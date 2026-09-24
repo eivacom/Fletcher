@@ -51,13 +51,15 @@ void RegisterInProcessProvider(ProviderRegistry& registry);
 /// another thread blocks on that mutex until the delivery in flight has
 /// returned, so no callback for a cancelled topic can outlive the call.
 ///
-/// **All four methods are refused from inside a delivery on this instance and
-/// this thread**, with `PubSubError(kReentrantCall)`, at a door BEFORE any lock
-/// (spec §6 clause 6, owner ruling 2026-09-05). The mutex being non-recursive is
-/// therefore not what stands between a handler and a deadlock — the door is; the
-/// mutex is the backstop, and a handler that reached it would get MSVC's
-/// "resource deadlock would occur" rather than a hang. Another THREAD calling
-/// during a delivery is not re-entrancy and is served.
+/// **Every seam method — the four data-path methods, the two schema-only
+/// ones and the two options-taking ones — is refused from inside a delivery
+/// on this instance and this thread**, with `PubSubError(kReentrantCall)`, at
+/// a door BEFORE any lock (spec §6 clause 6, owner ruling 2026-09-05). The
+/// mutex being non-recursive is therefore not what stands between a handler
+/// and a deadlock — the door is; the mutex is the backstop, and a handler
+/// that reached it would get MSVC's "resource deadlock would occur" rather
+/// than a hang. Another THREAD calling during a delivery is not re-entrancy
+/// and is served.
 class InProcessPubSubProvider : public PubSubProvider {
    public:
     explicit InProcessPubSubProvider(const ProviderConfig& config = {});

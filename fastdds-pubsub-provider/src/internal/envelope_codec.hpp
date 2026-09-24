@@ -28,7 +28,7 @@ namespace internal {
 // Fail the build rather than the wire if that stops being true.
 static_assert(std::endian::native == std::endian::little,
               "Fletcher's envelope stores lengths in host order and assumes little-endian; a "
-              "big-endian target needs byte swaps in EncodeEnvelopeBody and ParseEnvelope");
+              "big-endian target needs byte swaps in EncodeEnvelopeBody and ParseEnvelopeBody");
 
 // Writes [ROW_LEN:4][ROW_DATA][ATTACH_COUNT:4][attachments...]; throws if the buffer is too small.
 inline void EncodeEnvelopeBody(WriteBuffer& buf, const PubSubProvider::RowEncoder& encoder,
@@ -54,22 +54,12 @@ inline void EncodeEnvelopeBody(WriteBuffer& buf, const PubSubProvider::RowEncode
     }
 }
 
-// The same peek core uses, re-exported into this namespace so the read paths below read as one
-// vocabulary. Deliberately NOT a second implementation: it is the same parse of the same wire
-// header, and two copies of it are two chances to disagree about the layout.
-//
-// Its job here: an attachment-free sample - the hot path, and every sample the benchmarks
-// measure - needs no shared owner and takes no copy of any kind.
-inline uint32_t PeekAttachmentCount(const uint8_t* ptr, size_t total) {
-    return EnvelopeAttachmentCount(ptr, total);
-}
-
 // Reverse of EncodeEnvelopeBody. `row` views `ptr`, and so do the attachment blobs: `owner` is what
-// keeps `[ptr, ptr+total)` alive, and every Blob produced here takes its own reference to it
-// (§3.2). No attachment byte is copied.
+// keeps `[ptr, ptr+total)` alive, and every Blob produced here takes its own reference to it.
+// No attachment byte is copied.
 //
-// `owner` may be null ONLY for a body with no attachments — `PeekAttachmentCount` above is how a
-// caller finds that out cheaply. A body that claims attachments with no owner to hand them is
+// `owner` may be null ONLY for a body with no attachments — `EnvelopeAttachmentCount` (core's) is
+// how a caller finds that out cheaply. A body that claims attachments with no owner to hand them is
 // refused (returns false) rather than producing blobs nothing keeps alive.
 inline bool ParseEnvelopeBody(const std::shared_ptr<const void>& owner, const uint8_t* ptr,
                               size_t total, const uint8_t*& row, uint32_t& row_len,
@@ -94,7 +84,7 @@ inline bool ParseEnvelopeBody(const std::shared_ptr<const void>& owner, const ui
     // `deserialize()` and `on_data_available` frames, where a throw is a foreign frame's problem,
     // and a wire-supplied key is a wire fault rather than a caller fault in any case. Returning
     // false drops the sample down the existing warn path. Attachments::Set's throw is unreachable
-    // from this path by construction (owner ruling 2026-09-06).
+    // from this path by construction.
     AttachmentsWireBuilder build(attachments);
     if (total - pos >= 4) {
         uint32_t att_count;

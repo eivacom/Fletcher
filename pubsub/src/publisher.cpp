@@ -18,9 +18,14 @@ namespace fletcher {
 struct Publisher::Impl {
     std::shared_ptr<PubSubProvider> provider;
     mutable std::mutex mu;
-    // The declared schema per topic, as internal::DeclaredSchema — the same type, and the same
-    // comparison, the in-process provider uses for its own conflict check.
-    std::unordered_map<std::string, internal::DeclaredSchema> topics;
+    // The declared schema and the TopicOptions in force for a topic. `schema` uses the same type,
+    // and the same comparison, the in-process provider uses for its own conflict check; a
+    // CreateTopic call that omits `options` carries a default-constructed (empty) one.
+    struct TopicEntry {
+        internal::DeclaredSchema schema;
+        TopicOptions options;
+    };
+    std::unordered_map<std::string, TopicEntry> topics;
 };
 
 Publisher::Publisher(std::shared_ptr<PubSubProvider> provider) : impl_(std::make_unique<Impl>()) {
@@ -32,7 +37,8 @@ Publisher::Publisher(std::shared_ptr<PubSubProvider> provider) : impl_(std::make
 
 Publisher::~Publisher() = default;
 
-void Publisher::CreateTopic(const std::vector<std::string>& segments, OwnedSchema schema) {
+void Publisher::CreateTopic(const std::vector<std::string>& segments, OwnedSchema schema,
+                            const TopicOptions& options) {
     std::string key = internal::JoinSegments(segments);
 
     // Re-declaring an existing topic is idempotent for an identical schema — which lets several
@@ -48,7 +54,7 @@ void Publisher::CreateTopic(const std::vector<std::string>& segments, OwnedSchem
         std::lock_guard lock(impl_->mu);
         auto it = impl_->topics.find(key);
         if (it != impl_->topics.end()) {
-            if (incoming.ConflictsWith(it->second)) {
+            if (incoming.ConflictsWith(it->second.schema)) {
                 // The SAME numbered cause a provider reports for the same fact
                 // (spec §5.1). This tier short-circuits before the provider — it
                 // is the layer the gateway and PublisherArrow sit on, so it is
@@ -58,16 +64,28 @@ void Publisher::CreateTopic(const std::vector<std::string>& segments, OwnedSchem
                     PubSubStatus::kSchemaConflict,
                     "Publisher: topic already declared with a conflicting schema: " + key);
             }
+            // Field-wise: a later call may repeat or omit a field already stored, never change
+            // one — and a non-empty field against an EMPTY stored one conflicts too, because the
+            // endpoint already exists without it.
+            const TopicOptions& stored = it->second.options;
+            const bool profile_conflict =
+                !options.profile.empty() && options.profile != stored.profile;
+            const bool bound_conflict = options.max_payload_bytes != 0 &&
+                                        options.max_payload_bytes != stored.max_payload_bytes;
+            if (profile_conflict || bound_conflict) {
+                throw PubSubError(
+                    PubSubStatus::kInvalidArgument,
+                    "Publisher: topic already declared with different options: " + key);
+            }
             return;  // identical (or non-comparable) re-declaration — no-op
         }
-        impl_->topics.emplace(key, std::move(incoming));
+        impl_->topics.emplace(key, Impl::TopicEntry{std::move(incoming), options});
     }
 
     try {
-        impl_->provider->CreateTopic(segments, std::move(schema));
+        // Always the options form; the base delegates.
+        impl_->provider->CreateTopicWithOptions(segments, std::move(schema), options);
     } catch (...) {
-        // Provider rejected the topic — roll back the claim so a
-        // subsequent retry can succeed.
         std::lock_guard lock(impl_->mu);
         impl_->topics.erase(key);
         throw;

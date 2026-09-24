@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstring>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
-#include <thread>
+#include <mutex>
 
 using namespace fletcher;
 
@@ -27,6 +27,22 @@ static PubSubProvider::RowEncoder MakeEncoder(int32_t x) {
     };
 }
 
+// The built-in data profile is VOLATILE: a row published before the data writer has matched the
+// subscriber's data reader is dropped, not replayed -- and schema arrival proves only that the
+// schema channel matched. FastDDSStatusListener is Fletcher's own type, so this TU still compiles
+// with no Fast DDS headers.
+struct DataWriterMatch : FastDDSStatusListener {
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool matched = false;
+    void OnMatched(Endpoint endpoint, int32_t current_count, int32_t) noexcept override {
+        if (!endpoint.is_writer || endpoint.is_schema_channel || current_count < 1) return;
+        std::lock_guard<std::mutex> lock(mutex);
+        matched = true;
+        cv.notify_all();
+    }
+};
+
 int main() {
     // ProviderConfig and nothing else — and this TU is the machine check for that: the package
     // recipe drops `transitive_headers`, so it compiles with no Fast DDS include directories at
@@ -38,19 +54,24 @@ int main() {
     // <fletcher/pubsub/payload_bound.hpp>, which the public header must include for an out-of-tree
     // caller to compile (review 4a F7).
     const ProviderConfig config{.max_payload_bytes = kPayloadBytes<64 * 1024>};
-    FastDDSPubSubProvider pub_provider(config);
+    DataWriterMatch match;  // declared first: it must outlive the provider it observes
+    FastDDSPubSubProvider pub_provider(config, &match);
     FastDDSPubSubProvider sub_provider(config);
 
     pub_provider.CreateTopic({"example", "topic"}, MakeSchema());
 
-    std::atomic<int32_t> received{-1};
+    std::mutex mutex;
+    std::condition_variable cv;
+    int32_t received = -1;
     SubscriptionResult result = sub_provider.Subscribe(
         {"example", "topic"},
         [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             if (len >= 5) {
                 int32_t v;
                 std::memcpy(&v, data + 1, sizeof(v));
-                received.store(v);
+                std::lock_guard<std::mutex> lock(mutex);
+                received = v;
+                cv.notify_all();
             }
         });
 
@@ -61,15 +82,23 @@ int main() {
         return 1;
     }
 
-    pub_provider.Publish({"example", "topic"}, MakeEncoder(42));
-
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-    while (received.load() == -1 && std::chrono::steady_clock::now() < deadline) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    {
+        std::unique_lock<std::mutex> lock(match.mutex);
+        if (!match.cv.wait_for(lock, std::chrono::seconds(5), [&] { return match.matched; })) {
+            std::fputs("FAIL: data writer never matched the subscriber's data reader\n", stderr);
+            return 1;
+        }
     }
 
-    if (received.load() != 42) {
-        std::fprintf(stderr, "FAIL: expected 42, got %d\n", received.load());
+    pub_provider.Publish({"example", "topic"}, MakeEncoder(42));
+
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        cv.wait_for(lock, std::chrono::seconds(5), [&] { return received != -1; });
+    }
+
+    if (received != 42) {
+        std::fprintf(stderr, "FAIL: expected 42, got %d\n", received);
         return 1;
     }
 

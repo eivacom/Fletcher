@@ -32,7 +32,8 @@ PublisherArrow::PublisherArrow(std::shared_ptr<PubSubProvider> provider)
 PublisherArrow::~PublisherArrow() = default;
 
 void PublisherArrow::CreateTopic(const std::vector<std::string>& segments,
-                                 std::shared_ptr<arrow::Schema> schema) {
+                                 std::shared_ptr<arrow::Schema> schema,
+                                 const TopicOptions& options) {
     OwnedSchema nano;
     if (schema) {
         nano = ExportToNano(*schema);
@@ -41,12 +42,18 @@ void PublisherArrow::CreateTopic(const std::vector<std::string>& segments,
     // Delegate to the underlying Publisher FIRST. If it throws (duplicate
     // topic, provider failure) we leave the local codec registry
     // untouched, so it stays in sync with the Publisher's view.
-    publisher_->CreateTopic(segments, std::move(nano));
+    publisher_->CreateTopic(segments, std::move(nano), options);
 
     if (schema) {
         std::string key = internal::JoinSegments(segments);
         std::lock_guard lock(mu_);
-        codecs_[key] = TopicCodec{schema, std::make_unique<Codec>(schema)};
+        // try_emplace, not operator[]/insert_or_assign: a redeclaration of an existing topic
+        // reaches this line only after the Publisher above accepted it, which happens only when
+        // the schema's IPC bytes are byte-identical to the one already registered, so the
+        // existing codec is already equivalent. Publish() copies out the raw Codec* under mu_ and
+        // then releases mu_ to encode, so replacing the map entry here would free a codec a
+        // concurrent Publish() is still using.
+        codecs_.try_emplace(key, TopicCodec{schema, std::make_unique<Codec>(schema)});
     }
 }
 
@@ -63,10 +70,22 @@ void PublisherArrow::Publish(const std::vector<std::string>& segments, const Arr
         codec = it->second.codec.get();
     }
 
-    std::vector<uint8_t> encoded = codec->EncodeRow(row);
+    // Encode here, not inside the RowEncoder: the non-loaned Fast DDS path runs the encoder inside
+    // serialize(), which turns any exception into a logged false, and a type mismatch must reach
+    // the caller as std::invalid_argument. The scratch keeps its capacity, so a warm thread
+    // allocates nothing per publish.
+    thread_local std::vector<uint8_t> scratch;
+    scratch.clear();
+    VectorWriteBuffer buf(std::move(scratch));
+    try {
+        codec->EncodeRow(row, buf);
+    } catch (...) {
+        scratch = buf.Finish();  // keep the capacity for the next publish
+        throw;
+    }
+    scratch = buf.Finish();
     publisher_->Publish(
-        segments,
-        [data = std::move(encoded)](WriteBuffer& buf) { buf.Append(data.data(), data.size()); },
+        segments, [&](WriteBuffer& out) { out.Append(scratch.data(), scratch.size()); },
         attachments);
 }
 

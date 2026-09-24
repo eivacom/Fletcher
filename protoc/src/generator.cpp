@@ -950,12 +950,15 @@ std::string GeneratePublisherClass(const google::protobuf::MethodDescriptor* met
     // Constructor
     o << "    /// Creates the publisher and registers the topic with its schema\n"
       << "    /// on the provider. After construction, subscribers can discover\n"
-      << "    /// the topic and receive the schema for decoding.\n";
+      << "    /// the topic and receive the schema for decoding.\n"
+      << "    /// `options` is optional: a default-constructed value means the provider's "
+         "defaults.\n";
     o << "    explicit " << cls << "(\n"
-      << "            std::shared_ptr<fletcher::PubSubProvider> provider)\n"
+      << "            std::shared_ptr<fletcher::PubSubProvider> provider,\n"
+      << "            const fletcher::TopicOptions& options = {})\n"
       << "        : publisher_(std::make_unique<fletcher::Publisher>(std::move(provider)))\n"
       << "    {\n"
-      << "        publisher_->CreateTopic(TopicSegments(), " << msg_class << "Schema());\n"
+      << "        publisher_->CreateTopic(TopicSegments(), " << msg_class << "Schema(), options);\n"
       << "    }\n\n";
 
     // Publish (without attachments)
@@ -1016,9 +1019,12 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
     o << "    /// Begins receiving rows on this topic. The raw wire-format bytes\n"
       << "    /// are decoded into a typed message before being delivered to the\n"
       << "    /// callback, so subscribers never handle raw buffers directly.\n"
-      << "    /// Returns the subscription ID (used for Unsubscribe).\n";
+      << "    /// Returns the subscription ID (used for Unsubscribe).\n"
+      << "    /// `options` is optional: a default-constructed value means the provider's "
+         "defaults.\n";
     o << "    uint64_t Subscribe(\n"
-      << "        std::function<void(" << msg_class << ", const fletcher::Attachments&)> cb)\n"
+      << "        std::function<void(" << msg_class << ", const fletcher::Attachments&)> cb,\n"
+      << "        const fletcher::TopicOptions& options = {})\n"
       << "    {\n"
       << "        auto result = subscriber_->Subscribe(TopicSegments(),\n"
       << "            [cb = std::move(cb)](uint64_t /*subscription_id*/,\n"
@@ -1026,7 +1032,8 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
       << "                                 const fletcher::SharedSchema& /*schema*/,\n"
       << "                                 const fletcher::Attachments& att) {\n"
       << "                cb(" << msg_class << "(data, len), att);\n"
-      << "            });\n"
+      << "            },\n"
+      << "            options);\n"
       << "        return result.subscription_id;\n"
       << "    }\n\n";
 
@@ -1038,10 +1045,14 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
       << "    ///\n"
       << "    /// The row is borrowed for the duration of the call - copy it if you keep it. That\n"
       << "    /// is safe because a provider delivers at most one callback at a time per\n"
-      << "    /// subscription, which is part of PubSubProvider's delivery contract.\n";
+      << "    /// subscription, which is part of PubSubProvider's delivery contract.\n"
+      << "    ///\n"
+      << "    /// `options` is optional: a default-constructed value means the provider's "
+         "defaults.\n";
     o << "    uint64_t SubscribeInPlace(\n"
       << "        std::function<void(const " << msg_class
-      << "&, const fletcher::Attachments&)> cb)\n"
+      << "&, const fletcher::Attachments&)> cb,\n"
+      << "        const fletcher::TopicOptions& options = {})\n"
       << "    {\n"
       << "        auto result = subscriber_->Subscribe(TopicSegments(),\n"
       << "            [cb = std::move(cb), row = " << msg_class << "()](\n"
@@ -1051,7 +1062,8 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
       << "                const fletcher::Attachments& att) mutable {\n"
       << "                row.DecodeInto(data, len);\n"
       << "                cb(row, att);\n"
-      << "            });\n"
+      << "            },\n"
+      << "            options);\n"
       << "        return result.subscription_id;\n"
       << "    }\n\n";
 
@@ -1214,6 +1226,47 @@ std::string GenerateTypeScriptFile(const google::protobuf::FileDescriptor* file)
 }
 
 // -----------------------------------------------------------------------
+// AppendTo() free function generation
+//
+// Generates an inline free function per message that appends one message as
+// ONE element of a pre-built arrow::StructBuilder, driving that struct's
+// already-typed child builders directly (no per-element arrow::Scalar).
+// Found via ADL, used recursively for every nested message by AppendTo()
+// itself and by ToArrowRow()'s composite branches, and usable directly to
+// fill a struct column without going through ArrowRow at all.
+//
+// No forward declaration is needed: GenerateViewFile() emits messages in
+// OrderedMessages() dependency order, so a nested message's AppendTo() always
+// precedes the AppendTo() that calls it — the same property today's
+// ToArrowRow(*nested) calls rely on.
+// -----------------------------------------------------------------------
+
+std::string GenerateAppendTo(const std::string& cls, const std::vector<FieldInfo>& fields) {
+    std::ostringstream o;
+    o << "/// Appends `msg` as one element of the struct builder `b` — typed child\n"
+      << "/// builders, no arrow::Scalar.  `b` must have been made for\n"
+      << "/// arrow::struct_(detail::ImportSchema(" << cls << "Schema())->fields()).\n"
+      << "inline arrow::Status AppendTo(arrow::StructBuilder& b, const " << cls << "& msg) {\n"
+      << "    if (b.num_fields() != " << fields.size() << ")\n"
+      << "        return arrow::Status::Invalid(\"AppendTo(" << cls
+      << "): struct builder has \", b.num_fields(), \" fields, schema has \", " << fields.size()
+      << ");\n"
+      << "    ARROW_RETURN_NOT_OK(b.Append(true));\n";
+
+    // Same IR-driven view visitor that emits the `<Class>View` getters and the
+    // ToArrowRow() body (cpp_backend::EmitAppendToFieldFromIr): it reads each
+    // field through the public getter "msg.<name>()" and writes it into the
+    // matching `b.field_builder(<i>)` slot, so the slot index is positional
+    // against the same schema the row and view layers use.
+    for (size_t i = 0; i < fields.size(); ++i)
+        cpp_backend::EmitAppendToFieldFromIr(o, *fields[i].ir, "msg." + fields[i].name + "()", i);
+
+    o << "    return arrow::Status::OK();\n"
+      << "}\n";
+    return o.str();
+}
+
+// -----------------------------------------------------------------------
 // ToArrowRow() free function generation
 //
 // Generates an inline free function per message that converts a nanoarrow
@@ -1365,6 +1418,34 @@ std::string GenerateViewFile(const google::protobuf::FileDescriptor* file) {
           << "#endif\n\n";
     }
 
+    // GIR-8 (#53) sibling for a bare arrow::Status. ToArrowRow() returns a row,
+    // not a Status, so the AppendTo() calls in its composite branches cannot
+    // ARROW_RETURN_NOT_OK; this throws the same descriptive std::runtime_error
+    // FletcherValueOrThrow does instead of dropping the status on the floor.
+    // Guarded like the two helpers above, for the same reason.
+    {
+        std::string guard = "FLETCHER_DETAIL_THROW_IF_NOT_OK_";
+        for (char c : file->package()) guard += (c == '.' ? '_' : std::toupper(c));
+        guard += "_DEFINED";
+        o << "#ifndef " << guard << "\n"
+          << "#define " << guard << "\n"
+          << "namespace detail {\n"
+          << "/// Returns normally when `status` is ok, otherwise throws a\n"
+          << "/// std::runtime_error carrying `context` and the failing status.\n"
+          << "/// Used by generated ToArrowRow() code, which has no Status to\n"
+          << "/// return, so a failed Arrow append surfaces as a descriptive\n"
+          << "/// exception instead of a silently short array.\n"
+          << "inline void FletcherThrowIfNotOk(const arrow::Status& status,\n"
+          << "                                 const char* context) {\n"
+          << "    if (!status.ok()) {\n"
+          << "        throw std::runtime_error(\n"
+          << "            std::string(context) + \": \" + status.ToString());\n"
+          << "    }\n"
+          << "}\n"
+          << "}  // namespace detail\n"
+          << "#endif\n\n";
+    }
+
     for (const auto* msg : messages) {
         if (IsRecursive(msg) || IsFlattenedWrapper(msg)) continue;
 
@@ -1374,6 +1455,7 @@ std::string GenerateViewFile(const google::protobuf::FileDescriptor* file) {
         const std::string view_cls = cls + "View";
 
         o << GenerateViewClass(view_cls, fields) << "\n";
+        o << GenerateAppendTo(cls, fields) << "\n";
         o << GenerateToArrowRow(cls, fields) << "\n";
     }
 

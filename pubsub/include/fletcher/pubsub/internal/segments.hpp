@@ -126,7 +126,7 @@ inline void RequireSegments(const std::vector<std::string>& segs) {
 //
 // Deliberately not shared with JoinSegments below: routing that through here made it start from an
 // empty string where it used to copy-construct from segs[0], which costs a reallocation and showed
-// up as ~2.5% on bench_pubsub_fanout's BM_CreateTopic_Redeclare. Six duplicated lines are cheaper.
+// up as ~2.5% on the consuming repo's fletcher_bench fan-out arm. Six duplicated lines are cheaper.
 inline void JoinSegmentsInto(std::string& out, const std::vector<std::string>& segs) {
     RequireSegments(segs);
     out.clear();

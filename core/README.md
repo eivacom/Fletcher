@@ -38,7 +38,7 @@ summary; the normative wording is the doc comment on each enumerator in `status.
 | `kInternal` | 7 | The total catch-all. Anything with no better home arrives here carrying the original message — a taxonomy that lets an untyped exception through is not one. |
 | `kPending` | 8 | A wait **outcome**, never thrown: the answer is not available yet, within the timeout that was asked for. |
 | `kSubscriptionEnded` | 9 | A wait **outcome**, never thrown: the answer will never arrive, because the subscription that would have produced it is gone. |
-| `kReentrantCall` | 10 | The caller re-entered the seam from inside a delivery callback, on the same provider instance and the same thread, through a door that cannot serve it there. All four `PubSubProvider` methods refuse, on every provider (spec §6 clause 6). Distinct from `kNotSupported`, which says the provider cannot do this at all. |
+| `kReentrantCall` | 10 | The caller re-entered the seam from inside a delivery callback, on the same provider instance and the same thread, through a door that cannot serve it there. Every seam method — the four data-path methods, the two schema-only ones, and the two options-taking ones — refuses, on every provider (spec §6 clause 6). Distinct from `kNotSupported`, which says the provider cannot do this at all. |
 
 **The message beside the number.** A refusal carries a human-readable message, and spec §5.1
 makes it part of the error's value: it is retrievable from the error instance (never a global or

@@ -65,11 +65,34 @@ ArrowRow SensorRow(int32_t id, double temp, const std::string& label) {
     };
 }
 
+// Writer-side match fence: the data stream is VOLATILE, so a row published before the
+// subscriber's data reader has matched is dropped. The publisher provider takes this listener
+// and the test publishes only once its data writer (not the __schema one) reports a reader.
+class DataWriterMatchListener final : public fletcher::FastDDSStatusListener {
+   public:
+    void OnMatched(Endpoint endpoint, int32_t current_count, int32_t /*change*/) noexcept override {
+        if (endpoint.is_schema_channel || !endpoint.is_writer || current_count <= 0) return;
+        std::lock_guard<std::mutex> lk(mu_);
+        matched_ = true;
+        cv_.notify_all();
+    }
+    bool AwaitMatch(std::chrono::milliseconds budget) {
+        std::unique_lock<std::mutex> lk(mu_);
+        return cv_.wait_for(lk, budget, [&] { return matched_; });
+    }
+
+   private:
+    std::mutex mu_;
+    std::condition_variable cv_;
+    bool matched_ = false;
+};
+
 }  // namespace
 
 TEST(PubSubArrowFastDdsTest, SchemaAndRowDeliveredAcrossDdsBoundary) {
-    auto pub_provider =
-        std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = kTestDomain});
+    DataWriterMatchListener pub_listener;
+    auto pub_provider = std::make_shared<FastDDSPubSubProvider>(
+        ProviderConfig{.domain_id = kTestDomain}, &pub_listener);
     auto sub_provider =
         std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = kTestDomain});
 
@@ -102,10 +125,10 @@ TEST(PubSubArrowFastDdsTest, SchemaAndRowDeliveredAcrossDdsBoundary) {
     ASSERT_NE(sub_schema, nullptr);
     EXPECT_TRUE(sub_schema->Equals(*schema, /*check_metadata=*/false));
 
-    // No sleep before publish. The data-topic DataWriter is RELIABLE +
-    // TRANSIENT_LOCAL + KEEP_ALL, so the sample is retained and delivered
-    // as soon as the DataReader matches. The condition variable below
-    // handles the actual wait.
+    // The data stream is VOLATILE, so the test publishes only once the writer reports the
+    // match; the condition variable below handles the delivery wait.
+    ASSERT_TRUE(pub_listener.AwaitMatch(std::chrono::seconds(10)))
+        << "the data writer never matched the subscriber's data reader";
     pub.Publish(topic, SensorRow(42, 23.5, "alpha"));
 
     {
@@ -125,8 +148,9 @@ TEST(PubSubArrowFastDdsTest, SchemaAndRowDeliveredAcrossDdsBoundary) {
 }
 
 TEST(PubSubArrowFastDdsTest, MultipleRowsDeliveredInOrder) {
-    auto pub_provider =
-        std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = kTestDomain});
+    DataWriterMatchListener pub_listener;
+    auto pub_provider = std::make_shared<FastDDSPubSubProvider>(
+        ProviderConfig{.domain_id = kTestDomain}, &pub_listener);
     auto sub_provider =
         std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = kTestDomain});
 
@@ -154,8 +178,10 @@ TEST(PubSubArrowFastDdsTest, MultipleRowsDeliveredInOrder) {
 
     ASSERT_NE(AwaitArrowSchema(result.schema, std::chrono::seconds(15)), nullptr);
 
-    // No sleep before publish. KEEP_ALL durability retains every sample
-    // until the reader matches and consumes them in published order.
+    // The data stream is VOLATILE, so the test publishes only once the writer reports the
+    // match; the condition variable below handles the delivery wait.
+    ASSERT_TRUE(pub_listener.AwaitMatch(std::chrono::seconds(10)))
+        << "the data writer never matched the subscriber's data reader";
     for (int i = 0; i < kRowCount; ++i) {
         pub.Publish(topic, SensorRow(i, static_cast<double>(i), "row-" + std::to_string(i)));
     }
@@ -165,9 +191,9 @@ TEST(PubSubArrowFastDdsTest, MultipleRowsDeliveredInOrder) {
         ASSERT_TRUE(cv.wait_for(lk, 10s, [&] { return received_ids.size() == kRowCount; }))
             << "expected " << kRowCount << " rows, got " << received_ids.size();
     }
-    // Unsubscribe before reading received_ids: KEEP_ALL guarantees exactly
-    // kRowCount samples were delivered, so once the subscription is torn
-    // down nothing further can mutate the vector.
+    // Unsubscribe before reading received_ids: the wait_for predicate above already confirmed
+    // exactly kRowCount samples arrived, so once the subscription is torn down nothing further
+    // can mutate the vector.
     sub.Unsubscribe(result.subscription_id);
 
     for (int i = 0; i < kRowCount; ++i) {
@@ -186,8 +212,9 @@ TEST(PubSubArrowFastDdsTest, MultipleRowsDeliveredInOrder) {
 //     sample, which is the subscriber-only mode for the batched path
 // ---------------------------------------------------------------------------
 TEST(PubSubArrowFastDdsTest, BatchedRecordBatchDeliveredAcrossDdsBoundary) {
-    auto pub_provider =
-        std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = kTestDomain});
+    DataWriterMatchListener pub_listener;
+    auto pub_provider = std::make_shared<FastDDSPubSubProvider>(
+        ProviderConfig{.domain_id = kTestDomain}, &pub_listener);
     auto sub_provider =
         std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = kTestDomain});
 
@@ -231,10 +258,11 @@ TEST(PubSubArrowFastDdsTest, BatchedRecordBatchDeliveredAcrossDdsBoundary) {
     ASSERT_NE(sub_schema, nullptr);
     EXPECT_TRUE(sub_schema->Equals(*schema, /*check_metadata=*/false));
 
-    // Publish exactly max_rows samples — RELIABLE + TRANSIENT_LOCAL + KEEP_ALL
-    // guarantees ordered delivery to the matched DataReader. Once the batcher
-    // has counted three rows on the listener thread, it flushes a kRowLimit
-    // batch.
+    // The data stream is VOLATILE, so the test publishes only once the writer reports the
+    // match; RELIABLE then delivers in order to a matched reader. Once the batcher has
+    // counted three rows on the listener thread, it flushes a kRowLimit batch.
+    ASSERT_TRUE(pub_listener.AwaitMatch(std::chrono::seconds(10)))
+        << "the data writer never matched the subscriber's data reader";
     pub.Publish(topic, SensorRow(0, 0.5, "a"));
     pub.Publish(topic, SensorRow(1, 1.5, "b"));
     pub.Publish(topic, SensorRow(2, 2.5, "c"));
@@ -288,8 +316,9 @@ TEST(PubSubArrowFastDdsTest, BatchedRecordBatchDeliveredAcrossDdsBoundary) {
 // test's XrceSubscribeBeforeFastDDSPublish.
 // ---------------------------------------------------------------------------
 TEST(PubSubArrowFastDdsTest, SubscribeBeforePublishDeliversWithSchema) {
-    auto pub_provider =
-        std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = kTestDomain});
+    DataWriterMatchListener pub_listener;
+    auto pub_provider = std::make_shared<FastDDSPubSubProvider>(
+        ProviderConfig{.domain_id = kTestDomain}, &pub_listener);
     auto sub_provider =
         std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = kTestDomain});
 
@@ -317,9 +346,12 @@ TEST(PubSubArrowFastDdsTest, SubscribeBeforePublishDeliversWithSchema) {
     SharedSchema not_yet;
     EXPECT_EQ(result.schema.Wait(std::chrono::milliseconds(0), &not_yet), PubSubStatus::kPending);
 
-    // Bring the publisher up now. RELIABLE + TRANSIENT_LOCAL + KEEP_ALL retains
-    // the schema + row for the already-subscribed, late-matching DataReader.
+    // Bring the publisher up now. The data stream is VOLATILE: publish only once the writer has
+    // matched the already-subscribed reader, which the subscriber enables on its schema thread
+    // when the /__schema announcement lands.
     pub.CreateTopic(topic, schema);
+    ASSERT_TRUE(pub_listener.AwaitMatch(std::chrono::seconds(10)))
+        << "the data writer never matched the subscriber's data reader";
     pub.Publish(topic, SensorRow(42, 23.5, "alpha"));
 
     // The arrival answers once /__schema arrives — guaranteed non-null.

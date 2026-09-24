@@ -59,8 +59,15 @@ class SubscriberArrow {
 
     /// Subscribe with ArrowRow delivery.
     using SubscribeCallback = std::function<void(ArrowRow row, const Attachments& attachments)>;
+
+    /// `options` is optional; a default-constructed value means the provider's defaults, forwarded
+    /// verbatim to `Subscriber::Subscribe`'s options form — the options apply to the first
+    /// provider-level subscription of the topic, checked field-wise there: a later call may repeat
+    /// or omit a field already stored, never change one, and a non-empty field against an EMPTY
+    /// stored one is a conflict too, thrown as `PubSubError(kInvalidArgument)`.
     [[nodiscard]] SubscribeResult Subscribe(const std::vector<std::string>& segments,
-                                            SubscribeCallback callback);
+                                            SubscribeCallback callback,
+                                            const TopicOptions& options = {});
 
     /// Tuning for the batched (RecordBatch) Subscribe overload.
     struct BatchOptions {
@@ -81,6 +88,10 @@ class SubscriberArrow {
 
     /// Subscribe with batched RecordBatch delivery (Arrow tier only).
     ///
+    /// Rows are decoded straight into Arrow builders (`BatchDecoder`); a
+    /// window that would overflow a 32-bit Arrow offset (utf8/binary/list
+    /// columns beyond 2 GiB) is flushed early with reason kRowLimit.
+    ///
     /// Decoded rows are accumulated and flushed to `callback` when
     /// `options.max_rows` is reached or `options.timeout` elapses since the
     /// first row/drop of the current batch — whichever comes first. A partial
@@ -91,21 +102,53 @@ class SubscriberArrow {
     /// contributes neither a row nor an attachment — the metadata identifying
     /// its attachment lived in that row. If a window contains only dropped
     /// rows, a zero-row batch is still delivered so the loss is reported.
+    ///
+    /// `batch` is null only when `BatchDecoder`'s constructor rejected the
+    /// topic's schema; every row is then counted in `rows_dropped`, with a
+    /// null batch, for the entire life of this subscription — there is no
+    /// later recovery once the schema is known. Otherwise `batch` is never
+    /// null, and may have zero rows when a window contained only dropped
+    /// rows.
+    ///
+    /// What that costs depends on WHY `BatchDecoder` rejected the schema.
+    /// Null, extension, decimal32/64, run-end-encoded and list-view types are
+    /// not decodable through EITHER `SubscriberArrow::Subscribe` overload —
+    /// `Codec::DecodeRow` (the per-row one) throws on the same schema, so
+    /// there is no fallback to switch to. A dictionary nested below the top
+    /// level, an ordered dictionary, and a dictionary whose value type is
+    /// nested or `float16` are different: `Codec::DecodeRow` decodes all
+    /// three fine, so a caller who needs one of those three shapes and wants
+    /// data at all uses the per-row `Subscribe` overload for that topic
+    /// instead of this one.
     using RecordBatchCallback =
         std::function<void(std::shared_ptr<arrow::RecordBatch> batch,
                            std::vector<Attachments> attachments, BatchStatus status)>;
+
+    /// `topic_options` is optional; a default-constructed value means the provider's defaults,
+    /// forwarded to `Subscriber::Subscribe`'s options form — checked field-wise there: a later
+    /// call may repeat or omit a field already stored, never change one, and a non-empty field
+    /// against an EMPTY stored one is a conflict too, thrown as `PubSubError(kInvalidArgument)`.
     [[nodiscard]] SubscribeResult Subscribe(const std::vector<std::string>& segments,
-                                            RecordBatchCallback callback, BatchOptions options);
+                                            RecordBatchCallback callback, BatchOptions options,
+                                            const TopicOptions& topic_options = {});
 
     /// Convenience overload using the default BatchOptions (8000 rows, 1 min).
-    /// (BatchOptions cannot be a defaulted argument above: a nested aggregate's
-    /// member initializers aren't usable in a default arg of the same class.)
+    /// (BatchOptions cannot be a defaulted argument above: a nested aggregate's member
+    /// initializers aren't usable in a default arg of the same class. `TopicOptions` carries no
+    /// such restriction — it is not nested in this class — which is why it defaults above.)
     [[nodiscard]] SubscribeResult Subscribe(const std::vector<std::string>& segments,
                                             RecordBatchCallback callback) {
         return Subscribe(segments, std::move(callback), BatchOptions{});
     }
 
     void Unsubscribe(uint64_t subscription_id);
+
+    /// The topic's schema without its data — Subscriber::SubscribeSchema, forwarded as is. Poll or
+    /// wait on the arrival; convert with fletcher::ImportArrowSchema when it reports kOk. Released
+    /// by UnsubscribeSchema.
+    [[nodiscard]] SchemaArrival SubscribeSchema(const std::vector<std::string>& segments);
+    /// Subscriber::UnsubscribeSchema, forwarded as is (watches are counted per topic there).
+    void UnsubscribeSchema(const std::vector<std::string>& segments);
 
    private:
     class RecordBatchBatcher;  // defined in subscriber_arrow.cpp

@@ -56,13 +56,16 @@ void DiscardPubSub(fletcher::Publisher& publisher, fletcher::Subscriber& subscri
                    fletcher::PubSubProvider& provider, const ArrowSchema* schema) {
     publisher.ListTopics();
     subscriber.Subscribe({"probe"}, {});
-    // NOTE: PubSubProvider::Subscribe is VIRTUAL, and gcc (measured: 13.3.0, the
-    // version the Linux CI profile pins) emits no -Wunused-result diagnostic for a
-    // discarded [[nodiscard]] virtual call — through the base OR the concrete type.
-    // So this line is an effective gate on MSVC only; on gcc it contributes nothing
-    // and the test stays green purely on the non-virtual discards around it. Do not
-    // read a passing Linux run as proof that this line is guarded.
+    subscriber.SubscribeSchema({"probe"});
+    // NOTE: PubSubProvider::Subscribe, SubscribeWithOptions and SubscribeSchema are all
+    // VIRTUAL, and gcc (measured: 13.3.0, the version the Linux CI profile pins) emits no
+    // -Wunused-result diagnostic for a discarded [[nodiscard]] virtual call — through the base
+    // OR the concrete type. So these three lines are an effective gate on MSVC only; on gcc they
+    // contribute nothing and the test stays green purely on the non-virtual discards around
+    // them. Do not read a passing Linux run as proof that these lines are guarded.
     provider.Subscribe({"probe"}, {});
+    provider.SubscribeWithOptions({"probe"}, {}, fletcher::TopicOptions{});
+    provider.SubscribeSchema({"probe"});
     fletcher::OwnedSchema::DeepCopy(schema);
 }
 
@@ -76,10 +79,12 @@ void DiscardArrowWrappers(fletcher::PublisherArrow& publisher,
                           fletcher::SubscriberArrow& subscriber) {
     publisher.ListTopics();
     // All three SubscriberArrow::Subscribe overloads.
-    subscriber.Subscribe({"probe"}, fletcher::SubscriberArrow::SubscribeCallback{});
+    subscriber.Subscribe({"probe"}, fletcher::SubscriberArrow::SubscribeCallback{},
+                         fletcher::TopicOptions{});
     subscriber.Subscribe({"probe"}, fletcher::SubscriberArrow::RecordBatchCallback{},
-                         fletcher::SubscriberArrow::BatchOptions{});
+                         fletcher::SubscriberArrow::BatchOptions{}, fletcher::TopicOptions{});
     subscriber.Subscribe({"probe"}, fletcher::SubscriberArrow::RecordBatchCallback{});
+    subscriber.SubscribeSchema({"probe"});
 }
 
 void DiscardCodec(fletcher::Codec& codec, const fletcher::ArrowRow& row,

@@ -23,6 +23,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <csignal>
 #include <cstdint>
 #include <cstring>
 #include <fletcher/core/status.hpp>

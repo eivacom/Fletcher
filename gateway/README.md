@@ -31,14 +31,18 @@ The gateway routes between WebSocket clients and a pub/sub provider chosen with 
 
 Both providers are always compiled into the exe and the released binary; `--provider` selects between them at runtime.
 
+The gateway builds its provider through `fletcher::ProviderRegistry`, whose `Create` takes only a `ProviderConfig` — there is no listener parameter. So the gateway observes no endpoint or discovery statuses: for `fastdds`, that means no `FastDDSStatusListener` is ever installed, and callbacks like `OnMatched` or `OnIncompatibleQos` never fire for the gateway's own endpoints (see [Statuses](../fastdds-pubsub-provider/README.md#statuses)). A caller who wants them constructs `FastDDSPubSubProvider` directly, outside the registry, rather than going through the gateway.
+
 ### Configuring the provider
 
 `--provider-config FILE` reads `FILE` and hands its contents to the selected provider as its configuration document. **The format is the provider's, not the gateway's** — the gateway does not parse it, validate it or know what it means; it reads the bytes and passes them on. That is why one flag serves every provider, including ones a later build adds.
 
-- for **`fastdds`**, the document is a [Fast DDS XML QoS profiles document](../fastdds-pubsub-provider/README.md#qos-configuration). Reserved profile names are `fletcher_participant` (mandatory in a non-empty document), `fletcher_writer`, `fletcher_reader`, and a profile named after the `/`-joined topic for a per-topic override. Note that **a supplied profile is that endpoint's whole quality-of-service** — start from the published starting-point block rather than from a bare profile.
+The WebSocket protocol itself carries no per-topic options (no `TopicOptions` equivalent in a `create_topic`/`subscribe` frame): a profile reaches the gateway only as a topic-named profile in the `--provider-config` document below.
+
+- for **`fastdds`**, the document is a [Fast DDS XML QoS profiles document](../fastdds-pubsub-provider/README.md#qos-configuration). The only reserved profile name is `fletcher_participant` (mandatory); writer/reader defaults come from the document's `is_default_profile="true"` profiles, and a per-topic override is a profile named after the `/`-joined topic. Note that **a supplied profile is that endpoint's whole quality-of-service** — start from the published starting-point block rather than from a bare profile.
 - for **`inprocess`**, it is `key=value` lines; the only key is `schema_carriage`.
 
-Without the flag the document is empty and each provider uses its own defaults, which for `fastdds` is Fletcher's profile (`RELIABLE` + `KEEP_ALL` + `TRANSIENT_LOCAL`, with the resource limits and reader-side `data_sharing OFF` that profile carries). An unreadable `FILE` exits 2, as a bad `--provider` does; a document the provider rejects exits 2 with the provider's own message. An **empty or whitespace-only** `FILE` also exits 2, with its own message: passing the flag asks to be configured from that file, and every provider reads an empty document as "my own defaults", so accepting it would start a gateway that applies none of your intent and says nothing. Omit the flag if that is what you want.
+Without the flag the document is empty and each provider uses its own defaults, which for `fastdds` is Fletcher's built-in profiles (`RELIABLE` + `KEEP_LAST` 25 + `VOLATILE`; see the provider README's [Built-in profiles](../fastdds-pubsub-provider/README.md#built-in-profiles) table). An unreadable `FILE` exits 2, as a bad `--provider` does; a document the provider rejects exits 2 with the provider's own message. An **empty or whitespace-only** `FILE` also exits 2, with its own message: passing the flag asks to be configured from that file, and every provider reads an empty document as "my own defaults", so accepting it would start a gateway that applies none of your intent and says nothing. Omit the flag if that is what you want.
 
 ## Installing
 

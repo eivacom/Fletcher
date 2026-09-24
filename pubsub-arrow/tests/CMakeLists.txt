@@ -24,7 +24,7 @@ include(GoogleTest)
 # 30 s, chosen from this suite's own measured wall clock: the two slowest gtest rows are
 # `SubscriberArrowBatchTest.FlushesAtTimeout` and
 # `SubscriberArrowBatchTest.OnlyDroppedRowsStillDeliversEmptyBatch` at 0.15 s each, with the
-# other 13 at 0.04 s (msvc-194 x86_64 Release). Both slow rows are WAITS, not work - they set
+# rest well under 0.1 s (msvc-194 x86_64 Release). Both slow rows are WAITS, not work - they set
 # `opt.timeout = 100 ms` and then wait for the batch flush timer to fire, which is wall clock and
 # therefore does not stretch on a slower or more contended runner. 30 s is ~200x the slowest row
 # for a suite whose real ceiling is fixed by a 100 ms timer, and it turns a future hang into a

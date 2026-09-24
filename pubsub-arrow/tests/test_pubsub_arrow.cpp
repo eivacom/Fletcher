@@ -4,16 +4,20 @@
 #include <arrow/api.h>
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
+#include <fletcher/arrow_bridge/codec.hpp>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/internal/segments.hpp>
 #include <fletcher/pubsub/provider.hpp>
 #include <fletcher/pubsub_arrow/publisher_arrow.hpp>
 #include <fletcher/pubsub_arrow/schema_import.hpp>
 #include <fletcher/pubsub_arrow/subscriber_arrow.hpp>
+#include <future>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -41,6 +45,7 @@ class MockProvider : public PubSubProvider {
         VectorWriteBuffer wb;
         encoder(wb);
         const std::vector<uint8_t> buf = wb.Finish();
+        published.push_back(buf);
 
         auto it = callbacks_.find(key);
         if (it != callbacks_.end()) {
@@ -69,10 +74,74 @@ class MockProvider : public PubSubProvider {
         callbacks_.erase(fletcher::internal::JoinSegments(segments));
     }
 
+    // Recorded rather than refused: this MockProvider supports per-topic options, so the
+    // forwarding tests below can observe what the Arrow-tier overloads pass through.
+    void CreateTopicWithOptions(const std::vector<std::string>& segments, OwnedSchema schema,
+                                const TopicOptions& options) override {
+        create_topic_with_options_count++;
+        last_create_options = options;
+        CreateTopic(segments, std::move(schema));
+    }
+
+    SubscriptionResult SubscribeWithOptions(const std::vector<std::string>& segments,
+                                            SubscribeCallback callback,
+                                            const TopicOptions& options) override {
+        subscribe_with_options_count++;
+        last_subscribe_options = options;
+        return Subscribe(segments, std::move(callback));
+    }
+
     std::vector<std::string> topics_created;
+    // Raw bytes handed to the RowEncoder on each underlying Publish() call, one entry per call.
+    std::vector<std::vector<uint8_t>> published;
+    int create_topic_with_options_count = 0;
+    int subscribe_with_options_count = 0;
+    TopicOptions last_create_options;
+    TopicOptions last_subscribe_options;
 
    private:
     std::unordered_map<std::string, SubscribeCallback> callbacks_;
+    std::unordered_map<std::string, OwnedSchema> schemas_;
+};
+
+// A schema-carrying provider that never receives a data subscription in the
+// test below — SubscribeSchema is the only thing exercised through it, so
+// `subscribe_count` staying 0 is the whole point of the test.
+class SchemaOnlyProvider : public PubSubProvider {
+   public:
+    void CreateTopic(const std::vector<std::string>& segments, OwnedSchema schema) override {
+        std::string key = fletcher::internal::JoinSegments(segments);
+        if (schema) {
+            schemas_[key] = OwnedSchema::DeepCopy(schema.get());
+        }
+    }
+
+    void Publish(const std::vector<std::string>&, const RowEncoder&, const Attachments&) override {}
+
+    SubscriptionResult Subscribe(const std::vector<std::string>&, SubscribeCallback) override {
+        ++subscribe_count;
+        return {SchemaArrival::Ready(nullptr)};
+    }
+
+    void Unsubscribe(const std::vector<std::string>&) override {}
+
+    SchemaArrival SubscribeSchema(const std::vector<std::string>& segments) override {
+        auto it = schemas_.find(fletcher::internal::JoinSegments(segments));
+        SharedSchema schema;
+        if (it != schemas_.end()) {
+            schema = MakeSharedSchema(OwnedSchema::DeepCopy(it->second.get()));
+        }
+        return SchemaArrival::Ready(std::move(schema));
+    }
+
+    void UnsubscribeSchema(const std::vector<std::string>& /*segments*/) override {
+        ++unsubscribe_schema_count;
+    }
+
+    int subscribe_count = 0;
+    int unsubscribe_schema_count = 0;
+
+   private:
     std::unordered_map<std::string, OwnedSchema> schemas_;
 };
 
@@ -111,6 +180,109 @@ TEST(PublisherArrowTest, ListTopics) {
     EXPECT_EQ(topics[0], "test/topic");
 }
 
+TEST(PublisherArrowTest, CreateTopicForwardsTopicOptions) {
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+
+    TopicOptions options{.profile = "reliable", .max_payload_bytes = 4096};
+    pub.CreateTopic(kTopic, TestSchema(), options);
+
+    EXPECT_EQ(mock->create_topic_with_options_count, 1);
+    ASSERT_EQ(mock->topics_created.size(), 1u);
+    EXPECT_EQ(mock->last_create_options, options);
+}
+
+TEST(PublisherArrowTest, PublishTypeMismatchThrowsToCaller) {
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+
+    pub.CreateTopic(kTopic, arrow::schema({arrow::field("a", arrow::int32())}));
+
+    ArrowRow row = {std::make_shared<arrow::StringScalar>("nope")};
+    EXPECT_THROW(pub.Publish(kTopic, row), std::invalid_argument);
+
+    EXPECT_TRUE(mock->published.empty());
+}
+
+TEST(PublisherArrowTest, PublishAfterATypeMismatchStillDelivers) {
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+
+    auto schema = arrow::schema({arrow::field("a", arrow::int32())});
+    pub.CreateTopic(kTopic, schema);
+
+    ArrowRow bad_row = {std::make_shared<arrow::StringScalar>("nope")};
+    EXPECT_THROW(pub.Publish(kTopic, bad_row), std::invalid_argument);
+    EXPECT_TRUE(mock->published.empty());
+
+    // The scratch buffer survives the throw: a correct publish right
+    // after, on the same thread, is delivered intact.
+    ArrowRow good_row = {std::make_shared<arrow::Int32Scalar>(7)};
+    pub.Publish(kTopic, good_row);
+
+    ASSERT_EQ(mock->published.size(), 1u);
+    Codec codec(schema);
+    ArrowRow decoded = codec.DecodeRow(mock->published[0].data(), mock->published[0].size());
+    ASSERT_EQ(decoded.size(), 1u);
+    EXPECT_TRUE(decoded[0]->Equals(*good_row[0]));
+}
+
+TEST(PublisherArrowTest, PublishTwiceReusesScratchAndDeliversBothRows) {
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+
+    auto schema = TestSchema();
+    pub.CreateTopic(kTopic, schema);
+
+    ArrowRow row1 = {std::make_shared<arrow::Int32Scalar>(1),
+                     std::make_shared<arrow::StringScalar>("first")};
+    ArrowRow row2 = {std::make_shared<arrow::Int32Scalar>(2),
+                     std::make_shared<arrow::StringScalar>("second")};
+
+    pub.Publish(kTopic, row1);
+    pub.Publish(kTopic, row2);
+
+    ASSERT_EQ(mock->published.size(), 2u);
+
+    Codec codec(schema);
+    ArrowRow decoded1 = codec.DecodeRow(mock->published[0].data(), mock->published[0].size());
+    ArrowRow decoded2 = codec.DecodeRow(mock->published[1].data(), mock->published[1].size());
+
+    ASSERT_EQ(decoded1.size(), 2u);
+    EXPECT_TRUE(decoded1[0]->Equals(*row1[0]));
+    EXPECT_TRUE(decoded1[1]->Equals(*row1[1]));
+    ASSERT_EQ(decoded2.size(), 2u);
+    EXPECT_TRUE(decoded2[0]->Equals(*row2[0]));
+    EXPECT_TRUE(decoded2[1]->Equals(*row2[1]));
+}
+
+// Publisher::CreateTopic (publisher.cpp) treats a re-declaration with a byte-identical schema as
+// a no-op and never calls back into the provider, so this exercises PublisherArrow's own map
+// insert on the second CreateTopic call: it must not replace the existing codecs_ entry, because
+// Publish() copies out a raw Codec* with mu_ released before encoding, and a concurrent
+// redeclaration that replaced the entry would free a codec a running EncodeRow still points at.
+// The race itself isn't reproducible deterministically here; this only pins that a redeclare
+// leaves a codec that still round-trips.
+TEST(PublisherArrowTest, RedeclaringATopicKeepsTheCodec) {
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+
+    auto schema = TestSchema();
+    pub.CreateTopic(kTopic, schema);
+    pub.CreateTopic(kTopic, schema);  // re-declare with the identical schema
+
+    ArrowRow row = {std::make_shared<arrow::Int32Scalar>(3),
+                    std::make_shared<arrow::StringScalar>("third")};
+    pub.Publish(kTopic, row);
+
+    ASSERT_EQ(mock->published.size(), 1u);
+    Codec codec(schema);
+    ArrowRow decoded = codec.DecodeRow(mock->published[0].data(), mock->published[0].size());
+    ASSERT_EQ(decoded.size(), 2u);
+    EXPECT_TRUE(decoded[0]->Equals(*row[0]));
+    EXPECT_TRUE(decoded[1]->Equals(*row[1]));
+}
+
 // ---------------------------------------------------------------------------
 // SubscriberArrow tests
 // ---------------------------------------------------------------------------
@@ -134,6 +306,69 @@ TEST(SubscriberArrowTest, SubscribeReturnsArrowSchema) {
     EXPECT_TRUE(sch->field(0)->type()->Equals(*arrow::int32()));
     EXPECT_EQ(sch->field(1)->name(), "name");
     EXPECT_TRUE(sch->field(1)->type()->Equals(*arrow::utf8()));
+}
+
+TEST(SubscriberArrowTest, SubscribeSchemaYieldsAnImportableSchemaWithoutADataSubscription) {
+    auto provider = std::make_shared<SchemaOnlyProvider>();
+    PublisherArrow pub(provider);
+    SubscriberArrow sub(provider);
+    pub.CreateTopic(kTopic, TestSchema());
+
+    SchemaArrival arrival = sub.SubscribeSchema(kTopic);
+
+    SharedSchema nano;
+    ASSERT_EQ(arrival.Wait(std::chrono::milliseconds(0), &nano), PubSubStatus::kOk);
+    std::shared_ptr<arrow::Schema> schema = ImportArrowSchema(nano);
+    ASSERT_TRUE(schema);
+    EXPECT_TRUE(schema->Equals(*TestSchema()));
+
+    // No data subscription was ever opened for this.
+    EXPECT_EQ(provider->subscribe_count, 0);
+
+    sub.UnsubscribeSchema(kTopic);
+    EXPECT_EQ(provider->unsubscribe_schema_count, 1);
+}
+
+// Optional means optional: MockProvider never overrode SubscribeSchema, so the
+// base class's default refusal is what SubscriberArrow forwards.
+TEST(SubscriberArrowTest, SubscribeSchemaOnATransportWithoutOneThrowsNotSupported) {
+    auto mock = std::make_shared<MockProvider>();
+    SubscriberArrow sub(mock);
+
+    try {
+        static_cast<void>(sub.SubscribeSchema(kTopic));
+        FAIL() << "expected PubSubError(kNotSupported)";
+    } catch (const PubSubError& e) {
+        EXPECT_EQ(e.status(), PubSubStatus::kNotSupported);
+    }
+}
+
+TEST(SubscriberArrowTest, SubscribeForwardsTopicOptions) {
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
+    pub.CreateTopic(kTopic, TestSchema());
+
+    TopicOptions options{.profile = "reliable"};
+    static_cast<void>(sub.Subscribe(kTopic, [](ArrowRow, Attachments) {}, options));
+
+    EXPECT_EQ(mock->subscribe_with_options_count, 1);
+    EXPECT_EQ(mock->last_subscribe_options, options);
+}
+
+// Optional means optional: SchemaOnlyProvider never overrode SubscribeWithOptions, so the base
+// class's default refusal is what SubscriberArrow forwards for a non-empty options request.
+TEST(SubscriberArrowTest, SubscribeWithOptionsOnATransportWithoutOneThrowsNotSupported) {
+    auto provider = std::make_shared<SchemaOnlyProvider>();
+    SubscriberArrow sub(provider);
+
+    try {
+        static_cast<void>(
+            sub.Subscribe(kTopic, [](ArrowRow, Attachments) {}, TopicOptions{.profile = "x"}));
+        FAIL() << "expected PubSubError(kNotSupported)";
+    } catch (const PubSubError& e) {
+        EXPECT_EQ(e.status(), PubSubStatus::kNotSupported);
+    }
 }
 
 TEST(PubSubArrowTest, PublishSubscribeRoundtripWithArrowRow) {
@@ -274,6 +509,21 @@ ArrowRow MakeRow(int32_t x, const std::string& name) {
 }
 
 }  // namespace
+
+TEST(SubscriberArrowBatchTest, SubscribeForwardsTopicOptions) {
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
+    pub.CreateTopic(kTopic, TestSchema());
+
+    BatchSink sink;
+    TopicOptions options{.profile = "reliable"};
+    static_cast<void>(
+        sub.Subscribe(kTopic, sink.callback(), SubscriberArrow::BatchOptions{}, options));
+
+    EXPECT_EQ(mock->subscribe_with_options_count, 1);
+    EXPECT_EQ(mock->last_subscribe_options, options);
+}
 
 TEST(SubscriberArrowBatchTest, FlushesAtRowLimit) {
     auto mock = std::make_shared<MockProvider>();
@@ -498,4 +748,345 @@ TEST(SubscriberArrowBatchTest, DictionaryColumnPreservesNulls) {
 
     auto dict_col = std::static_pointer_cast<arrow::DictionaryArray>(col);
     EXPECT_EQ(dict_col->dictionary()->length(), 1);  // only "x"
+}
+
+// ---------------------------------------------------------------------------
+// BatchDecoder-backed batching — corrupt rows, capacity, reuse
+// ---------------------------------------------------------------------------
+
+TEST(SubscriberArrowBatchTest, CorruptRowIsCountedDroppedAndBatchStaysAligned) {
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
+    auto schema = arrow::schema({
+        arrow::field("tags", arrow::list(arrow::utf8())),
+        arrow::field("x", arrow::int32()),
+    });
+    pub.CreateTopic(kTopic, schema);
+
+    BatchSink sink;
+    SubscriberArrow::BatchOptions opt;
+    opt.max_rows = 2;  // A and B; the corrupt row in between never counts toward the limit
+    opt.timeout = std::chrono::minutes(10);
+    static_cast<void>(sub.Subscribe(kTopic, sink.callback(), opt));
+
+    arrow::StringBuilder sb_a;
+    ASSERT_TRUE(sb_a.AppendValues({"a", "b"}).ok());
+    ArrowRow row_a = {std::make_shared<arrow::ListScalar>(sb_a.Finish().ValueOrDie()),
+                      std::make_shared<arrow::Int32Scalar>(1)};
+    arrow::StringBuilder sb_b;
+    ASSERT_TRUE(sb_b.AppendValues({"c"}).ok());
+    ArrowRow row_b = {std::make_shared<arrow::ListScalar>(sb_b.Finish().ValueOrDie()),
+                      std::make_shared<arrow::Int32Scalar>(2)};
+
+    Blob blob_a{std::vector<uint8_t>{0xAA}};
+    Blob blob_b{std::vector<uint8_t>{0xBB}};
+    Attachments att_a;
+    att_a.Set("blob", blob_a);
+    Attachments att_b;
+    att_b.Set("blob", blob_b);
+
+    pub.Publish(kTopic, row_a, att_a);
+
+    // A corrupt row: row A's own encoding, truncated by 3 bytes so the fixed 4-byte
+    // int32 field underruns on read — BatchDecoder throws, nothing is appended.
+    Codec codec(schema);
+    EncodedRow encoded_a = codec.EncodeRow(row_a);
+    ASSERT_GT(encoded_a.size(), 3u);
+    EncodedRow truncated(encoded_a.begin(), encoded_a.end() - 3);
+    pub.PublishDirect(kTopic,
+                      [&](WriteBuffer& buf) { buf.Append(truncated.data(), truncated.size()); });
+
+    pub.Publish(kTopic, row_b, att_b);  // reaches max_rows -> synchronous flush
+
+    std::lock_guard<std::mutex> lk(sink.mu);
+    ASSERT_EQ(sink.deliveries.size(), 1u);
+    const auto& d = sink.deliveries[0];
+    EXPECT_EQ(d.num_rows, 2);
+    EXPECT_EQ(d.status.rows_dropped, 1);
+    EXPECT_EQ(d.status.reason, BatchStatus::Reason::kRowLimit);
+    ASSERT_EQ(d.attachments.size(), 2u);
+    const Blob* got_a = d.attachments[0].Find("blob");
+    ASSERT_NE(got_a, nullptr);
+    EXPECT_EQ(got_a->data(), blob_a.data());
+    EXPECT_EQ(got_a->size(), blob_a.size());
+    const Blob* got_b = d.attachments[1].Find("blob");
+    ASSERT_NE(got_b, nullptr);
+    EXPECT_EQ(got_b->data(), blob_b.data());
+    EXPECT_EQ(got_b->size(), blob_b.size());
+
+    ASSERT_NE(d.batch, nullptr);
+    auto x_col = std::static_pointer_cast<arrow::Int32Array>(d.batch->column(1));
+    EXPECT_EQ(x_col->Value(0), 1);
+    EXPECT_EQ(x_col->Value(1), 2);
+    auto tags_col = std::static_pointer_cast<arrow::ListArray>(d.batch->column(0));
+    EXPECT_EQ(tags_col->value_length(0), 2);
+    EXPECT_EQ(tags_col->value_length(1), 1);
+}
+
+TEST(SubscriberArrowBatchTest, FixedSizeListWithNamedItemArrivesNonNull) {
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
+    auto fsl_type = arrow::fixed_size_list(arrow::field("v", arrow::float32(), false), 3);
+    auto schema = arrow::schema({arrow::field("vec", fsl_type)});
+    pub.CreateTopic(kTopic, schema);
+
+    BatchSink sink;
+    SubscriberArrow::BatchOptions opt;
+    opt.max_rows = 1;
+    opt.timeout = std::chrono::minutes(10);
+    static_cast<void>(sub.Subscribe(kTopic, sink.callback(), opt));
+
+    arrow::FloatBuilder fb;
+    ASSERT_TRUE(fb.AppendValues({1.0f, 2.0f, 3.0f}).ok());
+    auto fsl_scalar =
+        std::make_shared<arrow::FixedSizeListScalar>(fb.Finish().ValueOrDie(), fsl_type);
+    pub.Publish(kTopic, {fsl_scalar});
+
+    std::lock_guard<std::mutex> lk(sink.mu);
+    ASSERT_EQ(sink.deliveries.size(), 1u);
+    auto batch = sink.deliveries[0].batch;
+    ASSERT_NE(batch, nullptr);
+    ASSERT_EQ(batch->num_rows(), 1);
+    auto col = batch->column(0);
+    ASSERT_TRUE(col->IsValid(0));  // this was silently nulled before the underlying fix
+    auto fsl_col = std::static_pointer_cast<arrow::FixedSizeListArray>(col);
+    auto values = std::static_pointer_cast<arrow::FloatArray>(fsl_col->values());
+    EXPECT_EQ(values->Value(0), 1.0f);
+    EXPECT_EQ(values->Value(1), 2.0f);
+    EXPECT_EQ(values->Value(2), 3.0f);
+}
+
+TEST(SubscriberArrowBatchTest, NestedDictionarySchemaReportsEveryRowDropped) {
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
+    auto dict_type = arrow::dictionary(arrow::int32(), arrow::utf8());
+    auto schema = arrow::schema({arrow::field("tags", arrow::list(dict_type))});
+    pub.CreateTopic(kTopic, schema);
+
+    BatchSink sink;
+    SubscriberArrow::BatchOptions opt;
+    opt.max_rows = 100000;
+    opt.timeout = std::chrono::minutes(10);
+    auto result = sub.Subscribe(kTopic, sink.callback(), opt);
+
+    // BatchDecoder rejects this schema (a dictionary below the top level), so the row
+    // content never matters -- every row is dropped without an attempt to decode it.
+    for (int i = 0; i < 3; ++i) {
+        pub.PublishDirect(kTopic, [](WriteBuffer& buf) { buf.AppendByte(0x00); });
+    }
+    sub.Unsubscribe(result.subscription_id);  // force the closing flush
+
+    std::lock_guard<std::mutex> lk(sink.mu);
+    ASSERT_EQ(sink.deliveries.size(), 1u);
+    const auto& d = sink.deliveries[0];
+    EXPECT_EQ(d.batch, nullptr);
+    EXPECT_EQ(d.status.rows_dropped, 3);
+    EXPECT_TRUE(d.attachments.empty());
+}
+
+TEST(SubscriberArrowBatchTest, FinishFailureIsReportedNotFatal) {
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
+    auto dict_type = arrow::dictionary(arrow::int8(), arrow::utf8());
+    pub.CreateTopic(kTopic, arrow::schema({arrow::field("d", dict_type, true)}));
+
+    BatchSink sink;
+    SubscriberArrow::BatchOptions opt;
+    opt.max_rows = 200;
+    opt.timeout = std::chrono::minutes(10);
+    auto result = sub.Subscribe(kTopic, sink.callback(), opt);
+
+    // 200 distinct values overflow an int8 dictionary index (128 representable
+    // values) when BatchDecoder::Finish() re-folds the column and casts it to
+    // dictionary<int8>. That failure is an internal invariant, not a
+    // malformed row, and must not terminate the process.
+    for (int i = 0; i < 200; ++i) {
+        pub.Publish(kTopic, {std::make_shared<arrow::StringScalar>("v" + std::to_string(i))});
+    }
+
+    {
+        std::lock_guard<std::mutex> lk(sink.mu);
+        ASSERT_EQ(sink.deliveries.size(), 1u);
+        EXPECT_EQ(sink.deliveries[0].batch, nullptr);
+        EXPECT_EQ(sink.deliveries[0].status.rows_dropped, 200);
+    }
+
+    // The decoder was reset, not left broken: a following window with few
+    // distinct values delivers a normal batch (closing flush forces it out
+    // rather than waiting on the 10-minute timeout).
+    for (const auto& v : {"a", "b", "c"}) {
+        pub.Publish(kTopic, {std::make_shared<arrow::StringScalar>(v)});
+    }
+    sub.Unsubscribe(result.subscription_id);
+
+    std::lock_guard<std::mutex> lk(sink.mu);
+    ASSERT_EQ(sink.deliveries.size(), 2u);
+    EXPECT_EQ(sink.deliveries[1].num_rows, 3);
+    EXPECT_EQ(sink.deliveries[1].status.rows_dropped, 0);
+}
+
+// The last remaining batched-subscriber case: Unsubscribe called from INSIDE the batch callback,
+// itself invoked synchronously from Flush() on the publishing thread. A real
+// BatchCapacityExceeded needs a column that trips Arrow's ~2 GiB builder limit
+// (BatchDecoderTest.CapacityExceededLeavesBuildersUntouched in arrow-bridge/tests/
+// test_batch_decoder.cpp needs 300 rows of an 8 MiB column to force it) — unforceable here without
+// allocating gigabytes in a unit test, so this drives the identical reentrant-Unsubscribe-during-
+// Flush path through the ordinary row-limit flush instead (max_rows = 1), exercising the
+// `if (stopped_) return;` guard in the BatchCapacityExceeded handler (subscriber_arrow.cpp)
+// precisely so a mid-flush Unsubscribe doesn't touch a decoder Stop() already tore down; this
+// pins the observable half of that fix: no further delivery after Unsubscribe returns, and the
+// process does not crash.
+TEST(SubscriberArrowBatchTest, UnsubscribeFromCallbackDuringRowLimitFlushStopsDeliveryCleanly) {
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
+    pub.CreateTopic(kTopic, TestSchema());
+
+    int delivery_count = 0;
+    uint64_t sub_id = 0;
+    SubscriberArrow::BatchOptions opt;
+    opt.max_rows = 1;  // every published row is its own row-limit flush
+    opt.timeout = std::chrono::minutes(10);
+    auto result = sub.Subscribe(
+        kTopic,
+        [&](std::shared_ptr<arrow::RecordBatch>, std::vector<Attachments>, BatchStatus) {
+            ++delivery_count;
+            // Reentrant: this runs from inside RecordBatchBatcher::Flush(), on the publishing
+            // thread, with the batcher's own mutex released.
+            sub.Unsubscribe(sub_id);
+        },
+        opt);
+    sub_id = result.subscription_id;
+
+    pub.Publish(kTopic, MakeRow(1, "a"));  // triggers the row-limit flush -> the callback above
+    EXPECT_EQ(delivery_count, 1);
+
+    // No further delivery: the subscription is gone, and the process has not crashed getting here.
+    pub.Publish(kTopic, MakeRow(2, "b"));
+    pub.Publish(kTopic, MakeRow(3, "c"));
+    EXPECT_EQ(delivery_count, 1);
+}
+
+// Pins RecordBatchBatcher::Start's fix: a timeout flush runs the callback on the batcher's own
+// timer thread, so an Unsubscribe from inside it makes that same thread take Stop()'s self-detach
+// branch. Before the fix the timer thread's lambda held only a raw `this`, so the shared_ptr
+// Unsubscribe drops there was the last owner and destroyed the batcher while the timer thread was
+// still inside Flush()/TimerLoop() on it (a use-after-free that may or may not crash under a given
+// allocator). With the fix the timer thread owns a shared_ptr of its own, kept alive until
+// TimerLoop() itself returns, so the object outlives the thread's use of it.
+TEST(SubscriberArrowBatchTest, UnsubscribeFromInsideATimeoutFlushIsSafe) {
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
+    pub.CreateTopic(kTopic, TestSchema());
+
+    std::mutex id_mu;
+    uint64_t sub_id = 0;
+    std::atomic<bool> unsubscribed{false};
+    std::promise<void> delivered;
+    std::future<void> delivered_future = delivered.get_future();
+
+    SubscriberArrow::BatchOptions opt;
+    opt.max_rows = 100;  // never reached; only the timeout triggers the flush
+    opt.timeout = std::chrono::milliseconds(20);
+    auto result = sub.Subscribe(
+        kTopic,
+        [&](std::shared_ptr<arrow::RecordBatch>, std::vector<Attachments>, BatchStatus) {
+            // Stop()'s own kClosing flush (triggered by the Unsubscribe below) re-enters this
+            // callback once more; only the first delivery unsubscribes and signals.
+            if (unsubscribed.exchange(true)) return;
+            uint64_t id;
+            {
+                std::lock_guard<std::mutex> lk(id_mu);
+                id = sub_id;
+            }
+            sub.Unsubscribe(id);  // runs on the timer thread -- the path the fix protects
+            delivered.set_value();
+        },
+        opt);
+    {
+        std::lock_guard<std::mutex> lk(id_mu);
+        sub_id = result.subscription_id;  // visible to the callback before the row is published
+    }
+
+    pub.Publish(kTopic, MakeRow(1, "a"));
+
+    ASSERT_EQ(delivered_future.wait_for(std::chrono::seconds(5)), std::future_status::ready);
+    // sub goes out of scope here; without the fix the timer thread would already have used freed
+    // memory well before reaching this point.
+}
+
+TEST(SubscriberArrowBatchTest, BatchesAreValidArrow) {
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
+    auto dict_type = arrow::dictionary(arrow::int32(), arrow::utf8());
+    auto schema = arrow::schema({
+        arrow::field("x", arrow::int32()),
+        arrow::field("name", arrow::utf8()),
+        arrow::field("category", dict_type, true),
+        arrow::field("tags", arrow::list(arrow::utf8())),
+    });
+    pub.CreateTopic(kTopic, schema);
+
+    BatchSink sink;
+    SubscriberArrow::BatchOptions opt;
+    opt.max_rows = 5;
+    opt.timeout = std::chrono::minutes(10);
+    static_cast<void>(sub.Subscribe(kTopic, sink.callback(), opt));
+
+    for (int i = 0; i < 5; ++i) {
+        arrow::StringBuilder sb;
+        ASSERT_TRUE(sb.AppendValues({"t" + std::to_string(i)}).ok());
+        ArrowRow row = {
+            std::make_shared<arrow::Int32Scalar>(i),
+            std::make_shared<arrow::StringScalar>("n" + std::to_string(i)),
+            std::make_shared<arrow::StringScalar>(i % 2 == 0 ? "red" : "blue"),
+            std::make_shared<arrow::ListScalar>(sb.Finish().ValueOrDie()),
+        };
+        pub.Publish(kTopic, row);
+    }
+
+    std::lock_guard<std::mutex> lk(sink.mu);
+    ASSERT_EQ(sink.deliveries.size(), 1u);
+    auto batch = sink.deliveries[0].batch;
+    ASSERT_NE(batch, nullptr);
+    EXPECT_EQ(batch->num_rows(), 5);
+    EXPECT_TRUE(batch->ValidateFull().ok());
+}
+
+TEST(SubscriberArrowBatchTest, ReuseAcrossWindows) {
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
+    pub.CreateTopic(kTopic, TestSchema());
+
+    BatchSink sink;
+    SubscriberArrow::BatchOptions opt;
+    opt.max_rows = 2;
+    opt.timeout = std::chrono::minutes(10);
+    auto result = sub.Subscribe(kTopic, sink.callback(), opt);
+
+    for (int i = 0; i < 5; ++i) pub.Publish(kTopic, MakeRow(i, "n" + std::to_string(i)));
+    sub.Unsubscribe(result.subscription_id);  // closing flush delivers the trailing partial batch
+
+    std::lock_guard<std::mutex> lk(sink.mu);
+    ASSERT_EQ(sink.deliveries.size(), 3u);
+    EXPECT_EQ(sink.deliveries[0].num_rows, 2);
+    EXPECT_EQ(sink.deliveries[1].num_rows, 2);
+    EXPECT_EQ(sink.deliveries[2].num_rows, 1);
+    for (const auto& d : sink.deliveries) EXPECT_EQ(d.status.rows_dropped, 0);
+
+    int32_t expected = 0;
+    for (const auto& d : sink.deliveries) {
+        ASSERT_NE(d.batch, nullptr);
+        auto col = std::static_pointer_cast<arrow::Int32Array>(d.batch->column(0));
+        for (int64_t r = 0; r < col->length(); ++r) {
+            EXPECT_EQ(col->Value(r), expected++);
+        }
+    }
 }

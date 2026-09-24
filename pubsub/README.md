@@ -10,9 +10,54 @@ Wire-compatible Arrow IPC schema serialization helpers are included.
 Headers are located under `include/fletcher/pubsub/` and consumed as `#include <fletcher/pubsub/<header>.hpp>`:
 - `provider.hpp` — `PubSubProvider` abstract interface and supporting types.
 - `publisher.hpp` — `Publisher` (CreateTopic + Publish + topic registry).
-- `subscriber.hpp` — `Subscriber` (Subscribe + Unsubscribe + multi-subscriber fan-out + subscription IDs).
+- `subscriber.hpp` — `Subscriber` (Subscribe + Unsubscribe + multi-subscriber fan-out + subscription IDs; SubscribeSchema / UnsubscribeSchema for the schema without the data).
 - `owned_schema.hpp` — RAII wrapper around `ArrowSchema`.
 - `schema_ipc.hpp` — Arrow IPC schema serialize/deserialize helpers.
+
+`Subscriber::SubscribeSchema` answers the catalog question — *what shape is this
+topic?* — without opening a data subscription for it. It returns the same
+`SchemaArrival` `Subscribe` does, never blocks, and resolves once a publisher has
+announced the topic. There is no subscription id, because a watch registers no
+callback and delivers nothing: watches are counted per `Subscriber` and
+idempotent per topic, and the provider's watch is released by the last
+`UnsubscribeSchema` or by `~Subscriber`. A data `Unsubscribe` does not release it.
+Both methods are optional at the provider tier — a transport with no out-of-band
+schema channel refuses with `kNotSupported`, and inside a delivery callback they
+are refused with `kReentrantCall` like every other seam method.
+
+### TopicOptions
+
+`TopicOptions` (`provider.hpp`) is a per-topic, OPTIONAL options struct: a
+`profile` — opaque text the provider interprets, the way it interprets
+`ProviderConfig::document` — and `max_payload_bytes`, a publisher-side payload
+bound for that one topic. A default-constructed (empty) `TopicOptions` means
+"the provider's defaults" and is exactly what `CreateTopic` / `Subscribe`
+already do — passing one changes nothing for a caller who never uses it.
+
+The provider tier gets two OPTIONAL seam methods for it,
+`CreateTopicWithOptions` and `SubscribeWithOptions`, both modelled on
+`SubscribeSchema` / `UnsubscribeSchema`: their default bodies delegate to
+`CreateTopic` / `Subscribe` when `options` is empty and refuse
+`PubSubStatus::kNotSupported` otherwise, so a provider that knows no profiles
+or per-topic bounds stays conforming with no code of its own. Segments are
+validated, and the re-entrancy door checked, before that support decision —
+exactly like every other seam method (§6 clause 6).
+
+`Publisher::CreateTopic` and `Subscriber::Subscribe` each take `options` as a defaulted third
+argument (`= {}`) rather than a second overload — `TopicOptions` is a namespace-scope aggregate, so
+the default is legal, and an option-less call site is unchanged. Both always reach the provider
+through the `*WithOptions` form (`CreateTopicWithOptions` / `SubscribeWithOptions`); the provider's
+own default delegates to the pure form when `options` is empty, so a provider that overrides only
+the pure form sees no behaviour change for option-less callers. The conflict check is field-wise,
+not whole-struct: a re-declaration, or a later local subscriber on the same topic, may repeat or
+omit a field already in force, but never change one — and naming a field that was never set before
+is a conflict too, against the stored EMPTY value, because the topic or subscription already exists
+without it. A conflicting field is `PubSubStatus::kInvalidArgument`. Subscribers never carry a
+payload bound of their own (they follow what the publisher announces), so a non-zero
+`max_payload_bytes` on a `Subscribe` call is `kInvalidArgument` too — refused by the provider tier's
+own default, before its empty/support check ever runs.
+
+### Vendored nanoarrow
 
 A vendored copy of [nanoarrow](https://github.com/apache/arrow-nanoarrow) 0.8.0
 (amalgamation: core + IPC + flatcc) is bundled under `third_party/nanoarrow/`
@@ -143,7 +188,7 @@ class MyProjectConan(ConanFile):
     settings = "os", "compiler", "build_type", "arch"
 
     def requirements(self):
-        self.requires("fletcher-pubsub/0.5.0-alpha")
+        self.requires("fletcher-pubsub/0.5.1-alpha")
 
     def layout(self):
         cmake_layout(self)
