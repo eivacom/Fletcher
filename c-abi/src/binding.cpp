@@ -723,9 +723,8 @@ fl_status fl_subscriber_subscribe(fl_subscriber* subscriber, fl_topic topic,
 /// gives (D-BIND-57).
 fl_status fl_subscriber_subscribe_with_options(fl_subscriber* subscriber, fl_topic topic,
                                                fl_delivery_fn on_delivery, void* ctx,
-                                               const fl_topic_options* options,
-                                               uint64_t* out_id, fl_schema_arrival** out_arrival,
-                                               fl_error* err) {
+                                               const fl_topic_options* options, uint64_t* out_id,
+                                               fl_schema_arrival** out_arrival, fl_error* err) {
     return Contain(err, FL_ORIGIN_SEAM, [&] {
         RequireOut(out_id, "fl_subscriber_subscribe (out_id)");
         RequireOut(out_arrival, "fl_subscriber_subscribe (out_arrival)");
