@@ -371,6 +371,8 @@ marked bullet 10 met without answering the code review's D15, which said exactly
 transport lane now builds a MicroXRCEAgent from a recipe shared with the interop lane, the suite
 proves it owns the Agent (a C# copy of PDA-DEC-1H's rule, with both forcing tests), and `xrce` joins
 every theory, plus one case across the Agent's bridge to Fast DDS. Locally **21/21**, with three
-falsifications; BIND-4 is 🔴 until CI shows the lane green by count. **The lesson is the same one
+falsifications. **Re-closed on CI at `78ac363`** (`ci.pr` run 36144203527, 50/50): the transport lane **21/21** on
+Linux and Windows, the Agent built cold from the shared recipe in both lanes on both platforms,
+managed **277/277** on all four legs, c-abi **71/71**, binding-abi **11/11**. **The lesson is the same one
 this entry already names**: a re-grade written by the author of the fixes read "resolved" off the
 BLOCKER list and never re-read the DEBT that carried an acceptance bullet's other half.

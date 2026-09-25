@@ -1768,9 +1768,10 @@ accessors do, for capstone parity (Q18).
   fastdds-xrce-interop` still green through the shared recipe. **Falsified:** skipping the
   ownership proof fails the foreign-Agent test; treating a failed query as good enough fails its
   test; with no Agent configured exactly the eight XRCE cases fail and the thirteen others pass.
-  `actionlint` clean. **Not yet proven:** the recipe's COLD build path — locally the Agent was
-  already installed, so the skip path ran. Linux builds cold on every run, and the Windows cache key
-  changes with this ruling, so the first CI run exercises it on both platforms.
+  `actionlint` clean. The recipe's COLD build path was not exercised locally — the Agent was already
+  installed — and **is now CI-proven at `78ac363`** (`ci.pr` run 36144203527): all four Agent-building jobs (both
+  lanes, both platforms) cloned and built it from source; the transport lane is **21/21** on Linux
+  and Windows, the interop lane green through the shared recipe. BIND-4 re-closes on that run.
 
   **Cost, accepted:** the transport lane's Linux job builds the Agent from source every run
   (~10–15 minutes cold, as the interop lane's does); Windows builds it once per key.
