@@ -1582,3 +1582,18 @@ accessors do, for capstone parity (Q18).
   **Declined:** changing the provider on this branch (crosses into a component `main` owns);
   leaving bullet 8 NOT MET until `main` moves (puts BIND-4's closure on another branch's
   schedule).
+
+  **AMENDED BY THE MAINTAINER, 2026-09-25 (the same day): the provider fix is made ON THIS
+  BRANCH.** The provider question went to its decision the same day — REPORT the overflow — and
+  the fix was first written on a branch off `main`. The maintainer then ruled it belongs to the C#
+  binding work and lives on `feature/csharp-bindings` only, reaching `main` when #129 does; the
+  `main`-side branch is dropped. So the "declined" line above no longer holds for this change:
+  `9255c19` makes the Fast DDS provider's serialize flow record an oversized row and `Publish`
+  throw `kPayloadTooLarge` (an encoder that throws stays `kInternal`), replaces the pinned
+  `DataSharingOversizedRowDoesNotThrow` with `AnOversizedRowIsPayloadTooLarge`, and updates the
+  conformance case that asserted the silent drop. **Bullet 8 therefore holds in full again**,
+  over a real transport: `CrossTransportTests.ABoundedPayloadOverflowSurfacesAsPayloadTooLarge`
+  (a Fast DDS provider bounded at 128 bytes, a 512-byte row, `PayloadTooLarge`) joins the
+  binding's-half test above. **Known cost, accepted:** until #129 lands, `main` keeps the silent
+  drop, and every `main` consumer of the provider — the gateway and its TS clients included —
+  with it.

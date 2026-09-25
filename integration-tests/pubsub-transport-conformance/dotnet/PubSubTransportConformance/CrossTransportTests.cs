@@ -280,6 +280,55 @@ public class CrossTransportTests
     }
 
     [Fact]
+    public void ABoundedPayloadOverflowSurfacesAsPayloadTooLarge()
+    {
+        // BIND-4's bullet 8 over a real transport. Unproven until the BIND-4 review
+        // (conformance, bullet 8), and then found FALSE: the Fast DDS provider dropped
+        // an oversized row and only logged it, so this very test published a 512-byte
+        // row through a 128-byte bound without an exception. The provider now reports
+        // the overflow as kPayloadTooLarge (D-BIND-53, amended), and this test is
+        // what keeps it doing so from C#.
+        //
+        // A FACT, NOT A THEORY ROW, and that is not per-transport code in the
+        // binding: `inprocess` ignores `max_payload_bytes` by design
+        // (`in_process_provider.hpp`), so a theory row over it would have nothing to
+        // refuse. Fast DDS enforces the bound, and is the transport a managed
+        // caller would actually hit it on.
+        const uint Bound = 128;
+        Assert.True(PayloadBound.IsValid(Bound));
+
+        using PubSubProviderHandle provider = ProviderRegistry.Create(
+            ProviderSelector.Parse("fastdds"), new ProviderConfig { MaxPayloadBytes = Bound });
+        using var publisher = new Publisher(provider);
+
+        var schema = new Schema([new Field("payload", StringType.Default, nullable: false)], metadata: null);
+        TopicPath topic = UniqueTopic("overflow");
+        publisher.CreateTopic(topic, schema);
+
+        // The control: a row well under the bound is accepted, so the refusal below
+        // is about SIZE rather than a bound that refuses everything.
+        using (RecordBatch small = new(schema, [new StringArray.Builder().Append("tiny").Build()], length: 1))
+        using (var codec = new FletcherCodec(schema))
+        using (BoundRows rows = codec.Bind(small))
+        {
+            publisher.Publish(topic, rows, 0);
+        }
+
+        string oversized = new('x', 4 * (int)Bound);
+        using (RecordBatch large = new(schema, [new StringArray.Builder().Append(oversized).Build()], length: 1))
+        using (var codec = new FletcherCodec(schema))
+        using (BoundRows rows = codec.Bind(large))
+        {
+            // ThrowsAny, not Throws: the overflow happens while the codec writes the row into
+            // the transport's window, so the shim attributes it to the CODEC origin and it
+            // arrives as the FletcherFormatException subclass (D-BIND-15) - still a
+            // FletcherException. The status is the claim.
+            FletcherException refused = Assert.ThrowsAny<FletcherException>(() => publisher.Publish(topic, rows, 0));
+            Assert.Equal(FletcherStatus.PayloadTooLarge, refused.Status);
+        }
+    }
+
+    [Fact]
     public void EveryTransportInThisSuiteWasActuallyExercised()
     {
         // THE VACUITY GUARD. A `TheoryData` that lost a row, or a selector renamed

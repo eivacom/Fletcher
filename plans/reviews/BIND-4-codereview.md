@@ -320,6 +320,9 @@ logged**. From C#, a row over the bound can vanish with no exception. The behavi
 out until that is ruled. **Ruled: D-BIND-53** (maintainer) — bullet 8 amended to the binding's
 half, proven by `ErrorTests.ARowThatDoesNotFitAFixedWindowIsPayloadTooLarge` on a real native
 status; the provider's drop-and-log recorded as its limitation and flagged to `main`'s owner.
+**Then amended the same day:** the provider decision was to report the overflow, and the fix is
+on this branch (`9255c19`), so bullet 8 now holds over Fast DDS as well
+(`CrossTransportTests.ABoundedPayloadOverflowSurfacesAsPayloadTooLarge`).
 
 **Not done here, and not claimed:** the six B6 drain mirrors and the two-provider mirror guard
 properties of the NATIVE Subscriber, so falsifying them would take a shim built with the drain

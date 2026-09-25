@@ -1192,7 +1192,10 @@ subscribe, **so that** I am a full Fletcher client with no protocol SDK on my bu
   real native status. No transport a managed caller can reach reports one today:
   `inprocess` ignores bounds, and Fast DDS drops and logs an oversized row
   (deliberate, test-pinned, `main`'s provider). That half is flagged to the
-  provider's owner.
+  provider's owner. **Amended the same day:** the provider fix is made on this
+  branch (`9255c19`; Fast DDS reports the overflow as `kPayloadTooLarge`), so
+  the bullet holds in full over a real transport too
+  (`CrossTransportTests.ABoundedPayloadOverflowSurfacesAsPayloadTooLarge`).
 - Fast DDS **and** XRCE reachable by selector with **no per-transport C# code**.
 - **Bucket 3 over `inprocess`; Bucket 4 over `fastdds` and `xrce`** — again the FILE
   SETS from Part 4 rather than counts, for the reason BIND-3's bullet gives. Bucket

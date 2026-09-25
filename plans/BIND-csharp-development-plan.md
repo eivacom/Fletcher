@@ -816,7 +816,9 @@ blocking or architectural, **S** = inherited from the seam, **N** = .NET interop
   it can reach today. **D-BIND-53 (2026-09-25):** bullet 8 is amended to the
   binding's half (a reported `PayloadTooLarge` surfaces as one, proven on a real
   native status), and the provider's behaviour is flagged to `main`'s owner.
-  *Open — owned by the provider, not by BIND.*
+  **CLOSED the same day on this branch** (D-BIND-53 amended, `9255c19`): the
+  provider now reports the overflow as `kPayloadTooLarge`, and a C# test proves it
+  over Fast DDS. `main` keeps the silent drop until #129 lands.
 
 ### Inherited from the seam (constraints 1–8 and the two details)
 
