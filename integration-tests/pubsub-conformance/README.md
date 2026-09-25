@@ -712,16 +712,18 @@ main thread, so each carries **its own mutex** and every comparison is made
 against a snapshot taken under it: unguarded, a foreign marker arriving during
 the read could be *missed*, which would be a green the arrangement did not earn.
 
-**The between-bounds row is dropped silently, and does not throw.** On the
-serialising publish flow — the one an empty document selects — the overflow is
-caught inside `serialize()`, which zeroes the payload length, so the sample never
-enters history, `write()` returns non-OK and `WriteSample` only logs it (pinned
-by `FastDDSPubSubProviderTest.DataSharingOversizedRowDoesNotThrow`). A typed
-`kPayloadTooLarge` exists only on the **loaned** flow, which is kept in the tree but not
-selectable (no `fletcher.loan_publish` property exists). So the bound case asserts
-**delivery** in both directions and no throw anywhere, and it publishes a third
-row *after* the oversized one which must arrive — nothing dead can pose as a
-working instance.
+**The between-bounds row is refused by name on the low-bound instance.** Its
+`Publish` throws `kPayloadTooLarge` — the status the seam spec's normative overflow
+mapping names — and the sample is not sent; the high-bound instance delivers it.
+The serialising publish flow (the one an empty document selects) records the
+overflow inside `serialize()` and `WriteSample` throws it once `write()` has
+returned, as the loaned flow always did (pinned by
+`FastDDSPubSubProviderTest.AnOversizedRowIsPayloadTooLarge`). **Until 2026-09** that
+flow dropped the row silently — caught, logged, `Publish` returning normally — and
+this case asserted the no-throw; the change came from the C# binding's review,
+which could not observe an overflow over any transport (BIND D-BIND-53). The case
+still asserts **delivery** in both directions, and publishes a third row *after*
+the refused one which must arrive — nothing dead can pose as a working instance.
 
 **These four cases are GREEN on the tree that first shipped them.** The property
 already held, so a passing run proves nothing by itself; the guard is the
