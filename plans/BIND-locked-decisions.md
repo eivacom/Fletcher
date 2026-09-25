@@ -1450,3 +1450,70 @@ accessors do, for capstone parity (Q18).
   **Consequences.** BIND-4's benchmark bullet is MET — 4d-v closes, and with it the last BIND-4
   item. Development plan B-2 closes. BIND-6's acceptance gains one bullet carrying the design input
   above. No code, ABI, public-surface or diagram change.
+
+- **D-BIND-50 — a subscription cancelled from INSIDE a delivery on its own Subscriber is freed
+  OFF-THREAD, after a second cancel from outside any delivery has waited for the drain. Amends
+  D-BIND-18.** *LOCKED BY THE MAINTAINER 2026-09-25,* answering BLOCKER B1 of
+  `plans/reviews/BIND-4-codereview.md`.
+
+  **WHAT D-BIND-18 GOT WRONG, precisely.** Its rule — "because the seam guarantees no invocation
+  *begins* after `Unsubscribe` returns, whoever brings the counter to zero after retirement frees
+  the `GCHandle`" — equates two points that are not the same. The seam's "begins" is **passing the
+  gate** (`pubsub/src/subscriber.cpp`: lock the gate, check `retired`, call). The managed counter
+  is incremented **later**, in `TryEnter`, after the shim's thunk and the reverse-P/Invoke
+  transition. On the blocking path the gap is harmless because native drains. On the carve-out —
+  an `Unsubscribe` issued from inside a delivery on the same Subscriber — native returns without
+  draining, and a **sibling** subscription whose delivery is between its gate and `TryEnter` on
+  another thread can have its `GCHandle` freed under it. The self-cancel case was safe only
+  because that thread had already incremented. Development plan S-2 stated the sibling case,
+  asserted "the counter covers it", and named the test that would have shown otherwise; the test
+  was not written.
+
+  **THE RULE NOW.** When `Unsubscribe` runs on the carve-out (this thread is inside a delivery on
+  this Subscriber, at any depth), it retires the subscription but does **not** free inline. It
+  queues one thread-pool work item that calls `fl_subscriber_unsubscribe(id)` again — from outside
+  any delivery, where the seam makes a cancellation of an id another thread is cancelling "wait
+  for the same drain" (`subscriber.hpp`) — and frees the `GCHandle` when that returns. The work
+  item holds a reference on the subscriber's SafeHandle, so a racing `Dispose` postpones the
+  native destroy rather than invalidating the call. The blocking path and the self-cancel path
+  are unchanged; `TryFree`'s interlocked exchange still makes "exactly one free" true, and which
+  branch freed stays observable (the counters `ReentrancyTests` read gain a third, for the
+  deferred branch).
+
+  **WHY THIS AND NOT THE ALTERNATIVES.** Never freeing on the carve-out (until `Dispose`) is
+  simpler and leaks a bounded amount per such cancel; declined. Fixing it natively — the shim
+  holding a per-subscription reference from gate-pass until `on_delivery` returns — changes a
+  documented ABI behaviour and an ABI minor, and BIND-Rust inherits it; declined, because the seam
+  already provides the wait this needs, from another thread.
+
+  **Consequences.** `Subscriber.cs`'s lifetime header and `binding.h`'s unsubscribe comment (which
+  repeat the false premise) are corrected; development plan S-2 is restated; a test cancels a
+  sibling from inside a handler while the sibling is between gate and handler on another thread.
+  No ABI or public-surface change.
+
+- **D-BIND-51 — the managed refusal layer is keyed on the PROVIDER, over every delivery frame on
+  the thread. Amends D-BIND-18.** *LOCKED BY THE MAINTAINER 2026-09-25,* answering BLOCKER B2 of
+  `plans/reviews/BIND-4-codereview.md`.
+
+  **WHAT D-BIND-18 GOT WRONG.** Its thread-static marker names "the Subscriber whose thunk this
+  thread is inside", and `Dispose`/`Subscribe` refuse when that is `this`. **The seam's rule is per
+  provider and per thread** — `subscriber.cpp`'s destructor: *"A handler on subscriber X destroying
+  subscriber Y over the same provider violates it"*, answered by rethrowing `kReentrantCall` out of
+  a `noexcept` destructor. So disposing ANOTHER Subscriber on the same provider from a handler
+  passed the managed check and terminated the process. And the marker holds only the innermost
+  frame, so a nested delivery (a handler publishing on an `inprocess` provider that delivers
+  synchronously) hid the outer one.
+
+  **THE RULE NOW.** The marker becomes a per-thread **stack of delivery frames**, each recording
+  its Subscriber and provider. `Subscriber.Dispose` and a `Subscribe` that needs a new
+  provider-level subscription are refused when **any** frame on this thread is on the same
+  provider — the seam's own question, asked in managed code first. D-BIND-50's carve-out predicate
+  is the same stack's other question: any frame on **this** Subscriber. Messages still name
+  `DispatchAfterDelivery`. A cross-provider call stays served, as the seam serves it.
+
+  **SCOPE, checked rather than assumed.** `Publisher.Dispose` is not refused: `~Publisher` is
+  defaulted and never enters the provider, so the widened §6 clause 5 has nothing to stop there.
+
+  **Consequences.** Tests: disposing another Subscriber on the same provider from a handler is
+  refused with a managed exception; the nested route is refused; a cross-provider dispose is
+  served. No ABI or public-surface change.

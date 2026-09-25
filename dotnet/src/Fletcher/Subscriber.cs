@@ -28,6 +28,19 @@
 // it. Exactly one of them wins, and `TryFree`'s interlocked exchange is what
 // makes "exactly one" true rather than likely.
 //
+// ── AND THE PATH THE FIRST VERSION GOT WRONG (D-BIND-50) ────────────────────
+// "No invocation begins after Unsubscribe returns" is true at the seam, where
+// "begins" means PASSING THE GATE. The count above is incremented LATER, inside
+// this file's thunk. On the blocking path the difference is invisible - native
+// drained. On the re-entrant path it is not: a handler that cancels a SIBLING
+// subscription whose delivery is between its gate and `TryEnter` on another
+// thread sees a count of zero, and freeing on it frees a handle that thread is
+// about to read. So a cancel from inside a delivery on this Subscriber does not
+// free inline. It retires, and a thread-pool cancel of the same id - from
+// outside any delivery, where the seam makes it wait for the same drain - frees
+// afterwards. The self-cancel case still usually frees on the thunk's exit;
+// either way exactly one free happens, and which branch ran is counted.
+//
 // ── The refusal layer above it (4c-ii) ──────────────────────────────────────
 // Two things a handler can do have no safe answer at all once they reach native,
 // so they are refused HERE, in managed code, while a managed exception is still
@@ -47,8 +60,13 @@
 //                                         subscription and the provider cannot be
 //                                         entered from inside its own delivery.
 //
-// A thread-static marker is what makes both detectable: it names the Subscriber
-// whose thunk this thread is inside. Note what is NOT refused - `Unsubscribe`
+// A thread-static stack of delivery frames is what makes both detectable, and
+// the question asked of it is the seam's: is this thread inside a delivery on
+// this Subscriber's PROVIDER, at any depth (D-BIND-51)? The first version kept
+// one marker naming the innermost Subscriber and compared it with `this`, which
+// let a handler on subscriber X dispose subscriber Y over the same provider -
+// and the seam's answer to that is the same process termination. Note what is
+// NOT refused - `Unsubscribe`
 // from a handler is the seam's documented carve-out and is served, and a
 // Subscribe to a topic this Subscriber ALREADY holds is answered from the cached
 // arrival without touching the provider. Which of the two a Subscribe gets
@@ -143,19 +161,33 @@ public readonly struct SubscribeResult
 /// <summary>Subscribes to topics over one provider.</summary>
 public sealed unsafe class Subscriber : IDisposable
 {
-    /// <summary>The Subscriber whose thunk this thread is currently inside.</summary>
+    /// <summary>Every Subscriber whose thunk this thread is inside, outermost first.</summary>
     /// <remarks>
+    /// <para>
     /// Thread-static because the question is about a THREAD's call stack, not
     /// about the object: two threads may be inside two deliveries on the same
-    /// Subscriber, and neither is inside the other's. Saved and restored around
-    /// the handler rather than simply cleared, so a delivery reached from inside
-    /// another delivery leaves the outer frame's answer intact.
+    /// Subscriber, and neither is inside the other's.
+    /// </para>
+    /// <para>
+    /// A STACK, NOT A SINGLE MARKER (D-BIND-51). The first version kept only the
+    /// innermost Subscriber, and the seam's questions are about EVERY frame: a
+    /// handler that publishes on an in-process provider which delivers
+    /// synchronously to another handler puts two frames on this thread, and the
+    /// outer one's provider is still one that must not be entered. An array and a
+    /// depth rather than a linked list of frames, because this is the delivery hot
+    /// path and a push must not allocate; the array grows only when nesting goes
+    /// deeper than it has before on this thread.
+    /// </para>
     /// </remarks>
     [ThreadStatic]
-    private static Subscriber? _inDelivery;
+    private static Subscriber?[]? _frames;
+
+    [ThreadStatic]
+    private static int _depth;
 
     private long _freedByDelivery;
     private long _freedByCanceller;
+    private long _freedDeferred;
 
     /// <summary>How many GCHandles a DEPARTING DELIVERY has freed (the re-entrant path).</summary>
     /// <remarks>
@@ -182,20 +214,81 @@ public sealed unsafe class Subscriber : IDisposable
     /// <summary>How many a CANCELLING THREAD has freed (the ordinary path).</summary>
     internal long FreedByCancellerCount => Interlocked.Read(ref _freedByCanceller);
 
+    /// <summary>How many the DEFERRED free has released (the carve-out path, D-BIND-50).</summary>
+    internal long FreedDeferredCount => Interlocked.Read(ref _freedDeferred);
+
     /// <summary>Record which branch released a subscription's handle.</summary>
-    internal void RecordFree(bool byDelivery)
+    internal void RecordFree(FreeBranch branch)
     {
-        if (byDelivery)
+        switch (branch)
         {
-            Interlocked.Increment(ref _freedByDelivery);
-        }
-        else
-        {
-            Interlocked.Increment(ref _freedByCanceller);
+            case FreeBranch.Delivery:
+                Interlocked.Increment(ref _freedByDelivery);
+                break;
+            case FreeBranch.Canceller:
+                Interlocked.Increment(ref _freedByCanceller);
+                break;
+            default:
+                Interlocked.Increment(ref _freedDeferred);
+                break;
         }
     }
 
+    /// <summary>Is this thread inside a delivery on THIS Subscriber, at any depth?</summary>
+    /// <remarks>The seam's carve-out question - <c>InsideDeliveryOn(identity)</c> - asked here.</remarks>
+    private bool InDeliveryOnThis()
+    {
+        Subscriber?[]? frames = _frames;
+        for (int i = 0; i < _depth; i++)
+        {
+            if (ReferenceEquals(frames![i], this))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>Is this thread inside a delivery on THIS Subscriber's PROVIDER, at any depth?</summary>
+    /// <remarks>
+    /// The seam's door question - <c>InsideDeliveryOn(provider)</c> - asked here
+    /// (D-BIND-51). Any Subscriber over the same provider counts, because the
+    /// provider is what refuses to be entered, not the Subscriber.
+    /// </remarks>
+    private bool InDeliveryOnProvider()
+    {
+        Subscriber?[]? frames = _frames;
+        for (int i = 0; i < _depth; i++)
+        {
+            if (ReferenceEquals(frames![i]!._provider, _provider))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static void PushFrame(Subscriber owner)
+    {
+        Subscriber?[] frames = _frames ??= new Subscriber?[4];
+        if (_depth == frames.Length)
+        {
+            Array.Resize(ref frames, frames.Length * 2);
+            _frames = frames;
+        }
+
+        frames[_depth++] = owner;
+    }
+
+    private static void PopFrame()
+    {
+        _frames![--_depth] = null;
+    }
+
     private readonly SubscriberHandle _handle;
+    private readonly ProviderHandle _provider;
     private readonly object _gate = new();
     private readonly System.Collections.Generic.HashSet<string> _known = new(StringComparer.Ordinal);
     private long _absorbed;
@@ -210,6 +303,11 @@ public sealed unsafe class Subscriber : IDisposable
         int status = SubscriberHandle.Create(provider.Handle, out SubscriberHandle handle, ref err);
         Errors.ThrowIfFailed(status, ref err);
         _handle = handle;
+
+        // The provider's IDENTITY, for the refusal layer (D-BIND-51). One
+        // ProviderHandle exists per native provider, so a reference comparison is
+        // the seam's "same provider instance" question exactly.
+        _provider = provider.Handle;
     }
 
     /// <summary>How many handler failures this subscriber's thunk has absorbed.</summary>
@@ -245,9 +343,10 @@ public sealed unsafe class Subscriber : IDisposable
         // already subscribed is answered from the cached arrival and touches no
         // provider, so it is SERVED; one it has not needs a provider-level
         // subscription, and the provider cannot be entered from inside its own
-        // delivery frame.
+        // delivery frame - a delivery on ANY Subscriber over this provider, at any
+        // depth on this thread (D-BIND-51).
         string key = topic.ToKey();
-        if (ReferenceEquals(_inDelivery, this))
+        if (InDeliveryOnProvider())
         {
             bool known;
             lock (_gate)
@@ -258,10 +357,10 @@ public sealed unsafe class Subscriber : IDisposable
             if (!known)
             {
                 throw new InvalidOperationException(
-                    $"Subscribe to '{key}' cannot run inside a delivery on this subscriber: the topic " +
-                    "has not been subscribed before, so it needs a provider-level subscription, and the " +
-                    "provider cannot be entered from inside its own delivery. Use DispatchAfterDelivery " +
-                    "to defer the call past this handler's return.");
+                    $"Subscribe to '{key}' cannot run inside a delivery on this subscriber's provider: " +
+                    "the topic has not been subscribed before, so it needs a provider-level subscription, " +
+                    "and the provider cannot be entered from inside its own delivery. Use " +
+                    "DispatchAfterDelivery to defer the call past this handler's return.");
             }
         }
 
@@ -338,6 +437,11 @@ public sealed unsafe class Subscriber : IDisposable
             _live.Remove(subscription.Id);
         }
 
+        // Asked BEFORE the native call, which does not change the answer: whether
+        // this thread is inside a delivery on this Subscriber is what decides
+        // whether native is about to drain or about to return early.
+        bool carveOut = InDeliveryOnThis();
+
         FlError err = default;
         int status = NativeMethods.fl_subscriber_unsubscribe(_handle, subscription.Id, ref err);
         subscription.MarkRetired();
@@ -345,9 +449,82 @@ public sealed unsafe class Subscriber : IDisposable
         // Retired AFTER the native call returns, never before: retiring first
         // would let the last in-flight delivery free the handle while native was
         // still holding the pointer to it.
-        state?.Retire();
+        if (state is not null)
+        {
+            if (carveOut)
+            {
+                RetireAfterDrain(state);
+            }
+            else
+            {
+                state.Retire();
+            }
+        }
 
         Errors.ThrowIfFailed(status, ref err);
+    }
+
+    /// <summary>The carve-out's retirement: free only once a drain has been waited for (D-BIND-50).</summary>
+    /// <remarks>
+    /// <para>
+    /// WHY NOT FREE HERE. Native returned WITHOUT draining - a cancel from inside a
+    /// delivery on this Subscriber cannot wait - and its promise is only that no
+    /// invocation BEGINS afterwards, where "begins" means passing the seam's gate.
+    /// The in-flight counter is incremented later, inside the thunk, so a SIBLING
+    /// subscription whose delivery is between its gate and <c>TryEnter</c> on
+    /// another thread reads as zero in flight. Freeing on that zero is a freed
+    /// GCHandle read on a transport thread.
+    /// </para>
+    /// <para>
+    /// WHAT WAITS INSTEAD. A second cancel of the same id, from a thread-pool thread
+    /// - outside any delivery - "waits for the same drain" (subscriber.hpp): it
+    /// returns only once the delivery holding the gate has finished, thunk and all.
+    /// Then nothing can still be reading the handle, and it is freed. A delivery
+    /// that DID reach <c>TryEnter</c> may still free it first, on its way out; the
+    /// interlocked exchange in <c>TryFree</c> makes that race harmless.
+    /// </para>
+    /// <para>
+    /// A reference is held on the subscriber's handle across the second cancel, so
+    /// a racing <c>Dispose</c> postpones the native destroy rather than pulling the
+    /// handle out from under the call. If <c>Dispose</c> already won, the destroy
+    /// has drained everything - destruction requires quiescence - and the handle
+    /// is simply freed.
+    /// </para>
+    /// </remarks>
+    private void RetireAfterDrain(SubscriptionState state)
+    {
+        state.MarkRetiredWithoutFreeing();
+        ulong id = state.Id;
+
+        ThreadPool.UnsafeQueueUserWorkItem(
+            static work =>
+            {
+                (Subscriber owner, SubscriptionState retiring, ulong subscriptionId) = work;
+                bool added = false;
+                try
+                {
+                    owner._handle.DangerousAddRef(ref added);
+                    FlError drainErr = default;
+                    NativeMethods.fl_subscriber_unsubscribe(owner._handle, subscriptionId, ref drainErr);
+                    NativeMethods.fl_error_dispose(ref drainErr);
+                }
+                catch (ObjectDisposedException)
+                {
+                    // Dispose won the race: the native destroy drained every
+                    // delivery before it returned, so the free below is safe.
+                }
+                finally
+                {
+                    if (added)
+                    {
+                        owner._handle.DangerousRelease();
+                    }
+
+                    retiring.FreeAfterDrain();
+                }
+            },
+            (this, state, id),
+            preferLocal: false);
     }
 
     /// <summary>Release the subscriber, cancelling everything still live.</summary>
@@ -368,13 +545,19 @@ public sealed unsafe class Subscriber : IDisposable
         // it. Checked BEFORE the disposed short-circuit, because a handler
         // disposing its own subscriber is a bug whether or not someone else
         // already disposed it.
-        if (ReferenceEquals(_inDelivery, this))
+        //
+        // PER PROVIDER, over every frame on this thread (D-BIND-51). The seam
+        // terminates for a handler on subscriber X destroying subscriber Y over
+        // the same provider - not only for X destroying itself - and a nested
+        // delivery must not hide an outer frame on that provider.
+        if (InDeliveryOnProvider())
         {
             throw new InvalidOperationException(
-                "Subscriber.Dispose() cannot run inside a delivery on this subscriber: destroying it " +
-                "requires quiescence, and the native answer to doing it from a handler is process " +
-                "termination, by design. Hand the subscriber to whatever owns its lifetime and let the " +
-                "handler return, or use DispatchAfterDelivery.");
+                "Subscriber.Dispose() cannot run inside a delivery on this subscriber's provider: " +
+                "destroying a subscriber requires quiescence - no delivery on its provider may be in " +
+                "flight on this thread - and the native answer to doing it from a handler is process " +
+                "termination, by design. Hand the subscriber to whatever owns its lifetime and let the handler return, or " +
+                "use DispatchAfterDelivery.");
         }
 
         if (_disposed)
@@ -495,12 +678,12 @@ public sealed unsafe class Subscriber : IDisposable
                 return;
             }
 
-            // SAVED AND RESTORED, never simply cleared. A handler that reaches a
-            // delivery on another subscriber leaves an outer frame whose answer is
-            // still "inside that one", and clearing would tell the outer frame it
-            // was safe to dispose itself.
-            Subscriber? outer = _inDelivery;
-            _inDelivery = state.Owner;
+            // PUSHED AND POPPED, never cleared. A handler that reaches a delivery
+            // on another subscriber leaves an outer frame whose answer is still
+            // "inside that one" - clearing would tell the outer frame it was safe
+            // to dispose itself, and keeping only the innermost frame (the first
+            // version) hid the outer frame's provider (D-BIND-51).
+            PushFrame(state.Owner);
 
             try
             {
@@ -520,9 +703,9 @@ public sealed unsafe class Subscriber : IDisposable
             }
             finally
             {
-                // The marker comes off BEFORE Exit, so that the departing delivery
+                // The frame comes off BEFORE Exit, so that the departing delivery
                 // is not still advertising itself as in-flight while it frees.
-                _inDelivery = outer;
+                PopFrame();
                 state.Exit();
             }
         }
@@ -578,24 +761,42 @@ public sealed unsafe class Subscriber : IDisposable
         }
 
         /// <summary>Leave a delivery. The last one out after retirement frees.</summary>
+        /// <remarks>
+        /// Safe on every path, the carve-out included: a delivery that reached
+        /// <c>TryEnter</c> holds this subscription's native gate until the thunk
+        /// has returned, and the gate serialises this subscription's deliveries, so
+        /// no other delivery of it can be between its gate and <c>TryEnter</c>
+        /// while this one frees.
+        /// </remarks>
         internal void Exit()
         {
             if (Interlocked.Decrement(ref _inFlight) == 0 && Volatile.Read(ref _retired) != 0)
             {
-                TryFree(byDelivery: true);
+                TryFree(FreeBranch.Delivery);
             }
         }
 
         /// <summary>Retire the subscription, freeing if nothing is in flight.</summary>
+        /// <remarks>
+        /// ONLY after a cancel that drained. On the carve-out, zero in flight does
+        /// not mean nothing is reading the handle - see
+        /// <c>Subscriber.RetireAfterDrain</c> (D-BIND-50).
+        /// </remarks>
         internal void Retire()
         {
             Volatile.Write(ref _retired, 1);
 
             if (Volatile.Read(ref _inFlight) == 0)
             {
-                TryFree(byDelivery: false);
+                TryFree(FreeBranch.Canceller);
             }
         }
+
+        /// <summary>The carve-out's first half: retired, and NOT freed on a zero count.</summary>
+        internal void MarkRetiredWithoutFreeing() => Volatile.Write(ref _retired, 1);
+
+        /// <summary>The carve-out's second half: a drain has been waited for, so free.</summary>
+        internal void FreeAfterDrain() => TryFree(FreeBranch.Deferred);
 
         /// <summary>Free the GCHandle exactly once, whoever gets here first.</summary>
         /// <remarks>
@@ -605,7 +806,7 @@ public sealed unsafe class Subscriber : IDisposable
         /// InvalidOperationException on a transport thread - which is to say, a
         /// crash with no useful stack.
         /// </remarks>
-        private void TryFree(bool byDelivery)
+        private void TryFree(FreeBranch branch)
         {
             if (Interlocked.Exchange(ref _freed, 1) != 0)
             {
@@ -619,7 +820,7 @@ public sealed unsafe class Subscriber : IDisposable
             // re-entrant path is the one where a bug is a use-after-free on a
             // transport thread. Counting is the cheapest way to make the claim
             // checkable rather than merely plausible.
-            Owner.RecordFree(byDelivery);
+            Owner.RecordFree(branch);
 
             if (Self.IsAllocated)
             {
@@ -627,6 +828,19 @@ public sealed unsafe class Subscriber : IDisposable
             }
         }
     }
+}
+
+/// <summary>Which branch of the lifetime rule released a subscription's GCHandle.</summary>
+internal enum FreeBranch
+{
+    /// <summary>The last delivery out after retirement (the re-entrant path).</summary>
+    Delivery,
+
+    /// <summary>The cancelling thread, after a cancel that drained (the ordinary path).</summary>
+    Canceller,
+
+    /// <summary>The thread-pool free after a carve-out cancel waited for the drain (D-BIND-50).</summary>
+    Deferred,
 }
 
 /// <summary>Carries a handler failure the thunk absorbed.</summary>

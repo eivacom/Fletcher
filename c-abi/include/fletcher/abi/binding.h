@@ -828,8 +828,11 @@ FL_ABI_EXPORT void fl_subscriber_destroy(fl_subscriber* subscriber);
  *
  * `ctx` is whatever was passed to fl_subscriber_subscribe. Its lifetime is the
  * binding's problem, and it is the reason the seam guarantees no invocation
- * BEGINS after unsubscribe returns: that is what makes an in-flight counter
- * sufficient to free it (D-BIND-18). */
+ * BEGINS after unsubscribe returns. "Begins" means PASSING THE SEAM'S GATE, which
+ * happens BEFORE this function is called: a counter the binding increments on
+ * entry to its thunk therefore does not cover a delivery that has passed the gate
+ * and not yet reached the thunk. See fl_subscriber_unsubscribe for when that
+ * matters (D-BIND-50). */
 typedef void (*fl_delivery_fn)(void* ctx, uint64_t subscription_id, const uint8_t* data, size_t len,
                                const fl_schema* schema, const fl_attachments* atts);
 
@@ -849,14 +852,23 @@ FL_ABI_EXPORT fl_status fl_subscriber_subscribe(fl_subscriber* subscriber, fl_to
 
 /* Cancel a subscription.
  *
- * On return, NO FURTHER DELIVERY BEGINS for this id - that guarantee is what
- * lets a binding free the context once the in-flight count reaches zero. A
- * delivery already running may still be running; the counter, not this call,
- * says when the last one has left.
+ * On return, NO FURTHER DELIVERY BEGINS for this id.
  *
- * Cancelling from inside a delivery is served rather than refused, as a
- * documented carve-out, and cancelling a sibling subscription running on another
- * thread does not wait for it. */
+ * OUTSIDE A DELIVERY THIS BLOCKS until any delivery for this id that is already
+ * running has finished - for as long as that handler takes, unbounded. On return
+ * nothing is running and nothing will run, so the binding may free the context at
+ * once. A binding that calls this while holding a lock its own handler takes will
+ * deadlock.
+ *
+ * FROM INSIDE A DELIVERY ON THIS SUBSCRIBER it is served rather than refused, as a
+ * documented carve-out, and it does NOT wait: a cancellation cannot wait for the
+ * frame it is in, and waiting for a sibling's frame is how two handlers hang one
+ * another. Only the first half of the promise holds then. A delivery for a SIBLING
+ * subscription may have passed the seam's gate on another thread and not yet
+ * entered the binding's thunk, so a zero in-flight count does NOT mean the context
+ * is unused. The safe route: cancel the same id again from a thread outside any
+ * delivery - a cancellation of an id another thread is cancelling waits for the
+ * same drain - and free the context when that returns (D-BIND-50). */
 FL_ABI_EXPORT fl_status fl_subscriber_unsubscribe(fl_subscriber* subscriber,
                                                   uint64_t subscription_id, fl_error* err);
 

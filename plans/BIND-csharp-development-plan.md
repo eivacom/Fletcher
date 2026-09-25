@@ -821,14 +821,21 @@ blocking or architectural, **S** = inherited from the seam, **N** = .NET interop
 - **S-2 — The re-entrant `Unsubscribe` carve-out.** Solved by the in-flight
   counter (D-BIND-18): on the re-entrant path `Unsubscribe` returns without
   freeing; the last thunk out frees. The subtle case is a *sibling* subscription
-  on the same `Subscriber` running on another thread; the counter covers it
-  because native guarantees no new invocation begins. Needs a test that cancels a
-  sibling from inside a handler while the sibling is mid-delivery, mirroring
-  `CallerTier.CancellingASiblingRunningOnAnotherThreadKeepsItPublished`. *BIND-4.*
+  on the same `Subscriber` running on another thread; ~~the counter covers it
+  because native guarantees no new invocation begins~~ — **it does not (BIND-4
+  review B1):** the seam's "begins" is passing the gate, the counter increments
+  later, and a sibling between the two can have its `GCHandle` freed under it.
+  **D-BIND-50 (2026-09-25):** on the carve-out the free is deferred to a
+  thread-pool cancel from outside any delivery, which waits for the drain. The
+  test this note named was not written the first time; it is owed with the fix.
+  *BIND-4.*
 
 - **S-3 — `Dispose` of a `Subscriber` from inside a handler terminates the
   process.** Managed refusal (`InvalidOperationException`) before native, keyed on
-  the thread-static marker. Also reachable via `using` scope exit inside a handler
+  the thread-static marker. **Keyed on the PROVIDER since D-BIND-51 (2026-09-25,
+  BIND-4 review B2):** the seam terminates for ANY Subscriber over the same
+  provider, and the marker is a per-thread stack of frames so a nested delivery
+  cannot hide an outer one. Also reachable via `using` scope exit inside a handler
   and via `await using`; the marker must be set for the synchronous extent of the
   thunk only, and the docs must say an `async` handler continuation runs outside
   the marker (see N-3). *BIND-4.*

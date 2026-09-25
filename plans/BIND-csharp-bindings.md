@@ -1168,6 +1168,10 @@ subscribe, **so that** I am a full Fletcher client with no protocol SDK on my bu
   every managed exception caught, counted and raised as `HandlerFaulted`
   (D-BIND-19 rule 5). The delegate signature takes `ReadOnlySpan<byte>` and ref
   structs so an `async` lambda cannot compile (N-3).
+  **Amended 2026-09-25 after the BIND-4 review (B1, B2):** a carve-out cancel
+  frees off-thread after a second cancel has waited for the drain (D-BIND-50),
+  and the refusals are keyed on the PROVIDER over a per-thread stack of delivery
+  frames (D-BIND-51). Each with the test the review found missing.
 - **Mapping details per D-BIND-20**: `Timeout.Infinite`/`InfiniteTimeSpan` →
   `INT64_MAX`, other negatives `ArgumentOutOfRangeException`; `TopicPath` validated
   in UTF-8 bytes against the six rules and the 246-byte cap; `AttachmentsView`

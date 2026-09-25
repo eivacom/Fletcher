@@ -100,6 +100,7 @@ public class ReentrancyTests : IDisposable
 
         long deliveryBefore = _subscriber.FreedByDeliveryCount;
         long cancellerBefore = _subscriber.FreedByCancellerCount;
+        long deferredBefore = _subscriber.FreedDeferredCount;
 
         const int Rounds = 25;
         for (int round = 0; round < Rounds; round++)
@@ -133,6 +134,13 @@ public class ReentrancyTests : IDisposable
         // rereading rather than the test relaxing.
         Assert.Equal(Rounds, _subscriber.FreedByDeliveryCount - deliveryBefore);
         Assert.Equal(0, _subscriber.FreedByCancellerCount - cancellerBefore);
+
+        // A self-cancel also queues D-BIND-50's deferred free, and it must never be
+        // the branch that wins here: its cancel waits for the drain, the drain
+        // includes this delivery's gate, and the delivery frees on its way out
+        // before releasing that gate. Race-free by the seam's guarantee, so a
+        // deferred free counted here would be an ordering bug, not flakiness.
+        Assert.Equal(0, _subscriber.FreedDeferredCount - deferredBefore);
     }
 
     [Fact]
@@ -337,7 +345,215 @@ public class ReentrancyTests : IDisposable
         after.Subscription.Dispose();
         result.Subscription.Dispose();
 
+        // A subscriber over the SAME provider, disposed on the thread that just
+        // ran a delivery. Since D-BIND-51 the refusal is keyed on the provider, so
+        // a delivery frame that leaked on this thread would refuse THIS dispose -
+        // which the first version, keyed on the Subscriber object, could not see.
         var throwaway = new Subscriber(_provider);
         throwaway.Dispose();
+    }
+
+    // ── D-BIND-50: a carve-out cancel frees only after a drain ──────────────
+
+    [Fact]
+    public async Task CancellingASiblingFromInsideAHandlerDefersTheFreeUntilADrainHasBeenWaitedFor()
+    {
+        // THE BUG, and why this test asserts a BRANCH rather than a crash. A
+        // handler that cancels a sibling gets no drain from native - a cancel from
+        // inside a delivery cannot wait - and the first version freed the
+        // sibling's GCHandle on the spot because its in-flight count read zero.
+        // That count is incremented inside the thunk, AFTER the seam's gate, so a
+        // sibling delivery between the two on another thread read a freed handle.
+        // That window lives in native code and the reverse-P/Invoke transition,
+        // where managed code cannot hold it open on demand - so the test pins the
+        // RULE that closes it instead: on the carve-out nothing is freed inline,
+        // and the free arrives later, from the deferred branch, once a second
+        // cancel has waited for the drain. The first version fails the first
+        // assertion (it freed on the canceller branch).
+        TopicPath trigger = Declare("siblingtrigger");
+        TopicPath idle = Declare("siblingidle");
+        List<Exception> faults = Absorbed();
+
+        int siblingDelivered = 0;
+        SubscribeResult sibling = _subscriber.Subscribe(idle, (_, _, _) => siblingDelivered++);
+        sibling.Schema.Dispose();
+
+        long deliveryBefore = _subscriber.FreedByDeliveryCount;
+        long cancellerBefore = _subscriber.FreedByCancellerCount;
+        long deferredBefore = _subscriber.FreedDeferredCount;
+
+        SubscribeResult canceller = _subscriber.Subscribe(trigger, (_, _, _) => sibling.Subscription.Dispose());
+        canceller.Schema.Dispose();
+
+        _publisher.Publish(trigger, _rows, 0);
+
+        Assert.Empty(faults);
+        Assert.False(sibling.Subscription.IsLive);
+
+        // Not freed inline, on either immediate branch. Independent of when the
+        // deferred work runs, so this assertion has no race in it.
+        Assert.Equal(0, _subscriber.FreedByCancellerCount - cancellerBefore);
+        Assert.Equal(0, _subscriber.FreedByDeliveryCount - deliveryBefore);
+
+        // Freed exactly once, by the deferred branch.
+        Assert.True(
+            await Eventually(() => _subscriber.FreedDeferredCount - deferredBefore == 1),
+            "the carve-out's deferred free never ran");
+        Assert.Equal(1, _subscriber.FreedDeferredCount - deferredBefore);
+
+        // And the cancelled sibling stays cancelled.
+        _publisher.Publish(idle, _rows, 0);
+        Assert.Equal(0, siblingDelivered);
+
+        canceller.Subscription.Dispose();
+    }
+
+    // ── D-BIND-51: the refusal is keyed on the provider ─────────────────────
+
+    [Fact]
+    public void DisposingAnotherSubscriberOnTheSameProviderFromAHandlerIsRefused()
+    {
+        // THE CASE THE SEAM'S OWN COMMENT NAMES: "a handler on subscriber X
+        // destroying subscriber Y over the same provider violates it". The first
+        // version asked only "is this thread inside a delivery on THIS object", so
+        // it let this through - and Y's live subscription then left
+        // provider_subscribed set, the native destructor reached the provider's
+        // door, and the kReentrantCall it rethrew out of a noexcept destructor
+        // TERMINATED THE PROCESS. A regression here does not fail this test; it
+        // kills the test host, which is louder.
+        using var other = new Subscriber(_provider);
+        SubscribeResult held = other.Subscribe(Declare("otherheld"), (_, _, _) => { });
+        held.Schema.Dispose();
+
+        TopicPath topic = Declare("disposeother");
+        List<Exception> faults = Absorbed();
+
+        SubscribeResult result = _subscriber.Subscribe(topic, (_, _, _) => other.Dispose());
+        result.Schema.Dispose();
+
+        _publisher.Publish(topic, _rows, 0);
+
+        Exception fault = Assert.Single(faults);
+        Assert.IsType<InvalidOperationException>(fault);
+        Assert.Contains("provider", fault.Message, StringComparison.Ordinal);
+        Assert.Contains("DispatchAfterDelivery", fault.Message, StringComparison.Ordinal);
+
+        // Refused before any teardown, so the other subscriber is intact.
+        Assert.True(held.Subscription.IsLive);
+
+        result.Subscription.Dispose();
+    }
+
+    [Fact]
+    public void ANestedDeliveryCannotHideAnOuterFrameOnTheSameProvider()
+    {
+        // The second route to the same termination, and the reason the marker is
+        // a stack. A handler on provider P publishes on an in-process provider Q,
+        // which delivers SYNCHRONOUSLY: this thread now holds a frame on P and,
+        // inside it, a frame on Q. Q's handler disposes a subscriber over P. The
+        // first version compared only the innermost frame (Q's subscriber) and
+        // passed; the seam asks about every frame on the thread.
+        using PubSubProviderHandle q = ProviderRegistry.Create(ProviderSelector.Parse("inprocess"), new ProviderConfig());
+        using var qPublisher = new Publisher(q);
+        using var qSubscriber = new Subscriber(q);
+        TopicPath qTopic = TopicPath.Of("bind", "nestedq");
+        qPublisher.CreateTopic(qTopic, _batch.Schema);
+
+        using var victim = new Subscriber(_provider);
+        SubscribeResult victimHeld = victim.Subscribe(Declare("nestedvictim"), (_, _, _) => { });
+        victimHeld.Schema.Dispose();
+
+        var qFaults = new List<Exception>();
+        qSubscriber.HandlerFaulted += (_, args) => qFaults.Add(args.Exception);
+        SubscribeResult inner = qSubscriber.Subscribe(qTopic, (_, _, _) => victim.Dispose());
+        inner.Schema.Dispose();
+
+        List<Exception> outerFaults = Absorbed();
+        TopicPath outer = Declare("nestedouter");
+        SubscribeResult outerSub = _subscriber.Subscribe(outer, (_, _, _) => qPublisher.Publish(qTopic, _rows, 0));
+        outerSub.Schema.Dispose();
+
+        _publisher.Publish(outer, _rows, 0);
+
+        Assert.Empty(outerFaults);
+        Exception fault = Assert.Single(qFaults);
+        Assert.IsType<InvalidOperationException>(fault);
+        Assert.True(victimHeld.Subscription.IsLive);
+
+        inner.Subscription.Dispose();
+        outerSub.Subscription.Dispose();
+    }
+
+    [Fact]
+    public void DisposingASubscriberOnADifferentProviderFromAHandlerIsServed()
+    {
+        // The refusal is the seam's question and no wider. Destroying a subscriber
+        // over provider Q from inside a delivery on provider P enters Q's door,
+        // not P's, and the seam serves it - so the managed layer must too.
+        // Refusing it would be this binding inventing a limit.
+        using PubSubProviderHandle q = ProviderRegistry.Create(ProviderSelector.Parse("inprocess"), new ProviderConfig());
+        using var qPublisher = new Publisher(q);
+        var elsewhere = new Subscriber(q);
+        TopicPath qTopic = TopicPath.Of("bind", "crossprovider");
+        qPublisher.CreateTopic(qTopic, _batch.Schema);
+        SubscribeResult held = elsewhere.Subscribe(qTopic, (_, _, _) => { });
+        held.Schema.Dispose();
+
+        List<Exception> faults = Absorbed();
+        TopicPath topic = Declare("disposeelsewhere");
+        SubscribeResult result = _subscriber.Subscribe(topic, (_, _, _) => elsewhere.Dispose());
+        result.Schema.Dispose();
+
+        _publisher.Publish(topic, _rows, 0);
+
+        Assert.Empty(faults);
+        Assert.Throws<ObjectDisposedException>(() => elsewhere.Subscribe(qTopic, (_, _, _) => { }));
+
+        result.Subscription.Dispose();
+    }
+
+    [Fact]
+    public void SubscribingThroughAnotherSubscriberOnTheSameProviderIsRefusedInManagedCode()
+    {
+        // The Subscribe half of D-BIND-51. The first version refused only through
+        // the handler's OWN subscriber; through another subscriber over the same
+        // provider the call reached native and came back as a kReentrantCall
+        // status - safe, but not the managed refusal naming the route that works.
+        using var other = new Subscriber(_provider);
+        TopicPath fresh = Declare("otherfresh");
+        TopicPath topic = Declare("subscribeother");
+        List<Exception> faults = Absorbed();
+
+        SubscribeResult result = _subscriber.Subscribe(topic, (_, _, _) =>
+        {
+            SubscribeResult nested = other.Subscribe(fresh, (_, _, _) => { });
+            nested.Schema.Dispose();
+        });
+        result.Schema.Dispose();
+
+        _publisher.Publish(topic, _rows, 0);
+
+        Exception fault = Assert.Single(faults);
+        Assert.IsType<InvalidOperationException>(fault);
+        Assert.Contains("DispatchAfterDelivery", fault.Message, StringComparison.Ordinal);
+
+        result.Subscription.Dispose();
+    }
+
+    /// <summary>Poll <paramref name="condition"/> until it holds or a generous deadline passes.</summary>
+    private static async Task<bool> Eventually(Func<bool> condition)
+    {
+        DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (!condition())
+        {
+            if (DateTime.UtcNow > deadline)
+            {
+                return false;
+            }
+
+            await Task.Delay(10);
+        }
+
+        return true;
     }
 }
