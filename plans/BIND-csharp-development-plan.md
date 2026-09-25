@@ -769,6 +769,14 @@ blocking or architectural, **S** = inherited from the seam, **N** = .NET interop
   path structural: one export and one validation per batch, N publishes. **If the owner judges the
   per-row cost unacceptable, the only faster route is generated C# writing wire
   bytes, which is a D-BIND-1 STOP-AND-ASK**, not a local fix. *Measure and decide in BIND-4.*
+  **The measurement's shape is D-BIND-48** (2026-09-24): ten arms that attribute the cost
+  layer by layer. **Measured 2026-09-25:** `ToSegments` is 72 ns per row and the managed
+  crossing 80 ns — the fused per-row path is 1.95× generated C++ and batch 1.23× — and the
+  real B-2 cost is a row that does NOT start as Arrow: 3.8 µs (19.6×), two-thirds of it
+  Apache.Arrow's own build and export. Table and attribution in `c-abi/benchmarks/README.md`.
+  **CLOSED 2026-09-25 (D-BIND-49): accepted, no STOP-AND-ASK; the mitigation that remains is a
+  design input to BIND-6 — the generated publisher's batch form is the cheap one, and
+  `Publish(T)` says so.**
 
 - **B-3 — Which built-ins the shim links decides the package.** Linking Fast DDS
   and XRCE statically into one shim gives C# real transports now, but the native

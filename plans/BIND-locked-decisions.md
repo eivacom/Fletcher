@@ -1357,3 +1357,96 @@ accessors do, for capstone parity (Q18).
   where they land, so BIND-5 does not have to rediscover it.
 
   **No diagram change** (the fourth place): nothing in the architecture set counts test cases.
+
+- **D-BIND-48 — BIND-4d-v's benchmark is TWO HARNESSES run by hand, and native allocations are
+  MEASURED on Linux rather than enumerated.** *LOCKED BY THE MAINTAINER 2026-09-24,* two
+  questions asked at the start of 4d-v, because D-BIND-37 moved the bullet but said nothing about
+  its shape.
+
+  **THE ARMS, one row type throughout** (the `Telemetry` message of
+  `integration-tests/protoc-arrow-bridge/proto/pubsub.proto`, over `inprocess`, no subscriber):
+  **C1** the generated C++ `TelemetryFeed_TelemetryStreamPublisher::Publish(row)` — the baseline
+  the bullet names; **C2** `fl_publisher_publish_row` driven from C++ — the shim, `ToSegments` and
+  the nanoarrow codec with no managed code; **M1** `Publisher.Publish(topic, rows, i)` over a
+  pre-bound batch — the fused per-row path; **M2** one-row `RecordBatch` → `Bind` → `Publish` →
+  dispose — B-2 as written, a lone row paying for an Arrow array; **M3** `Publish(topic, rows)`
+  over N rows, reported per row — the batch mitigation B-2 names. The gaps C1→C2→M1→M2 attribute
+  the cost layer by layer, so a D-BIND-1 question, if one is raised, arrives already pointing at
+  its fix: a pre-converted topic handle, or a managed codec.
+
+  **ARMS ADDED WHILE IMPLEMENTING, not ruled — stated apart so the ruling stays legible.**
+  **C3** (bind → publish → unbind of a one-row array, from C++) and **C4**
+  (`fl_publisher_publish_rows`, per row) are the native halves of M2 and M3, as C2 is of M1, so
+  the Linux counts attribute every managed arm and not only M1. **M2a** builds and disposes
+  M2's one-row batch with no bind and no publish, and **M2b** adds the C Data Interface export
+  and its release: two decompositions of M2, so that M2a is Apache.Arrow's batch build, M2b − M2a
+  its exporter, and M2 − M2b everything Fletcher does — measured rather than argued. **M4** — `Publish(topic, RowWriter, n)` copying the
+  canonical bytes — is the FLOOR of the D-BIND-1 alternative: generated C# writing wire bytes,
+  with the encoding replaced by a 40-byte copy. It is there so that a STOP-AND-ASK, if raised,
+  arrives with the most it could buy back already measured.
+
+  **TWO FACTS FOUND WHILE SHAPING IT.** The generated publisher's `TopicSegments()` is a
+  function-local `static const`, so C1 pays NO per-publish segment conversion — `ToSegments` is a
+  cost only the binding pays, not one shared with C++. And `InProcessPubSubProvider::Publish`
+  allocates a `VectorWriteBuffer` and a joined key on every call, on EVERY arm, so that cost
+  cancels in the comparison and must not be read as the binding's.
+
+  **SHAPE (question 1).** A C++ harness in `c-abi/benchmarks/` — a standalone Conan consumer on
+  `arrow-bridge/benchmarks`' pattern, Google Benchmark, `operator new` counting — and
+  `dotnet/benchmarks/Fletcher.Benchmarks` on BenchmarkDotNet with `MemoryDiagnoser`, **outside
+  `Fletcher.slnx`** for the reason the integration suites are. **Neither runs in CI**, as neither
+  existing benchmark does; the method and the table are recorded beside the harnesses and the
+  numbers in the tracker. Declined: a CI smoke lane (bit-rot cover for the price of three more
+  gates), and a C#-only Stopwatch harness (no C1, so not "against the C++ generated publisher").
+
+  **ALLOCATION COUNTING (question 2).** The shim keeps the dynamic CRT (D-BIND-38), and on
+  Windows an `operator new` replaced in the benchmark executable does not see allocations made
+  inside the DLL — so C2's count, and the native half of M1–M3, would be invisible there.
+  **Timings come from Windows; allocation counts from a Linux run**, where the executable's
+  `operator new` interposes over `libfletcher-c-abi.so`. Declined: enumerating what the path
+  provably allocates (a claim where a measurement is available), and a Debug-CRT
+  `_CrtSetAllocHook` build (rebuilds the whole static chain in Debug, whose paths may allocate
+  differently from the ones shipped).
+
+  **Consequences.** BIND-4's benchmark bullet and development plan B-2 point here; no code, ABI
+  or diagram change. **What counts as "unacceptable" is NOT ruled here** — it is the maintainer's
+  judgement on the table, and the D-BIND-1 STOP-AND-ASK stays where D-BIND-37 left it.
+
+- **D-BIND-49 — the measured per-row publish cost is ACCEPTED; no D-BIND-1 STOP-AND-ASK is
+  raised, and B-2 closes.** *LOCKED BY THE MAINTAINER 2026-09-25,* on the table in
+  `c-abi/benchmarks/README.md` — the judgement D-BIND-37 moved to BIND-4 and D-BIND-48 left open.
+
+  **WHAT WAS ACCEPTED, in the numbers it was judged on** (Windows, per row): the fused per-row path
+  M1 at **378 ns, 1.95× the generated C++ publisher's 194 ns, with no managed allocation**, and the
+  batch path M3 at **239 ns, 1.23×**. Every native allocation either path makes is the shim's — M1
+  and M3 equal their C++ mirrors (7 and 5) exactly.
+
+  **WHAT B-2 TURNED OUT TO BE, stated so nobody re-derives it.** Not `ToSegments` (72 ns) and not
+  the managed crossing (80 ns): **a row that does not start out as Arrow** (M2) pays **3.8 µs,
+  19.6×, 3.6 KB managed, 31 native allocations and Gen2 collections**, and about two-thirds of that
+  is Apache.Arrow's own — building the one-row batch and exporting it, including **all** of the
+  Gen2 collections (M2b shows them with no Fletcher code in the loop). No change inside Fletcher
+  removes that part; only a path that never builds an array does.
+
+  **WHY THAT DOES NOT RAISE THE STOP-AND-ASK.** D-BIND-1's alternative — generated C# writing wire
+  bytes — buys NOTHING for a row that is already Arrow: M4, which is that path with the encoding
+  replaced by a copy, costs what M1 costs (377 vs 378 ns). It would buy ~10× only for the lone
+  non-Arrow row, and that case has a remedy that keeps one codec: publish it in a batch.
+
+  **THE CONSEQUENCE, carried forward as a DESIGN INPUT to BIND-6, not a ruling on it: the generated
+  publisher should publish BATCH-FIRST.** The frozen surface already has both shapes:
+  `Publish(IEnumerable<T>)` is naturally the M3 shape (one `ToArrow`, one bind, one crossing), and
+  a straightforward `Publish(T)` is the M2 shape. This decision does NOT remove or redefine the
+  frozen `Publish(T)` — that would be a public-surface change, and it was not asked. What BIND-6
+  owes is to make the cost visible where it is chosen: `Publish(T)`'s documentation states the
+  per-row price and points at the batch form, and whether `Publish(T)` stays per-row or
+  accumulates behind the caller is BIND-6's to settle, arriving with the number that motivates it.
+
+  **NOT TAKEN, and still open to a later round on its own merits:** the shim's encoder lambda (three
+  captured references, one libstdc++ heap allocation per publish; internal, no ABI change) and the
+  pre-converted topic handle D-BIND-32 names (a pure ABI addition, worth at most the 72 ns C2 − C4
+  shows). Neither was needed to accept, and neither reaches M2.
+
+  **Consequences.** BIND-4's benchmark bullet is MET — 4d-v closes, and with it the last BIND-4
+  item. Development plan B-2 closes. BIND-6's acceptance gains one bullet carrying the design input
+  above. No code, ABI, public-surface or diagram change.

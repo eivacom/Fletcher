@@ -1194,6 +1194,19 @@ subscribe, **so that** I am a full Fletcher client with no protocol SDK on my bu
   the per-publish `ToSegments` cost, so it cannot be measured before the publisher
   exists. BIND-3 therefore carries no performance evidence, which is the accepted
   cost of keeping the item boundary where the tracker draws it.
+  **Shape ruled 2026-09-24 (D-BIND-48):** a C++ harness in `c-abi/benchmarks/` and
+  BenchmarkDotNet in `dotnet/benchmarks/`, both run by hand, outside CI; timings
+  on Windows, allocation counts measured on Linux because the Windows count cannot
+  see into the DLL. Ten arms: the five ruled (C1 generated C++, C2 the shim from
+  C++, M1 fused per row, M2 one-row batch per publish, M3 batch per row) and five
+  added while implementing (C3, C4, M2a, M2b, M4 — D-BIND-48 says why).
+  **Measured 2026-09-25** (method and full table: `c-abi/benchmarks/README.md`):
+  per row, C1 **194 ns**, M1 **378 ns (1.95×, 0 B managed)**, M3 **239 ns
+  (1.23×)**, M2 **3.8 µs (19.6×, 3.6 KB managed, Gen2 collections)**, M4 377 ns.
+  M2 is two-thirds Apache.Arrow (build 1.2 µs, C Data Interface export 1.3–1.5 µs)
+  and one-third Fletcher (1.1–1.3 µs, ~0.74 µs of it native). Native allocations:
+  M1 = C2 = 7, M3 = C4 = 5, C1 = 4. **ACCEPTED 2026-09-25 (D-BIND-49): no D-BIND-1
+  STOP-AND-ASK, B-2 closes; BIND-6 carries a batch-first design input.**
 
 ### BIND-5 — `SubscriberArrow`, batch-first, and the oracle from C#
 
@@ -1231,6 +1244,13 @@ codec step.
   `Publish(IEnumerable<T>)`) and `<Service>_<Method>Subscriber`
   (`Subscribe(Action<T, AttachmentsView>) → Subscription`), named exactly as the
   C++ pair; **no `SubscribeInPlace`** (Q16).
+- **Batch-first, per D-BIND-49's design input.** `Publish(IEnumerable<T>)` is the
+  M3 shape (one `ToArrow`, one bind, one crossing — 1.23× generated C++); a
+  per-row `Publish(T)` that binds one row is the M2 shape (3.8 µs, 19.6×, Gen2
+  collections, two-thirds of it Apache.Arrow's). `Publish(T)` stays on the frozen
+  surface; its documentation states that price and points at the batch form, and
+  whether it stays per-row or accumulates behind the caller is settled here, with
+  `c-abi/benchmarks/README.md` as the evidence.
 - Every mapped type in wire-format spec §"Proto to Arrow Type Mapping" is
   emitted: scalars, `repeated`, `map`, nested struct, nested list, the well-known
   types; **temporal types lossless** (D-BIND-26); maps as

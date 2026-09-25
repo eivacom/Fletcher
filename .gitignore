@@ -40,6 +40,9 @@ debug.log
 dotnet/**/bin/
 dotnet/**/obj/
 dotnet/**/*.user
+# BenchmarkDotNet writes its reports beside the project it runs from. The numbers
+# that matter are transcribed into c-abi/benchmarks/README.md with their method.
+dotnet/**/BenchmarkDotNet.Artifacts/
 
 # The binding ABI conformance suite's C# half lives under integration-tests/,
 # so the rules above do not reach it. Scoped the same way, and for the same
