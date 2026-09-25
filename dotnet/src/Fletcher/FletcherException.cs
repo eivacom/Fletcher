@@ -123,13 +123,18 @@ public class FletcherException : Exception
     public FletcherOrigin Origin { get; }
 }
 
-/// <summary>Malformed wire bytes: a failure whose origin is the codec.</summary>
+/// <summary>Malformed input: an <see cref="FletcherStatus.InvalidArgument"/> whose origin is the codec.</summary>
 /// <remarks>
 /// A separate type because the two are acted on differently. A caller can retry
 /// or reconfigure after a transport failure; malformed bytes mean the data is
 /// wrong, and the HARD rounds put specific messages into the positional reader
 /// precisely so that this case says which byte and why (D-BIND-15). Catching
-/// <see cref="FletcherException"/> still catches this.
+/// <see cref="FletcherException"/> still catches this. Other codec-origin
+/// failures are NOT this type: a row too large for its window is valid data and
+/// a <see cref="FletcherStatus.PayloadTooLarge"/>, and a codec-origin
+/// <see cref="FletcherStatus.Internal"/> is a defect (D-BIND-54). Both arrive as
+/// a plain <see cref="FletcherException"/> whose <see cref="FletcherException.Origin"/>
+/// is still <see cref="FletcherOrigin.Codec"/>.
 /// </remarks>
 public sealed class FletcherFormatException : FletcherException
 {

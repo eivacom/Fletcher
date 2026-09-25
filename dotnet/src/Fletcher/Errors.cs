@@ -57,7 +57,12 @@ internal static class Errors
             string message = ReadMessage(in err);
             FletcherStatus typed = (FletcherStatus)status;
 
-            throw (FletcherOrigin)err.Origin == FletcherOrigin.Codec
+            // The ORIGIN says which catch arm fired; the STATUS says what went wrong.
+            // Malformed input is the pair of them: an InvalidArgument from the codec.
+            // A codec-origin PayloadTooLarge is a row that does not fit the bound -
+            // valid data, a limit the caller can raise - and a codec-origin Internal
+            // is a defect; neither is the format exception (D-BIND-54).
+            throw (FletcherOrigin)err.Origin == FletcherOrigin.Codec && typed == FletcherStatus.InvalidArgument
                 ? new FletcherFormatException(typed, message)
                 : new FletcherException(typed, (FletcherOrigin)err.Origin, message);
         }

@@ -1597,3 +1597,48 @@ accessors do, for capstone parity (Q18).
   binding's-half test above. **Known cost, accepted:** until #129 lands, `main` keeps the silent
   drop, and every `main` consumer of the provider — the gateway and its TS clients included —
   with it.
+
+- **D-BIND-54 — `FletcherFormatException` is keyed on the PAIR (codec origin, `InvalidArgument`),
+  not on the origin alone.** *LOCKED BY THE MAINTAINER 2026-09-25,* on the nit left open by
+  D-BIND-53's transport test.
+
+  **WHAT WAS FOUND.** A row too large for the transport's bound reached C# as a
+  `FletcherFormatException` carrying `PayloadTooLarge`. The status was right, the type wrong. The
+  shim marks a fused publish's failure as CODEC-origin while the encoder writes the row
+  (`binding.cpp`, the re-attribution inside the encoder lambda); the encoder's
+  `std::overflow_error` becomes `FL_PAYLOAD_TOO_LARGE` by type (seam §5.1, at either origin); and
+  `Errors.ThrowIfFailed` raised the format subclass for EVERY codec-origin failure. Both BIND-4
+  tests of bullet 8 had to use `ThrowsAny` to pass, and said so.
+
+  **WHY THE MAPPING, NOT THE ORIGIN.** The origin is TRUE — the encoder is what hit the window's
+  end — and `Containment.OverflowIsPayloadTooLargeAtEitherOrigin` pins it. What was wrong is
+  reading "codec" as "malformed". D-BIND-19 rule 1 already says the origin is how the wrapper
+  knows to throw the format type "for a `kInvalidArgument` that came from `PositionalReader`";
+  the code had widened that to the origin alone, and the header, the tracker, the development
+  plan's sample and the public surface all copied the wider wording. The type's own contract
+  (`FletcherException.cs`) is that malformed data is NOT something a caller can retry or
+  reconfigure, and `PayloadTooLarge` is exactly that: valid data, a bound the caller can raise. A
+  catch that discards bad input on `FletcherFormatException` would have discarded good rows. A
+  codec-origin `kInternal` (an unexpected `std::exception` in the encoder) is a defect, not bad
+  data, and falls on the same side.
+
+  **THE RULE.** The managed throw site raises `FletcherFormatException` iff `Origin == Codec` AND
+  `Status == InvalidArgument`. Everything else is a plain `FletcherException`, whose `Origin`
+  still reads `Codec` where the shim said so — the origin is reported, not hidden. The shim is
+  unchanged and there is **no ABI change**: only `binding.h`'s comment on `fl_origin` moves, from
+  "a binding maps FL_ORIGIN_CODEC to its format exception" to the pair. Rust, next round, reads
+  that comment and inherits the pair.
+
+  **PROVEN BY** `ErrorTests.ARowThatDoesNotFitAFixedWindowIsPayloadTooLarge` (now exact type and
+  `Origin == Codec`, on a real native status), the new
+  `ErrorTests.OnlyACodecInvalidArgumentIsAFormatException` (`PayloadTooLarge` and `Internal` rows,
+  a hand-built error, since no managed call provokes a codec `kInternal` on demand) and
+  `CrossTransportTests.ABoundedPayloadOverflowSurfacesAsPayloadTooLarge` (exact type, over Fast
+  DDS). Falsified: with the old origin-only condition restored, the build compiles and exactly
+  those three unit rows fail. Every existing format-exception assertion is a codec
+  `InvalidArgument` and is unchanged.
+
+  **Declined:** clearing the origin in the shim when the encoder overflows (records something
+  false, and breaks the containment test that pins overflow at either origin); a new
+  `FletcherPayloadTooLargeException` subtype (widens the frozen surface for a distinction
+  `Status` already carries).

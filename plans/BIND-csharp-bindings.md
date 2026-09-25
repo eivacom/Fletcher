@@ -1053,7 +1053,10 @@ rows go to and from `RecordBatch`es with typed errors and no wire bytes in my co
   a packaging question and moved to BIND-9.
 - **Error handling per D-BIND-19** (development plan §3.5): one `ThrowIfFailed`
   site; `FletcherException {Status, Origin, Message}` with
-  `FletcherFormatException` when `Origin` is the codec; a captured managed
+  `FletcherFormatException` when `Origin` is the codec **and** `Status` is
+  `InvalidArgument` (narrowed to that pair by D-BIND-54, 2026-09-25 — a
+  codec-origin `PayloadTooLarge` or `Internal` is a plain
+  `FletcherException`); a captured managed
   exception rethrown as itself; a reflection test that every
   `[UnmanagedCallersOnly]` method carries the containment wrapper (N-1).
 - `FletcherCodec(Schema)` → `fl_codec_open`; `Bind(RecordBatch) → BoundRows`
@@ -1196,6 +1199,10 @@ subscribe, **so that** I am a full Fletcher client with no protocol SDK on my bu
   branch (`9255c19`; Fast DDS reports the overflow as `kPayloadTooLarge`), so
   the bullet holds in full over a real transport too
   (`CrossTransportTests.ABoundedPayloadOverflowSurfacesAsPayloadTooLarge`).
+  **And as exactly `FletcherException` (D-BIND-54, the same day):** both
+  tests now pin the type, not just the status — the overflow used to arrive as
+  the `FletcherFormatException` subclass because the encoder hit the bound
+  under a codec origin.
 - Fast DDS **and** XRCE reachable by selector with **no per-transport C# code**.
 - **Bucket 3 over `inprocess`; Bucket 4 over `fastdds` and `xrce`** — again the FILE
   SETS from Part 4 rather than counts, for the reason BIND-3's bullet gives. Bucket

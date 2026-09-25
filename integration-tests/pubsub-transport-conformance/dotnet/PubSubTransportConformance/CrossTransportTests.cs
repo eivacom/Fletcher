@@ -319,11 +319,11 @@ public class CrossTransportTests
         using (var codec = new FletcherCodec(schema))
         using (BoundRows rows = codec.Bind(large))
         {
-            // ThrowsAny, not Throws: the overflow happens while the codec writes the row into
-            // the transport's window, so the shim attributes it to the CODEC origin and it
-            // arrives as the FletcherFormatException subclass (D-BIND-15) - still a
-            // FletcherException. The status is the claim.
-            FletcherException refused = Assert.ThrowsAny<FletcherException>(() => publisher.Publish(topic, rows, 0));
+            // Throws, not ThrowsAny: exactly FletcherException. The overflow happens while
+            // the codec writes the row into the transport's window, so the shim attributes
+            // it to the CODEC origin - but a row too large for the bound is valid data, not
+            // malformed input, so it is not the FletcherFormatException subclass (D-BIND-54).
+            FletcherException refused = Assert.Throws<FletcherException>(() => publisher.Publish(topic, rows, 0));
             Assert.Equal(FletcherStatus.PayloadTooLarge, refused.Status);
         }
     }

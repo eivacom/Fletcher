@@ -241,7 +241,10 @@ typedef enum fl_status {
  * from the seam ("no such provider name", which the operator fixes in a
  * configuration file) and an FL_INVALID_ARGUMENT from the positional reader on a
  * truncated buffer (which is malformed data arriving from a peer). A binding
- * maps FL_ORIGIN_CODEC to its own typed format exception (D-BIND-15). */
+ * maps an FL_INVALID_ARGUMENT with FL_ORIGIN_CODEC to its own typed format
+ * exception (D-BIND-15), and ONLY that pair (D-BIND-54): the codec origin also
+ * carries FL_PAYLOAD_TOO_LARGE, a valid row that did not fit its window, and
+ * FL_INTERNAL, a defect - neither is malformed input. */
 typedef enum fl_origin {
     FL_ORIGIN_NONE = 0,    /* status == FL_OK */
     FL_ORIGIN_SEAM = 1,    /* a PubSubError, or a std::exception, from the seam */

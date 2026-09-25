@@ -31,7 +31,7 @@ namespace Eiva.Fletcher.Tests;
 
 public sealed class ErrorTests
 {
-    /// <summary>A codec-origin failure is a FletcherFormatException.</summary>
+    /// <summary>A codec-origin InvalidArgument is a FletcherFormatException.</summary>
     /// <remarks>
     /// The typed subclass is the whole reason `fl_error` carries an origin at all:
     /// the NUMBER cannot separate an InvalidArgument from the seam ("no such
@@ -71,6 +71,30 @@ public sealed class ErrorTests
 
         Assert.IsType<FletcherException>(error, exactMatch: true);
         Assert.Equal(FletcherOrigin.Seam, error.Origin);
+    }
+
+    /// <summary>A codec-origin failure that is not InvalidArgument is not a format exception.</summary>
+    /// <remarks>
+    /// D-BIND-54: the format type is keyed on the PAIR (codec, InvalidArgument),
+    /// not on the origin alone. PayloadTooLarge is proven on a real native status
+    /// below; Internal is the other status the codec's containment produces (an
+    /// unexpected std::exception inside the encoder), and no managed call can
+    /// provoke one on demand, so this row builds the error by hand. A NULL message
+    /// is the header's "could not allocate one" case, which `fl_error_dispose`
+    /// accepts, so nothing native is freed that was not allocated.
+    /// </remarks>
+    [Theory]
+    [InlineData(FletcherStatus.PayloadTooLarge)]
+    [InlineData(FletcherStatus.Internal)]
+    public void OnlyACodecInvalidArgumentIsAFormatException(FletcherStatus status)
+    {
+        FlError err = new() { Status = (int)status, Origin = (int)FletcherOrigin.Codec };
+
+        FletcherException error =
+            Assert.Throws<FletcherException>(() => Errors.ThrowIfFailed((int)status, ref err));
+
+        Assert.Equal(status, error.Status);
+        Assert.Equal(FletcherOrigin.Codec, error.Origin);
     }
 
     /// <summary>
@@ -298,16 +322,17 @@ public sealed class ErrorTests
     /// and read back through the real error tier, not synthesised.
     /// </para>
     /// <para>
-    /// Why not over a transport: no managed caller can reach one that reports it
-    /// today. `inprocess` ignores payload bounds, and Fast DDS DROPS an oversized
-    /// row and logs it on its only live publish path, deliberately and pinned by its
-    /// own test (`DataSharingOversizedRowDoesNotThrow`). D-BIND-53 records that as a
-    /// provider limitation and leaves the provider's behaviour to its owner.
+    /// The transport half is `CrossTransportTests.ABoundedPayloadOverflowSurfacesAsPayloadTooLarge`
+    /// in the transport-conformance suite, over Fast DDS (D-BIND-53, amended). This
+    /// one needs no transport, so it runs in the unit lane.
     /// </para>
     /// <para>
-    /// The exact type is not pinned: an overflow the shim attributes to the codec
-    /// arrives as the <see cref="FletcherFormatException"/> subclass (D-BIND-15),
-    /// which still IS a FletcherException - the status is the claim.
+    /// The exact type IS pinned, and the origin with it (D-BIND-54). The shim
+    /// attributes the overflow to the CODEC, truthfully - the encoder is what hit
+    /// the window's end - and until D-BIND-54 the throw site turned every
+    /// codec-origin failure into a <see cref="FletcherFormatException"/>. That
+    /// told a caller the data was malformed when it was valid and the bound too
+    /// small, which is the one case that type's own contract says it is not.
     /// </para>
     /// </remarks>
     [Fact]
@@ -323,9 +348,11 @@ public sealed class ErrorTests
         FlError err = default;
         int status = NativeMethods.fl_encode_row(rows.Handle, 0, ref window, ref err);
 
+        // Throws, not ThrowsAny: exactly FletcherException, never the format subclass.
         FletcherException error =
-            Assert.ThrowsAny<FletcherException>(() => Errors.ThrowIfFailed(status, ref err));
+            Assert.Throws<FletcherException>(() => Errors.ThrowIfFailed(status, ref err));
         Assert.Equal(FletcherStatus.PayloadTooLarge, error.Status);
+        Assert.Equal(FletcherOrigin.Codec, error.Origin);
     }
 
     private static unsafe int CreateProvider(string selector, ref FlError err, out ProviderHandle provider)

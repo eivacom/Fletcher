@@ -409,7 +409,10 @@ void fl_error_dispose(fl_error*);   /* frees message; safe on a zeroed struct */
 number alone cannot separate two things a C# caller must: a `kInvalidArgument` from
 the seam ("no such provider name") and a `kInvalidArgument` from `PositionalReader` on
 a truncated buffer. D-BIND-15 promises a typed `FletcherFormatException` for the HARD
-cases; `origin` is how the wrapper knows to throw it. Heap-allocated message, freed
+cases; `origin` is how the wrapper knows to throw it — **together with the status**:
+the codec origin also carries `kPayloadTooLarge` (a valid row that did not fit its
+window) and `kInternal` (a defect), and neither is malformed input, so the format type
+is keyed on the pair (codec, `kInvalidArgument`) (D-BIND-54). Heap-allocated message, freed
 through the ABI: registry refusals list every registered provider and will not fit a
 fixed buffer.
 
@@ -462,10 +465,11 @@ static void ThrowIfFailed(int status, ref FlError err, WriterState? ctx = null)
     {
         if (ctx?.Captured is { } edi) edi.Throw();
         var message = Encoding.UTF8.GetString(err.Message, err.Length);
-        throw err.Origin switch
+        throw (err.Origin, (FletcherStatus)status) switch
         {
-            FlOrigin.Codec => new FletcherFormatException((FletcherStatus)status, message),
-            _              => new FletcherException((FletcherStatus)status, message),
+            (FlOrigin.Codec, FletcherStatus.InvalidArgument)   // D-BIND-54: the pair, not the origin
+                => new FletcherFormatException((FletcherStatus)status, message),
+            _   => new FletcherException((FletcherStatus)status, message),
         };
     }
     finally { NativeMethods.fl_error_dispose(ref err); }
@@ -818,7 +822,9 @@ blocking or architectural, **S** = inherited from the seam, **N** = .NET interop
   native status), and the provider's behaviour is flagged to `main`'s owner.
   **CLOSED the same day on this branch** (D-BIND-53 amended, `9255c19`): the
   provider now reports the overflow as `kPayloadTooLarge`, and a C# test proves it
-  over Fast DDS. `main` keeps the silent drop until #129 lands.
+  over Fast DDS. `main` keeps the silent drop until #129 lands. **D-BIND-54 (the
+  same day):** the overflow arrives as exactly `FletcherException`, no longer as the
+  `FletcherFormatException` subclass its codec origin used to select.
 
 ### Inherited from the seam (constraints 1–8 and the two details)
 
