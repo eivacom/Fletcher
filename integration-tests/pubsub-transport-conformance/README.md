@@ -40,18 +40,31 @@ believing any provider access violation.** In a lane whose name says *transport*
 such a failure is diagnosable; in the unit lane it would look like a regression in
 the binding.
 
-## What XRCE does and does not cover here
+## XRCE: an Agent this suite starts and proves it owns (D-BIND-56)
 
-XRCE needs a running Agent, which this lane does not start. Two things are true
-without one and both are asserted rather than skipped:
+`xrce` is a row of every theory. Until 2026-09-25 it was not: this lane started no
+Agent, the XRCE row asserted only a typed refusal, and the round trip was deferred to
+`integration-test-fastdds-xrce-interop` — which is C++, so no C# had published or
+subscribed over XRCE-DDS at all.
 
-* the selector **resolves** to the XRCE driver — the "reachable by selector" half;
-* an unreachable Agent surfaces as a **typed** `FletcherException(TransportFailure)`
-  naming the endpoint, not a hang, a crash, or an untyped throw.
+* **The Agent** is eProsima's `MicroXRCEAgent`, built by the lane through
+  [`agent/`](agent) from the recipe the interop lane uses,
+  [`integration-tests/cmake/MicroXrceAgent.cmake`](../cmake/MicroXrceAgent.cmake), and
+  handed to the suite as `MICRO_XRCE_AGENT_PATH` (and `MICRO_XRCE_AGENT_LIB_DIR`).
+* **The fixture** (`XrceAgent.cs`) starts it on UDP **2020** — used by nothing else in
+  the tree — waits until an XRCE session opens, and then **proves it owns the port**:
+  a leftover Agent answers the probe just as well, so an answer is not enough. The rule
+  and its two forcing tests are the C++ harnesses' (PDA-DEC-1H), in C#
+  (`UdpPortOwnership.cs`, `XrceAgentTests.cs`).
+* **A row varies only its deployment configuration** — an XRCE client needs its
+  Agent's address and a session key of its own. No body reads it.
+* **One case crosses the bridge**: a C# XRCE client's row reaches a C# Fast DDS
+  subscriber through the Agent, byte for byte.
+* **Without an Agent the XRCE rows fail, not skip**; the other rows still run.
 
-The full XRCE round trip belongs to `integration-test-fastdds-xrce-interop`, which
-has an Agent. Skipping here would have left the suite quietly claiming less than it
-tested.
+`XrceIsSelectableAndAnUnreachableAgentIsATypedTransportFailure` still asserts the
+no-Agent answer, against the default address 127.0.0.1:2018, where this lane runs
+nothing.
 
 ## Two properties of the test bodies worth knowing before editing them
 
@@ -73,9 +86,15 @@ The shim is passed in, because a source build has no NuGet layout to find it in:
 
 ```bash
 conan create c-abi --build=missing -pr:a=.conan-profiles/<profile>
+(cd integration-tests/pubsub-transport-conformance/agent && conan build . --build=missing -pr:a=../../../.conan-profiles/<profile>)
+export MICRO_XRCE_AGENT_PATH=<the path the Agent build prints>
 cd integration-tests/pubsub-transport-conformance/dotnet/PubSubTransportConformance
 dotnet test -p:FletcherNativeShim=<path to the built shim>
 ```
+
+The Agent build prints `MICRO_XRCE_AGENT_PATH=` and `MICRO_XRCE_AGENT_LIB_DIR=`; on
+Windows the install is `C:/fl-uxa-install`, shared with the interop suite, and a
+complete install there is reused rather than rebuilt.
 
 Absent the shim the rows **fail rather than skip** — a transport suite that
 silently ran on no transport is the vacuity this round keeps catching, and

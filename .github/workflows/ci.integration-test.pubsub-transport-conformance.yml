@@ -39,6 +39,15 @@ on:
 # `ProviderRegistry.Create`, which is the right failure but an expensive way to
 # discover a missing checkout entry.
 #
+# THE `xrce` ROWS NEED A MicroXRCEAgent (D-BIND-56). The lane builds eProsima's
+# Agent from the recipe the C++ interop lane uses,
+# integration-tests/cmake/MicroXrceAgent.cmake, through the Agent-only project in
+# integration-tests/pubsub-transport-conformance/agent, and hands its path to the
+# suite as MICRO_XRCE_AGENT_PATH. The suite's fixture starts it and PROVES it owns
+# the port before any row runs. On Windows the install is cached under the SAME
+# key as the interop lane's; on Linux it is built every run, as the interop lane
+# builds it (~10-15 min cold).
+#
 # A NEW CONSUMER OF A PATH OUTSIDE THIS LIST ADDS IT HERE AND TO ci.pr.yml's
 # FILTER, IN THE SAME COMMIT. BIND-3c went red for exactly that: a lane gained a
 # file dependency, only the checkout was updated, and the suite silently found no
@@ -58,6 +67,7 @@ jobs:
             c-abi
             dotnet
             integration-tests/pubsub-transport-conformance
+            integration-tests/cmake
             .conan-profiles
             .github
 
@@ -80,6 +90,12 @@ jobs:
                      done && \
                      SHIM=\$(find ~/.conan2/p -path '*/p/lib/libfletcher-c-abi.so' -type f -print -quit) && \
                      if [ -z \"\$SHIM\" ]; then echo '::error::libfletcher-c-abi.so not found after conan create'; exit 1; fi && \
+                     echo '::group::conan build the MicroXRCEAgent' && \
+                     (cd integration-tests/pubsub-transport-conformance/agent && conan build . --build=missing -pr:a=\$PROFILE) && \
+                     echo '::endgroup::' && \
+                     export MICRO_XRCE_AGENT_PATH=/workspace/integration-tests/pubsub-transport-conformance/agent/install/bin/MicroXRCEAgent && \
+                     export MICRO_XRCE_AGENT_LIB_DIR=/workspace/integration-tests/pubsub-transport-conformance/agent/install/lib && \
+                     if [ ! -x \"\$MICRO_XRCE_AGENT_PATH\" ]; then echo '::error::MicroXRCEAgent not found after conan build'; exit 1; fi && \
                      echo '::group::dotnet test' && \
                      cd integration-tests/pubsub-transport-conformance/dotnet/PubSubTransportConformance && \
                      dotnet test -c Release -p:FletcherNativeShim=\$SHIM && \
@@ -99,6 +115,7 @@ jobs:
             c-abi
             dotnet
             integration-tests/pubsub-transport-conformance
+            integration-tests/cmake
             .conan-profiles
             .github
 
@@ -111,6 +128,16 @@ jobs:
         with:
           global-json-file: dotnet/global.json
 
+      # One cached Agent for this lane and the interop lane: the same path, the
+      # same key. No prefix fallback - a stale restore would make the recipe's
+      # skip-guard trust the wrong Agent version.
+      - name: Restore MicroXRCEAgent build
+        id: agent-cache
+        uses: actions/cache/restore@v5.0.5
+        with:
+          path: C:\fl-uxa-install
+          key: microxrce-agent-win-${{ hashFiles('integration-tests/cmake/MicroXrceAgent.cmake', '.conan-profiles/Windows-msvc194-x86_64-Release') }}
+
       - name: Build components into the local Conan cache
         shell: bash
         run: |
@@ -121,6 +148,20 @@ jobs:
             (cd "$COMPONENT" && conan create . --build=missing -pr:a="../$PROFILE")
             echo "::endgroup::"
           done
+
+      - name: Build the MicroXRCEAgent
+        shell: bash
+        working-directory: integration-tests/pubsub-transport-conformance/agent
+        run: conan build . --build=missing -pr:a=../../../.conan-profiles/Windows-msvc194-x86_64-Release
+
+      # Straight after the build, so a complete install is saved even if a row
+      # later fails - and never a partial one, which `success()` rules out.
+      - name: Save MicroXRCEAgent build
+        if: success() && steps.agent-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5.0.5
+        with:
+          path: C:\fl-uxa-install
+          key: microxrce-agent-win-${{ hashFiles('integration-tests/cmake/MicroXrceAgent.cmake', '.conan-profiles/Windows-msvc194-x86_64-Release') }}
 
       # Checked, not trusted: the suite FAILS rather than skips without the shim,
       # so an empty find must stop the job here with a diagnostic rather than
@@ -150,4 +191,7 @@ jobs:
       - name: Run one body over every transport
         shell: bash
         working-directory: integration-tests/pubsub-transport-conformance/dotnet/PubSubTransportConformance
+        env:
+          MICRO_XRCE_AGENT_PATH: C:/fl-uxa-install/bin/MicroXRCEAgent.exe
+          MICRO_XRCE_AGENT_LIB_DIR: C:/fl-uxa-install/lib
         run: dotnet test -c Release -p:FletcherNativeShim="${{ steps.shim.outputs.path }}"

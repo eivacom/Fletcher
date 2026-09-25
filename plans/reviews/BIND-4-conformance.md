@@ -89,12 +89,17 @@ what moved it.
 | 5 | ❌ NOT MET | ✅ | B1 → **D-BIND-50**, B2 → **D-BIND-51** (`1fe40fa`); B7, found while fixing B5, in `319ad02`. The fixed tests fail, or crash the host, against the old code |
 | 6 | 🟨 PARTIAL | ✅ | `SubscriberTests.AnInfiniteWaitActuallyWaitsUntilTheSchemaArrives` (`319ad02`) |
 | 8 | ❔ UNPROVEN | ✅ | **D-BIND-53** and its amendment: `ErrorTests.ARowThatDoesNotFitAFixedWindowIsPayloadTooLarge` on a real native status, and `CrossTransportTests.ABoundedPayloadOverflowSurfacesAsPayloadTooLarge` over Fast DDS after the provider fix (`9255c19`, `c42763e`). **D-BIND-54** (`309c321`): both now pin the exact type, `FletcherException`, not the malformed-input subclass |
-| 10 | 🟨 PARTIAL | ✅ | B3: `pr_gate` reads the transport lane's result. B4: the totality checker counts live, named, asserting mirrors and proves ten fakes are refused. B5/B6: the mirrors fail for their named property, and those that cannot are declared structurally weaker with the reason (`319ad02`) |
+| 10 | 🟨 PARTIAL | 🟨 **still PARTIAL — this row was wrong when first written; see below** | B3: `pr_gate` reads the transport lane's result. B4: the totality checker counts live, named, asserting mirrors and proves ten fakes are refused. B5/B6: the mirrors fail for their named property, and those that cannot are declared structurally weaker with the reason (`319ad02`) |
 | 11 | ❌ NOT MET | ✅ | `AttachmentsBuilderTests.KeysWhoseUtf16AndUtf8OrdersDisagreeAreOrderedByUtf8Bytes` (U+E000 against U+1F600, both build orders) and the infinite-wait test above (`319ad02`) |
 
 Bullet 2's stale `RowWriter` signature was corrected in the tracker in `319ad02`.
 
-**Outcome: 12 of 12 live bullets CONFORM. BIND-4 closes.**
+**Outcome as first written: 12 of 12 live bullets CONFORM. BIND-4 closes.** **Corrected the same
+day (D-BIND-56): 11 of 12, and BIND-4 does not close yet.** Bullet 10 says bucket 4 runs over
+`fastdds` **and** `xrce`; its XRCE row asserted only a typed refusal with no Agent, which the code
+review had filed as DEBT D15, and this re-grade marked the bullet met without answering it. The
+`xrce` rows now run against a MicroXRCEAgent the suite starts and proves it owns; the bullet is
+met when the transport lane is green over them in CI, by count.
 
 **Still open, and not a bullet:** the public-surface disagreement listed above. Each row is code
 owed or a document amendment owed, and none has been decided. BIND-3's D3 and N1/N2 are carried

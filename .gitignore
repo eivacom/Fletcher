@@ -55,3 +55,6 @@ dotnet/artifacts/
 # Benchmark consumer lockfile: `conan lock create` regenerates it from the local cache before each
 # run and the revisions it pins exist only in that cache; the recorded runs name them in README.md.
 arrow-bridge/benchmarks/conan.lock
+
+# The MicroXRCEAgent the transport-conformance lane builds on Linux (D-BIND-56).
+integration-tests/pubsub-transport-conformance/agent/install/

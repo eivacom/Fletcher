@@ -54,17 +54,23 @@ using Xunit;
 
 namespace Eiva.Fletcher.TransportConformance;
 
+[Collection(XrceAgentCollection.Name)]
 public class CrossTransportTests
 {
-    /// <summary>Every transport a managed caller can reach without an external service.</summary>
+    // Taken so xUnit starts the suite's MicroXRCEAgent before the first row: the
+    // `xrce` rows run against it (D-BIND-56).
+    public CrossTransportTests(XrceAgentFixture agent) => ArgumentNullException.ThrowIfNull(agent);
+
+    /// <summary>Every transport the shim links, each selected by name.</summary>
     /// <remarks>
-    /// XRCE is absent on purpose and is not an omission: it needs a running Agent,
-    /// which this lane does not start. Its own row below asserts what IS true
-    /// without one - that the selector resolves and the failure is typed - and the
-    /// full XRCE round trip belongs to `integration-test-fastdds-xrce-interop`,
-    /// which has an Agent.
+    /// `xrce` joined on 2026-09-25 (D-BIND-56). Until then it was absent because
+    /// this lane started no Agent, and the round trip was said to belong to
+    /// `integration-test-fastdds-xrce-interop` - which is C++, so no C# had ever
+    /// published or subscribed over XRCE-DDS, although BIND-4's acceptance promised
+    /// bucket 4 over it. The lane now builds the Agent and the suite's fixture
+    /// starts one and proves it owns it (see XrceAgent.cs).
     /// </remarks>
-    internal static readonly string[] SelectorNames = ["inprocess", "fastdds"];
+    internal static readonly string[] SelectorNames = ["inprocess", "fastdds", "xrce"];
 
     public static TheoryData<string> Transports
     {
@@ -93,8 +99,17 @@ public class CrossTransportTests
         return new RecordBatch(schema, [ids], length: 1);
     }
 
+    /// <summary>Each row's DEPLOYMENT configuration - the one thing a row may vary.</summary>
+    /// <remarks>
+    /// Configuration, not code: what a real application reads from a file. An XRCE
+    /// client has to be told where its Agent is and needs a session key of its
+    /// own; the other two run on their defaults. No body below looks at it.
+    /// </remarks>
+    private static ProviderConfig ConfigFor(string selector) =>
+        selector == "xrce" ? XrceAgentFixture.ClientConfig() : new ProviderConfig();
+
     private static PubSubProviderHandle Open(string selector) =>
-        ProviderRegistry.Create(ProviderSelector.Parse(selector), new ProviderConfig());
+        ProviderRegistry.Create(ProviderSelector.Parse(selector), ConfigFor(selector));
 
     /// <summary>A topic unique to this run, so concurrent lanes cannot collide.</summary>
     /// <remarks>
@@ -115,7 +130,7 @@ public class CrossTransportTests
     /// not a defect in anything. Returning a bool rather than asserting inside
     /// lets each row say what a timeout MEANS for it.
     /// </remarks>
-    private static bool PublishUntilSeen(Action publish, ManualResetEventSlim seen)
+    internal static bool PublishUntilSeen(Action publish, ManualResetEventSlim seen)
     {
         var clock = Stopwatch.StartNew();
         while (clock.ElapsedMilliseconds < DeadlineMs)
@@ -268,10 +283,9 @@ public class CrossTransportTests
         // message naming the endpoint - not as a crash, a hang, or an untyped
         // exception a caller cannot act on.
         //
-        // The full XRCE round trip needs an Agent and belongs to
-        // integration-test-fastdds-xrce-interop, which starts one. Asserting the
-        // refusal here rather than skipping keeps this suite honest about what it
-        // did and did not exercise.
+        // It aims at the default Agent address, 127.0.0.1:2018, where this lane
+        // runs nothing: the suite's own Agent is on 2020 (XrceAgent.SuitePort), and
+        // the round trip over it is the `xrce` row of every theory above.
         FletcherException refused = Assert.Throws<FletcherException>(
             () => ProviderRegistry.Create(ProviderSelector.Parse("xrce"), new ProviderConfig()));
 
@@ -339,8 +353,9 @@ public class CrossTransportTests
         // The list is the single source the theory is built from, so the count
         // check below cannot drift from what the rows actually ran over.
         Assert.Equal(SelectorNames.Length, Transports.Count);
-        Assert.Equal(2, SelectorNames.Length);
+        Assert.Equal(3, SelectorNames.Length);
         Assert.Contains("inprocess", SelectorNames);
         Assert.Contains("fastdds", SelectorNames);
+        Assert.Contains("xrce", SelectorNames);
     }
 }

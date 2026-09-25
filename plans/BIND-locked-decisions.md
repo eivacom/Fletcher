@@ -1723,3 +1723,59 @@ accessors do, for capstone parity (Q18).
   dropping `WaitAsync` (every async caller would write its own, with its own cancellation);
   leaving `SchemaHandle` without a finaliser and documenting the leak (the one native handle
   whose lifetime a caller could forget without a safety net).
+
+- **D-BIND-56 — BIND-4's bucket 4 runs over XRCE-DDS too: the C# transport lane builds a
+  MicroXRCEAgent from the shared recipe, the suite proves it owns it, and `xrce` joins the rows.
+  BIND-4 is reopened until that lane is green.** *LOCKED BY THE MAINTAINER 2026-09-25,* in two
+  questions, before BIND-5.
+
+  **WHAT WAS FOUND.** Reporting progress against Feature 16353's requirements showed that **no C#
+  had ever published or subscribed over XRCE-DDS.** The cross-transport suite ran `inprocess` and
+  `fastdds`; its XRCE row asserted only a typed refusal with no Agent, and deferred the round trip
+  to `integration-test-fastdds-xrce-interop` — which is C++. BIND-4's bullet 10 says "Bucket 4 over
+  `fastdds` **and** `xrce`", the tracker says 18786 does not close before bucket 4 is green over
+  both, and Hardware/ROTV can reach nothing but XRCE-DDS. The code review saw it as DEBT D15 ("XRCE
+  is covered only as a typed refusal"); **the close-out re-grade then marked bullet 10 met without
+  answering D15.** That was the re-grade's error, and it is corrected in the conformance review.
+
+  **THE RULING.**
+  1. **A BIND-4 follow-up, before BIND-5.** Bullet 10 is PARTIAL until the XRCE rows are green in CI,
+     and BIND-4's tracker row goes back to 🔴 until then.
+  2. **The Agent lives in the C# transport lane**, not as a C# step in the C++ interop lane, so the
+     `xrce` rows run the SAME bodies as the other transports — which is what "no per-transport C#
+     code" means when asserted. Concretely:
+     * **One recipe.** The interop lane's MicroXRCEAgent block moves, unchanged, into
+       `integration-tests/cmake/MicroXrceAgent.cmake`; the interop project includes it, and a new
+       Agent-only project (`integration-tests/pubsub-transport-conformance/agent`) includes it too.
+       So both lanes build one Agent version against one Fast DDS, and on Windows share ONE cache
+       entry, keyed on that file. `integration-tests/pubsub-conformance` keeps its own copy — a
+       known duplicate, recorded in the module's header.
+     * **Ownership, proven in C#.** The fixture spawns the Agent (`udp4 -p 2020`, a port nothing
+       else in the tree uses), waits until an XRCE session opens, then requires the OS to record
+       THIS child as the port's holder — `GetExtendedUdpTable` on Windows, `/proc/net/udp` against
+       the child's `/proc/<pid>/fd` on Linux, IPv4 only, foreign beats ours, a failed query is a
+       refusal. The third copy of PDA-DEC-1H's rule, with the same two forcing tests as the C++
+       copies (`AForeignAgentDoesNotSatisfyTheHarness`, `AFailedOwnershipQueryDoesNotSatisfyTheHarness`).
+     * **The rows.** `xrce` joins every theory; a row's deployment configuration (the Agent's
+       address and a fresh session key) is the only thing it varies, and no body reads it.
+     * **One deployment case**: a row published by a C# XRCE client reaches a C# Fast DDS
+       subscriber through the Agent, on a domain of its own, compared byte for byte with the
+       codec's encoding.
+     * **Absent an Agent, the XRCE rows FAIL, not skip,** and the other rows still run.
+
+  **PROVEN LOCALLY** (Windows): the suite **21/21** — the five theories over three transports, the
+  deployment case, both forcing tests, the overflow and vacuity guards; `integration-tests/
+  fastdds-xrce-interop` still green through the shared recipe. **Falsified:** skipping the
+  ownership proof fails the foreign-Agent test; treating a failed query as good enough fails its
+  test; with no Agent configured exactly the eight XRCE cases fail and the thirteen others pass.
+  `actionlint` clean. **Not yet proven:** the recipe's COLD build path — locally the Agent was
+  already installed, so the skip path ran. Linux builds cold on every run, and the Windows cache key
+  changes with this ruling, so the first CI run exercises it on both platforms.
+
+  **Cost, accepted:** the transport lane's Linux job builds the Agent from source every run
+  (~10–15 minutes cold, as the interop lane's does); Windows builds it once per key.
+
+  **Declined:** a C# step in the C++ interop lane (a second, XRCE-only set of C# cases instead of
+  bucket 4's shared bodies, and a .NET SDK in a C++ lane); amending bullet 10 to "reachable by
+  selector" (Hardware/ROTV's only transport would stay unproven from C#); folding it into BIND-5
+  (BIND-4's own bullet would close under another item).

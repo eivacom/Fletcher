@@ -363,3 +363,14 @@ leak (an owned `SchemaHandle` had no finaliser, where every other native handle 
 a trigger. Managed **277/277** on both TFMs locally, eight compiling mutations each caught. **A
 process-wide observable needs its own non-parallel collection** — `ProcessWideTests` is the first
 in the suite, and it is what lets the counter test assert an exact delta instead of "at least".
+
+**Reopened (D-BIND-56, same day).** Reporting progress against Feature 16353's requirements found
+that no C# had ever published or subscribed over XRCE-DDS — bucket 4's XRCE row was a typed refusal
+with no Agent, the round trip it deferred to lives in a C++ lane, and **the close-out re-grade had
+marked bullet 10 met without answering the code review's D15, which said exactly that.** The
+transport lane now builds a MicroXRCEAgent from a recipe shared with the interop lane, the suite
+proves it owns the Agent (a C# copy of PDA-DEC-1H's rule, with both forcing tests), and `xrce` joins
+every theory, plus one case across the Agent's bridge to Fast DDS. Locally **21/21**, with three
+falsifications; BIND-4 is 🔴 until CI shows the lane green by count. **The lesson is the same one
+this entry already names**: a re-grade written by the author of the fixes read "resolved" off the
+BLOCKER list and never re-read the DEBT that carried an acceptance bullet's other half.

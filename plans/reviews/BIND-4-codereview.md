@@ -328,3 +328,10 @@ on this branch (`9255c19`), so bullet 8 now holds over Fast DDS as well
 properties of the NATIVE Subscriber, so falsifying them would take a shim built with the drain
 removed; they rest on the reviewer's argument, verified against `in_process_provider.cpp`. The 17
 DEBT and 8 NIT items other than D16/D17 are open and, by the round's convention, do not loop the item.
+
+**D15's XRCE half — resolved by D-BIND-56 (maintainer), after close.** The transport lane builds a
+MicroXRCEAgent from the recipe the interop lane uses, now shared as
+`integration-tests/cmake/MicroXrceAgent.cmake`; the suite's fixture proves it owns the Agent's port;
+and `xrce` runs every bucket-4 body. The close-out re-grade had marked bullet 10 met without this —
+see the conformance review's correction. D15's other half (the round trip asserts `NotEmpty`, not
+the codec's bytes) stays open for the theory rows; the new bridge case compares bytes.

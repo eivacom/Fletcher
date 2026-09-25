@@ -802,7 +802,7 @@ Kind: 🟪 spec · 🟦 impl · 🔬 proof · ⚙ pipelines · 📓 docs
 | BIND-1 | The binding ABI header, reviewed as a specification (no implementation) | A | 🟪 | BIND-0 | `BindingAbi.CompilesAsC99AndIsSelfContained` | 🟢 |
 | BIND-2 | Nanoarrow schema-driven codec + publish fusion + the oracle's ABI producer | A | 🟦 | BIND-1 | `NanoarrowCodec.ByteIdenticalToArrowBridge` + `CopyAccounting.BindingProducerWritesInPlace` | 🟢 |
 | BIND-3 | `Eiva.Fletcher.Interop` + codec/Arrow tier in `Eiva.Fletcher` | A | 🟦 | BIND-2 | Every PROTO-MAPPING type round-trips through the binding (D-BIND-39, was "Bucket 1 green"); `ErrorTests.EveryHardCaseKeepsItsMessage` | 🟢 |
-| BIND-4 | Pub/sub in `Eiva.Fletcher`: registry, `Publisher`, `Subscriber`, `SchemaArrival`, thunk discipline, error handling | A | 🟦 | BIND-3 | Bucket 3 over `inprocess`; Bucket 4 over `fastdds`/`xrce` by selector; C# arm of `CallerTier`; per-row publish benchmark recorded (D-BIND-37) | 🟢 |
+| BIND-4 | Pub/sub in `Eiva.Fletcher`: registry, `Publisher`, `Subscriber`, `SchemaArrival`, thunk discipline, error handling | A | 🟦 | BIND-3 | Bucket 3 over `inprocess`; Bucket 4 over `fastdds`/`xrce` by selector; C# arm of `CallerTier`; per-row publish benchmark recorded (D-BIND-37) | 🔴 reopened 2026-09-25 (D-BIND-56): bucket 4 never ran over `xrce`; back to 🟢 when the transport lane is green over it, by count |
 | BIND-5 | `SubscriberArrow` batch-first + the copy oracle end-to-end from C# | A | 🔬 | BIND-4 | `pubsub-arrow` cases; copy oracle green with the **C#** producer | ⚪ |
 | BIND-6 | C# backend on the IR: type table + visitor → `<stem>.fletcher.cs` | B | 🟦 | — (GIR) | `CsharpVisitor.*` in `protoc/tests`; no-drift test unchanged | ⚪ |
 | BIND-7 | Arrow view + accessor emitters (`csharp_accessor`) + capstone third arm | B | 🟦 | BIND-6, BIND-3 | `accessor-capstone` C# arm `observed == expected`; `StructArray` windowing fixture at non-zero offset | ⚪ |
@@ -1210,6 +1210,12 @@ subscribe, **so that** I am a full Fletcher client with no protocol SDK on my bu
   which is the mechanism, observed;
   the **C# arm of `CallerTier`** with a total mapping onto the C++ cases; at least
   one case added to the C++ suite (seam §12.1).
+  **Reopened 2026-09-25 (D-BIND-56):** bucket 4 had never run over `xrce` - its
+  row asserted a typed refusal with no Agent, and the close-out re-grade missed
+  it. The transport lane now builds a MicroXRCEAgent from the shared recipe
+  (`integration-tests/cmake/MicroXrceAgent.cmake`), the suite proves it owns it,
+  and `xrce` joins every theory, plus one case across the Agent's bridge to Fast
+  DDS. Met when that lane is green by count.
 - The two mapping traps tested: a key above U+E000 and a supplementary-plane key
   where UTF-16 and UTF-8 orders differ; `Wait(Timeout.InfiniteTimeSpan)` waits.
 - **Per-row publish benchmark** against the C++ generated publisher over

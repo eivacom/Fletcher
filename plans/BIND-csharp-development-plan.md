@@ -676,6 +676,9 @@ record is its `BIND-progress-log.md` entry. **After close, D-BIND-55** reconcile
 `BIND-csharp-public-surface.md` with the shipped API: `IsSchemaless`, an owned
 `SchemaHandle`'s finaliser, `Diagnostics.AbsorbedTotal` and `WaitAsync` (above `Wait`,
 as D-BIND-22 allows) were built, and `BlobHandle` was deferred with a trigger.
+**D-BIND-56 then reopened the item:** bucket 4 had never run over `xrce`. The transport
+lane builds a MicroXRCEAgent from a recipe now shared with the C++ interop lane, the
+suite proves it owns the Agent, and `xrce` joins every theory.
 
 **BIND-5 — Arrow subscriber + oracle end to end.** Managed batching: copy borrowed
 rows, decode N per native call, deliver `RecordBatch`. Dictionary re-folding
