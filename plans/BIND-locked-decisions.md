@@ -1547,3 +1547,38 @@ accessors do, for capstone parity (Q18).
   **Declined:** exposing it in C# now (widens BIND-4 and the frozen surface without a separate
   ruling); deferring it and only correcting the message (keeps a declared-but-unimplemented pair
   in a header whose rule forbids one).
+
+- **D-BIND-53 — BIND-4's bullet 8 is amended to what the binding owns; Fast DDS's silent drop of
+  an oversized row is recorded as a PROVIDER limitation and left to its owner.** *LOCKED BY THE
+  MAINTAINER 2026-09-25,* answering Q2 of `plans/reviews/BIND-4-codereview.md`.
+
+  **WHAT WAS FOUND.** Writing bullet 8's missing test ("bounded-payload overflow surfaces as
+  `FletcherException(PayloadTooLarge)`") showed it cannot hold over any transport a managed
+  caller can reach. `inprocess` ignores `max_payload_bytes` by design. The Fast DDS provider's
+  `Publish` always takes its serialize flow (`sample_writer.hpp`: the loaned flow, which throws
+  `kPayloadTooLarge`, is "kept and unit-tested but not selected"), and on that flow an oversized
+  row is **dropped and logged** — deliberately, pinned by
+  `FastDDSPubSubProviderTest.DataSharingOversizedRowDoesNotThrow`. A 512-byte row through a
+  provider bounded at 128 bytes published with no exception.
+
+  **WHY THAT IS NOT THE BINDING'S TO FIX.** The seam spec makes the overflow mapping normative —
+  a row that does not fit the transport's bound must not degrade into something "that tells a
+  caller nothing it can act on" — and Fast DDS goes further than degrading it. But the provider
+  is `main`'s (#128), its behaviour is a recorded choice with a test pinning it, and changing it
+  from this branch would override that choice without its owner.
+
+  **BULLET 8 NOW READS:** a `PayloadTooLarge` the seam or the shim REPORTS surfaces as
+  `FletcherException(PayloadTooLarge)` — proven from C# by
+  `ErrorTests.ARowThatDoesNotFitAFixedWindowIsPayloadTooLarge` (a real native status, from
+  `fl_encode_row` into a fixed window too small for the row) and natively by c-abi's
+  `Containment.OverflowIsPayloadTooLargeAtEitherOrigin`. The transport half is the provider's.
+
+  **CARRIED FORWARD.** Whether the Fast DDS provider should report an oversized row — through
+  its serialize flow, as it already reports other encoder failures as `kInternal` — is flagged as
+  a separate task against `main`. If it changes, the transport test held out of BIND-4 (a Fast
+  DDS provider bounded at 128 bytes, a 512-byte row, `PayloadTooLarge` expected) goes into
+  `integration-tests/pubsub-transport-conformance` as written.
+
+  **Declined:** changing the provider on this branch (crosses into a component `main` owns);
+  leaving bullet 8 NOT MET until `main` moves (puts BIND-4's closure on another branch's
+  schedule).

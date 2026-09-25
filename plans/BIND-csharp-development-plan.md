@@ -809,6 +809,15 @@ blocking or architectural, **S** = inherited from the seam, **N** = .NET interop
   it does not). Nothing to do now except keep the shim's registry seat open and
   say so in the header. *BIND-1.*
 
+- **B-6 — An oversized row can vanish over Fast DDS.** Found at the BIND-4 review
+  (Q2): the Fast DDS provider's only live publish path drops and logs a row that
+  does not fit the bound instead of reporting `kPayloadTooLarge`, deliberately and
+  test-pinned. A C# caller therefore gets no exception for it over any transport
+  it can reach today. **D-BIND-53 (2026-09-25):** bullet 8 is amended to the
+  binding's half (a reported `PayloadTooLarge` surfaces as one, proven on a real
+  native status), and the provider's behaviour is flagged to `main`'s owner.
+  *Open — owned by the provider, not by BIND.*
+
 ### Inherited from the seam (constraints 1–8 and the two details)
 
 - **S-1 — `Unsubscribe` blocks for the duration of a handler.** Correct and

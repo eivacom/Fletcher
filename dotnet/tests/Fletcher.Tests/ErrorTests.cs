@@ -287,6 +287,47 @@ public sealed class ErrorTests
         Assert.Throws<FletcherFormatException>(() => codec.DecodeBatch(all, batch.Length + 1));
     }
 
+    /// <summary>A row that does not fit a fixed window surfaces as PayloadTooLarge.</summary>
+    /// <remarks>
+    /// <para>
+    /// BIND-4's bullet 8 as amended by D-BIND-53: the binding's half of "bounded
+    /// payload overflow surfaces as FletcherException(PayloadTooLarge)" is that a
+    /// PayloadTooLarge NATIVE REPORTS reaches the caller as one. The status here is
+    /// produced by the shim itself - `fl_encode_row` into a four-byte window with no
+    /// grow callback, the fixed-capacity overflow the seam spec's clause 4 names -
+    /// and read back through the real error tier, not synthesised.
+    /// </para>
+    /// <para>
+    /// Why not over a transport: no managed caller can reach one that reports it
+    /// today. `inprocess` ignores payload bounds, and Fast DDS DROPS an oversized
+    /// row and logs it on its only live publish path, deliberately and pinned by its
+    /// own test (`DataSharingOversizedRowDoesNotThrow`). D-BIND-53 records that as a
+    /// provider limitation and leaves the provider's behaviour to its owner.
+    /// </para>
+    /// <para>
+    /// The exact type is not pinned: an overflow the shim attributes to the codec
+    /// arrives as the <see cref="FletcherFormatException"/> subclass (D-BIND-15),
+    /// which still IS a FletcherException - the status is the claim.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public unsafe void ARowThatDoesNotFitAFixedWindowIsPayloadTooLarge()
+    {
+        RecordBatch batch = CodecFixtures.Scalar();
+        using var codec = new FletcherCodec(batch.Schema);
+        using BoundRows rows = codec.Bind(batch);
+
+        byte* tooSmall = stackalloc byte[4];
+        var window = new FlWriteWindow { Data = (nint)tooSmall, Capacity = 4, Pos = 0, Grow = 0 };
+
+        FlError err = default;
+        int status = NativeMethods.fl_encode_row(rows.Handle, 0, ref window, ref err);
+
+        FletcherException error =
+            Assert.ThrowsAny<FletcherException>(() => Errors.ThrowIfFailed(status, ref err));
+        Assert.Equal(FletcherStatus.PayloadTooLarge, error.Status);
+    }
+
     private static unsafe int CreateProvider(string selector, ref FlError err, out ProviderHandle provider)
     {
         byte[] bytes = System.Text.Encoding.UTF8.GetBytes(selector);

@@ -1187,6 +1187,12 @@ subscribe, **so that** I am a full Fletcher client with no protocol SDK on my bu
   schema-before-data with the schema-less exception, per-writer order, one callback
   at a time with no thread affinity, all three arguments borrowed for the call.
 - Bounded-payload overflow surfaces as `FletcherException(PayloadTooLarge)`.
+  **Amended 2026-09-25 (D-BIND-53):** a `PayloadTooLarge` the seam or the shim
+  REPORTS surfaces as `FletcherException(PayloadTooLarge)` — proven from C# on a
+  real native status. No transport a managed caller can reach reports one today:
+  `inprocess` ignores bounds, and Fast DDS drops and logs an oversized row
+  (deliberate, test-pinned, `main`'s provider). That half is flagged to the
+  provider's owner.
 - Fast DDS **and** XRCE reachable by selector with **no per-transport C# code**.
 - **Bucket 3 over `inprocess`; Bucket 4 over `fastdds` and `xrce`** — again the FILE
   SETS from Part 4 rather than counts, for the reason BIND-3's bullet gives. Bucket

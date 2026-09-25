@@ -317,7 +317,9 @@ exception. The provider documents this as deliberate and pins it
 loaned flow an oversized row throws `kPayloadTooLarge`, on the serialize flow it is **dropped and
 logged**. From C#, a row over the bound can vanish with no exception. The behaviour came from `main`
 (#128), so the choices are an amendment to bullet 8 or a change to the provider; the test is held
-out until that is ruled.
+out until that is ruled. **Ruled: D-BIND-53** (maintainer) — bullet 8 amended to the binding's
+half, proven by `ErrorTests.ARowThatDoesNotFitAFixedWindowIsPayloadTooLarge` on a real native
+status; the provider's drop-and-log recorded as its limitation and flagged to `main`'s owner.
 
 **Not done here, and not claimed:** the six B6 drain mirrors and the two-provider mirror guard
 properties of the NATIVE Subscriber, so falsifying them would take a shim built with the drain
