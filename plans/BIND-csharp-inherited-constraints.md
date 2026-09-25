@@ -90,6 +90,18 @@ must stay pinned.
 path a disposal is on. It must set a thread-local the disposal path reads, and
 the two paths must free different amounts.
 
+**Learned at BIND-4 — read this before binding it again (D-BIND-50, D-BIND-51,
+2026-09-25).** "No invocation begins afterwards" means no delivery *passes the
+gate* afterwards. A binding's own in-flight count increments later, after the
+shim's thunk, so on the carve-out a SIBLING delivery on another thread can sit
+between the gate and that increment: freeing its handle then is a use-after-free,
+and the self-cancel case is safe only because that thread has already counted
+itself. C# defers the free to a second cancel from outside any delivery, which the
+seam makes wait for the drain. And one "am I inside my own thunk" flag is not
+enough: deliveries nest, and §3's refusal is per PROVIDER. C# keeps a per-thread
+stack of delivery frames, each naming its Subscriber and provider — §3 asks the
+provider question of it, this section's carve-out the Subscriber one.
+
 ## 3 — Refuse `Dispose` of a Subscriber from inside a handler, in managed code
 
 **Derives from:** §6 clause 5 as widened

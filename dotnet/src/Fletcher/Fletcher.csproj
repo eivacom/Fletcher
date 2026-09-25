@@ -1,0 +1,42 @@
+<!-- SPDX-License-Identifier: LGPL-3.0-or-later
+     Copyright (C) 2026 The Fletcher Authors
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The package applications reference: rows, the codec tier, the Arrow tier,
+       pub/sub and SubscriberArrow. Namespaces inside it keep the C++ component
+       names (Eiva.Fletcher.PubSub, Eiva.Fletcher.Arrow, ...) so that splitting
+       this into several packages later needs no renames (D-BIND-14'). -->
+  <PropertyGroup>
+    <PackageId>Eiva.Fletcher</PackageId>
+    <RootNamespace>Eiva.Fletcher</RootNamespace>
+    <Description>Fletcher for .NET: Arrow-typed publish/subscribe over one wire format, with the codec running natively.</Description>
+    <PackageTags>fletcher;arrow;pubsub;dds</PackageTags>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- Errors.ReadMessage decodes the shim's message from a byte* by length:
+         the bytes are not NUL-terminated, so the length is authoritative. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Errors.ThrowIfFailed is internal: it takes an FlError, which is an
+         interop type and not part of this package's public surface. -->
+    <InternalsVisibleTo Include="Fletcher.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Fletcher.Interop/Fletcher.Interop.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Pinned exactly, not a floating range: the C Data Interface types this
+         tier hands across the ABI (CArrowArray / CArrowSchema) come from here,
+         and BIND-0 verifies their export/import against this exact version for
+         every type in the wire-format mapping (risk N-9). Bumping it re-runs
+         that verification. -->
+    <PackageReference Include="Apache.Arrow" Version="[23.0.0]" />
+  </ItemGroup>
+
+</Project>

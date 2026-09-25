@@ -1,0 +1,40 @@
+<!-- SPDX-License-Identifier: LGPL-3.0-or-later
+     Copyright (C) 2026 The Fletcher Authors
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The P/Invoke surface over the binding ABI, and the ONLY package in the
+       round that carries native assets: one shim per RID under
+       runtimes/<rid>/native/. Keeping them in one package is what isolates the
+       RID matrix, the packed-size budget and the LGPL relinking question to a
+       single artifact (D-BIND-13). -->
+  <PropertyGroup>
+    <PackageId>Eiva.Fletcher.Interop</PackageId>
+    <RootNamespace>Eiva.Fletcher.Interop</RootNamespace>
+    <Description>P/Invoke surface and native shim for Fletcher. Referenced by Eiva.Fletcher; not intended to be used directly.</Description>
+    <PackageTags>fletcher;arrow;interop;native</PackageTags>
+  </PropertyGroup>
+
+  <!-- BIND-3a: the declarations have arrived. The NATIVE ASSETS still have not -
+       they are packaged in BIND-9 - so this package is not yet installable and
+       runnable from a feed; what a source build produces is an assembly that
+       knows how to find a shim staged beside it. -->
+  <PropertyGroup>
+    <!-- `LibraryImport`'s generated marshalling stubs are unsafe code by
+         construction: they take addresses and pin. This is the only project in
+         the round that needs it, which is the point of keeping the P/Invoke
+         surface in a package of its own. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The shim's surface is internal (it is not a supported API), and the tests
+         drive it directly because BIND-3a's forcing property is about LOADING the
+         shim rather than about anything the managed tier does with it. -->
+    <!-- Eiva.Fletcher is the tier that gives these handles lifetimes and these
+         status numbers exceptions; it is the intended and only consumer. -->
+    <InternalsVisibleTo Include="Fletcher" />
+    <InternalsVisibleTo Include="Fletcher.Tests" />
+  </ItemGroup>
+
+</Project>

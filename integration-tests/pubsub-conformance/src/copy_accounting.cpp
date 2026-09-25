@@ -542,6 +542,49 @@ RoundTrip RunProducerRoundTrip(CopyRunner& runner, const Topic& topic, size_t ro
     return trip;
 }
 
+RoundTrip RunCustomProducerRoundTrip(CopyRunner& runner, const Topic& topic,
+                                     const std::vector<uint8_t>& payload,
+                                     const std::function<ProducedRow(uint8_t*, size_t)>& produce) {
+    RoundTrip trip;
+    Blob retained;
+    DriveRoundTrip(runner, topic, payload, Attachments{}, trip, retained,
+                   [&payload, &trip, &produce](WriteBuffer& buffer) {
+                       const Address base_before = At(buffer.Data());
+                       const size_t pos_before = buffer.Position();
+
+                       buffer.AppendInPlace(
+                           payload.size(), [&](uint8_t* dst, size_t room) -> size_t {
+                               if (room < payload.size()) {
+                                   throw std::logic_error(
+                                       "CopyAccounting: AppendInPlace lent less room than it was "
+                                       "asked for");
+                               }
+                               // The cursor is read BEFORE the producer runs, because afterwards
+                               // it has moved past the span.
+                               const Address cursor = At(buffer.Data()) + buffer.Position();
+                               const ProducedRow produced = produce(dst, room);
+                               // The producer's OWN answer, never the span it was lent.
+                               // Recording `dst` here would make `produced_in_window` true by
+                               // construction and every foreign producer a zero-copy one — a
+                               // tautology wearing a measurement's clothes. `kStaged` reports
+                               // its staging address for exactly this reason.
+                               trip.ledger.produced_at = At(produced.at);
+                               trip.ledger.produced_in_window = At(produced.at) == cursor;
+                               trip.ledger.produced_len = produced.len;
+                               return produced.len;
+                           });
+
+                       if (At(buffer.Data()) != base_before && pos_before > 0) {
+                           ++trip.ledger.refill_moves;
+                           trip.ledger.refill_bytes += pos_before;
+                       }
+                       trip.ledger.encode_base = At(buffer.Data());
+                       trip.ledger.encode_len = buffer.Position();
+                   });
+    ReadRetainedBlob(trip.ledger, retained);
+    return trip;
+}
+
 RoundTrip RunBorrowedAttachmentRoundTrip(const Topic& topic, bool copying_provider) {
     auto provider = std::make_shared<SeamProbeProvider>(copying_provider ? ProbeMode::kStaging
                                                                          : ProbeMode::kZeroCopy);

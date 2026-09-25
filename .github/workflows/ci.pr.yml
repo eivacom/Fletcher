@@ -32,6 +32,8 @@ jobs:
     outputs:
       core: ${{ steps.filter.outputs.core }}
       arrow-bridge: ${{ steps.filter.outputs.arrow-bridge }}
+      c-abi: ${{ steps.filter.outputs.c-abi }}
+      dotnet: ${{ steps.filter.outputs.dotnet }}
       fastdds-pubsub-provider: ${{ steps.filter.outputs.fastdds-pubsub-provider }}
       gateway: ${{ steps.filter.outputs.gateway }}
       gateway-client: ${{ steps.filter.outputs.gateway-client }}
@@ -43,6 +45,8 @@ jobs:
       integration-gateway-e2e: ${{ steps.filter.outputs.integration-gateway-e2e }}
       integration-gateway-fastdds-ts: ${{ steps.filter.outputs.integration-gateway-fastdds-ts }}
       integration-protoc-arrow: ${{ steps.filter.outputs.integration-protoc-arrow }}
+      integration-binding-abi: ${{ steps.filter.outputs.integration-binding-abi }}
+      integration-pubsub-transport: ${{ steps.filter.outputs.integration-pubsub-transport }}
       integration-protoc-coverage: ${{ steps.filter.outputs.integration-protoc-coverage }}
       integration-protoc-gateway-ts: ${{ steps.filter.outputs.integration-protoc-gateway-ts }}
       integration-pubsub-arrow-fastdds: ${{ steps.filter.outputs.integration-pubsub-arrow-fastdds }}
@@ -88,6 +92,34 @@ jobs:
               - '.github/actions/install-cmake/**'
               - '.github/actions/pull-devcontainer-image/**'
               - '.conan-profiles/**'
+              - '.devcontainer/**'
+            c-abi:
+              - 'c-abi/**'
+              - 'core/**'
+              - 'pubsub/**'
+              - 'arrow-bridge/**'
+              - 'fastdds-pubsub-provider/**'
+              - 'xrcedds-pubsub-provider/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.c-abi.yml'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.github/actions/conan-install/**'
+              - '.github/actions/install-cmake/**'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.conan-profiles/**'
+              - '.devcontainer/**'
+            # protoc/tests/golden is not a stray entry: Fletcher.Tests opens a
+            # codec over every .ipc the generator emits, so a changed golden has
+            # to re-run this lane. It is also in ci.dotnet.yml's sparse checkout,
+            # and the two must move together.
+            dotnet:
+              - 'dotnet/**'
+              - 'c-abi/**'
+              - 'protoc/tests/golden/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.dotnet.yml'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.github/actions/pull-devcontainer-image/**'
               - '.devcontainer/**'
             fastdds-pubsub-provider:
               - 'fastdds-pubsub-provider/**'
@@ -164,6 +196,7 @@ jobs:
               - 'fastdds-pubsub-provider/**'
               - 'xrcedds-pubsub-provider/**'
               - 'integration-tests/fastdds-xrce-interop/**'
+              - 'integration-tests/cmake/**'
               - '.github/workflows/ci.pr.yml'
               - '.github/workflows/ci.integration-test.fastdds-xrce-interop.yml'
               - '.github/actions/pull-devcontainer-image/**'
@@ -193,6 +226,40 @@ jobs:
               - 'integration-tests/gateway-fastdds-ts/**'
               - '.github/workflows/ci.pr.yml'
               - '.github/workflows/ci.integration-test.gateway-fastdds-ts.yml'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.conan-profiles/**'
+              - '.devcontainer/**'
+            integration-binding-abi:
+              - 'core/**'
+              - 'pubsub/**'
+              - 'arrow-bridge/**'
+              - 'fastdds-pubsub-provider/**'
+              - 'xrcedds-pubsub-provider/**'
+              - 'c-abi/**'
+              - 'dotnet/**'
+              - 'integration-tests/binding-abi-conformance/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.integration-test.binding-abi-conformance.yml'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.conan-profiles/**'
+              - '.devcontainer/**'
+            # BIND-4d-iii. The provider components are in the list because the shim
+            # statically links the transports this lane selects: a change to one of
+            # them changes what `fastdds` or `xrce` resolves to.
+            integration-pubsub-transport:
+              - 'core/**'
+              - 'pubsub/**'
+              - 'arrow-bridge/**'
+              - 'fastdds-pubsub-provider/**'
+              - 'xrcedds-pubsub-provider/**'
+              - 'c-abi/**'
+              - 'dotnet/**'
+              - 'integration-tests/pubsub-transport-conformance/**'
+              - 'integration-tests/cmake/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.integration-test.pubsub-transport-conformance.yml'
               - '.github/actions/pull-devcontainer-image/**'
               - '.github/workflows/ci.setup-devcontainer-image.yml'
               - '.conan-profiles/**'
@@ -252,6 +319,7 @@ jobs:
               - 'pubsub/**'
               - 'fastdds-pubsub-provider/**'
               - 'xrcedds-pubsub-provider/**'
+              - 'c-abi/**'
               - 'integration-tests/pubsub-conformance/**'
               - '.github/workflows/ci.pr.yml'
               - '.github/workflows/ci.integration-test.pubsub-conformance.yml'
@@ -323,6 +391,26 @@ jobs:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
 
+  # The binding ABI shim: the one SHARED library in the tree, statically linking
+  # the whole eProsima chain. It runs from BIND-0 on an ABI that exports a single
+  # function, so the Linux signal on that link is standing before there is any
+  # real code to break it (seam §12.4).
+  c-abi:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.c-abi == 'true' }}
+    uses: ./.github/workflows/ci.c-abi.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
+  dotnet:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.dotnet == 'true' }}
+    uses: ./.github/workflows/ci.dotnet.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
   pubsub:
     needs: [detect-changes, setup-devcontainer]
     if: ${{ needs.detect-changes.outputs.pubsub == 'true' }}
@@ -379,13 +467,17 @@ jobs:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
 
-  # format-check-cpp, format-check-ts, license-headers, and action-lint
-  # are standalone workflows that trigger directly on `pull_request` with
-  # their own path filters (.github/workflows/{format-check-cpp,
-  # format-check-ts,license-headers,action-lint}.yml). They are not
-  # invoked from ci.pr.yml and therefore aren't part of the pr_gate
-  # aggregation — configure them as separate required status checks on
-  # the branch protection rule if needed.
+  # format-check-cpp, format-check-ts, format-check-cs, license-headers, and
+  # action-lint are standalone workflows that trigger directly on
+  # `pull_request` with their own path filters
+  # (.github/workflows/ci.{format-check-cpp,format-check-ts,format-check-cs,
+  # license-headers,action-lint}.yml). They are not invoked from ci.pr.yml and
+  # therefore aren't part of the pr_gate aggregation — configure them as
+  # separate required status checks on the branch protection rule if needed.
+  #
+  # format-check-cs joined that list at BIND-0 and this inventory did not say so
+  # until Copilot's review of #129 pointed at the gap from the other end. EVERY
+  # format lane is standalone; the C# one is not an omission from the gate.
 
   # ── Stage 2 (continued): integration tests ───────────────────────────────────
   #
@@ -414,6 +506,22 @@ jobs:
     needs: [detect-changes, setup-devcontainer]
     if: ${{ needs.detect-changes.outputs.integration-gateway-fastdds-ts == 'true' }}
     uses: ./.github/workflows/ci.integration-test.gateway-fastdds-ts.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
+  integration-test-binding-abi-conformance:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.integration-binding-abi == 'true' }}
+    uses: ./.github/workflows/ci.integration-test.binding-abi-conformance.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
+  integration-test-pubsub-transport-conformance:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.integration-pubsub-transport == 'true' }}
+    uses: ./.github/workflows/ci.integration-test.pubsub-transport-conformance.yml
     with:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
@@ -493,6 +601,8 @@ jobs:
       - setup-devcontainer
       - core
       - arrow-bridge
+      - c-abi
+      - dotnet
       - pubsub
       - pubsub-arrow
       - protoc
@@ -500,7 +610,9 @@ jobs:
       - fastdds-pubsub-provider
       - xrcedds-pubsub-provider
       - gateway-client
+      - integration-test-binding-abi-conformance
       - integration-test-fastdds-xrce-interop
+      - integration-test-pubsub-transport-conformance
       - integration-test-gateway-end-to-end
       - integration-test-gateway-fastdds-ts
       - integration-test-protoc-arrow-bridge
@@ -526,6 +638,8 @@ jobs:
             ${{ needs.setup-devcontainer.result }},
             ${{ needs.core.result }},
             ${{ needs.arrow-bridge.result }},
+            ${{ needs.c-abi.result }},
+            ${{ needs.dotnet.result }},
             ${{ needs.pubsub.result }},
             ${{ needs.pubsub-arrow.result }},
             ${{ needs.protoc.result }},
@@ -533,6 +647,7 @@ jobs:
             ${{ needs.fastdds-pubsub-provider.result }},
             ${{ needs.xrcedds-pubsub-provider.result }},
             ${{ needs.gateway-client.result }},
+            ${{ needs.integration-test-binding-abi-conformance.result }},
             ${{ needs.integration-test-fastdds-xrce-interop.result }},
             ${{ needs.integration-test-gateway-end-to-end.result }},
             ${{ needs.integration-test-gateway-fastdds-ts.result }},
@@ -541,6 +656,7 @@ jobs:
             ${{ needs.integration-test-protoc-gateway-client-ts.result }},
             ${{ needs.integration-test-pubsub-arrow-fastdds.result }},
             ${{ needs.integration-test-pubsub-conformance.result }},
+            ${{ needs.integration-test-pubsub-transport-conformance.result }},
             ${{ needs.integration-test-protoc-gen-fletcher-npm.result }},
             ${{ needs.integration-test-protoc-gen-fletcher-rust.result }},
             ${{ needs.integration-test-protoc-plugin-cli.result }}

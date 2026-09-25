@@ -338,6 +338,11 @@ TEST(FletcherSamplePubSubTypeTest, ABufferTooSmallForAnEmptyRowIsRefusedQuietly)
 
     EXPECT_FALSE(type.serialize(&publishing.data, payload, kXcdr1));
     EXPECT_EQ(payload.length, 0u);
+    // Quiet means quiet: not reported as an oversized ROW, because no row was ever written - the
+    // buffer could not hold an empty one. (Unreachable from Publish: its pool slots are sized to
+    // the bound plus framing.)
+    EXPECT_FALSE(publishing.data.serialize_overflow);
+    EXPECT_TRUE(publishing.data.serialize_error.empty());
 }
 
 TEST(FletcherSamplePubSubTypeTest, AnOversizedRowFailsAndEmptiesThePayload) {
@@ -348,6 +353,10 @@ TEST(FletcherSamplePubSubTypeTest, AnOversizedRowFailsAndEmptiesThePayload) {
 
     EXPECT_FALSE(type.serialize(&publishing.data, payload, kXcdr1));
     EXPECT_EQ(payload.length, 0u);
+    // RECORDED as an overflow, so Publish reports kPayloadTooLarge rather than dropping it
+    // silently.
+    EXPECT_TRUE(publishing.data.serialize_overflow);
+    EXPECT_FALSE(publishing.data.serialize_error.empty());
 }
 
 // The exact-fit edge ABufferTooSmallForAnEmptyRowIsRefusedQuietly's guard leaves untested.
@@ -365,6 +374,7 @@ TEST(FletcherSamplePubSubTypeTest, ARowOfExactlyTheAvailableCapacitySerializesAn
     SerializedPayload_t payload(type.max_serialized_type_size);
 
     ASSERT_TRUE(type.serialize(&publishing.data, payload, kXcdr1));
+    EXPECT_FALSE(publishing.data.serialize_overflow) << "an exact fit is not an overflow";
 
     ReceivedData received;
     ASSERT_TRUE(type.deserialize(payload, &received));
@@ -373,9 +383,10 @@ TEST(FletcherSamplePubSubTypeTest, ARowOfExactlyTheAvailableCapacitySerializesAn
 }
 
 // The other edge: one byte more than the exact fit above cannot fit `capacity` at all, so
-// EncodeEnvelopeBody's overflow throws inside serialize()'s try block and is turned into a quiet
-// `false` (the "capacity outcome of a bounded type" catch(std::overflow_error) arm), the same
-// refusal AnOversizedRowFailsAndEmptiesThePayload pins for a row far past the bound.
+// EncodeEnvelopeBody's overflow throws inside serialize()'s try block and is turned into a
+// `false` recorded as an overflow (the "capacity outcome of a bounded type"
+// catch(std::overflow_error) arm), the same refusal AnOversizedRowFailsAndEmptiesThePayload pins
+// for a row far past the bound.
 TEST(FletcherSamplePubSubTypeTest,
      ARowOneByteOverTheAvailableCapacityIsRefusedAndEmptiesThePayload) {
     FletcherSamplePubSubType type(kTestPayloadBytes);
@@ -385,6 +396,7 @@ TEST(FletcherSamplePubSubTypeTest,
 
     EXPECT_FALSE(type.serialize(&publishing.data, payload, kXcdr1));
     EXPECT_EQ(payload.length, 0u);
+    EXPECT_TRUE(publishing.data.serialize_overflow);
 }
 
 // The property both publish flows rest on: whichever wrote the sample, a reader cannot tell.

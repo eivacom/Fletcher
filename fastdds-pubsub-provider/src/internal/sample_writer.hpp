@@ -37,7 +37,8 @@ inline void WriteSample(eprosima::fastdds::dds::DataWriter* writer,
     PublishData transport;
     transport.encoder = &encoder;
     transport.attachments = &attachments;
-    // An oversized row fails under write() rather than in front of it, so it cannot throw here.
+    // An oversized row fails under write() rather than in front of it: serialize() records it and
+    // it is thrown below, once write() has returned.
     const eprosima::fastdds::dds::ReturnCode_t rc = writer->write(&transport);
 
     // write() serializes into the history before it returns in EVERY publish mode
@@ -49,17 +50,19 @@ inline void WriteSample(eprosima::fastdds::dds::DataWriter* writer,
     // diagnostic, not rc, is the reliable signal that THIS row failed to encode. Checked first
     // so the caller gets the cause rather than a bare return code.
     if (!transport.serialize_error.empty()) {
-        // kInternal, NOT kTransportFailure: the only thing recorded here is the caller's encoder
-        // throwing, and the transport is blameless. A binding that retries kTransportFailure must
-        // not retry it.
+        // Two causes, reported apart, and neither is kTransportFailure - the transport is
+        // blameless, and a binding that retries kTransportFailure must not retry these.
         //
-        // The one asymmetry left is deliberate and test-pinned: an OVERSIZED row throws
-        // kPayloadTooLarge on the loaned flow (which encodes in front of write()) and is
-        // dropped and logged here (see serialize()'s overflow catch and
-        // FastDDSPubSubProviderTest.DataSharingOversizedRowDoesNotThrow).
-        throw PubSubError(PubSubStatus::kInternal, "FastDDS: failed to publish to '" +
-                                                       writer->get_topic()->get_name() +
-                                                       "': " + transport.serialize_error);
+        //   * The row did not fit the bound -> kPayloadTooLarge, the status the seam spec's
+        //     normative overflow mapping names, and the one the loaned flow already surfaces for
+        //     the same row (it encodes in front of write() and lets std::overflow_error escape).
+        //     Both flows now tell the caller the same thing.
+        //   * The caller's encoder threw -> kInternal, carrying its message.
+        const PubSubStatus status =
+            transport.serialize_overflow ? PubSubStatus::kPayloadTooLarge : PubSubStatus::kInternal;
+        throw PubSubError(status, "FastDDS: failed to publish to '" +
+                                      writer->get_topic()->get_name() +
+                                      "': " + transport.serialize_error);
     }
     if (rc != eprosima::fastdds::dds::RETCODE_OK) {
         EPROSIMA_LOG_ERROR(FLETCHER_PUBLICATION, "writer on '" << writer->get_topic()->get_name()

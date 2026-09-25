@@ -1,0 +1,1239 @@
+# BIND-C# — Development Plan (proposal for review, 2026-09-08)
+
+**Status: RECORD of the 2026-09-08 re-plan.** All nineteen questions were ruled on
+2026-09-11 and folded into [BIND-csharp-bindings.md](BIND-csharp-bindings.md) (the
+tracker, again the single source) and [BIND-locked-decisions.md](BIND-locked-decisions.md)
+(D-BIND-1 … D-BIND-27). This file is kept for §1 (the re-verification against `main`),
+§3.2 (the codec surface), §3.5 (error handling), §6 (the full risk register) and the
+files-to-touch note under BIND-2, all of which the tracker cites rather than repeats.
+Originally: *proposal, not a tracker.* Written at `main` = `6c541e9` (PR #126 merged,
+round PDA-DEC closed; re-checked at `0a56829` on 2026-09-10, where #127 is
+packaging-only and moves no premise, §1 row 7). It re-verifies the premises of the five BIND documents of
+2026-08-31 against the tree as it now stands, folds in
+[BIND-csharp-inherited-constraints.md](BIND-csharp-inherited-constraints.md)
+(2026-09-07), and proposes the item breakdown, sequencing, decisions and risk
+register for the round. Nothing here is locked until the maintainer says so; where
+this document disagrees with an existing BIND file, the disagreement is stated as a
+**proposed change**, not silently applied.
+
+Read in this order: §1 (what changed and why the plan must move), §2 (the proposed
+decision deltas), §4 (the work breakdown), §6 (potential issues), §7 (what needs
+your yes/no before kickoff).
+
+Oracles that win on any conflict, unchanged:
+[docs/pubsub-interface-spec.md](../docs/pubsub-interface-spec.md) (the seam,
+**frozen**), [GIR-locked-decisions.md](GIR-locked-decisions.md),
+[docs/wire-format-specification.md](../docs/wire-format-specification.md),
+[docs/recordbatch-accessor-spec.md](../docs/recordbatch-accessor-spec.md).
+Existing round documents this proposal amends:
+[BIND-csharp-bindings.md](BIND-csharp-bindings.md),
+[BIND-locked-decisions.md](BIND-locked-decisions.md),
+[BIND-native-transport.md](BIND-native-transport.md),
+[BIND-architecture-diagrams.md](BIND-architecture-diagrams.md).
+
+---
+
+## §1 — What changed between 2026-08-31 and now
+
+The plan was written against an unmerged `feature/protocol-driver-abi` branch and a
+round called "PDA" that has since been split in two. Six facts moved, and four of
+them change the plan's shape.
+
+| # | Then (plan, 2026-08-31) | Now (`main` 6c541e9, 2026-09-08) | Effect on BIND |
+|---|---|---|---|
+| 1 | Stage D (pub/sub) **gated on PDA merging**; `FastDDSProviderOptions` still present | **PDA-DEC merged as #126.** `ProviderRegistry` (`Create`/`Register`/`SetPathResolver`), `ProviderConfig {max_payload_bytes, domain_id, document}`, InProcess promoted to a built-in in `pubsub/`, Fast DDS on an XML document, XRCE on `key=value`, `FastDDSProviderOptions` **retired** | **The Stage D gate is discharged.** Everything BIND's pub/sub item needed is on `main`. PDA-ABI (loadable drivers) has **not started** and BIND does not need it: a path selector returns `kNotSupported` until PDA-ABI installs a resolver, which is additive (§4 clause 2). See D-BIND-3′. |
+| 2 | "PDA-L5: share the buffer struct, blob retain/release and error conventions **verbatim** with the driver ABI; bindings use driver-ABI **role 3**" | Seam §1: **no shared C header between the two ABIs**; PDA-ABI decision 2 says the same from its side. The driver ABI has **two** roles, not three, and selection is seam surface. Owner ruling 2026-09-05 (ruling 46): **both sides of the driver ABI are C++**. | D-BIND-2 is stale in wording. BIND derives its C types from the **seam spec**, not from PDA. The binding ABI stays pure C for a different reason: .NET P/Invoke cannot consume a C++ ABI. See D-BIND-2′. |
+| 3 | The delivery callback contract "changed three times in three days" | **Frozen** (§12.1). Re-entrancy is refused on all four methods (`kReentrantCall = 10`), callbacks are contained and counted, `Unsubscribe` blocks with one carve-out, `Subscriber` destruction from a handler terminates by design. | The contract stopped moving, which was the real gate. The constraints file lists what that contract obliges a binding to do; §2 and §6 here turn each into a mechanism. |
+| 4 | `AppendInPlace` did not exist; a binding cost one whole-row copy | PDA-DEC-A1 added `WriteBuffer::AppendInPlace`; the C form is `size_t (*writer)(void* ctx, uint8_t* dst, size_t room)`; **no production caller yet** | Under D-BIND-1 the **native codec** writes into the window with ordinary appends, so the common C# publish path never needs `AppendInPlace`. It is needed only for a raw-bytes publish entry point. See §3.3. |
+| 5 | Test matrix: 177/178 non-generator cases | Counts moved substantially (Fast DDS 20 → 87 cases across three files; new `pubsub-conformance` with 82 cases incl. `CallerTier`) | Re-baselined in §5. The 18786 reading still needs the Feature owner. |
+| 6 | Version series `0.5.x` "confirm at kickoff" | All components at `0.5.0-alpha`; `xrcedds-pubsub-provider` at `0.5.1-alpha` | Confirmed: .NET packages join **0.5.x**. |
+| 7 | *(added 2026-09-10)* Release archives carried only the executable; the LGPL notice for the NuGet was an open "how" under P-1 | **#127** (`0a56829`): the gateway archives now ship `LICENSE` + `THIRD-PARTY-LICENSES.txt`, the latter **derived from the resolved Conan graph** by `gateway/deployers/third_party_licenses.py`, staged on every CI run and verified inside the finished archive | Touches no header, seam, codec or generator: no premise or decision moves. **BIND-9 reuses the deployer** for the native shim, whose graph is the same stack (Fast DDS, Fast CDR, foonathan_memory, tinyxml2, Micro XRCE-DDS, microcdr, nanoarrow), so the "notice" half of P-1 has a mechanism. The gateway is also an in-tree precedent for **statically linking Fast DDS and shipping it** (B-3, Q3). |
+
+One more fact worth stating because the plan assumes the opposite: **there is no
+descriptor-driven, nanoarrow-only codec in the tree to wrap.** The two encoders
+that exist are `arrow-bridge`'s `Codec` (Arrow C++ scalars, `<arrow/api.h>`) and the
+generated C++ `WriteTo`/`ReadFrom` over `positional_io.hpp`. GIR-8 left the
+descriptor-driven codec as BIND-2 *scope*, not as a deliverable. So D-BIND-1 ("wrap
+the codec, never reimplement") is implementable only as **"build one schema-driven
+driver of `positional_io` in C++ over the Arrow C Data Interface, and wrap that."**
+It is the round's largest C++ item and its critical path (§4, BIND-2).
+
+---
+
+## §2 — Proposed changes to the locked decisions
+
+Marked ′ where an existing decision is amended; new numbers continue from D-BIND-16.
+
+- **D-BIND-1 — unchanged.** One codec. Sharpened: the one codec is `positional_io`,
+  and BIND-2 adds a **schema-driven C++ driver of it** over nanoarrow's
+  `ArrowArrayView` / array builders. No wire byte is written by managed code
+  except in `Eiva.Fletcher.GatewayClient` (the standing exception).
+
+- **D-BIND-1a′ — value transfer is the Arrow C Data Interface. LOCKED 2026-09-11 (Q1), together with D-BIND-23.**
+  Rider (i) accepted: `Apache.Arrow` is a base dependency of every native-backed
+  managed package; with that, collapse `Core`+`Arrow` (see D-BIND-14′). Rider (ii)
+  accepted: the native artifact links **nanoarrow only**; a CI packed-size budget
+  guards it. Descriptors are opened from an **exported `ArrowSchema`** (C Data
+  Interface), not from IPC bytes, because nanoarrow IPC rejects dictionary types
+  (the DICT halt) and the C Data path does not have that ceiling.
+
+- **D-BIND-2′ — the binding ABI is derived from the seam spec, and from nothing
+  else.** Replaces the "share PDA vocabulary verbatim / role 3" wording. The C
+  spellings of `Blob` (owner handle + retain/release), `Attachments` (positional
+  `size`/`KeyAt`/`ValueAt`), `SharedSchema` ({owner, `const ArrowSchema*`}),
+  `SchemaArrival` (`wait(arrival, timeout_ms, out)`), the write-buffer window and
+  writer, topic segments (pointer+length pairs), selector and document
+  (pointer+length, length authoritative) and the status enum (numbers from
+  `core/README.md`'s published table) are each **constructed from the C++ value**
+  on BIND's side, per §3.2's "conceptual, never a memory image". No header is shared
+  with PDA-ABI, and PDA-ABI's `fletcher_status` is never seen by C#. The binding ABI
+  is pure C because P/Invoke requires it, not because the driver ABI is.
+
+- **D-BIND-3′ — the pub/sub stage is gated on nothing.** BIND wraps
+  `ProviderRegistry::Create(selector, config)`; built-ins are registered inside the
+  native shim; path selectors are forwarded and today refuse with `kNotSupported`
+  exactly as the C++ registry does. When PDA-ABI lands, the shim calls
+  `SetPathResolver` and nothing above it changes. **Sub-decision, LOCKED 2026-09-11
+  (Q3): the shim registers all three.** Recommended and ruled: **all three** (`inprocess`,
+  `fastdds`, `xrce`), statically linked, because 18689 requires the native
+  protocols and PDA-ABI-5/6 have no start date. Cost: the native asset carries
+  Fast DDS and Micro XRCE-DDS per RID. Alternative: `inprocess` only, with Fast
+  DDS and XRCE reachable from C# only once PDA-ABI-5/6 ship drivers; smallest
+  package, but C# has no real transport until a round BIND does not control.
+
+- **D-BIND-5..9, D-BIND-11, D-BIND-13, D-BIND-15, D-BIND-16 — unchanged.**
+
+- **D-BIND-12′ — test matrix re-baselined (§5); adds a second exclusion class. LOCKED 2026-09-11 (Q10).**
+  Besides "no managed analogue" (`test_owned_schema`), a case that tests a
+  provider's *internal* C++ type (`test_fletcher_sample_pub_sub_type`, the Fast DDS
+  `TypeSupport`) is "internal to the provider implementation" and is proposed for
+  exclusion, documented. Both readings still need the Feature owner.
+
+- **D-BIND-14′ — three managed packages, not six. LOCKED 2026-09-11 (Q2).** With `Apache.Arrow`
+  a base dependency there is no dependency-free tier to protect, and the owner's
+  2026-09-05 process ruling ("ceremony is expensive; fewer, larger items") applies
+  to packages as much as to items. Proposed:
+  `Eiva.Fletcher.Interop` (native assets + raw P/Invoke, the **only** package with
+  `runtimes/`), `Eiva.Fletcher` (rows, codec wrapper, Arrow tier, pub/sub,
+  PubSubArrow), `Eiva.Fletcher.GatewayClient` (managed, no native). Namespaces
+  inside `Eiva.Fletcher` keep the C++ component names (`Eiva.Fletcher.PubSub`,
+  `Eiva.Fletcher.Arrow`, …) so the split can be re-introduced later without
+  renaming types. Alternative: keep the six-package layout of the plan.
+
+- **D-BIND-17 (new, LOCKED 2026-09-11 with Q11) — exactly one copy of Fletcher per process, and a check.**
+  From constraint 1 / `delivery_frame.hpp` P1. The native shim is **one shared
+  library** that statically links every Fletcher component it uses; no Fletcher
+  code is linked into any other binary the package ships. At load the shim
+  enumerates loaded modules (`EnumProcessModules` / `dl_iterate_phdr`) for a second
+  export of its marker symbol and **refuses to initialise** if found, naming both
+  modules. **Stated limit:** a C++ host that statically linked Fletcher without
+  the marker is undetectable; that deployment is a **STOP-AND-ASK** under P1
+  before it is attempted, and the .NET README says so. Two shims (two versions of
+  `Eiva.Fletcher.Interop` in one process) is the detectable case and the likely
+  one.
+
+- **D-BIND-18 (new, LOCKED 2026-09-11 with Q4) — the delivery thunk owns the lifetime bookkeeping.** From
+  constraints 2, 3, 4, 5, 8. Each managed subscription carries an atomic in-flight
+  counter maintained by the thunk (increment on entry, decrement on exit) and a
+  `retired` flag set by `Unsubscribe`. Because the seam guarantees no invocation
+  *begins* after `Unsubscribe` returns, **whoever brings the counter to zero after
+  retirement frees the `GCHandle`**, on either path; the two paths differ only in
+  whether `Unsubscribe` itself is that party. A thread-static "inside my own thunk"
+  marker is still needed for: refusing `Dispose` of a `Subscriber` from a handler
+  with a managed exception (constraint 3); refusing a synchronous `Subscribe` to
+  a new topic from a handler with a managed exception and pointing at the async
+  helper (constraint 4, see §6 S-4 for why not silent queueing); and the thunk
+  catching every managed exception, counting it in a per-instance
+  `AbsorbedCallbackFailures` and raising an optional `HandlerFaulted` event
+  (constraint 8), since native's count cannot see a managed catch.
+
+- **D-BIND-19 (new, LOCKED 2026-09-11, widened) — error handling across the boundary:
+  five rules.** Detail and code in §3.5. (1) One numbered error type per side, and
+  the number **and** the message always cross: `PubSubError(status, message)` ↔
+  `FletcherException { Status, Message }`, carried by a caller-owned `fl_error
+  {status, origin, message, message_len}` out-parameter, never a global slot;
+  `origin` (seam · codec · callback) records which C++ catch arm fired and is
+  BIND's own field, not a change to the append-only numbers. (2) No exception
+  crosses in either direction, and each direction has exactly one containment
+  site: `Translate()` in the shim, the thunk prologue in the wrapper. (3) A managed
+  exception that caused a native failure is rethrown **as itself**
+  (`ExceptionDispatchInfo`), never wrapped. (4) Expected outcomes are values
+  (`kPending`, `kSubscriptionEnded`, `Ok` + null); refusals the caller can fix are
+  .NET argument exceptions thrown in managed code before the call, with native
+  re-checking the same rules. (5) Absorbed handler failures are counted **and**
+  raised as a `HandlerFaulted` event, never silent and never escaping. The
+  original writer-frame rule from constraints 6 and 7 is rule 3's first instance:
+  `AppendInPlace` is reachable from C# **only** through `PublishRaw` and the
+  `RowWriter` overload; the thunk captures, returns 0, the adapter throws
+  `PubSubError(kInternal, …)` so nothing commits, and the wrapper rethrows the
+  original. The `SIZE_MAX` route is not used. A second containment site, a wrapped
+  user exception, or a per-thread error slot → STOP-AND-ASK.
+
+- **D-BIND-20 (new, LOCKED 2026-09-11) — the two mapping details are code, not comments.**
+  `Timeout.Infinite` / `Timeout.InfiniteTimeSpan` (−1) map to `INT64_MAX` before
+  the call; any other negative is an `ArgumentOutOfRangeException` raised in
+  managed code. Every bound is **bytes**: topic segments are UTF-8-encoded and
+  measured before crossing (246-byte joined cap), attachment keys are never sorted
+  in C# and are read in the sequence Fletcher publishes; `string.Length` is never
+  compared to a seam bound.
+
+- **D-BIND-21 (new, LOCKED 2026-09-11 with Q7) — toolchain.** .NET **10 LTS** SDK pinned in the devcontainer
+  and `global.json` (the plan said 8.0, whose support ends 2026-11); library TFMs
+  `net8.0;net10.0` unless the Feature owner names the consumers' TFM. `Apache.Arrow`
+  pinned to a version whose `Apache.Arrow.C` namespace exports and imports
+  `CArrowArray`/`CArrowSchema` (verify at BIND-0; do not assume).
+
+- **D-BIND-22 (new, LOCKED 2026-09-11) — nothing crossing the binding ABI is a `std::shared_future`.**
+  A future has no C form, which is why `SchemaArrival` exists (§3.4, ruling
+  2026-09-01). A future re-entering the seam is a stop-and-ask against the spec,
+  raised by BIND and never bridged by it.
+
+- **D-BIND-23 (new, LOCKED 2026-09-11 with Q1) — the encoder behind the ABI takes a bound
+  array, a row index and a destination; arrays are borrowed, never consumed; no
+  encode entry point returns bytes.** The three-step surface of §3.2 (`open` once per
+  schema, `bind` once per batch, `publish_row`/`publish_rows`/`encode_row` per row or
+  range). A returned buffer is the staging copy §8.1's negative control exists to
+  catch; a consumed array forces one export per row; per-value C arguments are the
+  row-builder ABI D-BIND-1a rejected. Drifting into any of the three → STOP-AND-ASK.
+
+---
+
+## §3 — Architecture as proposed
+
+### 3.1 Layers
+
+```
+ C# application
+   │  generated <stem>.fletcher.cs (POCO, Schema, ToArrow/FromArrow, typed Publisher/Subscriber)
+   ▼
+ Eiva.Fletcher            (managed)  Descriptor · RowCodec · Publisher · Subscriber · SubscriberArrow
+   │                                 ProviderRegistry · ProviderConfig · SchemaArrival · Attachments
+   ▼                                 typed FletcherException(status, message)
+ Eiva.Fletcher.Interop    (managed)  P/Invoke, SafeHandles, [UnmanagedCallersOnly] thunks,
+   │                                 GCHandle contexts, C Data Interface export/import
+   ▼  ── pure C, versioned: fletcher/abi/binding.h ─────────────────────────────────────
+ fletcher_binding.{dll,so}  (native shim, C++ inside, C outside; the ONLY Fletcher copy)
+   ├─ codec surface     fl_codec_open(ArrowSchema*) · fl_rows_bind(codec, ArrowArray*)  [array BORROWED]
+   │                    fl_publisher_publish_row(s)(rows, i) · fl_encode_row(rows, i, window)
+   │                    fl_decode_rows(codec, bytes, n) → ArrowArray   [nanoarrow-only, on positional_io]
+   ├─ pub/sub surface   registry_create(selector, config) · publisher_* · subscriber_*
+   │                    schema_arrival_wait · blob retain/release · attachments positional
+   └─ statically links  fletcher-core · fletcher-pubsub (+InProcess) · fastdds-provider · xrce-provider
+                        · nanoarrow    (no Arrow C++)
+   ▼
+ the seam (PubSubProvider) ── built-ins today ── PDA-ABI drivers later via SetPathResolver
+```
+
+`Eiva.Fletcher.GatewayClient` sits beside this stack with no native dependency,
+exactly as the plan has it.
+
+### 3.2 The codec surface (BIND-2), stated precisely (refined 2026-09-11)
+
+**The principle.** Today's `Codec::EncodeRow(const ArrowRow&) -> EncodedRow` has two
+properties that rule it out as the shape behind the ABI, and only one is about C#.
+Its **return type is the copy**: a function that returns a vector has written the row
+somewhere other than the transport window, and the caller then `Append`s it, which is
+exactly the whole-row copy the oracle's `StagingProducerIsCaught` control catches.
+Its **parameter is unbindable and slow**: a vector of `shared_ptr<arrow::Scalar>` is
+one heap object per field per row, cannot cross P/Invoke, and is re-validated on
+every call. So the encoder behind the ABI takes a **destination** it does not own, a
+**bound array view** plus a **row index** instead of scalars, and hoists validation
+out of the per-row call. Three steps, because each has a different cost and lifetime:
+
+```c
+/* fletcher/abi/binding.h — encode side; fl_ prefix as in schema_arrival.hpp's sketch */
+
+typedef struct fl_codec fl_codec;   /* a schema-bound field plan; opened once per topic */
+typedef struct fl_rows  fl_rows;    /* one ArrowArray bound to a codec; validated once, BORROWED */
+
+/* 1. OPEN — once per schema. Validates against the wire mapping (wire-format spec
+   §"Proto to Arrow Type Mapping"), refuses unsupported types (dictionary, D-BIND-8)
+   naming the field, precomputes the field plan. `schema` is BORROWED and deep-copied
+   (OwnedSchema::DeepCopy): the caller may release its export as soon as this returns. */
+fl_status fl_codec_open(const struct ArrowSchema* schema, fl_codec** out, fl_error* err);
+void      fl_codec_close(fl_codec*);
+
+/* 2. BIND — once per batch. Checks the array is a struct of this codec's schema and
+   builds the ArrowArrayView (nanoarrow validates every buffer HERE, not per row).
+   `array` is BORROWED: the codec never calls array->release. The caller keeps the
+   export alive until fl_rows_unbind and releases it afterwards. */
+fl_status fl_rows_bind(const fl_codec*, const struct ArrowArray* array, fl_rows** out, fl_error* err);
+void      fl_rows_unbind(fl_rows*);
+
+/* 3a. PUBLISH row i — the zero-copy path. The codec runs INSIDE Publish's RowEncoder
+   and writes straight into the provider's window; no intermediate bytes exist. */
+fl_status fl_publisher_publish_row(fl_publisher*, fl_topic topic, const fl_rows* rows,
+                                   int64_t i, const fl_attachments* atts, fl_error* err);
+
+/* 3b. PUBLISH rows [first, first+count) — N samples, one crossing.
+   atts_per_row is NULL (no attachments) or one entry per row. */
+fl_status fl_publisher_publish_rows(fl_publisher*, fl_topic topic, const fl_rows* rows,
+                                    int64_t first, int64_t count,
+                                    const fl_attachments* const* atts_per_row, fl_error* err);
+
+/* 3c. ENCODE row i into a caller-supplied window — bytes in hand (WAL, tests, relay).
+   `sink` is the seam's own C form of WriteBuffer, {ctx, data, capacity, pos, grow}:
+   one crossing per REFILL, never per append. */
+fl_status fl_encode_row(const fl_rows* rows, int64_t i, fl_write_window* sink, fl_error* err);
+
+/* DECODE — the mirror. Produces a fresh struct array the caller imports and OWNS; its
+   release frees the nanoarrow buffers. Row bytes are borrowed and never copied.
+   Touches no provider, so it is callable from inside the delivery thunk. */
+fl_status fl_decode_rows(const fl_codec*, const uint8_t* bytes, size_t len, int64_t count,
+                         struct ArrowArray* out, fl_error* err);
+```
+
+Errors follow §5.1: a returned status plus an `fl_error` out-parameter carrying number
+and message bytes, never a global slot.
+
+**The C++ behind it**, which is what BIND-2 writes:
+
+```cpp
+class NanoarrowCodec {
+ public:
+  explicit NanoarrowCodec(const ArrowSchema& schema);        // deep copy + FieldPlan, once
+  BoundRows Bind(const ArrowArray& array) const;             // ArrowArrayViewSetArray + type check, once per batch
+  void EncodeRow(const BoundRows& rows, int64_t i, WriteBuffer& out) const;   // the one encoder
+  void DecodeRows(const uint8_t* bytes, size_t len, int64_t count, ArrowArray* out) const;
+};
+
+// the shim's publish fusion — this is where zero-copy is decided
+fl_status fl_publisher_publish_row(fl_publisher* p, fl_topic t, const fl_rows* rows,
+                                   int64_t i, const fl_attachments* atts, fl_error* err) {
+  return Translate(err, [&] {
+    p->publisher.Publish(Segments(t),
+        [&](fletcher::WriteBuffer& window) { rows->codec->EncodeRow(rows->view, i, window); },
+        ToAttachments(atts));
+  });
+}
+```
+
+`EncodeRow` drives `PositionalWriter` as it stands (`SetNull`, the scalar writers,
+`WriteFixedArray<T>` for contiguous list runs, `WriteString`/`WriteBinary` from the
+Arrow data buffer, `BeginStruct`/`BeginList`/`BeginMap` for nesting) and `DecodeRows`
+drives `PositionalReader` and nanoarrow's builders (`ArrowArrayStartAppending`,
+`ArrowArrayAppend*`, `ArrowArrayFinishBuildingDefault`). Every HARD-1..7 malformed-input
+check already lives in `PositionalReader`; the surface adds none and removes none.
+
+**The C# on top:**
+
+```csharp
+using var codec = new FletcherCodec(SensorReading.Schema);   // fl_codec_open, once per topic
+using var rows  = codec.Bind(batch);                         // ONE export + ONE validation for N rows
+for (int i = 0; i < batch.Length; i++)
+    publisher.Publish(topic, rows, i);                       // one P/Invoke, zero intermediate bytes
+publisher.Publish(topic, rows);                              // or all N in one crossing
+```
+
+`BoundRows.Dispose()` unbinds and **then** releases the export, so the borrow rule is
+enforced by the type rather than remembered by the caller.
+
+**What each choice buys.**
+- Destination as a parameter, fused into `Publish`: the row's bytes come to exist inside
+  the transport window, so `encode_copies == 0` by the oracle's own definition. This is
+  the only choice that is about zero-copy; the rest are about cost.
+- Borrowed array, never consumed: one export serves N publishes. This is the B-2 batch
+  mitigation made structural.
+- Bind separated from encode: nanoarrow's buffer validation and the schema-equality
+  check run once per batch; per row the native side allocates nothing and validates
+  nothing, it reads offsets and memcpys.
+- Strings cost nothing extra at encode: `Apache.Arrow` stores UTF-8, so a string field
+  is a memcpy from the Arrow data buffer. The UTF-16→UTF-8 transcoding happens once,
+  when C# builds the array, which is where D-BIND-1b says the guarantee ends.
+- Columnar layout makes list runs cheap: a `list<double>` element run is contiguous in
+  the child values buffer, one `WriteFixedArray` of `n` elements.
+- `fl_codec` and `fl_rows` are immutable after construction, so N threads may publish
+  different rows of one bound batch concurrently without a lock.
+
+**What not to do.** Return `EncodedRow` or any owned buffer from encode (the staging
+copy). Consume the `ArrowArray` per call (one export per row; most of B-2). Take an
+`ArrowSchema` per encode call (validation is the expensive part). Take values as
+individual C arguments (the row-builder ABI D-BIND-1a rejected). Re-run
+`ArrowArrayViewSetArray` per row (it walks every buffer of every child).
+
+**Forcing test.** Byte identity with `arrow-bridge`'s `Codec` across the codec's own
+Arrow fixture corpus (`NanoarrowCodec.ByteIdenticalToArrowBridge`) — five fixtures of
+three rows each, every arm of both switches, counts asserted. **Amended 2026-09-18
+(D-BIND-35)**: this read *"across the whole `emit_vectors` scenario corpus"*, which is
+proto-row shaped (it encodes through the generated row class) and narrower than what was
+built. D-BIND-11's repurposing of the two-way parity harness stands where it was written,
+on the cross-language generated-artifact property. The same three changes
+would improve the server-tier `arrow-bridge` codec, and the modernization branch has
+already taken the first (`EncodeRow(values, WriteBuffer&)`); that file is that branch's
+to change (P-7), not BIND's.
+
+### 3.3 Where `AppendInPlace` does and does not appear
+
+| C# publish path | Bytes produced by | Buffer route | Copies |
+|---|---|---|---|
+| `Publisher.Publish(row)` / `Publish(batch, i)` (generated + Arrow) | native codec, inside `RowEncoder` | ordinary `Append*` into the window | 0 (oracle-measurable) |
+| `Publisher.PublishRaw(ReadOnlySpan<byte>)` (relay, gateway bridge, tests) | managed | `AppendInPlace` + managed writer that `memcpy`s from pinned managed memory | 1 (from managed memory; stated) |
+
+So constraints 6 and 7 bind one entry point, and the "generated encoder returns its
+own cursor delta" clause has no C# instance: generated C# emits no wire bytes.
+
+### 3.4 Delivery path
+
+`subscriber_subscribe(handle, segments, ctx, thunk)` → native `Subscriber` →
+`[UnmanagedCallersOnly] static void Thunk(void* ctx, ulong id, byte* data, nuint len, fl_schema* schema, fl_attachments* atts)`.
+The thunk: (1) resolves `ctx` to the managed subscription, (2) increments in-flight,
+(3) sets the thread-static "inside" marker, (4) invokes the user delegate with
+non-escaping `ReadOnlySpan<byte>` and ref-struct views over schema and attachments,
+(5) catches everything and counts, (6) clears the marker, (7) decrements in-flight
+and frees the handle if retired and last. The codec's `decode_rows` **is callable
+from inside the thunk** (it touches no provider), so a typed subscriber decodes in
+place; a batching subscriber copies the borrowed bytes (a copy that is required by
+the borrow rule, not a zero-copy violation) and decodes N rows in one call later.
+
+### 3.5 Error handling across the boundary (D-BIND-19, locked 2026-09-11)
+
+Five rules; each has a seam clause or a .NET convention behind it. BIND-1's header
+and BIND-3's wrapper implement one design.
+
+**Rule 1 — one numbered error type per side; number and message always cross.**
+Seam §5.1 already makes this the C++ rule (`PubSubError(status, message)`, message as
+bytes plus length, never a global slot). The ABI carries both in a caller-owned
+out-parameter, plus one field of BIND's own:
+
+```c
+typedef struct fl_error {
+    int32_t   status;       /* PubSubStatus number, or FL_OK */
+    int32_t   origin;       /* which catch arm fired: FL_ORIGIN_SEAM | FL_ORIGIN_CODEC | FL_ORIGIN_CALLBACK */
+    uint8_t*  message;      /* UTF-8 bytes, no NUL reliance; NULL when status == FL_OK */
+    size_t    message_len;
+} fl_error;
+void fl_error_dispose(fl_error*);   /* frees message; safe on a zeroed struct */
+```
+
+`origin` is not a change to the seam's append-only numbers. It exists because the
+number alone cannot separate two things a C# caller must: a `kInvalidArgument` from
+the seam ("no such provider name") and a `kInvalidArgument` from `PositionalReader` on
+a truncated buffer. D-BIND-15 promises a typed `FletcherFormatException` for the HARD
+cases; `origin` is how the wrapper knows to throw it — **together with the status**:
+the codec origin also carries `kPayloadTooLarge` (a valid row that did not fit its
+window) and `kInternal` (a defect), and neither is malformed input, so the format type
+is keyed on the pair (codec, `kInvalidArgument`) (D-BIND-54). Heap-allocated message, freed
+through the ABI: registry refusals list every registered provider and will not fit a
+fixed buffer.
+
+**Rule 2 — no exception crosses in either direction; one containment site each way.**
+
+```cpp
+// the shim: every extern "C" entry point is a call through here
+template <class Fn>
+fl_status Translate(fl_error* err, Fn&& fn) noexcept {
+    try { fn(); return FL_OK; }
+    catch (const fletcher::PubSubError& e)  { return Fill(err, e.status(),        FL_ORIGIN_SEAM,  e.what()); }
+    catch (const std::invalid_argument& e)  { return Fill(err, kInvalidArgument,  FL_ORIGIN_CODEC, e.what()); } // PositionalReader, DeserializeEnvelope
+    catch (const std::out_of_range& e)      { return Fill(err, kInvalidArgument,  FL_ORIGIN_CODEC, e.what()); }
+    catch (const std::overflow_error& e)    { return Fill(err, kPayloadTooLarge,  FL_ORIGIN_SEAM,  e.what()); } // §5.1's one normative by-type rule
+    catch (const std::exception& e)         { return Fill(err, kInternal,         FL_ORIGIN_SEAM,  e.what()); }
+    catch (...)                             { return Fill(err, kInternal,         FL_ORIGIN_SEAM,  "non-std exception"); }
+}
+```
+
+Managed to native is the thunk prologue: every `[UnmanagedCallersOnly]` method is a
+try/catch whose body does nothing else, because an exception leaving one is a
+fail-fast. A reflection test fails on any such method not marked with the wrapper
+attribute (N-1).
+
+**Rule 3 — a managed exception that caused a native failure is rethrown as itself.**
+A user's own `InvalidDataException` thrown from a `RowWriter` comes back as
+`InvalidDataException` with its own stack, not as `FletcherException(kInternal)`
+wrapping it. Native still sees a real `PubSubError(kInternal, message)`, so C++
+logging is consistent; the managed caller's contract is untouched.
+
+```csharp
+[UnmanagedCallersOnly]
+static nuint WriterThunk(void* ctx, byte* dst, nuint room)
+{
+    var state = (WriterState)GCHandle.FromIntPtr((IntPtr)ctx).Target!;
+    try   { return (nuint)state.Writer(new Span<byte>(dst, (int)room)); }   // returns BYTES written
+    catch (Exception ex)
+    {
+        state.Captured = ExceptionDispatchInfo.Capture(ex);
+        state.Message  = ex.ToString();      // what the adapter puts in PubSubError(kInternal, …)
+        return 0;                            // adapter sees Captured and THROWS: nothing commits
+    }
+}
+
+// the ONE throw site in the wrapper
+static void ThrowIfFailed(int status, ref FlError err, WriterState? ctx = null)
+{
+    if (status == 0) return;
+    try
+    {
+        if (ctx?.Captured is { } edi) edi.Throw();
+        var message = Encoding.UTF8.GetString(err.Message, err.Length);
+        throw (err.Origin, (FletcherStatus)status) switch
+        {
+            (FlOrigin.Codec, FletcherStatus.InvalidArgument)   // D-BIND-54: the pair, not the origin
+                => new FletcherFormatException((FletcherStatus)status, message),
+            _   => new FletcherException((FletcherStatus)status, message),
+        };
+    }
+    finally { NativeMethods.fl_error_dispose(ref err); }
+}
+```
+
+This is the writer-frame rule of constraints 6 and 7, generalised. `AppendInPlace` is
+reachable from C# only through `PublishRaw` (which does the `memcpy` itself and
+returns the byte count) and the advanced `RowWriter` overload, whose contract says
+bytes. The `SIZE_MAX` route is not used: it also commits nothing, but its diagnostic
+("reported more than it was lent") is misleading for a managed exception.
+
+**Rule 4 — expected outcomes are values; refusals the caller can fix are .NET
+argument exceptions thrown before the call.** The seam says so itself: `kPending` and
+`kSubscriptionEnded` are outcomes and `PubSubError` refuses to carry them, so
+`SchemaArrival.Wait` returns a `SchemaWaitResult` and `Ok` + null is a value.
+Managed pre-checks mirror native refusals for the stack trace, and native re-checks:
+`ArgumentOutOfRangeException` for a negative timeout other than `-1` (D-BIND-20),
+`ArgumentException` for a topic segment failing one of the six rules,
+`InvalidOperationException` for `Dispose` or a synchronous `Subscribe` from inside a
+handler (D-BIND-18). One table-driven test proves both sides refuse the same inputs
+(Q17). `OperationCanceledException` is managed-only and never crosses.
+
+**Rule 5 — absorbed handler failures are counted and raised, never silent, never
+escaping.** Seam §5.3 absorbs and counts a throwing delivery callback; the thunk does
+the same for managed handlers and adds an event, because a counter alone is easy to
+never read.
+
+```csharp
+[UnmanagedCallersOnly]
+static void DeliveryThunk(void* ctx, ulong id, byte* data, nuint len, void* schema, void* atts)
+{
+    var sub = (Subscription)GCHandle.FromIntPtr((IntPtr)ctx).Target!;
+    sub.EnterDelivery();                                   // in-flight++ and the thread-static marker
+    try   { sub.Handler(new ReadOnlySpan<byte>(data, (int)len), new SchemaHandle(schema), new AttachmentsView(atts)); }
+    catch (Exception ex) { sub.Owner.RecordAbsorbed(sub, ex); }   // counter++ and HandlerFaulted; nothing escapes
+    finally { sub.ExitDelivery(); }                        // in-flight--; frees the GCHandle if retired and last
+}
+```
+
+**Not used, deliberately:** `SetLastError`/`GetLastError` or any per-thread slot (the
+seam forbids it; several provider instances share a process); `HRESULT`-style codes
+that lose the message; a fixed-size inline message buffer; wrapping user exceptions
+in `FletcherException`; exceptions for `kPending`.
+
+---
+
+## §4 — Work breakdown and sequencing
+
+Following the 2026-09-05 process ruling, items are fewer and larger than in the
+2026-08-31 plan. Four tracks; only track A has a strict internal order.
+
+```
+Track A (native + managed core)   BIND-0 → BIND-1 → BIND-2 → BIND-3 → BIND-4 → BIND-5
+Track B (generator, protoc/)      BIND-6 → BIND-7        (BIND-7 needs BIND-3's Arrow import)
+Track C (managed-only)            BIND-T · BIND-8         (independent; can start day one)
+Track D (pipelines, docs)         BIND-9 (starts with BIND-0, closes last) · BIND-10
+```
+
+Critical path: **BIND-0 → BIND-1 → BIND-2 → BIND-3 → BIND-4**. BIND-2 is the long
+pole.
+
+| ID | Item | Track | Kind | Depends on | Forcing test |
+|---|---|---|---|---|---|
+| BIND-0 | Kickoff: decisions locked, skeleton `c-abi/` + `dotnet/` green in CI, matrix re-baselined | A/D | 🟪 | — | `ci.dotnet.yml` + `ci.c-abi.yml` green on both platforms with an empty ABI |
+| BIND-1 | The binding ABI header, reviewed as a specification (no implementation) | A | 🟪 | BIND-0 | `BindingAbi.CompilesAsC99AndIsSelfContained` |
+| BIND-2 | Nanoarrow schema-driven codec + copy oracle producer | A | 🟦 | BIND-1 | `NanoarrowCodec.ByteIdenticalToArrowBridge` + `CopyAccounting.BindingProducerWritesInPlace` |
+| BIND-3 | `Eiva.Fletcher.Interop` + codec/Arrow tier in `Eiva.Fletcher` | A | 🟦 | BIND-2 | Every PROTO-MAPPING type round-trips through the binding (D-BIND-39, was "Bucket 1 green"); `ErrorTests.EveryHardCaseKeepsItsMessage` |
+| BIND-4 | Pub/sub in `Eiva.Fletcher`: registry, Publisher, Subscriber, SchemaArrival, thunk discipline | A | 🟦 | BIND-3 | Bucket 3 over `inprocess`; Bucket 4 over `fastdds`/`xrce` by selector; C# arm of `CallerTier`; per-row publish benchmark (D-BIND-37) |
+| BIND-5 | `SubscriberArrow` batching + the oracle run end-to-end from C# | A | 🔬 | BIND-4 | `pubsub-arrow` cases; copy oracle green with the **C#** producer |
+| BIND-6 | C# backend on the IR: type table + visitor → `<stem>.fletcher.cs` | B | 🟦 | — (GIR) | `CsharpVisitor.*` in `protoc/tests`; no-drift test unchanged |
+| BIND-7 | Arrow view + accessor emitters (`csharp_accessor`) + capstone third arm | B | 🟦 | BIND-6, BIND-3 | `accessor-capstone` C# arm `observed == expected`; StructArray windowing fixture at non-zero offset |
+| BIND-T | TS `Publisher`/`Subscriber` emitter | C | 🟦 | — | `TsVisitor.DescriptorByteIdentical` still green + new emitter cases |
+| BIND-8 | `Eiva.Fletcher.GatewayClient` (managed port; the codec exception) | C | 🟦 | — | Bucket 2 green (the Part 4 file set, not a count); `Package.GatewayClientHasNoRuntimesFolder` |
+| BIND-9 | CI/CD: RID matrix, publish to `nuget.eiva.com` (D-BIND-28; NuGet.org deferred), size budget, licence files | D | ⚙ | BIND-0 (skeleton), all for release | `cd.dotnet.yml` dry run against the internal feed; packed-size check; asset-isolation check |
+| BIND-10 | Docs, TD-009, archive to `docs/archive/BIND/` | D | 📓 | all | docs review |
+
+### Item notes (what each must settle, beyond the plan's acceptance text)
+
+**BIND-0 — Kickoff.** Owner decisions from §7 recorded in
+`BIND-locked-decisions.md`. Branch `feature/csharp-bindings` from `main`.
+Devcontainer gains the .NET SDK (D-BIND-21). The two new component lanes run on
+an **empty** ABI (`fletcher_binding_abi_version()` only) so that the first
+automated run happens before any real code exists: §12.4's lesson is that the
+first lane run found seven defects local green could not. Re-baseline §5's matrix
+with the command shown there and commit it. ADO 18689 updated to point at the
+locked plan.
+
+**BIND-1 — The header.** `c-abi/include/fletcher/abi/binding.h`, C99, versioned,
+append-only structs, pre-1.0 exemption and deprecation policy **in the header**.
+Contents: status (numbers from `core/README.md`, `kOk`..`kReentrantCall`), error
+object with number + message bytes + length (never a global slot, §5.1 rule 1),
+registry (`create` with selector+config; `register_builtin` by name for the
+three the shim links; `set_path_resolver` reserved), publisher and subscriber
+handles, `schema_arrival_wait`, blob and attachments views, write-buffer window
+and writer, delivery callback signature, codec descriptor/encode/decode, and the
+**single-copy marker**. Reviewed as a spec, like PDA-ABI-1: the wording of who
+owns what and for how long is the expensive thing to get wrong.
+
+**BIND-2 — The codec.** See §3.2. Also: the C writer adapter for `publish_raw`
+(D-BIND-19); a **real** producer for the copy oracle that goes through the ABI
+window from C (replacing the "stand-in" caveat in
+`integration-tests/pubsub-conformance/README.md` for the client half); a
+packed-size budget for the shim in CI; the single-copy check. Lives in `c-abi/`
+(Conan component `fletcher-c-abi`), links `fletcher-core`, `fletcher-pubsub`,
+nanoarrow; **never** `arrow-bridge`. **Prior art to read first:** commit `0050365` on
+`feature/fastdds_modernization/19645` (not on `main`) adds
+`Codec::EncodeRow(const ArrowRow&, WriteBuffer&)`, writing through `PositionalWriter`
+straight into a caller-supplied buffer, and a public `arrow-bridge/…/batch_decoder.hpp`
+that decodes rows directly into Arrow builders. Structurally that is this item over
+Arrow C++ instead of nanoarrow, still per-`Scalar` on the encode side; a design
+reference, not something to link. The byte-identity oracle targets whichever
+`arrow-bridge` `Codec` `main` carries when it first runs.
+
+**Files to touch for §3.2 (BIND-1 + BIND-2), as of 2026-09-11.** Nothing in the
+existing C++ tree changes: every API the codec needs is public today and is driven as
+is. The modifications are new files, two existing test/CI files that gain a case or a
+job, and the plan documents.
+
+*Existing code — relied on, not modified:*
+
+| File | Methods relied on | Change |
+|---|---|---|
+| `core/include/fletcher/core/positional_io.hpp` | `PositionalWriter::SetNull`, `WriteInt8..WriteDouble`, `WriteBool`, `WriteTimestamp`, `WriteDuration`, `WriteFixedArray<T>`, `WriteString`, `WriteBinary`, `BeginStruct`, `BeginList` + `ListContext::SetElementNull`, `BeginValues`, `BeginMap`; `PositionalReader::Read<T>`, `ReadString`, `ReadFixedArray`, `ReadStruct`, `ReadListHeader`, `IsElementNull`, `VerifyFullyConsumed` | **None.** One optional addition: `PositionalWriter` has no fixed-size-list primitive; compose it from `BeginValues()` plus the element bitfield (as the modernization branch's codec does), or add a small `BeginFixedSizeList(count)` helper. Additive, wire bytes unchanged |
+| `core/include/fletcher/core/write_buffer.hpp` | the window, `Append*`, `Position`, `PatchByte`/`PatchU32` | None |
+| `pubsub/include/fletcher/pubsub/publisher.hpp` | `Publish(segments, const RowEncoder&, const Attachments&)`: the fusion is a lambda passed here | None |
+| `pubsub/include/fletcher/pubsub/owned_schema.hpp` | `OwnedSchema::DeepCopy` for `fl_codec_open`'s borrowed schema | None |
+| `pubsub/conanfile.py` | already exports nanoarrow headers and lib (`cpp_info.libs = ["fletcher-pubsub", "nanoarrow"]`) | None |
+| `arrow-bridge/…/codec.hpp`, `Codec::EncodeRow` | byte-identity oracle target in tests only | **None**, by D-BIND-1 and P-7 |
+| `pubsub/include/fletcher/pubsub/provider.hpp` | frozen | None |
+
+*New files:*
+
+| File | Contents |
+|---|---|
+| `c-abi/conanfile.py`, `c-abi/CMakeLists.txt` | Conan component `fletcher-c-abi`; requires `fletcher-core`, `fletcher-pubsub` (brings nanoarrow), the provider packages per Q3; **never** `arrow-bridge` |
+| `c-abi/include/fletcher/abi/binding.h` | `fl_codec_open`/`fl_codec_close`, `fl_rows_bind`/`fl_rows_unbind`, `fl_publisher_publish_row`, `fl_publisher_publish_rows`, `fl_encode_row`, `fl_decode_rows`, `fl_write_window`, `fl_error`, beside the registry, subscriber and schema-arrival entry points BIND-1 already lists |
+| `c-abi/src/nanoarrow_codec.hpp`, `nanoarrow_codec.cpp` | `NanoarrowCodec(const ArrowSchema&)`, `FieldPlan`, `Bind(const ArrowArray&) -> BoundRows`, `EncodeRow(const BoundRows&, int64_t, WriteBuffer&)`, `DecodeRows(bytes, len, count, ArrowArray*)`; one `switch` per mapping row, recursive for list, struct and map |
+| `c-abi/src/codec_abi.cpp` | the C entry points above plus `Translate(err, fn)`, the `PubSubError` → status-and-message adapter |
+| `c-abi/src/publisher_abi.cpp` | the publish fusion shown in §3.2 |
+| `c-abi/src/write_window_adapter.hpp` | `fl_write_window` → `WriteBuffer` adapter for `fl_encode_row` (grow hook = one crossing per refill) |
+| `c-abi/tests/test_nanoarrow_codec.cpp` | `NanoarrowCodec.ByteIdenticalToArrowBridge` over the codec's own Arrow fixture corpus (D-BIND-35); malformed-input parity with HARD-1..7; the borrow rule (the array is never consumed across N encodes, and the caller's release is the only one) |
+| `c-abi/tests/codec_corpus.hpp` | the five Arrow fixtures (`scalars`, `temporal`, `nested`, `composites`, `fixed_size`), lifted out of `test_nanoarrow_codec.cpp` so ONE definition serves both the byte-identity test and the conformance emitter (D-BIND-40). gtest-free: it throws, because one consumer is a plain executable |
+| `integration-tests/binding-abi-conformance/src/emit_corpus.cpp` | writes each fixture as an Arrow IPC stream plus the rows as the SHIM encoded them through the C ABI, and a manifest the C# side discovers its cases from |
+| `integration-tests/binding-abi-conformance/dotnet/BindingAbiConformance/` | `ManagedArrowEncodesTheBytesNativeArrowDid` (the forcing property: two independent Arrow implementations, one codec, identical bytes), `NativeBytesDecodeToNativeValuesThroughTheBinding`, `TheCorpusWasEmitted` |
+| `c-abi/tests/binding_abi_c99.c` | `BindingAbi.CompilesAsC99AndIsSelfContained` |
+| `dotnet/src/Fletcher.Interop/NativeMethods.Codec.cs` | P/Invoke declarations for the eight functions |
+| `dotnet/src/Fletcher/FletcherCodec.cs` | `FletcherCodec(Schema)`, `Bind(RecordBatch) -> BoundRows`, `Decode`, `DecodeBatch`, `Dispose` |
+| `dotnet/src/Fletcher/BoundRows.cs` | holds the `CArrowArray` export; `Dispose` = `fl_rows_unbind` **then** release |
+| `dotnet/src/Fletcher/Publisher.cs` | `Publish(TopicPath, BoundRows, int)`, `Publish(TopicPath, BoundRows)`, `Publish(TopicPath, RowWriter)`, `PublishRaw` |
+
+*Existing files that gain something:*
+
+| File | Change |
+|---|---|
+| `integration-tests/pubsub-conformance/src/copy_accounting.cpp` | **add** `CopyAccounting.BindingProducerWritesInPlace`: a producer through `fl_rows_bind` + `fl_publisher_publish_row` scores `encode_copies == 0`, retiring the README's "stand-in" caveat for the client half (§12.1 expects both rounds to add cases) |
+| `integration-tests/pubsub-conformance/CMakeLists.txt`, `conanfile.py` | link `fletcher-c-abi` for that one subject |
+| `.github/workflows/ci.pr.yml` | filter + caller job + `pr_gate` `needs:`/`results:` for the new `ci.c-abi.yml` (D-BIND-16) |
+| `protoc/` (BIND-6, new backend files only) | the generated `<Svc>_<Method>Publisher.Publish(Msg)` body: build a one-row batch, `Bind`, `Publish(rows, 0)`; `Publish(IEnumerable<Msg>)` binds once and publishes N. No existing emitter is edited (D-BIND-6) |
+
+*Plan documents:* this file (§3.1 diagram, §3.2, D-BIND-23, this note);
+`BIND-csharp-public-surface.md` §2.3 `Publish` overloads and §2.4 `FletcherCodec` gain
+`BoundRows`, diagrams 5.2/5.3 gain the class (applied 2026-09-11);
+`BIND-locked-decisions.md` gains D-BIND-23 once ruled.
+
+Two methods are deliberately absent because the design removes the need for them: a
+native `EncodeRow` that returns bytes, and any per-value setter on the ABI.
+
+**BIND-3 — Interop + Arrow tier.** `SafeHandle` per native handle;
+`NativeLibrary.SetDllImportResolver` with a diagnostic that names the missing RID;
+ABI version check at load; C Data Interface export/import via `Apache.Arrow.C`;
+`FletcherException : Exception { PubSubStatus Status; }` with the native message
+verbatim; `FletcherFormatException` for HARD malformed-input cases; the
+UTF-16↔UTF-8 boundary stated in the XML docs and in the oracle's scope note
+(D-BIND-1b). Ports Bucket 1.
+
+**BIND-4 — Pub/sub.** `ProviderRegistry.Create(selector, config)`; `ProviderConfig
+{ uint MaxPayloadBytes; uint DomainId; ReadOnlyMemory<byte> Document; }` (bytes,
+length authoritative, C# parses nothing); `Publisher`, `Subscriber` with
+D-BIND-18's thunk; `SchemaArrival.Wait(TimeSpan)` with D-BIND-20's mapping and a
+typed outcome (`Ok(schema)`, `Ok(null)` for schema-less transports, `Pending`,
+`SubscriptionEnded`, failure); `Attachments` as a positional read-only view on
+delivery and a builder on publish; `DispatchAfterDelivery` helper (constraint 5)
+that hands work to the thread pool and returns a `Task`. Ports Buckets 3 and 4;
+writes the C# arm of `CallerTier` (the tier BIND actually wraps, per §9) and adds
+at least one case to the C++ suite as §12.1 expects. **Carries the per-row publish
+benchmark** that settles B-2 (D-BIND-37, moved here from BIND-3).
+
+**As built — BIND-4 closed 2026-09-25.** The design above held; what it did not
+foresee is recorded as rulings in `BIND-locked-decisions.md`. Three entry points
+the header lacked, each found by writing its caller and each an ABI minor bump:
+`fl_blob_create` (D-BIND-42, see N-6a), `fl_schema_retain` (D-BIND-43) and
+`fl_schema_copy` (D-BIND-46). Two managed signatures corrected against the native
+contract, with no ABI change: `AttachmentsBuilder` owns its entries and caches the
+sealed set, because `fl_attachments_builder_build` empties the native builder
+(D-BIND-44), and the `RowWriter` publish takes `int minBytes` explicitly
+(D-BIND-45). Bucket 3 ports 21 of its 23 `pubsub` cases; two assert the C++
+fan-out's own bookkeeping and are ruled unportable (D-BIND-47). The benchmark's
+shape and verdict are D-BIND-48 and D-BIND-49 (B-2). From the review: D-BIND-50
+and D-BIND-51 amend D-BIND-18's thunk (S-2, and the constraints note §2),
+D-BIND-52 implements the schema-watch pair in the shim (ABI 0.5, no C# surface
+yet), and D-BIND-53 and D-BIND-54 settle bounded-payload overflow (B-6). The item's
+record is its `BIND-progress-log.md` entry. **After close, D-BIND-55** reconciled
+`BIND-csharp-public-surface.md` with the shipped API: `IsSchemaless`, an owned
+`SchemaHandle`'s finaliser, `Diagnostics.AbsorbedTotal` and `WaitAsync` (above `Wait`,
+as D-BIND-22 allows) were built, and `BlobHandle` was deferred with a trigger.
+**D-BIND-56 then reopened the item:** bucket 4 had never run over `xrce`. The transport
+lane builds a MicroXRCEAgent from a recipe now shared with the C++ interop lane, the
+suite proves it owns the Agent, and `xrce` joins every theory. **D-BIND-57 reopened it again:**
+#128 grew bucket 3's file set by 26 cases after the port and the seam by `TopicOptions`; the ABI
+gains the `*_with_options` pair (0.6), C# gains `TopicOptions` and the schema watch, the 26 are
+mapped, and `scripts/check_test_matrix.py` now guards the matrix on every pull request.
+
+**BIND-5 — Arrow subscriber + oracle end to end.** Managed batching: copy borrowed
+rows, decode N per native call, deliver `RecordBatch`. Dictionary re-folding
+deferred to DICT (D-BIND-8). The copy oracle run with the C# producer is this
+item's acceptance, not BIND-2's stand-in.
+
+**BIND-6 — C# row emitter.** `csharp_backend_type_table` + `csharp_backend_visitor`
+on the IR, reusing `cpp_backend::BuildFlattenedFieldList`. Emitted per message:
+POCO with nullable annotations, a real `enum` (D-BIND-8), a static
+`Apache.Arrow.Schema` built in code (metadata preserved) and exported to the
+descriptor at first use, `ToArrow(IEnumerable<T>)`/`FromArrow(StructArray, int)`,
+and per service method a typed `<Service>_<Method>Publisher`/`Subscriber` pair
+mirroring the C++ names. **No `WriteTo`/`ReadFrom`** (that was the pre-D-BIND-1
+draft). Temporal mapping decided in the type table (see §6, G-2). NativeAOT
+publish of a consumer with zero trim warnings is the reflection-free proof.
+
+**BIND-7 — Views + accessors + capstone.** Two emitters under one token; the
+`StructArray.Fields` windowing question settled empirically first and recorded in
+`BIND-locked-decisions.md`; accessor depth cap decided (match 2/3 recommended,
+see §6 G-4); C# joins `accessor-capstone` against the shared fixture and oracle.
+
+**BIND-T, BIND-8, BIND-9, BIND-10** — as in the 2026-08-31 plan, with BIND-9
+carrying the LGPL notice text and the packaging statement (§6 P-1), and BIND-10
+adding **TD-009** (TD-008 is now taken by the seam).
+
+**BIND-9, licence files (added 2026-09-10, after #127).** The native shim statically
+links the same permissively licensed stack the gateway does, plus Fletcher's own
+LGPL components, so `Eiva.Fletcher.Interop` owes the same two files the gateway
+archive now carries: the repository `LICENSE` and a `THIRD-PARTY-LICENSES.txt`.
+**Reuse `gateway/deployers/third_party_licenses.py` as is** (D-BIND-16: existing
+machinery, not a second implementation), run against the shim's Conan package
+with `-c tools.graph:skip_binaries=False`, which is mandatory: a static
+library's dependencies carry nothing needed at run time, so Conan otherwise
+marks them "Skip" and they have no package folder to read the texts from. Use
+`dependencies` over the whole host graph, not `dependencies.host`, which drops
+skipped header-only packages that are nonetheless in the binary; asio was the
+case that found this. Stage both files into the package on **every** CI run and
+have the pack step fail if either is missing, mirroring `ci.gateway.yml`'s
+archive check; the asset-isolation check for `GatewayClient` already opens the
+`.nupkg`, so the licence check rides in the same step. If the deployer wants a
+shared home rather than living under `gateway/`, that is a small move and the
+gateway's owner's call, not BIND's; do it before BIND-9 or import by path.
+
+---
+
+## §5 — Test matrix, re-baselined at `6c541e9`
+
+Counts are `grep -c "^TEST\(_F\|_P\)\?("` per file, so they are **cases, not
+parameterised instances**, and they are reproducible from the tree.
+
+**Re-derived 2026-09-18 at `a1b247f`.** Every number below reproduces except three,
+now corrected: `test_xrce_document` 9 → **11** (so bucket 4 is 104, and its port
+target 80), `pubsub-conformance` 80 → **82** (BIND-2d added the two binding legs),
+and `CallerTier` 20 → **21** (the tracker already carried this correction and this
+table did not). **These counts rot** — #129 is rebased onto `main` at item
+boundaries, so a case added upstream changes them silently. That is why the
+acceptance bullets in Part 7 name FILE SETS rather than numbers; re-run the
+command rather than trusting a figure whose date you do not know:
+
+```bash
+for f in core/tests/*.cpp pubsub/tests/*.cpp arrow-bridge/tests/*.cpp pubsub-arrow/tests/*.cpp fastdds-pubsub-provider/tests/*.cpp xrcedds-pubsub-provider/tests/*.cpp gateway/tests/*.cpp protoc/tests/*.cpp; do echo "$(grep -c '^TEST\(_F\|_P\)\?(' "$f") $f"; done
+```
+
+| Bucket | Files (cases) | Total | Treatment |
+|---|---|---|---|
+| 1 codec / envelope / buffer / status | `test_positional_io` 19, `test_envelope` 11, `test_write_buffer` 11, `test_status_taxonomy` 3, `test_codec` 70, `test_codec_edge` 23, `test_codec_property_fuzz` 2, `test_batch_decoder` 22 | **161** | **NOT a binding port target (D-BIND-39, 2026-09-21).** `test_codec*` (60) is `arrow-bridge`'s **Arrow-native** suite and about half of it exercises unions, decimals, intervals, half-float, view types and fixed-size binary, which no `.proto` can produce; `test_envelope` (11) is BIND-8's by §2.6; `WriteBufferInPlace`'s writer cases are BIND-4's by surface; 13 of `test_positional_io` drive `PositionalWriter`/`AppendTrailingUint64Field`, which §2.5 does not expose. **BIND-3's obligation instead: every type the PROTO MAPPING produces round-trips through the binding.** `test_status_taxonomy` still ports naturally: the C# enum is compared to `core/README.md`'s table. |
+| 2 gateway client | `test_schema_codec` 11, `test_publish_frame` 9, TS 36 | **56** | Port (BIND-8), true parity: managed code both sides. |
+| 3 pub/sub semantics | `test_publisher_subscriber` 44, `test_segments` 5, `test_pubsub_arrow` 33 | **82** | Port over `inprocess` (BIND-4/5); #128's option and schema-watch cases over real Fast DDS where only a provider that knows them can answer (D-BIND-57). 5 excluded. |
+| 4 native providers | Fast DDS: `test_fast_dds_pubsub_provider` 71, `test_profile_document` 33, `test_fletcher_sample_pub_sub_type` 28; XRCE: `test_xrce_provider` 7, `test_xrce_document` 11 | **150** | Port as driver-selection tests where the assertion is seam-visible (122); `test_fletcher_sample_pub_sub_type` (28) excluded as internal to the provider (Q10). |
+| 5 generator | `test_type_mapper` 36, `test_option_metadata` 33, `test_schema_builder` 9, `test_schema_visitor` 9, `test_ir` 8, `test_schema_codec_lockstep` 2, `test_ts_visitor` 1 | **98** | Stay C++; extended with `test_csharp_*`. Needs the Feature owner. |
+| 6 no managed analogue | `test_owned_schema` 1 | **1** | Excluded, documented. |
+| Conformance (new since plan) | `integration-tests/pubsub-conformance` 95 cases; `CallerTier` 22 of them | — | Inherited **oracle**, not a port target. BIND writes a C# arm of `CallerTier` and adds cases to the C++ suite. |
+
+Non-generator total is **302** (was 178). The two exclusion classes were **ruled on
+2026-09-11 (Q10)**: **278 of 302** non-generator cases port — 302 less the 24
+provider-internal cases, and nothing else. The 98 generator cases stay in C++ and are
+extended.
+
+**Corrected 2026-09-18, denominator ruled by the maintainer.** This read *"275 of 300
+(300 less the 24 provider-internal cases **and `test_owned_schema`**)"*, which is wrong
+twice over: the 300 is buckets 1–4 and `test_owned_schema` is bucket 6, so the −1
+removed a case the total never held; and bucket 4 was carrying `test_xrce_document` at 9
+where the file has 11. Both readings of the scope converge on **278 ported** — counting
+bucket 6 in gives 303 − 24 − 1 = 278 as well — so only the denominator was open, and it
+is ruled **302**. The tracker's "177 of 178" sentence is rewritten at the fold.
+
+**Re-derived 2026-09-25 (D-BIND-57), and now CHECKED.** #128 changed six files and added
+`test_batch_decoder`, and nothing re-ran the command above after it was merged in - which is how
+26 bucket-3 cases went unported under a bullet that named their file set. The table above is
+current, and `scripts/check_test_matrix.py` (run on every pull request by
+`ci.check-test-matrix`) now fails when it is not. Buckets 1-4: **416 of 449** in scope, 33
+excluded; the tracker's Part 4 says what that number does and does not count.
+
+---
+
+## §6 — Potential issues for the implementation
+
+Grouped by where they bite. Each names the item that must close it. **B** =
+blocking or architectural, **S** = inherited from the seam, **N** = .NET interop,
+**G** = generator, **P** = packaging/process.
+
+### Blocking / architectural
+
+- **B-1 — There is no codec to wrap.** D-BIND-1 assumes a descriptor-driven codec
+  exists; only its *scope* does (GIR-8). BIND-2 must build a nanoarrow-only
+  schema-driven driver of `positional_io`, covering every type in the mapping,
+  nesting to arbitrary depth, and both directions. It is a third *driver* of the
+  one wire format, not a second wire format, and the byte-identity test against
+  `arrow-bridge` is what keeps that sentence true. Size: **L**, on the critical
+  path. *Close in BIND-2.*
+
+- **B-2 — Per-row publish pays for an Arrow array.** A single-row `Publish(row)`
+  builds a one-row `StructArray` in managed code, exports it, crosses, and encodes.
+  The C++ generated path writes bytes into the window directly. The copy oracle
+  will still report zero copies (the wire bytes are written once, into the
+  window), but allocation and latency per row are higher than C++. **Mitigation:**
+  measure in BIND-4 with a per-row benchmark against the C++ generated publisher
+  (moved there from BIND-3 on 2026-09-21, D-BIND-37: the benchmark needs a managed
+  publish path, which is BIND-4's);
+  offer `Publish(batch)` as the fast path; document. §3.2's bind step makes that
+  path structural: one export and one validation per batch, N publishes. **If the owner judges the
+  per-row cost unacceptable, the only faster route is generated C# writing wire
+  bytes, which is a D-BIND-1 STOP-AND-ASK**, not a local fix. *Measure and decide in BIND-4.*
+  **The measurement's shape is D-BIND-48** (2026-09-24): ten arms that attribute the cost
+  layer by layer. **Measured 2026-09-25:** `ToSegments` is 72 ns per row and the managed
+  crossing 80 ns — the fused per-row path is 1.95× generated C++ and batch 1.23× — and the
+  real B-2 cost is a row that does NOT start as Arrow: 3.8 µs (19.6×), two-thirds of it
+  Apache.Arrow's own build and export. Table and attribution in `c-abi/benchmarks/README.md`.
+  **CLOSED 2026-09-25 (D-BIND-49): accepted, no STOP-AND-ASK; the mitigation that remains is a
+  design input to BIND-6 — the generated publisher's batch form is the cheap one, and
+  `Publish(T)` says so.**
+
+- **B-3 — Which built-ins the shim links decides the package.** Linking Fast DDS
+  and XRCE statically into one shim gives C# real transports now, but the native
+  asset per RID grows (Fast DDS + fastcdr + foonathan + tinyxml2 + Micro XRCE +
+  microcdr), Fast DDS's shared-memory transport needs writable
+  `eprosima/fastdds_interprocess` directories on the consumer's machine, and the
+  LGPL notice must list what the shim contains. `inprocess`-only defers all of
+  that to PDA-ABI, which has not started. **Precedent (2026-09-10):** the gateway
+  already statically links Fast DDS and its whole dependency chain into one
+  executable and ships it as a release archive, with the licence notice #127
+  added; the archive's size on the latest `gateway-v*` release is a usable proxy
+  for the shim's per-RID native asset before BIND-0 builds one. *Decide in BIND-0
+  (§7 Q3).* **BIND-0 built one and measured it rather than leaning on the proxy:
+  `win-x64` 7.61 MiB, Release, with `inprocess`, `fastdds` and `xrce` all linked
+  in.** `ci.c-abi.yml` reports the number on both platforms on every run; the
+  threshold is BIND-9's to set against real numbers.
+
+- **B-4 — A second copy of Fletcher is silent.** `inline thread_local` per binary
+  (P1). The detectable case is two shims; the undetectable case is a C++ host that
+  statically links Fletcher and also hosts the CLR. Feature 20061 ("Flight:
+  refactor services onto Fletcher") is the consumer: **if any Flight service is a
+  C++ process hosting .NET, or hosts two bindings, this is a STOP-AND-ASK before
+  design, per P1.** *Answered 2026-09-11 (Q11): no such consumer exists; the check
+  is implemented in BIND-2 for the detectable case and the README states the rule.*
+
+- **B-5 — PDA-ABI and BIND now share no gate but will share code paths.** When
+  PDA-ABI installs a resolver, the shim calls `SetPathResolver` and driver
+  binaries appear beside the shim. Constraint 1 then applies to drivers too: a
+  driver must not carry a Fletcher copy (PDA-ABI keeps the adapter host-side, so
+  it does not). Nothing to do now except keep the shim's registry seat open and
+  say so in the header. *BIND-1.*
+
+- **B-6 — An oversized row can vanish over Fast DDS.** Found at the BIND-4 review
+  (Q2): the Fast DDS provider's only live publish path drops and logs a row that
+  does not fit the bound instead of reporting `kPayloadTooLarge`, deliberately and
+  test-pinned. A C# caller therefore gets no exception for it over any transport
+  it can reach today. **D-BIND-53 (2026-09-25):** bullet 8 is amended to the
+  binding's half (a reported `PayloadTooLarge` surfaces as one, proven on a real
+  native status), and the provider's behaviour is flagged to `main`'s owner.
+  **CLOSED the same day on this branch** (D-BIND-53 amended, `9255c19`): the
+  provider now reports the overflow as `kPayloadTooLarge`, and a C# test proves it
+  over Fast DDS. `main` keeps the silent drop until #129 lands. **D-BIND-54 (the
+  same day):** the overflow arrives as exactly `FletcherException`, no longer as the
+  `FletcherFormatException` subclass its codec origin used to select.
+
+### Inherited from the seam (constraints 1–8 and the two details)
+
+- **S-1 — `Unsubscribe` blocks for the duration of a handler.** Correct and
+  needed (it is what lets the `GCHandle` be freed), but a handler that never
+  returns blocks `Unsubscribe` forever, and a `Dispose` from a finaliser thread
+  would block the finaliser thread. **Recommend no finaliser on `Subscriber`**; an
+  undisposed `Subscriber` at GC is a leak reported by a debug-only
+  `~Subscriber` that only logs. *BIND-4.*
+
+- **S-2 — The re-entrant `Unsubscribe` carve-out.** Solved by the in-flight
+  counter (D-BIND-18): on the re-entrant path `Unsubscribe` returns without
+  freeing; the last thunk out frees. The subtle case is a *sibling* subscription
+  on the same `Subscriber` running on another thread; ~~the counter covers it
+  because native guarantees no new invocation begins~~ — **it does not (BIND-4
+  review B1):** the seam's "begins" is passing the gate, the counter increments
+  later, and a sibling between the two can have its `GCHandle` freed under it.
+  **D-BIND-50 (2026-09-25):** on the carve-out the free is deferred to a
+  thread-pool cancel from outside any delivery, which waits for the drain. The
+  test this note named was not written the first time; it is owed with the fix.
+  *BIND-4.*
+
+- **S-3 — `Dispose` of a `Subscriber` from inside a handler terminates the
+  process.** Managed refusal (`InvalidOperationException`) before native, keyed on
+  the thread-static marker. **Keyed on the PROVIDER since D-BIND-51 (2026-09-25,
+  BIND-4 review B2):** the seam terminates for ANY Subscriber over the same
+  provider, and the marker is a per-thread stack of frames so a nested delivery
+  cannot hide an outer one. Also reachable via `using` scope exit inside a handler
+  and via `await using`; the marker must be set for the synchronous extent of the
+  thunk only, and the docs must say an `async` handler continuation runs outside
+  the marker (see N-3). *BIND-4.*
+
+- **S-4 — `Subscribe` from a handler is data-dependent in C++.** The constraints
+  file says "always queue". **Recommendation differs:** a synchronous
+  `Subscribe` from a handler throws a managed exception naming
+  `DispatchAfterDelivery`, and the deferred spelling is that helper returning a
+  `Task<Subscription>` whose failure surfaces on the `Task`. Silent queueing would
+  make a refused topic name (a `kInvalidArgument`) surface only through a failed
+  `SchemaArrival` later, which is a worse error surface than a throw. Both are
+  deterministic, which is the property the constraint asks for. *Owner's call;
+  BIND-4.*
+
+- **S-5 — The absorbed-failure count.** The thunk's catch increments the managed
+  per-instance counter; native's `AbsorbedTotal` stays at 0 for managed faults.
+  Expose both, document which counts what, and test that a throwing handler
+  raises the managed delta by exactly one. *BIND-4.*
+
+- **S-6 — `AppendInPlace` has never met production code.** BIND is its first
+  consumer (via `publish_raw`). The residue "bytes in `[written, used)` are
+  published having been written by nobody" is real on `FixedWriteBuffer`; the
+  managed writer must return the byte count it copied, never a character count.
+  Cover with a test that publishes a non-ASCII row through `publish_raw` and
+  checks the decoded row. *BIND-2 / BIND-3.*
+
+- **S-7 — `Timeout.Infinite` is refused by the seam.** Mapped in the wrapper
+  (D-BIND-20). The unbounded-wait clause is pinned by no test on Windows, by
+  ruling; BIND inherits that blind spot and lists it here rather than in a bug.
+  *BIND-4.*
+
+- **S-8 — Strings are bytes at the seam.** Topic segment and joined-name caps in
+  UTF-8 bytes; attachment key order is `memcmp`, not `string.CompareOrdinal`;
+  `Attachments` in C# must not expose a sorting API. Test with a key above U+E000
+  and a supplementary-plane key, where UTF-16 and UTF-8 orders differ. *BIND-4.*
+
+- **S-9 — Null schema is a mode, not an error.** `SchemaArrival.Wait` returning
+  `Ok(null)` on a schema-less transport; the generated typed subscriber must
+  handle it by using its own descriptor, and `Ok(null)` must **not** release an
+  owner handle (§3.4). *BIND-4 / BIND-6.*
+
+### .NET interop hazards
+
+- **N-1 — No exception may cross in either direction.** `[UnmanagedCallersOnly]`
+  thunks catch everything; native entry points translate everything to a status.
+  A managed exception escaping an `UnmanagedCallersOnly` method is a fail-fast.
+  Enforce with a Roslyn analyzer or a reflection test that every such method's
+  body is wrapped. *BIND-3.*
+  **Done at BIND-3c (2026-09-21), with the reflection test:**
+  `ThunkDisciplineTests.EveryUnmanagedCallersOnlyMethodIsWrapped` walks both
+  binding assemblies and requires each thunk's **outermost** exception clause to
+  be a catch-all. Written at 3c rather than 3b because the round's first thunk is
+  `GrowingWindow.GrowThunk` and a reflection test over an empty set passes while
+  asserting nothing. **Two things learned by deliberately breaking it, both worth
+  not relearning:** (1) the first version asked whether ANY clause caught
+  `Exception` and was toothless — narrowing the thunk's own catch left the
+  catch-all guarding the failure-recording path, nested inside the handler, and
+  the row kept passing; (2) **the fail-fast above is not what this platform does.**
+  With the catch narrowed, the escaping exception unwound through the shim's C++
+  frames and reached the managed caller intact, so the behavioural test passed
+  too. That is a property of the Windows unwinder and of the flags the shim is
+  built with — on a toolchain whose `catch (...)` sees it, the containment site
+  turns it into `FL_INTERNAL` and the caller's own exception type is LOST. So the
+  rule is enforced structurally, and no code may rest on what happens to work.
+
+- **N-2 — Transport threads call managed code.** Fast DDS listener threads and the
+  XRCE session pump enter the CLR via the thunk; that is legal, but a handler that
+  blocks starves the transport (Fast DDS holds the reader mutex across the call).
+  Document; provide `DispatchAfterDelivery`; consider a debug watchdog that logs
+  handlers over a threshold. *BIND-4.*
+
+- **N-3 — `async void` handlers and `SynchronizationContext`.** An `async`
+  delegate passed as a delivery callback returns at its first `await`, the thunk
+  frees nothing wrongly (the counter is per synchronous extent), but the
+  continuation runs **after** the borrowed `data`/`schema`/`attachments` are gone.
+  The delegate type must not be awaitable; give the span/ref-struct signature so
+  an `async` lambda cannot type-check, and document the trap. *BIND-4.*
+
+- **N-4 — `ReadOnlySpan<byte>` cannot be captured, ref structs cannot cross
+  `await`.** This is the protection, and it is also the ergonomics cost: a handler
+  that wants the row later copies explicitly (`ToArray()`), which is the borrow
+  rule made visible. Same for the schema: retaining it is `Retain()` on the owner
+  handle, never the C Data Interface `release`. *BIND-4.*
+
+- **N-5 — Two `release` protocols coexist.** The C Data Interface `release` on an
+  `ArrowArray`/`ArrowSchema` that C# *exported* is called by native when done; the
+  `ArrowSchema` a subscriber *receives* is shared and must **never** be released by
+  C# (only its owner handle). `Apache.Arrow.C.CArrowSchemaImporter` consumes what
+  it imports, so a received schema must be **deep-copied on the native side**
+  (`OwnedSchema::DeepCopy`, public for exactly this reason) before import. Misuse
+  is a use-after-free under every other holder. *BIND-3; test with a schema
+  received twice.*
+  **NOT discharged at BIND-3c, and not by oversight — the RECEIVING half is
+  unreachable.** 3c builds the EXPORT direction only: a schema and a batch that C#
+  exports, which the shim borrows and deep-copies on its own side. Nothing in the
+  implemented entry-point set produces an `fl_schema` — it arrives from
+  `fl_schema_arrival_wait` and the subscriber, both BIND-4's — so the
+  deep-copy-before-import rule and the "a schema received twice" test **move to
+  BIND-4**, where a received schema first exists.
+
+- **N-6a — a binding cannot make a blob, and now it can (D-BIND-42, 2026-09-21).**
+  The ABI's blob rules forbid a view-only blob so that everything crossing has an
+  owner — and the surface then offered no way to CREATE one from a binding's own
+  bytes, so `fl_attachments_builder_set` was unreachable for a publisher. Closed
+  by adding `fl_blob_create`, which COPIES; the copy is what supplies the owner.
+  Attachments are sidecar metadata and the row payload's zero-copy path is
+  untouched. ABI minor 1 → 2. *BIND-4a.*
+
+- **N-6 — `GCHandle` and pinning.** Context handles are `GCHandle.Alloc(obj)` (not
+  pinned; they are opaque tokens). Buffers handed to native for the duration of a
+  call are pinned with `fixed`; nothing pinned outlives its call. The
+  `publish_raw` writer copies from a `fixed` region inside the writer frame.
+  *BIND-3.*
+
+- **N-7 — Native library loading.** `DllNotFoundException` at runtime, not build
+  time, when the RID asset is missing or the wrong architecture; on Linux, a shim
+  built on Ubuntu 24.04 (glibc 2.39) does not load on older distributions.
+  Mitigate with `SetDllImportResolver` naming the RID and the search path, an ABI
+  version handshake, and a **decision** on the glibc baseline for `linux-x64`
+  (build on an older image, or state the floor). MSVC: the shim links the CRT
+  **statically** (`/MT`) so consumers need no redistributable. *BIND-3 / BIND-9.*
+  **The glibc half moved to BIND-9 and is now MEASURED (D-BIND-41, 2026-09-21).**
+  A floor is a statement about a package, and BIND-3 packages nothing — but the
+  measurement does not have to wait: `ci.c-abi.yml`'s Linux leg prints the highest
+  `GLIBC_x.y` the built shim references on every run, so BIND-9 states a measured
+  number rather than inferring one from the build image (which is wrong in the
+  safe direction — the symbols a binary reaches are older than the glibc it was
+  built against). **Why this bites NuGet and never bit the C++ lanes:** they ship
+  Conan packages, so a profile mismatch rebuilds from source and heals itself; a
+  `.so` under `runtimes/linux-x64/native/` is taken as-is or not at all. The CRT
+  half of this bullet moved to BIND-9 earlier, by D-BIND-38.
+
+- **N-8 — NativeAOT and static native linking change the LGPL analysis.** Default
+  P/Invoke to a shared shim keeps the shim replaceable (see P-1). A consumer that
+  statically links the shim into a NativeAOT binary creates a combined work with
+  different obligations; the README must say so. *BIND-9 / BIND-10.*
+
+- **N-9 — `Apache.Arrow` gaps.** C Data Interface support must be verified for
+  every type in the mapping (nested lists, maps, struct-of-list, timestamps with
+  timezone metadata, large binary); `StructArray.Fields` windowing is an open
+  empirical question (D-BIND-10); dictionary arrays are deferred anyway. Pin the
+  version and write a probe test per type at BIND-3, before generated code depends
+  on it. *BIND-3 / BIND-7.*
+  **Answered at BIND-0 (2026-09-14), earlier than this note planned because the
+  tracker's acceptance asks for it there:** `Apache.Arrow` **23.0.0**, pinned
+  exactly. `dotnet/tests/Fletcher.Tests/ArrowCDataInterfaceTests.cs` round-trips one
+  array per mapped Arrow type through `Apache.Arrow.C` — 9 scalars, `timestamp(ns)`
+  with and without a timezone, `duration(ns)`, `struct`, `list<int32>`,
+  `list<struct>`, `map<utf8,int32>` — plus a whole `RecordBatch` and schema/field
+  metadata, comparing the imported arrays buffer for buffer. All green on both
+  TFMs. No gap found, so no type has to be avoided; `StructArray.Fields` windowing
+  (D-BIND-10) is a separate question and stays with BIND-7.
+
+- **N-10 — the shim's Windows export table is not ours (found at BIND-0).**
+  ConanCenter's `fast-dds` static build is compiled with
+  `EPROSIMA_USER_DLL_EXPORT`, so `libfastdds-3.4.lib` carries 303003 `/EXPORT`
+  directives that the linker honours when it pulls those objects into a DLL: the
+  shim exports 3531 names instead of the one `binding.h` declares. A
+  module-definition file does not suppress them — MSVC merges `/DEF` exports with
+  `__declspec(dllexport)` ones (measured both ways). Linux is clean
+  (`CXX_VISIBILITY_PRESET hidden` plus `--exclude-libs ALL`) and `ci.c-abi.yml`
+  asserts it there. Nothing mis-resolves on Windows — imports bind per module, with
+  no ELF-style interposition — so this is a size and honesty problem rather than a
+  correctness one. Fixing it means changing how the dependency is built.
+  *BIND-9, with the packed-size budget.*
+
+### Generator
+
+- **G-1 — Generated C# does not encode.** The plan's BIND-3 acceptance
+  (`WriteTo`/`ReadFrom`) predates D-BIND-1 and must be rewritten as
+  `ToArrow`/`FromArrow` plus a descriptor. If a reviewer asks for direct wire
+  writing in generated C#, that is the D-BIND-1 STOP-AND-ASK. *BIND-6.*
+
+- **G-2 — Temporal precision.** `DateTime`/`DateTimeOffset` ticks are 100 ns;
+  Arrow nanosecond timestamps lose two digits on the round trip. The type table
+  must choose: expose `long` + unit (lossless, less ergonomic), a Fletcher
+  `Timestamp` struct, or `DateTimeOffset` with a documented truncation for `ns`.
+  **Recommend lossless by default** (`long`-backed struct with `ToDateTimeOffset()`),
+  since a silent precision change is a wire-visible difference in the capstone.
+  Same question for `Duration` vs `TimeSpan`. *BIND-6, recorded in the type table.*
+
+- **G-3 — Maps.** Arrow `Map` permits duplicate keys and preserves order; proto
+  maps do not. `Dictionary<K,V>` drops duplicates silently on `FromArrow`.
+  Recommend `IReadOnlyList<KeyValuePair<K,V>>` on the row and a documented
+  conversion helper, or `Dictionary` with a refusal on duplicates. *BIND-6.*
+
+- **G-4 — Accessor depth cap.** The IR has no cap; RBA's emitter caps nested lists
+  at depth 2/3. Recommend **matching the cap** for capstone parity and recording
+  the asymmetry as RIR's to remove; exceeding it deliberately needs a fixture C++
+  cannot consume, which breaks D-BIND-11's shared-fixture rule. *BIND-7.*
+
+- **G-5 — Nullability and `optional`.** Proto3 `optional`, message fields and
+  wrapper WKTs map to nullable C#; scalars do not. Nullable reference type
+  annotations must be emitted so consumers get warnings, and the descriptor's
+  nullability must match the Arrow schema's, or the capstone fails on the
+  nullable-flag-tolerant read. *BIND-6.*
+
+- **G-6 — Multi-file and namespace.** Reuse `CollectCrossFileIncludes` read-only
+  for namespace qualification; shared helper emitted exactly once from
+  `GenerateAll()` (the RBA-1 failure mode). *BIND-6.*
+
+### Packaging and process
+
+- **P-1 — LGPL relinking.** Fletcher is LGPL-3.0-or-later; today consumers build
+  from source. The argument to put to the owner: the shim is a **shared library**
+  the .NET assembly loads at runtime, so the application is a combined work "using
+  a shared library mechanism" and §4(d)(1) is met if the user can replace the shim
+  with a rebuilt one; the corresponding source is the public repository at the
+  tagged commit, and the NuGet carries the notice, the tag, and the build
+  instructions. Static Fast DDS/XRCE inside the shim are permissive and do not
+  change the analysis. **This is an engineering argument, not a legal conclusion;
+  it needs an owner and a decision before BIND-9 designs packaging.** The
+  *notice* half is no longer open: #127 (2026-09-10) ships `LICENSE` and a
+  graph-derived `THIRD-PARTY-LICENSES.txt` with the gateway, and BIND-9 reuses
+  that deployer for the shim (§4, BIND-9 licence files). What still needs the
+  owner is the *relinking* half: whether a replaceable shared shim plus the
+  public source at the tagged commit satisfies §4(d)(1), and what the NuGet
+  README must say. *Owner assigned 2026-09-11 (Q9): the maintainer; BIND-9 hands
+  over the brief and waits for the answer on packaging only.* **Narrowed further
+  2026-09-14 (D-BIND-28):** the first publication target is EIVA's internal feed, and
+  distribution to EIVA's own applications is not distribution to third parties, so the
+  relinking answer is needed before the first *external* publication rather than
+  before BIND-9. The licence files ship in the packages either way.
+
+- **P-2 — RID matrix.** `win-x64` and `linux-x64` are the ones the tree already
+  builds. `linux-arm64` needs cross-compilation or an ARM runner; `osx-arm64` needs
+  a macOS runner and a Fast DDS build the tree has never done. Recommend
+  **`win-x64`, `linux-x64` at first release**, `linux-arm64` as the first addition,
+  macOS on demand. *BIND-9.*
+
+- **P-3 — Conformance suite duplication.** The C++ suite cannot exercise C# code;
+  the C# arm re-states `CallerTier` and the `ProviderConformance` clauses over
+  `inprocess`. Two suites over one contract will drift unless each C# case names
+  the C++ case it mirrors in an attribute and a script checks the mapping is
+  total. *BIND-4.*
+
+- **P-4 — Publishing goes to `nuget.eiva.com` first (D-BIND-28, 2026-09-14), and the
+  feed is not reachable from GitHub-hosted runners.** The host resolves to a private
+  10.x address, and every workflow in the repo runs on `ubuntu-latest` /
+  `windows-2022`. So `cd.dotnet.yml`'s publish job needs a **self-hosted runner inside
+  the EIVA network** (a new thing for this repo: registration, maintenance, secret
+  scoping) or the push happens from an EIVA machine for the alpha series. The feed is
+  BaGetter: anonymous read, API-key publish, symbol packages supported. NuGet.org
+  Trusted Publishing and the prefix reservation are deferred until the packages go
+  external, and the workflow is shaped so that is one added `push` step. **Ruled
+  2026-09-14: the publish job runs on a self-hosted runner inside the EIVA network,
+  and `cd.dotnet.yml` mirrors this repo's Conan CD workflows** (`cd.core.yml`: tag →
+  `setup-devcontainer` → `ci.*.yml` → publish job with tag verification, artifact
+  download, push, GitHub Release); build, test and pack stay on GitHub-hosted
+  runners. The runner runs only the tag-triggered publish job, never PR code.
+  *Implement in BIND-9; design in the tracker's Part 5.*
+
+- **P-5 — ADO 18786 "all tests".** Two exclusion classes now (generator; provider
+  internals) instead of one. Do not close 18786 before Bucket 4 is green over
+  `fastdds` and `xrce`. *BIND-0 (ask), BIND-4 (deliver).*
+
+- **P-6 — First lane run beats local green (§12.4).** Windows is the primary dev
+  platform; three of PR #126's seven CI-found defects were Linux-only. BIND-0's
+  empty-ABI lanes exist to make the Linux signal standing from day one.
+  **Vindicated on the first run (PR #129, 2026-09-15).** Every local Windows build
+  was green; Linux failed at the link:
+  `relocation R_X86_64_TPOFF32 against '__tls_guard' can not be used when making a
+  shared object; recompile with -fPIC`. No `fletcher-*` recipe declared an `fPIC`
+  option, because until `c-abi/` nothing in the tree packaged a SHARED library to
+  link those archives into. Fixed by adding the option (default True, deleted on
+  Windows) to `pubsub`, `fastdds-pubsub-provider` and `xrcedds-pubsub-provider`;
+  header-only `core` needs none. The same run also caught two unformatted spots
+  that `ci.format-check-cpp` had never checked — its globs omitted `*.c`, and
+  `c-abi/` is the tree's first C component.
+
+- **P-7 — `protoc/` and `arrow-bridge/` are contended.** The branch is now **PR #128**
+  ("FastDDS Modernization"), and the paragraph this bullet used to carry was written
+  against a state that no longer exists. Re-derived 2026-09-15: seven commits, 79
+  files, **+10629/−639**, merge base `6c541e9`. `arrow-bridge` is the big one (18
+  files, +6275/−212: `BatchDecoder`, `EncodeRow` on `PositionalWriter`, benchmarks,
+  +2675 lines of tests, and `src/codec.cpp` +404/−139); `pubsub` grows a schema-only
+  subscribe (+557/−21).
+
+  **What changed since the plan said it.** The `protoc` collision has largely
+  evaporated — commit `b95026c` rebased that work onto the IR, so it is **+416/−56**
+  across seven files, and BIND-6/7 meet it only in `generator.cpp`. `SubscribeSchema`
+  no longer takes a `std::shared_future`: it returns a `SchemaArrival`, and both
+  schema-only methods are defaulted virtuals, so the seam grows append-only and the
+  D-BIND-22 conflict is already resolved on the branch. And a collision this bullet
+  never anticipated is live: #128 bumps `pubsub`, `arrow-bridge`, `protoc` and the
+  Fast DDS provider to **0.5.1-alpha**, while `c-abi/conanfile.py` pins three of them
+  exactly — so the `c-abi` lane reddens on the merge commit unless someone moves three
+  lines.
+
+  **Ruled 2026-09-15 (Q20 / D-BIND-29): BIND does not wait.** #128 is a draft, red on
+  Linux, with no human review decision; blocking a round that has just started on it
+  would put another branch's unknown schedule on this one's critical path. #129 lands
+  first (it carries `fPIC`, the XRCE SIGPIPE fix and `*.c` format coverage, all of
+  which #128 wants anyway); BIND-1 specifies the schema-watch pair into `binding.h`
+  declared-but-`kNotSupported`, so a header reviewed as a specification is not reopened
+  at BIND-4; the order is re-examined at the **BIND-1 → BIND-2 boundary**, which is
+  where the genuine dependency on the rewritten `Codec` sits.
+  **Closed 2026-09-25 (D-BIND-52):** #128 landed on `main` and reached this branch by
+  merge, so the seam has the pair; the shim now implements it (ABI 0.5). The C#
+  surface does not expose it yet — owed to a later ruling.
+  `TsVisitor.DescriptorByteIdentical`, the no-drift test and BIND-2's byte-identity
+  oracle are what prove neither party moved wire bytes — and if BIND-2 goes first, that
+  oracle becomes a standing guard on #128's rewrite. *Ruled at BIND-0; re-examined at
+  BIND-2.*
+
+---
+
+## §7 — Decisions needed before kickoff
+
+Answer these and BIND-0 can close in a day. Q13–Q18 are interface-shape
+questions and live in [BIND-csharp-public-surface.md](BIND-csharp-public-surface.md) §7;
+the numbering is shared so a ruling can cite one number.
+
+| # | Question | Recommendation | Blocks |
+|---|---|---|---|
+| Q1 | Lock the value transfer as the Arrow C Data Interface (D-BIND-1a′) with both riders, **together with the encode surface in its three layers (D-BIND-23, §3.2)**: the C ABI (`fl_codec_open` once per schema, `fl_rows_bind` once per batch with the array borrowed, `fl_publisher_publish_row(s)` fused into `Publish`, `fl_encode_row` into the seam's window form, `fl_decode_rows`), the C++ behind it (`NanoarrowCodec{Bind, EncodeRow(BoundRows, i, WriteBuffer&), DecodeRows}`), and the C# on top (`FletcherCodec.Bind → BoundRows`, `Publisher.Publish(topic, rows, i)`, no method returning bytes) | ✅ **LOCKED 2026-09-11**: all three layers as one lock; B-2 stays an open measurement in BIND-3 with the D-BIND-1 STOP-AND-ASK as the escape hatch | BIND-1, BIND-2 |
+| Q2 | Three managed packages instead of six (D-BIND-14′) | ✅ **LOCKED 2026-09-11**: three | BIND-0 |
+| Q3 | Shim links and registers `inprocess` + `fastdds` + `xrce` (D-BIND-3′) | ✅ **LOCKED 2026-09-11**: all three | BIND-2, BIND-9 |
+| Q4 | Constraint 4 spelling: managed refusal + explicit async helper, or silent queueing (S-4) | ✅ **LOCKED 2026-09-11**: refusal + helper (D-BIND-18) | BIND-4 |
+| Q5 | Temporal mapping: lossless `long`-backed struct vs `DateTimeOffset` (G-2) | ✅ **LOCKED 2026-09-11**: lossless (D-BIND-26) | BIND-6 |
+| Q6 | Accessor depth cap: match RBA's 2/3 (G-4) | ✅ **LOCKED 2026-09-11**: match (D-BIND-9 amended) | BIND-7 |
+| Q7 | Toolchain: .NET 10 LTS SDK; TFMs `net8.0;net10.0` (D-BIND-21) | ✅ **LOCKED 2026-09-11** | BIND-0 |
+| Q8 | RID matrix at first release (P-2) | ✅ **LOCKED 2026-09-11**: `win-x64`, `linux-x64` (D-BIND-27) | BIND-9 |
+| Q9 | Owner for the LGPL relinking review (P-1) | ✅ **Assigned 2026-09-11: the maintainer.** Decision due before BIND-9 designs packaging; BIND supplies the engineering brief (P-1's argument, the #127 notice mechanism, the NativeAOT caveat N-8) | BIND-9 |
+| Q10 | 18786 exclusion classes: generator tests and provider-internal tests stay in C++ (P-5) | ✅ **LOCKED 2026-09-11**: both classes, documented | closing 18786 |
+| Q11 | Are any Flight (20061) consumers C++ processes hosting .NET, or hosting two bindings? (B-4) | ✅ **Answered 2026-09-11: no** — consumers are .NET processes with this binding only. D-BIND-17's check covers the detectable case; a future C++ host is a STOP-AND-ASK under P1 | BIND-2 design |
+| Q12 | Is BIND-Rust in this round? (plan open decision 5) | ✅ **Ruled 2026-09-11: next round** | scope |
+| Q20 | Landing order against PR #128 (P-7): does BIND wait for the FastDDS modernization branch to land? | ✅ **RULED 2026-09-15: no** (D-BIND-29). #129 first; BIND-1 declares the schema-watch pair as `kNotSupported`; re-examined at the BIND-1 → BIND-2 boundary; whoever lands second moves `c-abi`'s three pins to `0.5.1-alpha`. **The schema-watch clause is superseded (D-BIND-52, 2026-09-25):** the seam grew the pair (#128) and the shim forwards to it, ABI 0.5 | BIND-1, BIND-2 |
+| Q19 | Confirm the reading of 16353's "make C# emit Rust-native accessor classes" as *C# accessor classes equivalent to the Rust-native ones* (plan open decision 4; the literal phrasing would mean C# emitting Rust and looks like a copy-paste from the RBA feature) | ✅ **CONFIRMED 2026-09-11**: equivalence reading; ADO 16353 text to be corrected | BIND-7 |
+
+---
+
+## §8 — Definition of done (round), updated
+
+- BIND-0..10 and BIND-T green, reviewed, logged in `BIND-progress-log.md`.
+- **One wire format**: byte identity between the nanoarrow codec and `arrow-bridge`
+  across the full scenario corpus; no managed code writes wire bytes except
+  `GatewayClient`.
+- **Zero-copy proven from C#**: the copy oracle green with the C# producer for rows
+  and attachments, the UTF-16↔UTF-8 boundary stated in its scope note.
+- **Generic transport proven**: `fastdds` and `xrce` reachable from C# by selector
+  with no per-transport C# code; a path selector refuses with `kNotSupported`
+  until PDA-ABI installs a resolver.
+- **Single copy enforced**: the shim refuses to load beside a second marker.
+- Every seam-inherited obligation (constraints 1–8, the two details) has a named
+  test in the C# suite, and the C# `CallerTier` arm maps totally onto the C++ one.
+- Test matrix of §5 green per the owner's ruling on exclusions; 18786 not closed
+  before Bucket 4.
+- Generator: every plugin output has a C# counterpart; TS gains
+  `Publisher`/`Subscriber`; no existing output byte changed.
+- `GatewayClient` carries no `runtimes/`; the shim is within its size budget.
+- Docs incl. TD-009; round archived to `docs/archive/BIND/`.

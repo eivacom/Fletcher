@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+name: ci.format-check-cs
+
+concurrency:
+  group: ci.format-check-cs-${{ github.ref }}
+  cancel-in-progress: true
+
+# Standalone and self-triggering, exactly like ci.format-check-ts.yml and
+# ci.format-check-cpp.yml: it is NOT part of ci.pr.yml's pr_gate aggregation.
+# Configure it as a separate required status check on the branch protection rule
+# if it should block.
+on:
+  pull_request:
+    paths:
+      - "dotnet/**"
+      - "integration-tests/**/dotnet/**"
+      - ".github/workflows/ci.format-check-cs.yml"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # The same pin the devcontainer installs and ci.dotnet.yml builds with, so
+      # editor, CI and a developer's host agree on what "formatted" means — the
+      # reason ci.format-check-ts.yml pins prettier and Node together.
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: dotnet/global.json
+
+      # --severity warn, not the default: the naming and style rules in
+      # dotnet/.editorconfig are declared at `error`, and the analyzer severities
+      # that matter at the P/Invoke boundary are too. A check that only looked at
+      # whitespace would pass a file that violates every one of them.
+      - name: Run dotnet format --verify-no-changes
+        working-directory: dotnet
+        run: |
+          dotnet restore Fletcher.slnx --locked-mode
+          dotnet format Fletcher.slnx --verify-no-changes --severity warn --no-restore
+
+      # THE SOLUTION DOES NOT CONTAIN THE INTEGRATION SUITES, and must not: 
+      # ci.dotnet.yml runs `dotnet test Fletcher.slnx`, so adding them there would
+      # drag real Fast DDS participants into the unit lane - the precise thing
+      # pubsub-transport-conformance was given its own lane to avoid - and would
+      # break `restore --locked-mode`, which wants a lock file per project.
+      #
+      # So they are formatted HERE, by path. Without this step they are outside
+      # the gate entirely: binding-abi-conformance had been since BIND-3, which is
+      # how the gap was found - by noticing a SECOND project was about to join it.
+      # A new C# project outside dotnet/ adds itself to this list.
+      - name: Run dotnet format over the integration suites
+        run: |
+          for PROJECT in \
+            integration-tests/binding-abi-conformance/dotnet/BindingAbiConformance/BindingAbiConformance.csproj \
+            integration-tests/pubsub-transport-conformance/dotnet/PubSubTransportConformance/PubSubTransportConformance.csproj; do
+            echo "::group::dotnet format $PROJECT"
+            dotnet format "$PROJECT" --verify-no-changes --severity warn
+            echo '::endgroup::'
+          done

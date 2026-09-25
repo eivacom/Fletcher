@@ -1,0 +1,214 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+name: ci.dotnet
+
+concurrency:
+  group: ci.dotnet-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_call:
+    inputs:
+      devcontainer-image:
+        description: >-
+          Pre-built devcontainer image reference (e.g.
+          eivaorg/fletcher-devcontainer:<sha>). The caller is
+          responsible for invoking ci.setup-devcontainer-image.yml; this
+          workflow only consumes the resulting image. ci.pr.yml passes the
+          image it built once and shares across all callers; the
+          cd.dotnet.yml wrapper does the same for tag-push releases. Only the
+          Linux job needs it; the Windows job runs natively on the
+          windows-2022 runner.
+        required: true
+        type: string
+
+# The two-job split is the one ci.integration-test.protoc-gen-fletcher-rust.yml
+# uses: Linux inside the devcontainer image (the same environment every other
+# Fletcher Linux build runs in, and the one a developer gets from "Reopen in
+# Container"), Windows natively with actions/setup-dotnet. Both legs restore with
+# --locked-mode, so a dependency that changed without its packages.lock.json
+# fails here rather than resolving differently on the two platforms.
+#
+# BOTH SPARSE CHECKOUTS INCLUDE protoc/tests/golden, AND THAT IS NOT A STRAY
+# ENTRY. Fletcher.Tests stages those .ipc files beside the test binary and opens
+# a codec over every one of them (SchemaIpcTests), which is the only check in the
+# tree that the descriptors the generator emits are descriptors the binding's
+# codec accepts. Without the entry the MSBuild glob matches nothing, the goldens
+# are silently absent, and the theory over them has no cases - which is exactly
+# how BIND-3c first went red here while passing on every developer machine, where
+# the whole repo is present. Cone mode also brings the files directly in protoc/
+# and protoc/tests/ along; that is a few hundred KB and is the price of the
+# check. A new consumer of a path outside this lane's checkout must add it HERE
+# and to ci.pr.yml's dotnet filter, in the same commit.
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            dotnet
+            .github
+            .conan-profiles
+            core
+            pubsub
+            fastdds-pubsub-provider
+            xrcedds-pubsub-provider
+            c-abi
+            protoc/tests/golden
+
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
+        with:
+          image: ${{ inputs.devcontainer-image }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # The image carries the pinned .NET SDK (DOTNET_SDK_VERSION in
+      # .devcontainer/Dockerfile) and dotnet/global.json pins the same band, so
+      # there is no toolchain install step here at all — the Node pattern, not
+      # the Rust one (D-BIND-21).
+      # BIND-3a: the managed suite now LOADS the native shim, so this lane builds
+      # it. One container invocation for both halves, because the shim is found
+      # inside the Conan cache and that cache is container-local.
+      #
+      # No Conan remote hosts the fletcher-* packages, so each dependency recipe
+      # has to be created before the next can resolve it. arrow-bridge is NOT in
+      # the loop: it is the c-abi lane byte-identity oracle, never linked into the
+      # shim, so this lane has no use for it.
+      #
+      # The find is checked rather than trusted. The two native rows in
+      # Fletcher.Tests fail rather than skip when the shim is absent, so an empty
+      # path here would surface as two confusing test failures instead of one
+      # clear lane failure naming the real cause.
+      - name: Build the native shim, then restore, build, test, pack
+        shell: bash
+        run: |
+          docker run --rm             -v "${GITHUB_WORKSPACE}:/workspace"             -w /workspace             -e CI=true             fletcher-build             bash -c '
+              set -e
+              PROFILE=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release
+              for COMPONENT in core pubsub fastdds-pubsub-provider xrcedds-pubsub-provider c-abi; do
+                echo "::group::conan create $COMPONENT"
+                (cd /workspace/$COMPONENT && conan create . --build=missing -pr:a=$PROFILE)
+                echo "::endgroup::"
+              done
+
+              SHIM=$(find ~/.conan2/p -path "*/p/lib/libfletcher-c-abi.so" -type f -print -quit)
+              if [ -z "$SHIM" ]; then
+                echo "::error::libfletcher-c-abi.so not found in the Conan cache after conan create"
+                exit 1
+              fi
+              echo "staging shim: $SHIM"
+
+              cd /workspace/dotnet
+              echo "::group::dotnet --info"
+              dotnet --info
+              echo "::endgroup::"
+              dotnet restore Fletcher.slnx --locked-mode
+              dotnet build Fletcher.slnx -c Release --no-restore -p:FletcherNativeShim="$SHIM"
+              dotnet test Fletcher.slnx -c Release --no-build --logger "trx;LogFileName=linux.trx"
+              dotnet pack Fletcher.slnx -c Release --no-build -o /workspace/dotnet/artifacts
+            '
+
+      # The packages are the release artifact, and at BIND-0 they are also the
+      # proof that packing works before there is anything in them. BIND-9 adds
+      # the native assets, the LICENSE / THIRD-PARTY-LICENSES.txt staging that
+      # #127 introduced for the gateway archive, and the asset-isolation check.
+      - name: Upload packages
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: dotnet-packages
+          path: |
+            dotnet/artifacts/*.nupkg
+            dotnet/artifacts/*.snupkg
+          retention-days: 5
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: dotnet-test-results-linux
+          path: dotnet/**/TestResults/*.trx
+          retention-days: 5
+
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            dotnet
+            .github
+            .conan-profiles
+            core
+            pubsub
+            fastdds-pubsub-provider
+            xrcedds-pubsub-provider
+            c-abi
+            protoc/tests/golden
+
+      # global-json-file, not a literal version: dotnet/global.json is the single
+      # pin, and the runner's own pre-installed SDKs must not be what decides
+      # which one this job uses.
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: dotnet/global.json
+
+      - name: Install Conan
+        uses: ./.github/actions/conan-install
+
+      # BIND-3a: the managed suite loads the native shim, so this lane builds it.
+      # Same component order as the c-abi lane, minus arrow-bridge, which is that
+      # lane's byte-identity oracle and is never linked into the shim.
+      - name: Build the native shim
+        shell: bash
+        run: |
+          set -e
+          PROFILE=.conan-profiles/Windows-msvc194-x86_64-Release
+          for COMPONENT in core pubsub fastdds-pubsub-provider xrcedds-pubsub-provider c-abi; do
+            echo "::group::conan create $COMPONENT"
+            (cd "$COMPONENT" && conan create . --build=missing -pr:a="../$PROFILE")
+            echo "::endgroup::"
+          done
+
+      # Checked, not trusted: the native rows fail rather than skip when the shim
+      # is absent, so an empty path here would surface as test failures instead of
+      # a lane failure that names the cause.
+      - name: Locate the shim
+        id: shim
+        shell: bash
+        run: |
+          set -e
+          SHIM=$(find ~/.conan2/p -path '*/p/bin/fletcher-c-abi.dll' -type f -print -quit)
+          if [ -z "$SHIM" ]; then
+            echo "::error::fletcher-c-abi.dll not found in the Conan cache after conan create"
+            exit 1
+          fi
+          echo "staging shim: $SHIM"
+          echo "path=$SHIM" >> "$GITHUB_OUTPUT"
+
+      - name: Restore, build, test
+        shell: bash
+        working-directory: dotnet
+        env:
+          CI: "true"
+        run: |
+          set -e
+          dotnet --info
+          dotnet restore Fletcher.slnx --locked-mode
+          dotnet build Fletcher.slnx -c Release --no-restore -p:FletcherNativeShim="${{ steps.shim.outputs.path }}"
+          dotnet test Fletcher.slnx -c Release --no-build --logger "trx;LogFileName=windows.trx"
+
+      # No pack here: the packages are platform-neutral managed assemblies, and
+      # packing them twice would produce two artifacts claiming to be the same
+      # thing. Windows earns its place in this lane by RUNNING the tests — it is
+      # the primary development platform, and the P/Invoke surface these packages
+      # will carry is the part most likely to differ between the two.
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: dotnet-test-results-windows
+          path: dotnet/**/TestResults/*.trx
+          retention-days: 5

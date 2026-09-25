@@ -330,16 +330,26 @@ returned when `Take` returns and a buffered pre-schema backlog can outlive it.
 
 ### What green does NOT prove — read before trusting it
 
-- **`encode_copies == 0` claims what the interface PERMITS, and no more.** It
-  says a client that uses `AppendInPlace` (§3.1 clause 6) *can* send a row with
-  no copy at all. It does **not** say that a C#/Rust binding does so: none
-  exists, so the producer measured here is a **stand-in** written in this
-  harness, and any wider claim would rest on a stand-in standing for something
-  unbuilt (owner ruling 2026-09-04, "the guard claims what the interface permits,
-  measured with a stand-in"). It is also a permission rather than a guarantee at
-  the seam itself: a client that ignores the call composes its row elsewhere and
-  `Append`s it, pays one whole-row copy, and the seam cannot stop it —
-  `StagingProducerIsCaught` is that client, measured, at exactly 1.
+- **`encode_copies == 0` claims what the interface PERMITS, and — since
+  BIND-2d — what one real binding ACHIEVES.** It says a client that uses
+  `AppendInPlace` (§3.1 clause 6) *can* send a row with no copy at all, and
+  `InPlaceEncodeWritesIntoTheDeliveredWindow` measures that with a stand-in
+  producer written in this harness (owner ruling 2026-09-04, "the guard claims
+  what the interface permits, measured with a stand-in").
+  **`BindingProducerWritesInPlace` narrows the caveat**: its producer is the
+  codec behind `fletcher-c-abi` — the artifact `Eiva.Fletcher.Interop` ships per
+  RID — driven through `fl_codec_open` → `fl_rows_bind` → `fl_encode_row` into a
+  span of the probe's own window. The producer is no longer a stand-in.
+  **What is still not claimed:** the managed tier above the ABI (it does not
+  exist until BIND-3), and the publisher wrapper `fl_publisher_publish_row`,
+  which this instrument cannot score at all — it samples from inside the
+  `RowEncoder` frame, and the fusion resolves its own provider rather than
+  being handed the probe (D-BIND-34).
+  It also remains a permission rather than a guarantee at the seam itself: a
+  client that ignores the call composes its row elsewhere and `Append`s it, pays
+  one whole-row copy, and the seam cannot stop it — `StagingProducerIsCaught` is
+  that client, measured, at exactly 1, and it is the live negative control for
+  the binding leg as much as for the stand-in one.
 - **A producer is trusted to report what it wrote.** `AppendInPlace` commits the
   count the writer returns, checked against the room it was lent and not against
   what it actually touched, so a writer that reports more than it wrote publishes
@@ -702,16 +712,18 @@ main thread, so each carries **its own mutex** and every comparison is made
 against a snapshot taken under it: unguarded, a foreign marker arriving during
 the read could be *missed*, which would be a green the arrangement did not earn.
 
-**The between-bounds row is dropped silently, and does not throw.** On the
-serialising publish flow — the one an empty document selects — the overflow is
-caught inside `serialize()`, which zeroes the payload length, so the sample never
-enters history, `write()` returns non-OK and `WriteSample` only logs it (pinned
-by `FastDDSPubSubProviderTest.DataSharingOversizedRowDoesNotThrow`). A typed
-`kPayloadTooLarge` exists only on the **loaned** flow, which is kept in the tree but not
-selectable (no `fletcher.loan_publish` property exists). So the bound case asserts
-**delivery** in both directions and no throw anywhere, and it publishes a third
-row *after* the oversized one which must arrive — nothing dead can pose as a
-working instance.
+**The between-bounds row is refused by name on the low-bound instance.** Its
+`Publish` throws `kPayloadTooLarge` — the status the seam spec's normative overflow
+mapping names — and the sample is not sent; the high-bound instance delivers it.
+The serialising publish flow (the one an empty document selects) records the
+overflow inside `serialize()` and `WriteSample` throws it once `write()` has
+returned, as the loaned flow always did (pinned by
+`FastDDSPubSubProviderTest.AnOversizedRowIsPayloadTooLarge`). **Until 2026-09** that
+flow dropped the row silently — caught, logged, `Publish` returning normally — and
+this case asserted the no-throw; the change came from the C# binding's review,
+which could not observe an overflow over any transport (BIND D-BIND-53). The case
+still asserts **delivery** in both directions, and publishes a third row *after*
+the refused one which must arrive — nothing dead can pose as a working instance.
 
 **These four cases are GREEN on the tree that first shipped them.** The property
 already held, so a passing run proves nothing by itself; the guard is the
