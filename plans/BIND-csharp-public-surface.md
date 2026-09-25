@@ -12,7 +12,8 @@ directions; every difference was ruled either a document amendment or code owed,
 and the tables and diagrams below now draw what ships. `BlobHandle` is the one
 member drawn nowhere because it is DEFERRED, not dropped (§2.1). A frozen table
 that disagrees with the shipped API is worse than no table (D-BIND-45), so a
-managed signature that changes lands here in the same commit.
+managed signature that changes lands here in the same commit. **D-BIND-57** (the same day) added
+the seam's per-topic options and exposed the schema watch; both are drawn below.
 
 Every C++ surface below was read from the tree, not from the plan documents. The
 seam types are **frozen** (`docs/pubsub-interface-spec.md` §12.1), so the C# shapes
@@ -49,6 +50,7 @@ that mirror them are constrained rather than chosen.
 | `OwnedSchema`, `MakeSharedSchema` | not exposed | Construction-side types. C# supplies schemas as `Apache.Arrow.Schema` and the shim owns the conversion |
 | `SchemaArrival::Wait(timeout, out)` and its five outcomes; `Message()` | `sealed class SchemaArrival : IDisposable` — `Wait(TimeSpan)` and `WaitAsync(TimeSpan, CancellationToken)` → `readonly struct SchemaWaitResult { FletcherStatus Status · SchemaHandle? Schema · bool HasSchema · bool IsSchemaless }`. **No `Message` member (D-BIND-55):** a failed wait throws a `FletcherException` carrying the message (D-BIND-19 rule 4) | `Ok` + null is a **schema-less transport**, not a failure, and must not release the handle. `Pending` and `SubscriptionEnded` are outcomes, never exceptions. `Timeout.Infinite` (−1) maps to `INT64_MAX`; any other negative throws in managed code (D-BIND-20). **`IsSchemaless` is not `!HasSchema`** — that is also true for `Pending` and `SubscriptionEnded`. **`WaitAsync` is the helper D-BIND-22 allows, built ABOVE `Wait`** (D-BIND-55): short `Wait` slices on the thread pool, the token checked between them, the same outcomes, cancellation as `OperationCanceledException` that cancels nothing native. It occupies one pool thread while it waits |
 | `SchemaResolver` | **not exposed** | Provider-side write end. C# cannot author a provider (§3.1) |
+| `TopicOptions {profile, max_payload_bytes}` (#128) | `sealed class TopicOptions { string? Profile · uint MaxPayloadBytes · bool IsEmpty }` (D-BIND-57) | The seam's struct, crossing as a fixed `fl_topic_options` (ABI 0.6). **Not validated in managed code**, for `ProviderConfig`'s reason: Fletcher does not know which profiles a provider's document defines or which bounds it takes, so the caller sees the seam's own statuses - an unknown profile, a bound on a subscription, or a re-declaration that changes a stored field is `InvalidArgument`; a field the provider has no notion of is `NotSupported`. Fast DDS knows both fields, XRCE only the bound, `inprocess` neither |
 | topic segments — `vector<string>`, six refusals, 246-byte joined cap | `readonly struct TopicPath` — `TopicPath.Of(params string[])`, `Segments`, `ToKey()` | Validated in managed code against the same six rules, in **UTF-8 bytes**, so the refusal arrives with a C# stack trace instead of crossing. Native re-validates; the two must agree |
 | `PubSubError` message escaping | handled natively | C# reads bytes + length, never a NUL-terminated string |
 
@@ -74,12 +76,13 @@ that enumerated built-ins would silently reopen that decision.
 | C++ | C# |
 |---|---|
 | `Publisher(shared_ptr<PubSubProvider>)` | `Publisher(PubSubProviderHandle)` , `IDisposable` |
-| `Publisher::CreateTopic(segments, OwnedSchema)` | `CreateTopic(TopicPath, Apache.Arrow.Schema)` |
+| `Publisher::CreateTopic(segments, OwnedSchema, TopicOptions = {})` | `CreateTopic(TopicPath, Apache.Arrow.Schema)` · `CreateTopic(TopicPath, Schema, TopicOptions?)` (D-BIND-57; null is empty) |
 | `Publisher::Publish(segments, RowEncoder, Attachments)` | `Publish(TopicPath, BoundRows, int row, AttachmentsBuilder?)` · `Publish(TopicPath, BoundRows, AttachmentsBuilder[]?)` (all rows, one crossing) · `Publish(TopicPath, RowWriter, int minBytes, AttachmentsBuilder?)` (**`minBytes` added by D-BIND-45**: `publish_raw` sizes the window before the writer runs, refuses 0, and a writer cannot ask for more — so it cannot be defaulted honestly) · `PublishRaw(TopicPath, ReadOnlySpan<byte>, AttachmentsBuilder?)`. `BoundRows` comes from `FletcherCodec.Bind(RecordBatch)`: one export and one validation serve N publishes (development plan §3.2, D-BIND-23) |
 | `Publisher::ListTopics()` | `IReadOnlyList<string> ListTopics()` |
 | `Subscriber(shared_ptr<PubSubProvider>)` | `Subscriber(PubSubProviderHandle)` , `IDisposable` |
-| `Subscriber::Subscribe(segments, cb)` → `{subscription_id, SchemaArrival}` | `Subscribe(TopicPath, RowHandler)` → `SubscribeResult { Subscription Subscription · SchemaArrival Schema }` |
+| `Subscriber::Subscribe(segments, cb, TopicOptions = {})` → `{subscription_id, SchemaArrival}` | `Subscribe(TopicPath, RowHandler)` · `Subscribe(TopicPath, RowHandler, TopicOptions?)` (D-BIND-57) → `SubscribeResult { Subscription Subscription · SchemaArrival Schema }`. The options apply to the topic's FIRST provider-level subscription on this subscriber; later ones share them, checked field by field |
 | `Subscriber::Unsubscribe(uint64)` | `Subscription.Dispose()` , and `Subscriber.Unsubscribe(Subscription)` |
+| `Subscriber::SubscribeSchema(segments)` / `UnsubscribeSchema(segments)` (#128) | `SchemaArrival SubscribeSchema(TopicPath)` · `void UnsubscribeSchema(TopicPath)` (D-BIND-57; implemented in the shim by D-BIND-52) | A watch delivers nothing, so there is no subscription: it is COUNTED per subscriber and released by the last `UnsubscribeSchema` or by `Dispose`. From inside a delivery on the provider a watch is refused in managed code first, because the seam refuses it always; a release passes the seam's `ReentrantCall` through, because only the last release enters the provider. Only Fast DDS has a schema channel; the others answer `NotSupported` |
 | `Subscriber::AbsorbedCallbackFailures()` | `ulong AbsorbedCallbackFailures { get }` — **the managed counter**, since a thunk that catches its own exception increments nothing native (constraint 8) — and `event EventHandler<HandlerFaultedEventArgs> HandlerFaulted` (`Exception`, `SubscriptionId`), raised for each absorbed failure (D-BIND-18, D-BIND-19 rule 5) |
 | `DeliveryChannel::AbsorbedTotal()` | `static ulong Diagnostics.AbsorbedTotal` — process-wide, the sum of every `Subscriber`'s count including disposed ones, and meaningful only under D-BIND-17's one-copy rule (shipped by D-BIND-55) |
 
@@ -317,6 +320,7 @@ classDiagram
     class Publisher {
         +Publisher(PubSubProviderHandle provider)
         +CreateTopic(TopicPath topic, Schema schema) void
+        +CreateTopic(TopicPath topic, Schema schema, TopicOptions options) void
         +Publish(TopicPath topic, BoundRows rows, int row) void
         +Publish(TopicPath topic, BoundRows rows) void
         +Publish(TopicPath topic, RowWriter writer, int minBytes) void
@@ -327,7 +331,10 @@ classDiagram
     class Subscriber {
         +Subscriber(PubSubProviderHandle provider)
         +Subscribe(TopicPath topic, RowHandler handler) SubscribeResult
+        +Subscribe(TopicPath topic, RowHandler handler, TopicOptions options) SubscribeResult
         +Unsubscribe(Subscription subscription) void
+        +SubscribeSchema(TopicPath topic) SchemaArrival
+        +UnsubscribeSchema(TopicPath topic) void
         +ulong AbsorbedCallbackFailures
         +HandlerFaulted EventHandler~HandlerFaultedEventArgs~
         +DispatchAfterDelivery(Func~Task~ work) Task
@@ -380,6 +387,13 @@ classDiagram
     ProviderRegistry ..> ProviderSelector : takes
     ProviderRegistry ..> ProviderConfig : takes
     ProviderRegistry ..> PubSubProviderHandle : returns
+    class TopicOptions {
+        +string Profile
+        +uint MaxPayloadBytes
+        +bool IsEmpty
+    }
+    Publisher ..> TopicOptions : takes
+    Subscriber ..> TopicOptions : takes
     Publisher o-- PubSubProviderHandle : shares
     Subscriber o-- PubSubProviderHandle : shares
     SubscriberArrow *-- Subscriber : wraps

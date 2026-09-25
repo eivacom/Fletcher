@@ -332,7 +332,18 @@ public sealed unsafe class Subscriber : IDisposable
     public event EventHandler<HandlerFaultedEventArgs>? HandlerFaulted;
 
     /// <summary>Subscribe to a topic. NEVER BLOCKS.</summary>
-    public SubscribeResult Subscribe(TopicPath topic, RowHandler handler)
+    public SubscribeResult Subscribe(TopicPath topic, RowHandler handler) => Subscribe(topic, handler, null);
+
+    /// <summary>Subscribe with per-topic options (D-BIND-57).</summary>
+    /// <remarks>
+    /// The options apply to the FIRST provider-level subscription on the topic;
+    /// a later subscription joins it and shares them, checked field by field (see
+    /// <see cref="TopicOptions"/>). A subscription carries no payload bound, so a
+    /// non-zero <see cref="TopicOptions.MaxPayloadBytes"/> is
+    /// <see cref="FletcherStatus.InvalidArgument"/>. The two-argument form is this
+    /// one with null options, which mean empty.
+    /// </remarks>
+    public SubscribeResult Subscribe(TopicPath topic, RowHandler handler, TopicOptions? options)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(handler);
@@ -375,15 +386,29 @@ public sealed unsafe class Subscriber : IDisposable
         // no retirement, so the handle is freed right here.
         state.Self = GCHandle.Alloc(state);
 
+        byte[] profile = options?.Profile is { Length: > 0 } p ? System.Text.Encoding.UTF8.GetBytes(p) : [];
         FlError err = default;
-        int status = NativeMethods.fl_subscriber_subscribe(
-            _handle,
-            native,
-            (nint)(delegate* unmanaged[Cdecl]<nint, ulong, byte*, nuint, FlSchema*, nint, void>)&DeliveryThunk,
-            GCHandle.ToIntPtr(state.Self),
-            out ulong id,
-            out SchemaArrivalHandle arrival,
-            ref err);
+        int status;
+        ulong id;
+        SchemaArrivalHandle arrival;
+        fixed (byte* profileBytes = profile)
+        {
+            var nativeOptions = new FlTopicOptions
+            {
+                Profile = new FlStr { Data = (nint)profileBytes, Len = (nuint)profile.Length },
+                MaxPayloadBytes = options?.MaxPayloadBytes ?? 0,
+            };
+
+            status = NativeMethods.fl_subscriber_subscribe_with_options(
+                _handle,
+                native,
+                (nint)(delegate* unmanaged[Cdecl]<nint, ulong, byte*, nuint, FlSchema*, nint, void>)&DeliveryThunk,
+                GCHandle.ToIntPtr(state.Self),
+                in nativeOptions,
+                out id,
+                out arrival,
+                ref err);
+        }
 
         if (status != (int)FletcherStatus.Ok)
         {
@@ -410,6 +435,77 @@ public sealed unsafe class Subscriber : IDisposable
     }
 
     private readonly System.Collections.Generic.Dictionary<ulong, SubscriptionState> _live = [];
+
+    /// <summary>Watch a topic's schema without subscribing to its data (D-BIND-52, D-BIND-57).</summary>
+    /// <remarks>
+    /// <para>
+    /// The seam's <c>SubscribeSchema</c>, forwarded: it never blocks, and the
+    /// arrival resolves when a publisher announces the topic, exactly as the one
+    /// <see cref="Subscribe(TopicPath, RowHandler)"/> returns. There is no
+    /// subscription to cancel - a watch delivers nothing - so it is COUNTED per
+    /// Subscriber and idempotent per topic, and the last
+    /// <see cref="UnsubscribeSchema"/> (or <see cref="Dispose"/>) releases it.
+    /// A data unsubscribe does not.
+    /// </para>
+    /// <para>
+    /// A transport with no out-of-band schema channel answers
+    /// <see cref="FletcherStatus.NotSupported"/>: only Fast DDS has one today.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">
+    /// Called from inside a delivery on this subscriber's provider. The seam refuses
+    /// that ALWAYS - unlike <c>Subscribe</c>, whose answer depends on whether the
+    /// provider must be entered - so it is refused here first (D-BIND-51).
+    /// </exception>
+    public SchemaArrival SubscribeSchema(TopicPath topic)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (InDeliveryOnProvider())
+        {
+            throw new InvalidOperationException(
+                $"SubscribeSchema on '{topic.ToKey()}' cannot run inside a delivery on this subscriber's " +
+                "provider: the seam refuses a schema watch there always. Use DispatchAfterDelivery to " +
+                "defer the call past this handler's return.");
+        }
+
+        byte* buffer = stackalloc byte[TopicPath.MaxJoinedBytes];
+        FlStr* segments = stackalloc FlStr[topic.Segments.Count];
+        FlTopic native = MarshalTopic(topic, buffer, segments);
+
+        FlError err = default;
+        int status = NativeMethods.fl_subscriber_subscribe_schema(_handle, native, out SchemaArrivalHandle arrival, ref err);
+        if (status != (int)FletcherStatus.Ok)
+        {
+            arrival.Dispose();
+            Errors.ThrowIfFailed(status, ref err);
+        }
+
+        return new SchemaArrival(arrival);
+    }
+
+    /// <summary>Release one of this subscriber's watches on <paramref name="topic"/>.</summary>
+    /// <remarks>
+    /// A no-op for a topic this subscriber does not watch. Only the LAST release
+    /// enters the provider, and a still-pending arrival then reports
+    /// <see cref="FletcherStatus.SubscriptionEnded"/>. From inside a delivery on
+    /// this subscriber's provider that last release is refused by the seam as
+    /// <see cref="FletcherStatus.ReentrantCall"/> and the watch stays counted;
+    /// this tier cannot tell a last release from an earlier one, so it passes the
+    /// seam's answer through rather than guessing.
+    /// </remarks>
+    public void UnsubscribeSchema(TopicPath topic)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        byte* buffer = stackalloc byte[TopicPath.MaxJoinedBytes];
+        FlStr* segments = stackalloc FlStr[topic.Segments.Count];
+        FlTopic native = MarshalTopic(topic, buffer, segments);
+
+        FlError err = default;
+        int status = NativeMethods.fl_subscriber_unsubscribe_schema(_handle, native, ref err);
+        Errors.ThrowIfFailed(status, ref err);
+    }
 
     /// <summary>Cancel a subscription.</summary>
     /// <remarks>

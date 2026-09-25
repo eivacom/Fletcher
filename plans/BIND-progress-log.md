@@ -376,3 +376,16 @@ Linux and Windows, the Agent built cold from the shared recipe in both lanes on 
 managed **277/277** on all four legs, c-abi **71/71**, binding-abi **11/11**. **The lesson is the same one
 this entry already names**: a re-grade written by the author of the fixes read "resolved" off the
 BLOCKER list and never re-read the DEBT that carried an acceptance bullet's other half.
+
+**Reopened again (D-BIND-57, same day).** Laying out the `TopicOptions` gap for BIND-5 found that
+#128 had reached this branch four hours AFTER bucket 3 was ported, grown its file set from 23 cases
+to 49, added per-topic options to the seam that the ABI did not carry, and changed five more
+matrix files - and that nothing re-derived the matrix after the merge, so both closes today claimed
+a file set 26 cases short. The ABI gains a `*_with_options` pair (0.6, 46 entry points), C# gains
+`TopicOptions` and the schema watch, the 26 are mapped (12 over `inprocess`, 11 over Fast DDS, 3
+excluded), and **`scripts/check_test_matrix.py` runs on every pull request** - without a path
+filter, because a merge of `main` changes counts without putting the files in the PR's diff.
+Locally: c-abi **76/76**, managed **286/286**, transport **32/32**, eight compiling mutations each
+caught. **The lesson is about a rule this log already wrote down**: "a lane that gains a FILE
+dependency needs its checkout AND its path filter" was learned for CI; the matrix needed the same
+treatment - a table that says "re-run the command" is a table nobody re-runs.

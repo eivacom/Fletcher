@@ -161,7 +161,7 @@ extern "C" {
  * fl_binding_abi_version() at load time; `Eiva.Fletcher.Interop` does exactly
  * that in its static constructor. */
 #define FL_BINDING_ABI_VERSION_MAJOR 0
-#define FL_BINDING_ABI_VERSION_MINOR 5
+#define FL_BINDING_ABI_VERSION_MINOR 6
 #define FL_BINDING_ABI_VERSION                                   \
     ((uint32_t)(((uint32_t)FL_BINDING_ABI_VERSION_MAJOR << 16) | \
                 (uint32_t)FL_BINDING_ABI_VERSION_MINOR))
@@ -780,6 +780,42 @@ FL_ABI_EXPORT void fl_publisher_destroy(fl_publisher* publisher);
 FL_ABI_EXPORT fl_status fl_publisher_create_topic(fl_publisher* publisher, fl_topic topic,
                                                   const struct ArrowSchema* schema, fl_error* err);
 
+/* Per-topic options (seam §2, `TopicOptions`; D-BIND-57, ABI 0.6).
+ *
+ * The seam's struct, field for field. Like fl_provider_config it is FIXED:
+ * widening it is a change to the seam, not an edit here.
+ *
+ * `profile` is opaque text the provider resolves the way it resolves its
+ * document - for Fast DDS a <data_writer> / <data_reader> profile name in the
+ * loaded document, where a name the document does not define is
+ * FL_INVALID_ARGUMENT. Empty means none.
+ * `max_payload_bytes` is the typed core's number for ONE topic's PUBLISHER; 0 is
+ * the provider's own. On a subscription a non-zero value is FL_INVALID_ARGUMENT,
+ * because a subscriber follows the bound its publisher announces.
+ *
+ * An all-empty value is never refused and means the provider's defaults. A
+ * provider with no notion of a field refuses a non-empty value with
+ * FL_NOT_SUPPORTED: XRCE refuses `profile`, `inprocess` refuses both. */
+typedef struct fl_topic_options {
+    fl_str profile;
+    uint32_t max_payload_bytes;
+} fl_topic_options;
+
+/* fl_publisher_create_topic with per-topic options (the seam's
+ * CreateTopicWithOptions). `options` is BORROWED for the call; NULL means an
+ * all-empty value, which makes this exactly fl_publisher_create_topic.
+ *
+ * Options are checked FIELD BY FIELD against a topic already declared here: a
+ * re-declaration may repeat or omit a field already stored, but never change
+ * one, and a non-empty field against an EMPTY stored one is a conflict too,
+ * because the endpoint already exists without it - FL_INVALID_ARGUMENT, before
+ * anything reaches the provider. */
+FL_ABI_EXPORT fl_status fl_publisher_create_topic_with_options(fl_publisher* publisher,
+                                                               fl_topic topic,
+                                                               const struct ArrowSchema* schema,
+                                                               const fl_topic_options* options,
+                                                               fl_error* err);
+
 /* The topics this publisher has declared, as an OWNED list the caller disposes. */
 FL_ABI_EXPORT fl_status fl_publisher_list_topics(const fl_publisher* publisher,
                                                  fl_string_list** out, fl_error* err);
@@ -852,6 +888,20 @@ FL_ABI_EXPORT fl_status fl_subscriber_subscribe(fl_subscriber* subscriber, fl_to
                                                 fl_delivery_fn on_delivery, void* ctx,
                                                 uint64_t* out_id, fl_schema_arrival** out_arrival,
                                                 fl_error* err);
+
+/* fl_subscriber_subscribe with per-topic options (the seam's
+ * SubscribeWithOptions; D-BIND-57, ABI 0.6). `options` is BORROWED for the call;
+ * NULL means an all-empty value, which makes this exactly fl_subscriber_subscribe.
+ *
+ * The options apply to the FIRST provider-level subscription for the topic on
+ * this subscriber. A later subscription joins it and shares its options,
+ * checked field by field the way a re-declaration is (see
+ * fl_publisher_create_topic_with_options): FL_INVALID_ARGUMENT on a conflict. A
+ * non-zero `max_payload_bytes` is FL_INVALID_ARGUMENT before any support check. */
+FL_ABI_EXPORT fl_status fl_subscriber_subscribe_with_options(
+    fl_subscriber* subscriber, fl_topic topic, fl_delivery_fn on_delivery, void* ctx,
+    const fl_topic_options* options, uint64_t* out_id, fl_schema_arrival** out_arrival,
+    fl_error* err);
 
 /* Cancel a subscription.
  *

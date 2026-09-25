@@ -70,7 +70,7 @@ verification.
 **Since then (2026-09-25).** **BIND-3** built `Eiva.Fletcher.Interop` and the
 codec/Arrow tier (`FletcherCodec`, `BoundRows`), and **BIND-4** the pub/sub tier
 (`ProviderRegistry`, `Publisher`, `Subscriber`, `SchemaArrival`), all over the
-native shim in [`../c-abi`](../c-abi/README.md) at ABI 0.5. A transport is chosen
+native shim in [`../c-abi`](../c-abi/README.md) at ABI 0.6. A transport is chosen
 by selector string and C# never implements one (D-BIND-24).
 `Eiva.Fletcher.GatewayClient` is still empty. The suites that need a real
 transport live under `integration-tests/` and are deliberately not in

@@ -92,6 +92,14 @@ std::vector<std::string> ToSegments(fl_topic topic) {
     return segments;
 }
 
+/// The seam's per-topic options from their C form. NULL is the all-empty value,
+/// and nothing is validated here: the seam checks every field, with its own
+/// messages, one level down (D-BIND-57).
+fletcher::TopicOptions ToTopicOptions(const fl_topic_options* options) {
+    if (options == nullptr) return {};
+    return {ToString(options->profile), options->max_payload_bytes};
+}
+
 /// The attachments to publish with. NULL means none — and in 2c it is the only
 /// thing a caller can pass, because no exported function constructs an
 /// `fl_attachments` until BIND-4's builder (D-BIND-31).
@@ -552,6 +560,16 @@ void fl_publisher_destroy(fl_publisher* publisher) { delete publisher; }
 
 fl_status fl_publisher_create_topic(fl_publisher* publisher, fl_topic topic,
                                     const struct ArrowSchema* schema, fl_error* err) {
+    return fl_publisher_create_topic_with_options(publisher, topic, schema, nullptr, err);
+}
+
+/// Both forms, one body. The seam's own two-argument `CreateTopic` is the
+/// empty-options case of the three-argument one, so this forwards to the latter
+/// unconditionally - an empty value reaches a provider that never heard of
+/// options as its ordinary call (D-BIND-57).
+fl_status fl_publisher_create_topic_with_options(fl_publisher* publisher, fl_topic topic,
+                                                 const struct ArrowSchema* schema,
+                                                 const fl_topic_options* options, fl_error* err) {
     return Contain(err, FL_ORIGIN_SEAM, [&] {
         if (publisher == nullptr || schema == nullptr) {
             throw PubSubError(PubSubStatus::kInvalidArgument,
@@ -561,7 +579,8 @@ fl_status fl_publisher_create_topic(fl_publisher* publisher, fl_topic topic,
         // this returns. N-5: the C Data Interface's `release` and the seam's
         // owner-handle protocol are two different lifetimes, and this is the one
         // place they meet.
-        publisher->publisher->CreateTopic(ToSegments(topic), OwnedSchema::DeepCopy(schema));
+        publisher->publisher->CreateTopic(ToSegments(topic), OwnedSchema::DeepCopy(schema),
+                                          ToTopicOptions(options));
     });
 }
 
@@ -696,6 +715,17 @@ void fl_subscriber_destroy(fl_subscriber* subscriber) { delete subscriber; }
 fl_status fl_subscriber_subscribe(fl_subscriber* subscriber, fl_topic topic,
                                   fl_delivery_fn on_delivery, void* ctx, uint64_t* out_id,
                                   fl_schema_arrival** out_arrival, fl_error* err) {
+    return fl_subscriber_subscribe_with_options(subscriber, topic, on_delivery, ctx, nullptr,
+                                                out_id, out_arrival, err);
+}
+
+/// Both forms, one body, for the reason fl_publisher_create_topic_with_options
+/// gives (D-BIND-57).
+fl_status fl_subscriber_subscribe_with_options(fl_subscriber* subscriber, fl_topic topic,
+                                               fl_delivery_fn on_delivery, void* ctx,
+                                               const fl_topic_options* options,
+                                               uint64_t* out_id, fl_schema_arrival** out_arrival,
+                                               fl_error* err) {
     return Contain(err, FL_ORIGIN_SEAM, [&] {
         RequireOut(out_id, "fl_subscriber_subscribe (out_id)");
         RequireOut(out_arrival, "fl_subscriber_subscribe (out_arrival)");
@@ -742,7 +772,8 @@ fl_status fl_subscriber_subscribe(fl_subscriber* subscriber, fl_topic topic,
                 fl_attachments view(atts);
 
                 on_delivery(ctx, id, data, len, shared.get(), &view);
-            });
+            },
+            ToTopicOptions(options));
 
         arrival->arrival = std::move(result.schema);
         *out_id = result.subscription_id;

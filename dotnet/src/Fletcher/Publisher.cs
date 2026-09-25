@@ -94,7 +94,16 @@ public sealed unsafe class Publisher : IDisposable
     /// seam's owner-handle protocol are two different lifetimes, and this is one of
     /// the two places they meet.
     /// </remarks>
-    public void CreateTopic(TopicPath topic, Schema schema)
+    public void CreateTopic(TopicPath topic, Schema schema) => CreateTopic(topic, schema, null);
+
+    /// <summary>Declare a topic with per-topic options (D-BIND-57).</summary>
+    /// <remarks>
+    /// See <see cref="TopicOptions"/>: a re-declaration may repeat or omit a
+    /// stored field but never change one, and a field the provider has no notion
+    /// of is <see cref="FletcherStatus.NotSupported"/>. The two-argument form is
+    /// this one with null options, which mean empty.
+    /// </remarks>
+    public void CreateTopic(TopicPath topic, Schema schema, TopicOptions? options)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(schema);
@@ -108,9 +117,20 @@ public sealed unsafe class Publisher : IDisposable
         {
             CArrowSchemaExporter.ExportSchema(schema, exported);
 
-            FlError err = default;
-            int status = NativeMethods.fl_publisher_create_topic(_handle, native, (nint)exported, ref err);
-            Errors.ThrowIfFailed(status, ref err);
+            byte[] profile = options?.Profile is { Length: > 0 } p ? Encoding.UTF8.GetBytes(p) : [];
+            fixed (byte* profileBytes = profile)
+            {
+                var nativeOptions = new FlTopicOptions
+                {
+                    Profile = new FlStr { Data = (nint)profileBytes, Len = (nuint)profile.Length },
+                    MaxPayloadBytes = options?.MaxPayloadBytes ?? 0,
+                };
+
+                FlError err = default;
+                int status = NativeMethods.fl_publisher_create_topic_with_options(
+                    _handle, native, (nint)exported, in nativeOptions, ref err);
+                Errors.ThrowIfFailed(status, ref err);
+            }
         }
         finally
         {

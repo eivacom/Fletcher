@@ -626,7 +626,8 @@ accessors do, for capstone parity (Q18).
 
   **PART 2 SUPERSEDED 2026-09-25 BY D-BIND-52.** The seam grew the pair (#128, merged into
   this branch), so the shim no longer answers `kNotSupported`: it forwards to
-  `Subscriber::SubscribeSchema`, ABI 0.4 → 0.5. Exposing it in C# is owed to a later ruling.
+  `Subscriber::SubscribeSchema`, ABI 0.4 → 0.5. Exposing it in C# is owed to a later ruling -
+  **made by D-BIND-57**, which also brought the seam's per-topic options across.
   Parts 1, 3 and 4 stand as history.
 
   **What this ruling explicitly refuses:** making a freshly started round's critical path wait on
@@ -1780,3 +1781,79 @@ accessors do, for capstone parity (Q18).
   bucket 4's shared bodies, and a .NET SDK in a C++ lane); amending bullet 10 to "reachable by
   selector" (Hardware/ROTV's only transport would stay unproven from C#); folding it into BIND-5
   (BIND-4's own bullet would close under another item).
+
+- **D-BIND-57 — per-topic options cross the ABI and C#, the schema watch is exposed in C#, bucket
+  3's #128 cases are ported, and the test matrix is checked on every pull request. BIND-4 is
+  reopened until that is green.** *LOCKED BY THE MAINTAINER 2026-09-25,* in four questions,
+  before BIND-5.
+
+  **WHAT WAS FOUND.** Laying out the `TopicOptions` gap for BIND-5 showed something larger. #128
+  (FastDDS modernization) added `TopicOptions { profile, max_payload_bytes }` to the seam - a Fast
+  DDS QoS profile per topic and a per-topic publisher bound - and the seam spec says a C form is
+  owed for each of its methods; `binding.h` declared none, like D-BIND-42, 43 and 46 before it. And
+  #128 reached this branch by the merge of `main` at 15:10 on 2026-09-24, FOUR HOURS AFTER bucket 3
+  was ported against the 18-case `test_publisher_subscriber.cpp`. That file now has 44 cases;
+  `test_pubsub_arrow` went 15 → 33, bucket 4's files 80 → 122 by driver selection, and a new
+  `test_batch_decoder` sat in no bucket. Nothing re-derived the matrix after the merge, so both
+  BIND-4 closes - including this morning's re-close on CI - claimed a bucket-3 file set that was 26
+  cases short. The tables even said "these counts rot; re-run the command"; nobody did.
+
+  **THE RULING.**
+  1. **A BIND-4 follow-up, and BIND-4 reopens.** Its bucket-3 bullet names the FILE SET, and by that
+     rule it is not met until the 26 are mapped.
+  2. **The ABI gains a `*_with_options` pair, 0.5 → 0.6**: `fl_publisher_create_topic_with_options`
+     and `fl_subscriber_subscribe_with_options`, taking a FIXED `fl_topic_options { fl_str profile;
+     uint32_t max_payload_bytes; }` - the seam's struct field for field, fixed like
+     `fl_provider_config` because widening it is a change to the seam. `NULL` is the all-empty value,
+     and the two existing functions become that case of the new ones, so there is one body each. It
+     mirrors the seam's own `*WithOptions` split and the header's append-only rule (existing
+     functions never change signature). 46 entry points.
+  3. **The schema watch is exposed in C# now, with the options**: `Subscriber.SubscribeSchema(TopicPath)
+     → SchemaArrival` and `UnsubscribeSchema(TopicPath)`, beside `TopicOptions` and the overloads
+     `Publisher.CreateTopic(topic, schema, TopicOptions?)` and `Subscriber.Subscribe(topic, handler,
+     TopicOptions?)`. Options are NOT validated in managed code, for `ProviderConfig`'s reason -
+     Fletcher does not know a provider's profiles or bounds - so a caller sees the seam's own
+     statuses. A watch from inside a delivery on the provider is refused in managed code first,
+     because the seam refuses it ALWAYS (D-BIND-51's pattern); a release from inside one passes the
+     seam's `ReentrantCall` through, because only the LAST release enters the provider and this tier
+     cannot tell which that is.
+  4. **The matrix is checked**: `scripts/check_test_matrix.py` recounts every file both tables name,
+     re-adds every row, fails on a test file in no bucket and on the conformance row, and runs on
+     **every** pull request (`ci.check-test-matrix`) - not on a path filter, because a merge of
+     `main` changes counts without putting those files in the PR's own diff. Its fixture test proves
+     nine ways to go stale are each refused for their own reason. Both tables are re-derived: buckets
+     1-4 hold **449** cases, **416** in scope, **33** excluded.
+
+  **THE PORT.** Of #128's 26 `pubsub` cases: **12 over `inprocess`** in the unit lane
+  (`BucketThreeOptionsTests.cs`) - `inprocess` overrides none of the option or watch methods, so it
+  answers the seam's DEFAULT bodies the C++ cases pin through a data-only mock; **11 over real Fast
+  DDS** in the transport lane (`TopicOptionsOverFastDdsTests.cs`), because only a provider that KNOWS
+  options or has a schema channel can answer them; **3 EXCLUDED** - `SubscribeSchemaDoesNotCreate
+  AProviderSubscription` (a mock's provider-level count, D-BIND-47's reason),
+  `SubscribeSchemaWaitsForAnInFlightLastRelease` (it parks the PROVIDER inside its own release, and
+  C# cannot implement one, D-BIND-24), and `SubscriberAcceptsASecondSubscriptionNamingASubsetOfThe
+  Options` (its mock accepts a bound on a subscription, which every conforming provider refuses).
+  Bucket 3's `pubsub` file set: 49, 44 mapped, 5 excluded. The C++ cases' provider-call counts are
+  not observable from C#, so the Fast DDS mirrors make each refusal UNAMBIGUOUS instead: the refused
+  value is one the provider would accept on its own (a valid bound, a profile the document
+  defines), so the caller tier's field-wise check is the only thing that can refuse it.
+
+  **FOUND WHILE PORTING.** The Fast DDS provider's named profiles are writer/reader PAIRS
+  (`qos_defaults.cpp`) and are meant to be used as pairs. A named reader against the default writer
+  was measured: `store_latest`/`store_history` (TRANSIENT_LOCAL) never match a VOLATILE writer, which
+  is DDS's own QoS rule; but `latest`, compatible on paper, delivered NOTHING when subscribed before
+  the topic was declared, and did when declared first - with matched pairs every order works. The
+  tests use matched pairs. The subscribe-first `latest` case is recorded, not chased: it is the
+  provider's, not the binding's.
+
+  **PROVEN LOCALLY** (Windows): c-abi **76/76** (five new: `NULL` is the plain form, `inprocess`
+  refuses a profile as NOT_SUPPORTED, a bound on a subscription is INVALID_ARGUMENT, Fast DDS takes a
+  per-topic bound and refuses changing it, and refuses an undefined profile naming it); managed
+  **286/286** on both TFMs; transport **32/32**. **Falsified:** eight compiling mutations - the
+  publisher or subscriber dropping the options, the profile crossing a byte short, no managed refusal
+  of a watch inside a delivery, `UnsubscribeSchema` never reaching native - each failing its test.
+
+  **Declined:** freezing bucket 3 at the port (BIND-4's own file-set rule says otherwise); a new
+  tracker item (the bullet is BIND-4's); changing the existing two functions' signatures (breaks the
+  header's append-only rule for a one-form convenience); keeping the watch owed (nine cases would be
+  recorded as owed rather than ported); re-deriving by hand (it was the hand that forgot).

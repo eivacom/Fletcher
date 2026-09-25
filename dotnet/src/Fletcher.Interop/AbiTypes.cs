@@ -138,6 +138,21 @@ internal struct FlProviderConfig
     internal FlStr Document;
 }
 
+/// <summary>Per-topic options (`fl_topic_options`, ABI 0.6, D-BIND-57).</summary>
+/// <remarks>
+/// The seam's struct, field for field and fixed: widening it is a change to the
+/// seam. An all-empty value is the provider's defaults.
+/// </remarks>
+[StructLayout(LayoutKind.Sequential)]
+internal struct FlTopicOptions
+{
+    /// <summary>`fl_str profile` - empty for none.</summary>
+    internal FlStr Profile;
+
+    /// <summary>`uint32_t max_payload_bytes` - 0 for the provider's own.</summary>
+    internal uint MaxPayloadBytes;
+}
+
 /// <summary>
 /// The C form of the seam's write buffer: a window plus a refill hook
 /// (`fl_write_window`).

@@ -272,7 +272,7 @@ classDiagram
 
     class binding_abi_h {
         <<built>>
-        44 entry points at ABI 0.5
+        46 entry points at ABI 0.6
         codec: open, bind, encode_row, decode_rows
         registry, publisher, subscriber, schema arrival
         path selectors answer kNotSupported until PDA-ABI
@@ -308,6 +308,7 @@ classDiagram
         <<built>>
         Eiva.Fletcher - pub/sub tier
         ProviderRegistry, Publisher, Subscriber, SchemaArrival
+        TopicOptions, the schema watch (D-BIND-57)
         a provider is an opaque handle
     }
     note for Fletcher_PubSub_cs "D-BIND-24: C# never implements a provider. There is no managed provider interface, no Register and no SetPathResolver - a transport is chosen by selector string."
@@ -566,8 +567,8 @@ are marked rather than deleted, because a gap that closed is worth distinguishin
 from a gap nobody re-checked.*
 
 1. ~~**The binding ABI's function set is not designed yet.**~~ ✅ **CLOSED
-   2026-09-17.** BIND-1 landed `c-abi/include/fletcher/abi/binding.h` — 912 lines then (1,013, and 44 entry
-   points at ABI 0.5, once BIND-4 closed),
+   2026-09-17.** BIND-1 landed `c-abi/include/fletcher/abi/binding.h` — 912 lines then (46 entry points at
+   ABI 0.6 after BIND-4's follow-ups, D-BIND-57),
    pure C99, reviewed as a *specification* over two cycles
    (`plans/reviews/BIND-1-design-review.md`), with every declaration derived from
    the seam spec and its § named. The value-transfer hop that was provisional here

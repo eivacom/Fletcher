@@ -1727,3 +1727,124 @@ TEST(Subscriber, CopyingARefusesWhenThereIsNoSchemaToCopy) {
     EXPECT_EQ(fl_schema_copy(&unused, nullptr, &err), FL_INVALID_ARGUMENT);
     fl_error_dispose(&err);
 }
+
+// ── Per-topic options (D-BIND-57, ABI 0.6) ──────────────────────────────────
+//
+// The pair forwards to the seam's *WithOptions methods, so every rule below is the
+// SEAM's: these tests prove the C form reaches it and that its answers come back
+// through the containment site, over the two providers that answer differently.
+// `inprocess` knows no options and takes the seam's default bodies; Fast DDS knows
+// both fields.
+
+namespace {
+
+void DeliverNothing(void*, uint64_t, const uint8_t*, size_t, const fl_schema*,
+                    const fl_attachments*) {}
+
+/// Declare `topic` on `publisher` with `options`, returning the status.
+fl_status CreateTopicWith(fl_publisher* publisher, const fl_topic& topic,
+                          const fl_topic_options* options, fl_error* err) {
+    AbiFixture abi;
+    ArrowSchema schema = {};
+    EXPECT_TRUE(arrow::ExportSchema(*abi.batch().schema(), &schema).ok());
+    const fl_status status =
+        fl_publisher_create_topic_with_options(publisher, topic, &schema, options, err);
+    schema.release(&schema);  // BORROWED: the shim deep-copied what it kept.
+    return status;
+}
+
+}  // namespace
+
+TEST(TopicOptions, NullOptionsAreThePlainForms) {
+    SubscriberFixture fx;
+    fl_error err = {};
+    const fl_str segments[] = {Str("bind"), Str("options"), Str("null")};
+    const fl_topic topic = {segments, 3};
+
+    EXPECT_EQ(CreateTopicWith(fx.publisher(), topic, nullptr, &err), FL_OK) << MessageOf(err);
+
+    uint64_t id = 0;
+    fl_schema_arrival* arrival = nullptr;
+    ASSERT_EQ(fl_subscriber_subscribe_with_options(fx.subscriber(), topic, DeliverNothing, nullptr,
+                                                   nullptr, &id, &arrival, &err),
+              FL_OK)
+        << MessageOf(err);
+    ASSERT_NE(arrival, nullptr);
+    fl_schema_arrival_dispose(arrival);
+    EXPECT_EQ(fl_subscriber_unsubscribe(fx.subscriber(), id, &err), FL_OK) << MessageOf(err);
+}
+
+TEST(TopicOptions, AProviderWithNoNotionOfAFieldRefusesItAsNotSupported) {
+    // `inprocess` takes the seam's default *WithOptions bodies: an empty value
+    // delegates, a non-empty one is refused - on BOTH halves.
+    SubscriberFixture fx;
+    fl_error err = {};
+    const fl_str segments[] = {Str("bind"), Str("options"), Str("profile")};
+    const fl_topic topic = {segments, 3};
+    const fl_topic_options profiled = {Str("some_profile"), 0};
+
+    EXPECT_EQ(CreateTopicWith(fx.publisher(), topic, &profiled, &err), FL_NOT_SUPPORTED);
+    fl_error_dispose(&err);
+
+    uint64_t id = 0;
+    fl_schema_arrival* arrival = nullptr;
+    EXPECT_EQ(fl_subscriber_subscribe_with_options(fx.subscriber(), topic, DeliverNothing, nullptr,
+                                                   &profiled, &id, &arrival, &err),
+              FL_NOT_SUPPORTED);
+    EXPECT_EQ(arrival, nullptr) << "a refused call must not write its out parameter";
+    fl_error_dispose(&err);
+}
+
+TEST(TopicOptions, ASubscriptionCarriesNoPayloadBound) {
+    // A subscriber follows the bound its publisher announces, so a bound here is a
+    // caller error - INVALID_ARGUMENT, and before any support check, which is why
+    // `inprocess` (which supports nothing) answers it this way and not NOT_SUPPORTED.
+    SubscriberFixture fx;
+    fl_error err = {};
+    const fl_str segments[] = {Str("bind"), Str("options"), Str("bound")};
+    const fl_topic topic = {segments, 3};
+    const fl_topic_options bounded = {{nullptr, 0}, 1024};
+
+    uint64_t id = 0;
+    fl_schema_arrival* arrival = nullptr;
+    EXPECT_EQ(fl_subscriber_subscribe_with_options(fx.subscriber(), topic, DeliverNothing, nullptr,
+                                                   &bounded, &id, &arrival, &err),
+              FL_INVALID_ARGUMENT);
+    EXPECT_EQ(arrival, nullptr);
+    fl_error_dispose(&err);
+}
+
+TEST(TopicOptions, FastDdsTakesAPerTopicBoundAndARedeclarationCannotChangeIt) {
+    FastDdsFixture fx;
+    fl_error err = {};
+    const std::string unique = UniqueSegment();
+    const fl_str segments[] = {Str("bind"), Str("bounded"), Str(unique.c_str())};
+    const fl_topic topic = {segments, 3};
+
+    const fl_topic_options small = {{nullptr, 0}, 1024};
+    const fl_topic_options large = {{nullptr, 0}, 2048};
+
+    ASSERT_EQ(CreateTopicWith(fx.publisher(), topic, &small, &err), FL_OK) << MessageOf(err);
+
+    // Repeating the stored field, or omitting it, is the same declaration.
+    EXPECT_EQ(CreateTopicWith(fx.publisher(), topic, &small, &err), FL_OK) << MessageOf(err);
+    EXPECT_EQ(CreateTopicWith(fx.publisher(), topic, nullptr, &err), FL_OK) << MessageOf(err);
+
+    // Changing it is a conflict, refused before anything reaches the provider.
+    EXPECT_EQ(CreateTopicWith(fx.publisher(), topic, &large, &err), FL_INVALID_ARGUMENT);
+    fl_error_dispose(&err);
+}
+
+TEST(TopicOptions, FastDdsRefusesAProfileItsDocumentDoesNotDefine) {
+    FastDdsFixture fx;
+    fl_error err = {};
+    const std::string unique = UniqueSegment();
+    const fl_str segments[] = {Str("bind"), Str("profiled"), Str(unique.c_str())};
+    const fl_topic topic = {segments, 3};
+    const fl_topic_options unknown = {Str("no_such_profile"), 0};
+
+    EXPECT_EQ(CreateTopicWith(fx.publisher(), topic, &unknown, &err), FL_INVALID_ARGUMENT);
+    EXPECT_NE(MessageOf(err).find("no_such_profile"), std::string::npos)
+        << "the refusal should name the profile: " << MessageOf(err);
+    fl_error_dispose(&err);
+}

@@ -106,3 +106,11 @@ and BIND-4 closes — this time with the CI run as the basis rather than the fix
 decided by **D-BIND-55** (six amended to the code, three members built, `WaitAsync` built above
 `Wait`, `BlobHandle` deferred with a trigger). BIND-3's D3 and N1/N2 are carried
 forward unchanged.
+
+**Corrected again, the same day (D-BIND-57): bullet 10 is PARTIAL once more, and BIND-4 does not
+close.** Its bucket-3 half names the FILE SET, and that file set grew from 23 cases to 49 when #128
+was merged in - four hours after the port, and before either re-grade above. Neither re-grade
+re-derived the matrix. The 26 new cases are mapped by D-BIND-57 (12 over `inprocess`, 11 over Fast
+DDS, 3 excluded); the bullet is met when CI is green over them, by count, and
+`scripts/check_test_matrix.py` now makes a stale file set fail a pull request rather than pass a
+review.

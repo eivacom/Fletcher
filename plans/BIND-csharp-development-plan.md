@@ -678,7 +678,10 @@ record is its `BIND-progress-log.md` entry. **After close, D-BIND-55** reconcile
 as D-BIND-22 allows) were built, and `BlobHandle` was deferred with a trigger.
 **D-BIND-56 then reopened the item:** bucket 4 had never run over `xrce`. The transport
 lane builds a MicroXRCEAgent from a recipe now shared with the C++ interop lane, the
-suite proves it owns the Agent, and `xrce` joins every theory.
+suite proves it owns the Agent, and `xrce` joins every theory. **D-BIND-57 reopened it again:**
+#128 grew bucket 3's file set by 26 cases after the port and the seam by `TopicOptions`; the ABI
+gains the `*_with_options` pair (0.6), C# gains `TopicOptions` and the schema watch, the 26 are
+mapped, and `scripts/check_test_matrix.py` now guards the matrix on every pull request.
 
 **BIND-5 — Arrow subscriber + oracle end to end.** Managed batching: copy borrowed
 rows, decode N per native call, deliver `RecordBatch`. Dictionary re-folding
@@ -744,13 +747,13 @@ for f in core/tests/*.cpp pubsub/tests/*.cpp arrow-bridge/tests/*.cpp pubsub-arr
 
 | Bucket | Files (cases) | Total | Treatment |
 |---|---|---|---|
-| 1 codec / envelope / buffer / status | `test_positional_io` 19, `test_envelope` 11, `test_write_buffer` 11, `test_status_taxonomy` 3, `test_codec` 35, `test_codec_edge` 23, `test_codec_property_fuzz` 2 | **104** | **NOT a binding port target (D-BIND-39, 2026-09-21).** `test_codec*` (60) is `arrow-bridge`'s **Arrow-native** suite and about half of it exercises unions, decimals, intervals, half-float, view types and fixed-size binary, which no `.proto` can produce; `test_envelope` (11) is BIND-8's by §2.6; `WriteBufferInPlace`'s writer cases are BIND-4's by surface; 13 of `test_positional_io` drive `PositionalWriter`/`AppendTrailingUint64Field`, which §2.5 does not expose. **BIND-3's obligation instead: every type the PROTO MAPPING produces round-trips through the binding.** `test_status_taxonomy` still ports naturally: the C# enum is compared to `core/README.md`'s table. |
+| 1 codec / envelope / buffer / status | `test_positional_io` 19, `test_envelope` 11, `test_write_buffer` 11, `test_status_taxonomy` 3, `test_codec` 70, `test_codec_edge` 23, `test_codec_property_fuzz` 2, `test_batch_decoder` 22 | **161** | **NOT a binding port target (D-BIND-39, 2026-09-21).** `test_codec*` (60) is `arrow-bridge`'s **Arrow-native** suite and about half of it exercises unions, decimals, intervals, half-float, view types and fixed-size binary, which no `.proto` can produce; `test_envelope` (11) is BIND-8's by §2.6; `WriteBufferInPlace`'s writer cases are BIND-4's by surface; 13 of `test_positional_io` drive `PositionalWriter`/`AppendTrailingUint64Field`, which §2.5 does not expose. **BIND-3's obligation instead: every type the PROTO MAPPING produces round-trips through the binding.** `test_status_taxonomy` still ports naturally: the C# enum is compared to `core/README.md`'s table. |
 | 2 gateway client | `test_schema_codec` 11, `test_publish_frame` 9, TS 36 | **56** | Port (BIND-8), true parity: managed code both sides. |
-| 3 pub/sub semantics | `test_publisher_subscriber` 18, `test_segments` 5, `test_pubsub_arrow` 15 | **38** | Port over `inprocess` (BIND-4/5). |
-| 4 native providers | Fast DDS: `test_fast_dds_pubsub_provider` 40, `test_profile_document` 23, `test_fletcher_sample_pub_sub_type` 24; XRCE: `test_xrce_provider` 6, `test_xrce_document` 11 | **104** | Port as driver-selection tests where the assertion is seam-visible (80); **propose excluding** `test_fletcher_sample_pub_sub_type` (24) as internal to the provider. Needs the Feature owner. |
+| 3 pub/sub semantics | `test_publisher_subscriber` 44, `test_segments` 5, `test_pubsub_arrow` 33 | **82** | Port over `inprocess` (BIND-4/5); #128's option and schema-watch cases over real Fast DDS where only a provider that knows them can answer (D-BIND-57). 5 excluded. |
+| 4 native providers | Fast DDS: `test_fast_dds_pubsub_provider` 71, `test_profile_document` 33, `test_fletcher_sample_pub_sub_type` 28; XRCE: `test_xrce_provider` 7, `test_xrce_document` 11 | **150** | Port as driver-selection tests where the assertion is seam-visible (122); `test_fletcher_sample_pub_sub_type` (28) excluded as internal to the provider (Q10). |
 | 5 generator | `test_type_mapper` 36, `test_option_metadata` 33, `test_schema_builder` 9, `test_schema_visitor` 9, `test_ir` 8, `test_schema_codec_lockstep` 2, `test_ts_visitor` 1 | **98** | Stay C++; extended with `test_csharp_*`. Needs the Feature owner. |
 | 6 no managed analogue | `test_owned_schema` 1 | **1** | Excluded, documented. |
-| Conformance (new since plan) | `integration-tests/pubsub-conformance` 82 cases; `CallerTier` 21 of them | — | Inherited **oracle**, not a port target. BIND writes a C# arm of `CallerTier` and adds cases to the C++ suite. |
+| Conformance (new since plan) | `integration-tests/pubsub-conformance` 95 cases; `CallerTier` 22 of them | — | Inherited **oracle**, not a port target. BIND writes a C# arm of `CallerTier` and adds cases to the C++ suite. |
 
 Non-generator total is **302** (was 178). The two exclusion classes were **ruled on
 2026-09-11 (Q10)**: **278 of 302** non-generator cases port — 302 less the 24
@@ -764,6 +767,13 @@ removed a case the total never held; and bucket 4 was carrying `test_xrce_docume
 where the file has 11. Both readings of the scope converge on **278 ported** — counting
 bucket 6 in gives 303 − 24 − 1 = 278 as well — so only the denominator was open, and it
 is ruled **302**. The tracker's "177 of 178" sentence is rewritten at the fold.
+
+**Re-derived 2026-09-25 (D-BIND-57), and now CHECKED.** #128 changed six files and added
+`test_batch_decoder`, and nothing re-ran the command above after it was merged in - which is how
+26 bucket-3 cases went unported under a bullet that named their file set. The table above is
+current, and `scripts/check_test_matrix.py` (run on every pull request by
+`ci.check-test-matrix`) now fails when it is not. Buckets 1-4: **416 of 449** in scope, 33
+excluded; the tracker's Part 4 says what that number does and does not count.
 
 ---
 

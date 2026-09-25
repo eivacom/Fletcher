@@ -81,7 +81,7 @@ the write window and its one-call writer, the delivery callback, the three-step
 codec surface, and the single-copy marker. It is reviewed **as a specification**:
 what is expensive to get wrong here is the ownership wording, not the syntax.
 
-**Every declaration is now implemented: 44 entry points, ABI 0.5.** BIND-2 built
+**Every declaration is now implemented: 46 entry points, ABI 0.6.** BIND-2 built
 the codec surface and the publisher chain, BIND-3 the interop tier above it, and
 BIND-4 the rest — the subscriber half, the arrival, attachments and blobs, and the
 three entry points the header turned out to be missing (`fl_blob_create`,

@@ -15,7 +15,7 @@
 // slice are named rather than duplicated: a second test of the same property is
 // not more coverage, it is one more thing to keep true.
 //
-//   pubsub/tests/test_publisher_subscriber.cpp (18)
+//   pubsub/tests/test_publisher_subscriber.cpp (44: the original 18, then the 26 #128 added)
 //     CreateTopicDelegatesToProvider          -> PublisherTests.ATopicIsDeclaredUnderTheNameTheSeamJoins (4b)
 //     CreateTopicIsIdempotentForSameSchema    -> RedeclaringATopicWithTheSameSchemaIsIdempotent
 //     CreateTopicRejectsConflictingSchema     -> RedeclaringATopicWithADifferentSchemaIsASchemaConflict
@@ -36,6 +36,47 @@
 //     UnsubscribeLastSubscriberUnsubscribesFromProvider        -> EXCLUDED, see below
 //     UnsubscribeWithRemainingSubscribersKeepsProviderSubscription -> EXCLUDED, see below
 //
+//   ... and the 26 #128 added (D-BIND-57). They reached this branch at the merge of
+//   `main` on 2026-09-24, after the 18 above were ported, and nothing re-derived the
+//   matrix - so they went unported through two BIND-4 closes. `U` = the unit lane,
+//   over `inprocess` (BucketThreeOptionsTests.cs); `T` = the transport lane, over
+//   real Fast DDS (integration-tests/pubsub-transport-conformance,
+//   TopicOptionsOverFastDdsTests.cs), because only a provider that KNOWS options or
+//   has a schema channel can answer them.
+//     PublisherForwardsTopicOptions           -> T BothFieldsReachTheProvider
+//     PublisherRefusesARedeclarationWithDifferentOptions -> T ARedeclarationThatChangesAFieldIsRefused
+//     PublisherAcceptsARedeclarationWithEmptyOptions     -> T ARedeclarationWithEmptyOptionsIsTheSameDeclaration
+//     PublisherAcceptsARedeclarationNamingASubsetOfTheOptions
+//                                             -> T ARedeclarationNamingASubsetOfTheFieldsIsTheSameDeclaration
+//     PublisherRefusesANewFieldOnARedeclaration -> T ARedeclarationThatAddsAFieldIsRefused
+//     SubscriberForwardsTopicOptionsOnTheFirstSubscription -> T AReaderProfileReachesTheProvider
+//     SubscriberRefusesDifferentOptionsOnALiveTopic       -> T ASecondSubscriptionWithADifferentProfileIsRefused
+//     SubscriberSecondSubscriptionWithEmptyOptionsSharesTheFirst
+//                                             -> T ASecondSubscriptionWithEmptyOptionsJoinsTheFirst
+//     SubscriberRefusesANewFieldOnASecondSubscription     -> T AFieldAddedToALiveSubscriptionIsRefused
+//     SubscriberAcceptsASecondSubscriptionNamingASubsetOfTheOptions -> EXCLUDED, see below
+//     DefaultCreateTopicWithOptionsDelegatesWhenEmpty     -> U EmptyOptionsDeclareATopicOnAProviderThatKnowsNone
+//     DefaultCreateTopicWithOptionsRefusesNonEmptyWithNotSupported
+//                                             -> U NonEmptyOptionsAreNotSupportedByAProviderThatKnowsNone
+//     DefaultSubscribeWithOptionsDelegatesWhenEmpty       -> U EmptyOptionsSubscribeOnAProviderThatKnowsNone
+//     DefaultSubscribeWithOptionsRefusesNonEmptyWithNotSupported
+//                                             -> U ANonEmptyProfileOnASubscriptionIsNotSupportedByAProviderThatKnowsNone
+//     DefaultSubscribeWithOptionsRefusesABoundAsInvalidArgument -> U ASubscriptionCarriesNoPayloadBound
+//     DefaultOptionsMethodsAreRefusedFromInsideADelivery  -> U TheOptionFormsAreRefusedFromInsideADelivery
+//     DefaultOptionsMethodsValidateSegmentsBeforeRefusingSupport
+//                                             -> NoEntryPointCanBeHandedAnUnvalidatedTopic (a TopicPath
+//                                                cannot hold an invalid topic, so no call can carry one)
+//     DefaultProviderRefusesSchemaOnlyWithNotSupported    -> U ASchemaWatchIsNotSupportedWithoutASchemaChannel
+//     DefaultSchemaMethodsAreRefusedFromInsideADelivery   -> U AWatchFromInsideADeliveryIsRefusedAndAnUnwatchedReleaseIsServed
+//     SubscribeSchemaFromInsideADeliveryThroughTheMockProviderIsRefused
+//                                             -> U AWatchFromInsideADeliveryIsRefusedAndAnUnwatchedReleaseIsServed
+//     DefaultSubscribeSchemaValidatesSegmentsBeforeRefusingSupport -> NoEntryPointCanBeHandedAnUnvalidatedTopic
+//     UnsubscribeSchemaWithoutAWatchDoesNotForward        -> U ReleasingAWatchThatWasNeverTakenIsANoOp
+//     SchemaWatchesAreCountedPerTopic                     -> T AWatchIsReleasedOnlyByItsLastRelease
+//     DestructorReleasesOutstandingSchemaWatches          -> T DisposingTheSubscriberReleasesAnOutstandingWatch
+//     SubscribeSchemaDoesNotCreateAProviderSubscription   -> EXCLUDED, see below
+//     SubscribeSchemaWaitsForAnInFlightLastRelease        -> EXCLUDED, see below
+//
 //   pubsub/tests/test_segments.cpp (5)
 //     SegmentsThatAliasOrTruncateAreRefused   -> TheRefusedShapesAndTheAcceptedOnesBesideThem
 //     JoinIsInvertible                        -> TheJoinIsInvertibleOverACorpus
@@ -43,7 +84,7 @@
 //     AcceptedNamesJoinToTheSameBytesAsBefore -> AcceptedNamesJoinToTheSameBytesAsBefore
 //     NamesThatWouldTruncateOnTheWireAreRefused -> TheCapIsTheFastDdsCeilingLessTheCompanionSuffix
 //
-// ── TWO CASES ARE EXCLUDED (D-BIND-47), the reason structural not awkward ───
+// ── FIVE CASES ARE EXCLUDED (two by D-BIND-47, three by D-BIND-57), each structurally ──
 // `UnsubscribeLastSubscriberUnsubscribesFromProvider` and
 // `UnsubscribeWithRemainingSubscribersKeepsProviderSubscription` both assert
 // `mock->unsubscribe_count`: the fan-out's PROVIDER-LEVEL bookkeeping, which
@@ -61,6 +102,21 @@
 // DDS cases. It moves bucket 3's portable count from 23 to 21 and the round's
 // documented exclusions from 24 to 26; the tracker is corrected in the same
 // commit rather than left disagreeing with this file.
+//
+// Three of #128's cases are excluded on the same test, one of them for a new reason
+// (D-BIND-57):
+//   * `SubscribeSchemaDoesNotCreateAProviderSubscription` asserts the mock's
+//     `subscribe_count` - provider-level bookkeeping again, with no managed view.
+//   * `SubscribeSchemaWaitsForAnInFlightLastRelease` parks the PROVIDER inside its
+//     own UnsubscribeSchema through a mock hook. C# cannot implement a provider
+//     (D-BIND-24), so there is nothing to park: the case is unconstructible here,
+//     and the property is the C++ Subscriber's lock ordering.
+//   * `SubscriberAcceptsASecondSubscriptionNamingASubsetOfTheOptions` first
+//     subscribes with a payload BOUND, which its mock accepts and every conforming
+//     provider refuses (a subscription carries none). Against a real provider the
+//     only legal subscription field is the profile, whose subset is the empty value
+//     - which is `ASecondSubscriptionWithEmptyOptionsJoinsTheFirst`, already mapped.
+// So bucket 3's `pubsub` file set is 49 cases, of which 44 are mapped and 5 excluded.
 using System;
 using System.Collections.Generic;
 using System.Linq;

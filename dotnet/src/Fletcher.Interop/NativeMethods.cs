@@ -290,6 +290,16 @@ internal static partial class NativeMethods
     internal static partial int fl_publisher_create_topic(
         PublisherHandle publisher, FlTopic topic, nint schema, ref FlError err);
 
+    /// <summary>Declare a topic with per-topic options (ABI 0.6, D-BIND-57).</summary>
+    /// <remarks>
+    /// `options` is borrowed for the call; the seam checks every field, and a
+    /// re-declaration that changes a stored one is FL_INVALID_ARGUMENT.
+    /// </remarks>
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int fl_publisher_create_topic_with_options(
+        PublisherHandle publisher, FlTopic topic, nint schema, in FlTopicOptions options, ref FlError err);
+
     [LibraryImport(LibraryName)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial int fl_publisher_list_topics(
@@ -416,6 +426,30 @@ internal static partial class NativeMethods
     internal static partial int fl_subscriber_subscribe(
         SubscriberHandle subscriber, FlTopic topic, nint onDelivery, nint ctx,
         out ulong subscriptionId, out SchemaArrivalHandle arrival, ref FlError err);
+
+    /// <summary>Subscribe with per-topic options (ABI 0.6, D-BIND-57).</summary>
+    /// <remarks>
+    /// The options apply to the FIRST provider-level subscription on the topic;
+    /// a later one joins it and shares them, checked field by field.
+    /// </remarks>
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int fl_subscriber_subscribe_with_options(
+        SubscriberHandle subscriber, FlTopic topic, nint onDelivery, nint ctx,
+        in FlTopicOptions options, out ulong subscriptionId, out SchemaArrivalHandle arrival,
+        ref FlError err);
+
+    /// <summary>Watch a topic's schema without its data (D-BIND-52; bound in C# by D-BIND-57).</summary>
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int fl_subscriber_subscribe_schema(
+        SubscriberHandle subscriber, FlTopic topic, out SchemaArrivalHandle arrival, ref FlError err);
+
+    /// <summary>Release one schema watch; a no-op for a topic not watched.</summary>
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int fl_subscriber_unsubscribe_schema(
+        SubscriberHandle subscriber, FlTopic topic, ref FlError err);
 
     /// <summary>Cancel a subscription.</summary>
     /// <remarks>

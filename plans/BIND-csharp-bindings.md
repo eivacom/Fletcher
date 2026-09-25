@@ -505,19 +505,28 @@ development plan §5). **Re-derived at BIND-0 (2026-09-14, branch base `0a56829`
 by that command**: every bucket total below is unchanged; the one correction is
 the conformance suite's `CallerTier`, which is **21** cases and not 20.
 
+**Re-derived 2026-09-25 (D-BIND-57), and now CHECKED.** #128 grew five files and added one, and
+reached this branch by the merge of `main` on 2026-09-24 - after bucket 3 had been ported - so
+every number below that it touched was wrong for a day and two BIND-4 closes. From here the
+table is guarded: `scripts/check_test_matrix.py` recounts every file named here, re-adds every
+row, fails on a test file in no bucket, and runs on every pull request (`ci.check-test-matrix`),
+not only on those that touch a test - because a merge of `main` changes counts without putting
+those files in the PR's own diff.
+
+
 18786 requires "C# versions of all tests as CI tests". Because there is **one**
 codec, the ported tests are **conformance tests of the binding**, not parity
 tests between two implementations.
 
 | Bucket | Files (cases) | Total | Treatment (ruled 2026-09-11, Q10) |
 |---|---|---|---|
-| 1 codec / envelope / buffer / status | `test_positional_io` 19, `test_envelope` 11, `test_write_buffer` 11, `test_status_taxonomy` 3, `test_codec` 35, `test_codec_edge` 23, `test_codec_property_fuzz` 2 | **104** | Port as binding conformance over the ABI (BIND-3). `test_status_taxonomy` ports as "the C# enum matches `core/README.md`'s published table". |
+| 1 codec / envelope / buffer / status | `test_positional_io` 19, `test_envelope` 11, `test_write_buffer` 11, `test_status_taxonomy` 3, `test_codec` 70, `test_codec_edge` 23, `test_codec_property_fuzz` 2, `test_batch_decoder` 22 | **161** | **Not a case-by-case port target since D-BIND-39**: BIND-3's obligation is that every type the PROTO MAPPING produces round-trips through the binding, because `test_codec*` is `arrow-bridge`'s Arrow-native suite. #128 doubled `test_codec` and added `test_batch_decoder` (`arrow-bridge`'s own batch decoder); both stay out of scope for that reason. `test_status_taxonomy` ports as "the C# enum matches `core/README.md`'s published table". |
 | 2 gateway client | `test_schema_codec` 11, `test_publish_frame` 9, TS 36 | **56** | Port (BIND-8), true parity: managed code both sides. |
-| 3 pub/sub semantics | `test_publisher_subscriber` 18, `test_segments` 5, `test_pubsub_arrow` 15 | **38** | Port over `inprocess`. **Split confirmed 2026-09-24: the 23 `pubsub` cases are BIND-4d-ii (done); `test_pubsub_arrow`'s 15 are BIND-5's, whose acceptance row claims them and whose `SubscriberArrow` did not exist before it.** Of the 23, **21 port and 2 are EXCLUDED (D-BIND-47)**: `UnsubscribeLastSubscriberUnsubscribesFromProvider` and `UnsubscribeWithRemainingSubscribersKeepsProviderSubscription` assert `mock->unsubscribe_count`, the fan-out's provider-level bookkeeping, which lives in the C++ `Subscriber` the binding WRAPS and does not reimplement - porting them would run that C++ a second time and call it a test of the binding, and the managed surface has no view of provider-level subscriptions by design (D-BIND-24). Reasoning and the full case-by-case mapping: `dotnet/tests/Fletcher.Tests/BucketThreeConformanceTests.cs`. |
-| 4 native providers | Fast DDS: `test_fast_dds_pubsub_provider` 40, `test_profile_document` 23; XRCE: `test_xrce_provider` 6, `test_xrce_document` 11 — **port as driver-selection tests (80)**; `test_fletcher_sample_pub_sub_type` 24 — **excluded**, provider-internal (the Fast DDS `TypeSupport`, a C++ type no managed code touches) | **104** | 80 port; 24 excluded, documented. |
+| 3 pub/sub semantics | `test_publisher_subscriber` 44, `test_segments` 5, `test_pubsub_arrow` 33 | **82** | Port over `inprocess`. **Split confirmed 2026-09-24: the `pubsub` cases are BIND-4's; `test_pubsub_arrow`'s are BIND-5's, whose acceptance row claims them and whose `SubscriberArrow` did not exist before it.** **#128 added 26 `pubsub` cases and 18 `pubsub-arrow` ones (D-BIND-57)**; of the 49 `pubsub` cases, **44 are mapped** - 12 of #128's over `inprocess`, 11 over real Fast DDS in the transport lane, because only a provider that knows options or has a schema channel can answer them - **and 5 are EXCLUDED**, 2 by D-BIND-47 and 3 by D-BIND-57. D-BIND-47's two: `UnsubscribeLastSubscriberUnsubscribesFromProvider` and `UnsubscribeWithRemainingSubscribersKeepsProviderSubscription` assert `mock->unsubscribe_count`, the fan-out's provider-level bookkeeping, which lives in the C++ `Subscriber` the binding WRAPS and does not reimplement - porting them would run that C++ a second time and call it a test of the binding, and the managed surface has no view of provider-level subscriptions by design (D-BIND-24). Reasoning and the full case-by-case mapping: `dotnet/tests/Fletcher.Tests/BucketThreeConformanceTests.cs`. |
+| 4 native providers | Fast DDS: `test_fast_dds_pubsub_provider` 71, `test_profile_document` 33; XRCE: `test_xrce_provider` 7, `test_xrce_document` 11 — **port as driver-selection tests (122)**; `test_fletcher_sample_pub_sub_type` 28 — **excluded**, provider-internal (the Fast DDS `TypeSupport`, a C++ type no managed code touches) | **150** | 122 by driver selection - ONE body over every transport (`integration-tests/pubsub-transport-conformance`), not a port per case; 28 excluded, documented. #128 added 45 of these. |
 | 5 generator | `test_type_mapper` 36, `test_option_metadata` 33, `test_schema_builder` 9, `test_schema_visitor` 9, `test_ir` 8, `test_schema_codec_lockstep` 2, `test_ts_visitor` 1 | **98** | **Stay in C++** — they test a C++ generator; **extended** with `test_csharp_visitor`, `test_csharp_type_table` and the TS pub/sub emitter cases. |
 | 6 no managed analogue | `test_owned_schema` 1 | **1** | Excluded, documented (an `ArrowSchemaDeepCopy` ENOMEM path). |
-| Conformance (inherited, not a port target) | `integration-tests/pubsub-conformance` 82 cases; `CallerTier` 21 of them | — | The **oracle** seam §9 hands BIND. BIND writes a C# arm of `CallerTier` and adds cases to the C++ suite (§12.1 expects it); each C# case names the C++ case it mirrors and a script checks the mapping is total. |
+| Conformance (inherited, not a port target) | `integration-tests/pubsub-conformance` 95 cases; `CallerTier` 22 of them | — | The **oracle** seam §9 hands BIND. BIND writes a C# arm of `CallerTier` and adds cases to the C++ suite (§12.1 expects it); each C# case names the C++ case it mirrors and a script checks the mapping is total. |
 
 **276 of 302 non-generator cases port to C#** — the 302 is buckets 1–4. *Corrected
 2026-09-24 from 278: bucket 3 turned out to carry two cases that cannot be ported, for the
@@ -528,6 +537,12 @@ subtracted a case the total did not hold, and bucket 4 was carrying a stale
 `test_xrce_document` count besides. Both exclusion classes stay documented; the 98
 generator cases stay in C++ and grow. **18786 is not closed before Bucket 4 is green over `fastdds` and
 `xrce`.**
+
+**Re-counted 2026-09-25 (D-BIND-57): 416 of 449.** Buckets 1-4 now hold 449 cases (161 + 56 + 82
++ 150); 33 are excluded - the 28 provider-internal ones and bucket 3's 5. Read the number for what
+it is since D-BIND-39 and bucket 4's one-body design: cases IN SCOPE for C#, not C# test methods.
+Bucket 1 is answered by the proto-mapping round trip and bucket 4 by one body over every
+transport. `TS 36` in bucket 2 is carried forward, not re-counted - the checker counts C++ only.
 
 ### What replaces the byte-parity harness
 
@@ -802,7 +817,7 @@ Kind: 🟪 spec · 🟦 impl · 🔬 proof · ⚙ pipelines · 📓 docs
 | BIND-1 | The binding ABI header, reviewed as a specification (no implementation) | A | 🟪 | BIND-0 | `BindingAbi.CompilesAsC99AndIsSelfContained` | 🟢 |
 | BIND-2 | Nanoarrow schema-driven codec + publish fusion + the oracle's ABI producer | A | 🟦 | BIND-1 | `NanoarrowCodec.ByteIdenticalToArrowBridge` + `CopyAccounting.BindingProducerWritesInPlace` | 🟢 |
 | BIND-3 | `Eiva.Fletcher.Interop` + codec/Arrow tier in `Eiva.Fletcher` | A | 🟦 | BIND-2 | Every PROTO-MAPPING type round-trips through the binding (D-BIND-39, was "Bucket 1 green"); `ErrorTests.EveryHardCaseKeepsItsMessage` | 🟢 |
-| BIND-4 | Pub/sub in `Eiva.Fletcher`: registry, `Publisher`, `Subscriber`, `SchemaArrival`, thunk discipline, error handling | A | 🟦 | BIND-3 | Bucket 3 over `inprocess`; Bucket 4 over `fastdds`/`xrce` by selector; C# arm of `CallerTier`; per-row publish benchmark recorded (D-BIND-37) | 🟢 (reopened and re-closed 2026-09-25, D-BIND-56: bucket 4 now runs over `xrce`, transport lane 21/21 on both platforms at `78ac363`) |
+| BIND-4 | Pub/sub in `Eiva.Fletcher`: registry, `Publisher`, `Subscriber`, `SchemaArrival`, thunk discipline, error handling | A | 🟦 | BIND-3 | Bucket 3 over `inprocess`; Bucket 4 over `fastdds`/`xrce` by selector; C# arm of `CallerTier`; per-row publish benchmark recorded (D-BIND-37) | 🔴 reopened again 2026-09-25 (D-BIND-57): bucket 3's file set grew by 26 cases when #128 was merged in, after the port; back to 🟢 when they are mapped and CI is green by count. (D-BIND-56 re-closed it on `78ac363` first: bucket 4 over `xrce`.) |
 | BIND-5 | `SubscriberArrow` batch-first + the copy oracle end-to-end from C# | A | 🔬 | BIND-4 | `pubsub-arrow` cases; copy oracle green with the **C#** producer | ⚪ |
 | BIND-6 | C# backend on the IR: type table + visitor → `<stem>.fletcher.cs` | B | 🟦 | — (GIR) | `CsharpVisitor.*` in `protoc/tests`; no-drift test unchanged | ⚪ |
 | BIND-7 | Arrow view + accessor emitters (`csharp_accessor`) + capstone third arm | B | 🟦 | BIND-6, BIND-3 | `accessor-capstone` C# arm `observed == expected`; `StructArray` windowing fixture at non-zero offset | ⚪ |
@@ -1164,12 +1179,14 @@ subscribe, **so that** I am a full Fletcher client with no protocol SDK on my bu
   named a call that did not exist. Found the same way, by writing the thunk that
   has to call it. Minor 2 → 3, with the same coupled managed handshake; the
   handshake test's cases, derived as offsets by D-BIND-42, moved on their own.
-  **The native half of BIND-4 is COMPLETE: 44 declared entry points, 44 defined,
+  **The native half of BIND-4 is COMPLETE: 46 declared entry points at ABI 0.6 (D-BIND-57's
+  per-topic-options pair; 44 at 0.5), 46 defined,
   checked mechanically in both directions** (43 at ABI 0.3; D-BIND-46's
   `fl_schema_copy` made it 44 at 0.4, and this count was stale until the BIND-4
   review). **The schema-watch pair is implemented since D-BIND-52 (2026-09-25,
   ABI 0.5):** the seam grew it (#128), so the `kNotSupported` stub the clause
-  above names now forwards to it; C# exposure is owed to a later ruling.
+  above names now forwards to it; **exposed in C# by D-BIND-57** as
+  `Subscriber.SubscribeSchema` / `UnsubscribeSchema`.
 - **Thunk discipline per D-BIND-18**: per-subscription in-flight counter and
   `retired` flag, the last one out frees the `GCHandle`; thread-static marker;
   managed refusal of `Dispose` from a handler; managed refusal of a synchronous
@@ -1207,7 +1224,10 @@ subscribe, **so that** I am a full Fletcher client with no protocol SDK on my bu
 - **Bucket 3 over `inprocess`; Bucket 4 over `fastdds` and `xrce`** — again the FILE
   SETS from Part 4 rather than counts, for the reason BIND-3's bullet gives. Bucket
   4's own total moved 102 → 104 between the matrix being derived and BIND-2 closing,
-  which is the mechanism, observed;
+  which is the mechanism, observed - and it struck again at #128 (D-BIND-57): bucket 3's
+  `pubsub` file set went 23 → 49 after it was ported, 26 of them per-topic options and
+  the schema watch. They are mapped - 12 over `inprocess`, 11 over Fast DDS in the
+  transport lane - and 3 more are excluded, so 44 of 49 are mapped and 5 excluded;
   the **C# arm of `CallerTier`** with a total mapping onto the C++ cases; at least
   one case added to the C++ suite (seam §12.1).
   **Reopened 2026-09-25 (D-BIND-56):** bucket 4 had never run over `xrce` - its
@@ -1263,7 +1283,9 @@ codec step.
   1 min}`; per-row Arrow delivery is `MaxRows = 1`.
 - `PublisherArrow` folds into `Publisher` (already Arrow-typed via `BoundRows`).
 - Dictionary re-folding deferred to DICT (D-BIND-8).
-- **15 `pubsub-arrow` cases** ported over `inprocess`.
+- **The `test_pubsub_arrow` file set** ported over `inprocess` - 33 cases at D-BIND-57,
+  which re-derived it from 15 after #128; the options and schema-watch cases among them
+  use what D-BIND-57 added.
 - **The copy oracle run with the C# producer** is this item's acceptance: zero-copy
   for rows and attachments, from managed code, falsifiable.
 

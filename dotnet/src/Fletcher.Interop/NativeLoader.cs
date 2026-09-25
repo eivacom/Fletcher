@@ -30,7 +30,7 @@ internal static class NativeLoader
     internal const uint HeaderVersionMajor = 0;
 
     /// <summary>Mirrored from <c>FL_BINDING_ABI_VERSION_MINOR</c>.</summary>
-    internal const uint HeaderVersionMinor = 5;
+    internal const uint HeaderVersionMinor = 6;
 
     /// <summary>The header's version packed the way the shim reports its own.</summary>
     internal const uint HeaderVersion = (HeaderVersionMajor << 16) | HeaderVersionMinor;
