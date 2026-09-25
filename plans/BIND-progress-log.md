@@ -333,8 +333,10 @@ net10.0); c-abi **71/71** on both platforms; cross-transport **12/12** on both;
 binding-abi-conformance **11/11** on both. **LOCAL ONLY at `309c321`** (Windows): managed
 **263/263** on both TFMs, cross-transport **13/13** over a shim rebuilt from the tree, c-abi
 **71/71**, the format lane clean. The three commits after `a16c083` (`9255c19`, `c42763e`,
-`309c321`) postdate the last complete CI run, and were held back so as not to cancel it; their
-run comes with the push. Every new test in the review fixes was shown to fail against the old
+`309c321`) postdate that run, and were held back so as not to cancel it. **CI-CONFIRMED at
+`75eb19e`** (`ci.pr` run 36132087821): **50/50**, managed **263/263** on all four legs,
+cross-transport **13/13** and c-abi **71/71** on both platforms, binding-abi **11/11** on both -
+so the Fast DDS fix and D-BIND-54 hold on Linux as well. Every new test in the review fixes was shown to fail against the old
 behaviour by a compiling mutation, except where the property is the native Subscriber's (the drain
 mirrors), which the review states.
 
@@ -350,3 +352,14 @@ one are two different answers a managed short-circuit collapses into one. And a 
 publishes once over Fast DDS failed 2 times in 340 runs, never under forced CPU load, with a
 TRANSIENT_LOCAL + RELIABLE QoS that should have made "dropped before the match" impossible —
 flagged separately, cause not established.
+
+**After close (D-BIND-55, same day).** The conformance review's one undecided list — the public
+surface note against the shipped API — was ruled in four questions. Re-deriving it from the code
+rather than from the review corrected the review three times: a promise it attributed to D-BIND-22
+that D-BIND-22 does not make, four differences it missed, and one "naming" difference that was a
+leak (an owned `SchemaHandle` had no finaliser, where every other native handle is a
+`SafeHandle`). Six rows of the note were amended to the code; `IsSchemaless`, the finaliser,
+`Diagnostics.AbsorbedTotal` and `SchemaArrival.WaitAsync` were built; `BlobHandle` was deferred with
+a trigger. Managed **277/277** on both TFMs locally, eight compiling mutations each caught. **A
+process-wide observable needs its own non-parallel collection** — `ProcessWideTests` is the first
+in the suite, and it is what lets the counter test assert an exact delta instead of "at least".

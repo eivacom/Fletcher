@@ -638,6 +638,7 @@ public sealed unsafe class Subscriber : IDisposable
     internal void ReportAbsorbed(Exception exception, ulong subscriptionId)
     {
         Interlocked.Increment(ref _absorbed);
+        Diagnostics.CountAbsorbed();
 
         try
         {
@@ -648,6 +649,7 @@ public sealed unsafe class Subscriber : IDisposable
             // A subscriber to the event threw. Counted already; nothing else can
             // be done, and NOTHING may leave this frame.
             Interlocked.Increment(ref _absorbed);
+            Diagnostics.CountAbsorbed();
         }
     }
 

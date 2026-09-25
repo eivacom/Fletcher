@@ -672,7 +672,10 @@ shape and verdict are D-BIND-48 and D-BIND-49 (B-2). From the review: D-BIND-50
 and D-BIND-51 amend D-BIND-18's thunk (S-2, and the constraints note §2),
 D-BIND-52 implements the schema-watch pair in the shim (ABI 0.5, no C# surface
 yet), and D-BIND-53 and D-BIND-54 settle bounded-payload overflow (B-6). The item's
-record is its `BIND-progress-log.md` entry.
+record is its `BIND-progress-log.md` entry. **After close, D-BIND-55** reconciled
+`BIND-csharp-public-surface.md` with the shipped API: `IsSchemaless`, an owned
+`SchemaHandle`'s finaliser, `Diagnostics.AbsorbedTotal` and `WaitAsync` (above `Wait`,
+as D-BIND-22 allows) were built, and `BlobHandle` was deferred with a trigger.
 
 **BIND-5 — Arrow subscriber + oracle end to end.** Managed batching: copy borrowed
 rows, decode N per native call, deliver `RecordBatch`. Dictionary re-folding

@@ -1657,3 +1657,69 @@ accessors do, for capstone parity (Q18).
   false, and breaks the containment test that pins overflow at either origin); a new
   `FletcherPayloadTooLargeException` subtype (widens the frozen surface for a distinction
   `Status` already carries).
+
+- **D-BIND-55 — the public-surface note is reconciled with the shipped API: six rows amended to
+  the code, three small members owed and built, `WaitAsync` built above `Wait`, `BlobHandle`
+  deferred with a trigger.** *LOCKED BY THE MAINTAINER 2026-09-25,* in four questions, on the
+  disagreement the BIND-4 conformance review listed and left undecided.
+
+  **WHAT WAS FOUND, and what the review got wrong about it.** `BIND-csharp-public-surface.md` is
+  the round's frozen C# reference, and it disagreed with the code in both directions. Re-derived
+  by comparing every drawn type with the shipped public members, three corrections to the review:
+  it said D-BIND-22 and the development plan promise `WaitAsync` — neither does; D-BIND-22 forbids
+  a waiting mechanism BESIDE `Wait`, and only the note's diagram promised one. It missed four
+  differences (`FletcherFormatException.Offset` drawn and never built; `FletcherCodec.DecodedSchema`,
+  `PayloadBound.FramingBytes` and `FletcherOrigin` built and never drawn). And one item it listed as
+  a naming difference had a consequence: the note drew `SchemaHandle : SafeHandle`, the code has a
+  plain `IDisposable` with no finaliser, and every OTHER native handle in the binding is a
+  `SafeHandle` — so an undisposed `Retain()` was the one native leak the managed tier allowed.
+
+  **THE RULING.**
+  1. **The note is amended to the code** where the code is right: `ProviderSelector.IsName` stays
+     internal (a public kind invites a caller edit where the seam promises a configuration edit);
+     `AttachmentsBuilder.Set` takes a span and copies, with a `string` overload and `Dispose`
+     (D-BIND-44 — the value is not the caller's memory, so `ReadOnlyMemory` would misstate it);
+     no `FletcherFormatException.Offset` (no ABI field carries one; the reader's message, which
+     crosses verbatim, names the byte); no `SchemaArrival.Message` (a failed wait throws with the
+     message, D-BIND-19 rule 4); and `HandlerFaulted` with its event args, `SchemaArrival.Dispose`,
+     `SchemaWaitResult.HasSchema`, `DecodedSchema`, `FramingBytes` and `FletcherOrigin` are drawn.
+  2. **Three small members are owed and built.** `SchemaWaitResult.IsSchemaless` — `!HasSchema` is
+     also true for `Pending` and `SubscriptionEnded`, so reading it as "schema-less transport" is the
+     mistake seam §7 exists to prevent. A **finaliser on an OWNED `SchemaHandle`** — it cannot be a
+     `SafeHandle` (`fl_schema` is two pointers, and a borrowed handle must never release), but an
+     owned one is now finalised; `fl_schema_release` is safe from any thread by the header's own
+     contract. `static Diagnostics.AbsorbedTotal` — the managed mirror of C++
+     `DeliveryChannel::AbsorbedTotal()`, the sum of every `Subscriber`'s count, meaningful because
+     D-BIND-17 allows one copy per process. `TopicPath.Utf8ByteLength` is dropped from the note:
+     `TopicPath.Of` already refuses an over-long path, and nothing needs the number.
+  3. **`SchemaArrival.WaitAsync(TimeSpan, CancellationToken)` is built ABOVE `Wait`**, the helper
+     D-BIND-22 permits: `Wait` in slices of at most 50 ms on the thread pool, the token checked
+     between them, the same outcomes and no others. A refused timeout or a disposed arrival throws
+     on the caller's stack; cancellation ends the task as cancelled
+     (`OperationCanceledException`, managed-only, D-BIND-19 rule 4) and cancels nothing native.
+     **Cost, accepted:** one pool thread for as long as the wait runs.
+  4. **`BlobHandle` is DEFERRED, not dropped.** "Copy what you keep" stays the rule for attachment
+     blobs; the planned shape (a `SafeHandle` over `fl_blob_retain`/`release`: `Length`, `CopyTo`,
+     `Retain`, `Dispose`) is recorded in the note. **Trigger:** a consumer whose attachments are
+     large enough that copying them out of the callback costs. BIND-5 does not need it —
+     `SubscriberArrow` copies attachments into builders anyway.
+
+  **PROVEN BY** `SchemaArrivalTests` (the three `IsSchemaless` shapes, all from a real
+  `inprocess`; `WaitAsync` on an arrived, a schema-less, an infinite, a finite, a cancelled and a
+  pre-cancelled wait, and the two synchronous refusals) and `ProcessWideTests`, which runs in a
+  collection with parallelisation disabled because both of its subjects are process-wide: an
+  undisposed owned schema is released by the finaliser, a disposed one is not released again, a
+  BORROWED one never is, and `AbsorbedTotal` moves by exactly the per-instance count through both
+  absorbing routes. **Falsified:** eight mutations, each compiling, each failing its test. Two of
+  them had to remove BOTH defences to fail — `SuppressFinalize` and the finaliser's own guard each
+  prevent a double or a borrowed release alone — and the tests are therefore guards on the pair.
+  Managed 277/277 on both TFMs.
+
+  **No ABI change and no version bump.** Every member is managed. **No diagram change in the fourth
+  place:** `BIND-architecture-diagrams.md` draws no members; the note's own diagrams 5.1–5.3 move,
+  validated under mermaid + jsdom.
+
+  **Declined:** building `BlobHandle` now (a type and its tests for a need no consumer has stated);
+  dropping `WaitAsync` (every async caller would write its own, with its own cancellation);
+  leaving `SchemaHandle` without a finaliser and documenting the leak (the one native handle
+  whose lifetime a caller could forget without a safety net).

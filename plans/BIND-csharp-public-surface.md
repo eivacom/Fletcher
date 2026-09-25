@@ -6,6 +6,14 @@
 gets, and what obliges each piece of it?* It proposes names and shapes; it locks
 nothing. Open questions continue the development plan's numbering, from Q13.
 
+**Reconciled with the shipped API 2026-09-25 (D-BIND-55),** after BIND-4. The
+BIND-4 conformance review found this note and the code disagreeing in both
+directions; every difference was ruled either a document amendment or code owed,
+and the tables and diagrams below now draw what ships. `BlobHandle` is the one
+member drawn nowhere because it is DEFERRED, not dropped (§2.1). A frozen table
+that disagrees with the shipped API is worse than no table (D-BIND-45), so a
+managed signature that changes lands here in the same commit.
+
 Every C++ surface below was read from the tree, not from the plan documents. The
 seam types are **frozen** (`docs/pubsub-interface-spec.md` §12.1), so the C# shapes
 that mirror them are constrained rather than chosen.
@@ -34,12 +42,12 @@ that mirror them are constrained rather than chosen.
 | C++ | C# | Notes |
 |---|---|---|
 | `PubSubStatus` (int32, 0…10, append-only) | `enum FletcherStatus : int` | Numbers copied from `core/README.md`'s published table, not re-derived. A C# test compares the enum to that table, mirroring `Taxonomy.PublishedNumbersMatchTheEnum` |
-| `PubSubError : std::runtime_error` — `status()`, `what()` | `FletcherException : Exception` — `Status`, `Origin`, `Message`; `FletcherFormatException : FletcherException` when `Origin` is the codec and `Status` is `InvalidArgument` (D-BIND-15, narrowed to that pair by D-BIND-54; no member changes) | Crosses as a caller-owned `fl_error {status, origin, message, message_len}`, message as bytes + length with no zero byte (the seam escapes it), never a global slot (§5.1 rule 1). A managed exception that caused the failure is rethrown **as itself**, not wrapped (development plan §3.5, D-BIND-19) |
-| `Blob {owner, data, size}` | delivery: `ReadOnlySpan<byte>` inside the callback · retained: `BlobHandle : SafeHandle` | Retaining is `Retain()` on the owner handle. There is no view-only `Blob`; a C# blob with bytes always has an owner |
-| `Attachments` — `size()`, `KeyAt(i)`, `ValueAt(i)`, `Find(k)`, `Set(k,v)`, `Clear()` | read: `readonly ref struct AttachmentsView` — `Count`, `KeyAt(int)`, `ValueAt(int)`, `TryFind` · write: `AttachmentsBuilder` — `Set(ReadOnlySpan<byte>, …)` | **Positional enumeration only.** No sort, no `IDictionary`, no LINQ ordering. Keys are bytes in `memcmp` order, which is not C#'s ordinal UTF-16 order (§3.2 A2). A key with a zero byte is refused |
-| `SharedSchema = shared_ptr<const ArrowSchema>` | `SchemaHandle : SafeHandle` — `IsNull`, `Retain()`, `ToArrowSchema()` | `ToArrowSchema()` deep-copies natively before importing, because `CArrowSchemaImporter` consumes. Releasing the handle is **not** the C Data Interface `release` |
+| `PubSubError : std::runtime_error` — `status()`, `what()` | `FletcherException : Exception` — `Status`, `Origin` (`enum FletcherOrigin { None, Seam, Codec, Callback }`), `Message`; `FletcherFormatException : FletcherException` when `Origin` is the codec and `Status` is `InvalidArgument` (D-BIND-15, narrowed to that pair by D-BIND-54; no member changes). **No `Offset` member (D-BIND-55):** no ABI field carries one, and the reader's message, which crosses verbatim, already names the byte | Crosses as a caller-owned `fl_error {status, origin, message, message_len}`, message as bytes + length with no zero byte (the seam escapes it), never a global slot (§5.1 rule 1). A managed exception that caused the failure is rethrown **as itself**, not wrapped (development plan §3.5, D-BIND-19) |
+| `Blob {owner, data, size}` | delivery: `ReadOnlySpan<byte>` inside the callback · retained: **DEFERRED (D-BIND-55)** — a handler copies what it keeps | The ABI lets a handler keep a blob past the call (`fl_blob_retain`), and `BlobHandle : SafeHandle` over it is the planned shape: `Length`, `CopyTo`, `Retain`, `Dispose`. **Trigger:** a consumer whose attachments are large enough that copying them out of the callback costs. Until then "copy what you keep" is the rule, and BIND-5's `SubscriberArrow` copies attachments anyway. There is no view-only `Blob` |
+| `Attachments` — `size()`, `KeyAt(i)`, `ValueAt(i)`, `Find(k)`, `Set(k,v)`, `Clear()` | read: `readonly ref struct AttachmentsView` — `Count`, `KeyAt(int)`, `ValueAt(int)`, `TryFind` · write: `sealed class AttachmentsBuilder : IDisposable` — `Set(ReadOnlySpan<byte> key, ReadOnlySpan<byte> value)`, `Set(string key, ReadOnlySpan<byte> value)` (UTF-8), `Clear`, `Count`. The builder **copies** what it is given and caches the sealed set, and `Dispose` frees that native set (D-BIND-44) — so the value is a span, not the caller's memory | **Positional enumeration only.** No sort, no `IDictionary`, no LINQ ordering. Keys are bytes in `memcmp` order, which is not C#'s ordinal UTF-16 order (§3.2 A2). A key with a zero byte is refused |
+| `SharedSchema = shared_ptr<const ArrowSchema>` | `sealed class SchemaHandle : IDisposable` — `IsNull`, `Retain()`, `ToArrowSchema()` | `ToArrowSchema()` deep-copies natively before importing, because `CArrowSchemaImporter` consumes. Releasing the handle is **not** the C Data Interface `release`. **Not a `SafeHandle` (D-BIND-55):** `fl_schema` is two pointers, an owner and a borrowed schema, and the handle a delivery lends a handler must never release. An OWNED handle (from `Retain` or a wait) is finalised if nobody disposes it; a borrowed one never is |
 | `OwnedSchema`, `MakeSharedSchema` | not exposed | Construction-side types. C# supplies schemas as `Apache.Arrow.Schema` and the shim owns the conversion |
-| `SchemaArrival::Wait(timeout, out)` and its five outcomes | `SchemaArrival` — `Wait(TimeSpan)` → `readonly struct SchemaWaitResult { FletcherStatus Status · SchemaHandle? Schema }` | `Ok` + null is a **schema-less transport**, not a failure, and must not release the handle. `Pending` and `SubscriptionEnded` are outcomes, never exceptions. `Timeout.Infinite` (−1) maps to `INT64_MAX`; any other negative throws in managed code (D-BIND-20) |
+| `SchemaArrival::Wait(timeout, out)` and its five outcomes; `Message()` | `sealed class SchemaArrival : IDisposable` — `Wait(TimeSpan)` and `WaitAsync(TimeSpan, CancellationToken)` → `readonly struct SchemaWaitResult { FletcherStatus Status · SchemaHandle? Schema · bool HasSchema · bool IsSchemaless }`. **No `Message` member (D-BIND-55):** a failed wait throws a `FletcherException` carrying the message (D-BIND-19 rule 4) | `Ok` + null is a **schema-less transport**, not a failure, and must not release the handle. `Pending` and `SubscriptionEnded` are outcomes, never exceptions. `Timeout.Infinite` (−1) maps to `INT64_MAX`; any other negative throws in managed code (D-BIND-20). **`IsSchemaless` is not `!HasSchema`** — that is also true for `Pending` and `SubscriptionEnded`. **`WaitAsync` is the helper D-BIND-22 allows, built ABOVE `Wait`** (D-BIND-55): short `Wait` slices on the thread pool, the token checked between them, the same outcomes, cancellation as `OperationCanceledException` that cancels nothing native. It occupies one pool thread while it waits |
 | `SchemaResolver` | **not exposed** | Provider-side write end. C# cannot author a provider (§3.1) |
 | topic segments — `vector<string>`, six refusals, 246-byte joined cap | `readonly struct TopicPath` — `TopicPath.Of(params string[])`, `Segments`, `ToKey()` | Validated in managed code against the same six rules, in **UTF-8 bytes**, so the refusal arrives with a C# stack trace instead of crossing. Native re-validates; the two must agree |
 | `PubSubError` message escaping | handled natively | C# reads bytes + length, never a NUL-terminated string |
@@ -48,12 +56,12 @@ that mirror them are constrained rather than chosen.
 
 | C++ | C# |
 |---|---|
-| `ProviderSelector::Parse(string)` — name vs path, total and disjoint | `ProviderSelector.Parse(string)` → `readonly struct ProviderSelector`. Same predicate, re-implemented in managed code so the classification is visible before the call, and re-checked natively |
+| `ProviderSelector::Parse(string)` — name vs path, total and disjoint | `ProviderSelector.Parse(string)` → `readonly struct ProviderSelector`. Same predicate, re-implemented in managed code, and re-checked natively. The classification stays **internal** (no public `IsName`): moving a protocol from built-in to loaded driver must be a configuration edit, never a caller edit, and a public kind invites the caller edit — C++ keeps `is_name_` private for the same reason |
 | `ProviderConfig {max_payload_bytes, domain_id, document}` | `sealed class ProviderConfig { uint MaxPayloadBytes · uint DomainId · ReadOnlyMemory<byte> Document }` |
 | `ProviderRegistry::Create(selector, config)` | `ProviderRegistry.Create(ProviderSelector, ProviderConfig)` → `PubSubProviderHandle` |
 | `ProviderRegistry::Register(name, factory)` | **not exposed** — see §3.1 and Q13 |
 | `ProviderRegistry::SetPathResolver(resolver)` | **not exposed** — PDA-ABI's seat, filled inside the shim |
-| `IsPayloadBound(uint32)`, `kMinPayloadBytes`, `kMaxPayloadBytes` | `PayloadBound.IsValid(uint)`, `PayloadBound.Min`, `PayloadBound.Max` | so a caller validates a bound where it is written, instead of learning at construction |
+| `IsPayloadBound(uint32)`, `kMinPayloadBytes`, `kMaxPayloadBytes` | `PayloadBound.IsValid(uint)`, `PayloadBound.Min`, `PayloadBound.Max`, and `PayloadBound.FramingBytes` (the sample's 4-byte length plus the 4-byte CDR header a transport adds ON TOP of a bound, which is why `Max` sits below `uint.MaxValue`) | so a caller validates a bound where it is written, instead of learning at construction |
 | `FletcherTypeName`, `kSchemaTypeName` | not exposed — provider-internal |
 
 **The registry publishes no name query, and C# must not add one.** Owner ruling
@@ -72,8 +80,8 @@ that enumerated built-ins would silently reopen that decision.
 | `Subscriber(shared_ptr<PubSubProvider>)` | `Subscriber(PubSubProviderHandle)` , `IDisposable` |
 | `Subscriber::Subscribe(segments, cb)` → `{subscription_id, SchemaArrival}` | `Subscribe(TopicPath, RowHandler)` → `SubscribeResult { Subscription Subscription · SchemaArrival Schema }` |
 | `Subscriber::Unsubscribe(uint64)` | `Subscription.Dispose()` , and `Subscriber.Unsubscribe(Subscription)` |
-| `Subscriber::AbsorbedCallbackFailures()` | `ulong AbsorbedCallbackFailures { get }` — **the managed counter**, since a thunk that catches its own exception increments nothing native (constraint 8) |
-| `DeliveryChannel::AbsorbedTotal()` | `static ulong Diagnostics.AbsorbedTotal` — process-wide, and true only under D-BIND-17's one-copy rule |
+| `Subscriber::AbsorbedCallbackFailures()` | `ulong AbsorbedCallbackFailures { get }` — **the managed counter**, since a thunk that catches its own exception increments nothing native (constraint 8) — and `event EventHandler<HandlerFaultedEventArgs> HandlerFaulted` (`Exception`, `SubscriptionId`), raised for each absorbed failure (D-BIND-18, D-BIND-19 rule 5) |
+| `DeliveryChannel::AbsorbedTotal()` | `static ulong Diagnostics.AbsorbedTotal` — process-wide, the sum of every `Subscriber`'s count including disposed ones, and meaningful only under D-BIND-17's one-copy rule (shipped by D-BIND-55) |
 
 `Subscription` is a handle, not an id: C++ ids are per-`Subscriber` counters and
 handing one to a different `Subscriber` silently addresses that instance's own
@@ -83,7 +91,7 @@ subscription. A typed handle makes that unrepresentable.
 
 | C++ | C# |
 |---|---|
-| `Codec(shared_ptr<arrow::Schema>)`, `EncodeRow`, `DecodeRow` | `FletcherCodec(Apache.Arrow.Schema)` (`fl_codec_open`, once per schema) — `Bind(RecordBatch) → BoundRows` (`fl_rows_bind`, once per batch; the array is **borrowed**, and `BoundRows.Dispose()` unbinds **then** releases the export), `Encode(BoundRows, int row, IBufferWriter<byte>)` (`fl_encode_row`, bytes in hand), `Decode(ReadOnlySpan<byte>)`, `DecodeBatch(ReadOnlySpan<byte>, int count)` (`fl_decode_rows`), `IDisposable`. **No method returns encoded bytes**; the zero-copy path is `Publisher.Publish(topic, rows, i)` (D-BIND-23) |
+| `Codec(shared_ptr<arrow::Schema>)`, `EncodeRow`, `DecodeRow` | `FletcherCodec(Apache.Arrow.Schema)` (`fl_codec_open`, once per schema) — `Bind(RecordBatch) → BoundRows` (`fl_rows_bind`, once per batch; the array is **borrowed**, and `BoundRows.Dispose()` unbinds **then** releases the export), `Encode(BoundRows, int row, IBufferWriter<byte>)` (`fl_encode_row`, bytes in hand), `Decode(ReadOnlySpan<byte>)`, `DecodeBatch(ReadOnlySpan<byte>, int count)` (`fl_decode_rows`), `Schema`, `DecodedSchema` (what a decode produces: the same object as `Schema` unless the schema carries a dictionary, which the wire carries as its value type — D-BIND-39), `IDisposable`. **No method returns encoded bytes**; the zero-copy path is `Publisher.Publish(topic, rows, i)` (D-BIND-23) |
 | `ArrowRow = vector<shared_ptr<arrow::Scalar>>` | **no analogue** — see Q14. `Apache.Arrow` has no `Scalar` type, so the C# unit of one row is `(RecordBatch batch, int row)` |
 | `PublisherArrow` — `CreateTopic`, `Publish(ArrowRow)`, `PublishDirect` | folded into `Publisher` (the C# `Publish` is already Arrow-typed) |
 | `SubscriberArrow::Subscribe(segments, SubscribeCallback)` per-row | `SubscriberArrow.Subscribe(TopicPath, RowBatchHandler)` with `BatchOptions.MaxRows = 1` , or the generated typed subscriber |
@@ -193,6 +201,10 @@ These are not in the C++ surface, and each exists because .NET requires it.
 | Managed refusals before the call: `Dispose` from a handler, `Subscribe` to a new topic from a handler, a negative timeout | The native answers are respectively process termination, a data-dependent `kReentrantCall`, and `kInvalidArgument`. A managed exception with a stack trace is strictly better, and the abort is correct | constraints 2, 3, 4 |
 | `AbsorbedCallbackFailures` on the managed side | A thunk that catches its own managed exception increments nothing native | constraint 8 |
 | `CancellationToken` on every async path | .NET convention | — |
+| `SchemaArrival.WaitAsync` | An async application should not block its own thread on a schema. Built above `Wait`, never beside it, so no second waiting mechanism crosses the ABI | D-BIND-22, D-BIND-55 |
+| `SchemaWaitResult.IsSchemaless` | `!HasSchema` conflates the schema-less answer with `Pending` and `SubscriptionEnded`, which seam §7 says demand opposite handling | D-BIND-55 |
+| `HandlerFaulted` on `Subscriber` | An absorbed failure must be observable, not only counted | D-BIND-18, D-BIND-19 rule 5 |
+| A finaliser on an OWNED `SchemaHandle` | Every other native handle is a `SafeHandle` and is finalised; this one cannot be one, and without a finaliser an undisposed `Retain` leaked | D-BIND-55 |
 | `BoundRows` as a disposable handle between codec and publisher | The ABI borrows the Arrow array rather than consuming it, so one export can serve N publishes; the handle's `Dispose` unbinds before it releases, making the borrow rule a property of the type | development plan §3.2, D-BIND-23 |
 
 ---
@@ -217,26 +229,26 @@ classDiagram
         SubscriptionEnded
         ReentrantCall
     }
+    class FletcherOrigin {
+        <<enumeration>>
+        None
+        Seam
+        Codec
+        Callback
+    }
     class FletcherException {
         +FletcherStatus Status
         +FletcherOrigin Origin
         +string Message
     }
     class FletcherFormatException {
-        +long Offset
+        codec origin AND InvalidArgument
     }
     class TopicPath {
         <<readonly struct>>
         +Of(string[] segments) TopicPath
         +IReadOnlyList~string~ Segments
         +ToKey() string
-        +int Utf8ByteLength
-    }
-    class BlobHandle {
-        +int Length
-        +Retain() BlobHandle
-        +CopyTo(Span~byte~ destination) void
-        +Dispose() void
     }
     class AttachmentsView {
         <<readonly ref struct>>
@@ -246,9 +258,11 @@ classDiagram
         +TryFind(ReadOnlySpan~byte~ key) bool
     }
     class AttachmentsBuilder {
-        +Set(ReadOnlySpan~byte~ key, ReadOnlyMemory~byte~ value) void
+        +Set(ReadOnlySpan~byte~ key, ReadOnlySpan~byte~ value) void
+        +Set(string key, ReadOnlySpan~byte~ value) void
         +Clear() void
         +int Count
+        +Dispose() void
     }
     class SchemaHandle {
         +bool IsNull
@@ -259,21 +273,23 @@ classDiagram
     class SchemaArrival {
         +Wait(TimeSpan timeout) SchemaWaitResult
         +WaitAsync(TimeSpan timeout, CancellationToken ct) Task~SchemaWaitResult~
-        +string Message
+        +Dispose() void
     }
     class SchemaWaitResult {
         <<readonly struct>>
         +FletcherStatus Status
         +SchemaHandle Schema
+        +bool HasSchema
         +bool IsSchemaless
     }
     FletcherException <|-- FletcherFormatException
     FletcherException ..> FletcherStatus : carries
+    FletcherException ..> FletcherOrigin : carries
     SchemaArrival ..> SchemaWaitResult : returns
     SchemaWaitResult o-- SchemaHandle : null when schemaless
-    AttachmentsBuilder ..> BlobHandle : publishes
     note for AttachmentsView "Positional only. Byte order, never ordinal UTF-16. A boundary never sorts."
-    note for SchemaWaitResult "Ok plus null schema is a schemaless transport, not a failure, and releases nothing."
+    note for SchemaWaitResult "Ok plus null schema is a schemaless transport, not a failure, and releases nothing. IsSchemaless is not the negation of HasSchema."
+    note for SchemaHandle "IDisposable, not a SafeHandle - two pointers, and a borrowed handle never releases. An owned one is finalised if undisposed."
 ```
 
 ### 5.2 Selection, pub/sub, and the Arrow tier
@@ -283,7 +299,6 @@ classDiagram
     class ProviderSelector {
         <<readonly struct>>
         +Parse(string text) ProviderSelector
-        +bool IsName
         +string Text
     }
     class ProviderConfig {
@@ -314,8 +329,17 @@ classDiagram
         +Subscribe(TopicPath topic, RowHandler handler) SubscribeResult
         +Unsubscribe(Subscription subscription) void
         +ulong AbsorbedCallbackFailures
+        +HandlerFaulted EventHandler~HandlerFaultedEventArgs~
         +DispatchAfterDelivery(Func~Task~ work) Task
         +Dispose() void
+    }
+    class HandlerFaultedEventArgs {
+        +Exception Exception
+        +ulong SubscriptionId
+    }
+    class Diagnostics {
+        <<static>>
+        +ulong AbsorbedTotal
     }
     class SubscribeResult {
         <<readonly struct>>
@@ -360,6 +384,8 @@ classDiagram
     Subscriber o-- PubSubProviderHandle : shares
     SubscriberArrow *-- Subscriber : wraps
     Subscriber ..> SubscribeResult : returns
+    Subscriber ..> HandlerFaultedEventArgs : raises
+    Subscriber ..> Diagnostics : counts into
     SubscribeResult *-- Subscription
     Subscriber ..> RowHandler : invokes
     Publisher ..> RowWriter : invokes
@@ -382,6 +408,7 @@ classDiagram
         +Decode(ReadOnlySpan~byte~ row) RecordBatch
         +DecodeBatch(ReadOnlySpan~byte~ rows, int count) RecordBatch
         +Schema Schema
+        +Schema DecodedSchema
         +Dispose() void
     }
     class BoundRows {

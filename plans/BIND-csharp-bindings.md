@@ -1233,6 +1233,13 @@ subscribe, **so that** I am a full Fletcher client with no protocol SDK on my bu
   and one-third Fletcher (1.1–1.3 µs, ~0.74 µs of it native). Native allocations:
   M1 = C2 = 7, M3 = C4 = 5, C1 = 4. **ACCEPTED 2026-09-25 (D-BIND-49): no D-BIND-1
   STOP-AND-ASK, B-2 closes; BIND-6 carries a batch-first design input.**
+- **After close — the public surface reconciled (D-BIND-55, 2026-09-25).** The
+  conformance review's surface-versus-code list, ruled: six rows of the note amended
+  to the code; `SchemaWaitResult.IsSchemaless`, a finaliser on an OWNED
+  `SchemaHandle` and `Diagnostics.AbsorbedTotal` built; `SchemaArrival.WaitAsync`
+  built above `Wait`; `BlobHandle` deferred until a consumer's attachments are large
+  enough to cost a copy. Proven by `SchemaArrivalTests` and `ProcessWideTests`, each
+  falsified by a compiling mutation. No ABI change.
 
 ### BIND-5 — `SubscriberArrow`, batch-first, and the oracle from C#
 

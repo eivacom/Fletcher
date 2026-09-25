@@ -69,6 +69,13 @@ public sealed unsafe class SchemaHandle : IDisposable
     {
         _schema = schema;
         _owned = owned;
+
+        // A borrowed handle took no reference, so its finaliser would have
+        // nothing to drop - and running one anyway would drop the SHIM's.
+        if (!owned)
+        {
+            GC.SuppressFinalize(this);
+        }
     }
 
     /// <summary>Whether this is the schema-less transport's answer.</summary>
@@ -153,5 +160,45 @@ public sealed unsafe class SchemaHandle : IDisposable
         {
             NativeMethods.fl_schema_release(in _schema);
         }
+
+        GC.SuppressFinalize(this);
     }
+
+    /// <summary>The safety net for an OWNED handle nobody disposed.</summary>
+    /// <remarks>
+    /// <para>
+    /// Why a finaliser here, when this type is not a <c>SafeHandle</c> (D-BIND-55):
+    /// <c>fl_schema</c> is TWO pointers, an owner and a borrowed schema, and a
+    /// <c>SafeHandle</c> wraps one; and a borrowed handle must never release. But
+    /// every other native handle in this binding IS a <c>SafeHandle</c>, and is
+    /// finalised, so without this an undisposed <see cref="Retain"/> was the one
+    /// native leak the tier allowed.
+    /// </para>
+    /// <para>
+    /// Safe on the finaliser thread because the header makes it so:
+    /// <c>fl_schema_release</c> never fails, never re-enters the seam and is safe
+    /// from any thread. It is still the fallback - <see cref="Dispose"/> is the
+    /// contract, and the finaliser only bounds the cost of forgetting it.
+    /// </para>
+    /// </remarks>
+    ~SchemaHandle()
+    {
+        if (_disposed || !_owned)
+        {
+            return;
+        }
+
+        NativeMethods.fl_schema_release(in _schema);
+        ReleasedByFinalizerForTest?.Invoke(_schema.Owner);
+    }
+
+    /// <summary>Called with the owner of each reference the FINALISER released.</summary>
+    /// <remarks>
+    /// Observes the branch rather than a count, because a count of finalisations is
+    /// process-wide and xUnit runs classes in parallel. Null in production.
+    /// </remarks>
+    internal static Action<nint>? ReleasedByFinalizerForTest { get; set; }
+
+    /// <summary>The native owner this handle refers to, for the test above.</summary>
+    internal nint OwnerForTest => _schema.Owner;
 }
