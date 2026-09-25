@@ -412,6 +412,16 @@ is a copy-paste from the RBA feature; the ADO text is corrected to say what is m
   native's count cannot see a managed catch. Silent queueing of a re-entrant `Subscribe` →
   STOP-AND-ASK.
 
+  **AMENDED 2026-09-25 BY D-BIND-50 AND D-BIND-51** (the BIND-4 review, B1 and B2). Two
+  premises above were false. "Whoever brings the counter to zero after retirement frees"
+  equated the seam's *begins* — passing the gate — with the managed counter's increment,
+  which comes later; on the carve-out a SIBLING's `GCHandle` could be freed under a delivery
+  on another thread. The free is now deferred to a second cancel from outside any delivery,
+  which the seam makes wait for the drain (D-BIND-50). And the marker named one Subscriber
+  where the seam's refusal is per PROVIDER and deliveries nest; it is now a per-thread stack
+  of delivery frames, and the refusals ask whether any frame is on the same provider
+  (D-BIND-51). Everything else in this entry stands.
+
 - **D-BIND-19 — Error handling across the boundary: five rules.** *LOCKED BY THE MAINTAINER
   2026-09-11, widened from the writer-frame rule of constraints 6 and 7. Detail and code in the
   development plan §3.5.* **(1)** One numbered error type per side and the number AND the
@@ -613,6 +623,11 @@ accessors do, for capstone parity (Q18).
   pair stops being defaulted virtuals), part 2 is void and BIND-1 is a STOP-AND-ASK under
   D-BIND-22. If #128 is still unmerged when BIND-2 is ready to start, that is not a re-ruling —
   part 3 already says what happens.
+
+  **PART 2 SUPERSEDED 2026-09-25 BY D-BIND-52.** The seam grew the pair (#128, merged into
+  this branch), so the shim no longer answers `kNotSupported`: it forwards to
+  `Subscriber::SubscribeSchema`, ABI 0.4 → 0.5. Exposing it in C# is owed to a later ruling.
+  Parts 1, 3 and 4 stand as history.
 
   **What this ruling explicitly refuses:** making a freshly started round's critical path wait on
   a draft pull request of ten thousand lines that is red on Linux and has no human review

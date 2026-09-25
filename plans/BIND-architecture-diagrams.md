@@ -27,20 +27,22 @@ aware Markdown viewer.
 |---|---|
 | `<<shipped>>` | Exists on `main` today (`8ef1d0e`) and is tested in CI |
 | `<<in-flight>>` | Round **PDA**, on `feature/protocol-driver-abi` — **design documents only, no ABI code written yet**, 8 commits ahead of `main`, unmerged |
-| `<<planned>>` | Round **BIND** — this plan. **Nothing exists yet.** |
+| `<<built>>` | Round **BIND**, on `feature/csharp-bindings` (draft #129) — **built and tested in CI, not yet on `main`**. Added 2026-09-25, when BIND-4 closed |
+| `<<planned>>` | Round **BIND** — this plan, **not built yet** |
 | `<<provisional>>` | Planned *and* the design is still an open decision |
 
 ## Language support — what actually exists today
 
 This matters for reading the sequence diagrams: only C++ has a complete pub/sub
-path right now.
+path right now — generated classes through to the transport. C# has pub/sub over
+the shim since BIND-4, but no generated classes until BIND-6.
 
 | Language | Encode / decode | Publish / subscribe | Arrow read side | Status |
 |---|---|---|---|---|
 | **C++** | ✅ generated row classes + `Codec` | ✅ `Publisher` / `Subscriber`, all providers | ✅ views + accessors | complete |
 | **TypeScript** | ✅ managed codec in `@eiva/fletcher-gateway-client` | ⚠️ via gateway WebSocket only, and **hand-wired** — no generated `Publisher`/`Subscriber` (that is BIND-T) | ❌ | partial |
 | **Rust** | ❌ *(planned — BIND-Rust)* | ❌ *(planned — BIND-Rust)* | ✅ `.fletcher.rs` RecordBatch accessor | read side today |
-| **C#** | ✅ `FletcherCodec` over the shim *(BIND-3c, 2026-09-21)* | ❌ *(BIND-4)* | ❌ *(BIND-7)* | in progress (BIND) |
+| **C#** | ✅ `FletcherCodec` over the shim *(BIND-3c, 2026-09-21)* | ✅ `Publisher` / `Subscriber` over the shim, all three built-in providers by selector *(BIND-4, 2026-09-25)* — hand-wired until BIND-6 generates classes, `SubscriberArrow` at BIND-5 | ❌ *(BIND-7)* | in progress (BIND) |
 
 **Which codec a language reaches, and why the type sets look different
 (D-BIND-39, 2026-09-21).** One wire format, **two drivers** of it:
@@ -209,7 +211,7 @@ Opt tokens: `--fletcher_opt=` `ts` · `ipc` · `accessor` · `rust` (shipped), p
 
 ---
 
-## 2. Class diagram — the two ABIs and the C# binding (planned + in-flight)
+## 2. Class diagram — the two ABIs and the C# binding (built, planned and in-flight)
 
 The two ABIs point in **opposite directions**; conflating them is the classic
 mistake (PDA-L5).
@@ -269,10 +271,11 @@ classDiagram
     driver_abi_h <|.. InProcess_driver
 
     class binding_abi_h {
-        <<planned>>
-        descriptor-driven encode/decode
-        pub/sub verbs
-        role 3 driver management
+        <<built>>
+        44 entry points at ABI 0.5
+        codec: open, bind, encode_row, decode_rows
+        registry, publisher, subscriber, schema arrival
+        path selectors answer kNotSupported until PDA-ABI
     }
     note for binding_abi_h "Fletcher is the CALLEE here. No driver data-plane function is reachable. The window and blob shapes resemble the driver ABI because both are derived from the SEAM SPEC, not because either includes the other - D-BIND-2′ forbids sharing a declaration."
 
@@ -291,39 +294,55 @@ classDiagram
     }
 
     class Fletcher_Interop {
-        <<planned>>
-        P/Invoke + native assets per RID
+        <<built>>
+        Eiva.Fletcher.Interop
+        P/Invoke, SafeHandles, exact ABI handshake
+        native assets per RID at BIND-9
     }
-    class Fletcher_Core_cs {
-        <<planned>>
-        row types, TypedSchema, envelope
-    }
-    class Fletcher_Arrow_cs {
-        <<planned>>
-        managed, Apache.Arrow
+    class Fletcher_Codec_cs {
+        <<built>>
+        Eiva.Fletcher - codec and Arrow tier
+        FletcherCodec, BoundRows
     }
     class Fletcher_PubSub_cs {
-        <<planned>>
-        IPubSubProvider, Publisher, Subscriber
-        runtime driver selection
+        <<built>>
+        Eiva.Fletcher - pub/sub tier
+        ProviderRegistry, Publisher, Subscriber, SchemaArrival
+        a provider is an opaque handle
     }
-    class Fletcher_PubSubArrow_cs {
+    note for Fletcher_PubSub_cs "D-BIND-24: C# never implements a provider. There is no managed provider interface, no Register and no SetPathResolver - a transport is chosen by selector string."
+    class Fletcher_SubscriberArrow_cs {
         <<planned>>
-        PublisherArrow / SubscriberArrow
+        Eiva.Fletcher - SubscriberArrow, batch-first
+        BIND-5. PublisherArrow folds into Publisher
+    }
+    class Fletcher_Generated_cs {
+        <<planned>>
+        generated .fletcher.cs rows
+        BIND-6, writes no wire bytes
     }
     class Fletcher_GatewayClient_cs {
         <<planned>>
+        Eiva.Fletcher.GatewayClient, BIND-8
         managed WebSocket - NO native assets
     }
+    note for Fletcher_GatewayClient_cs "The one managed codec (D-BIND-1). Depends on Apache.Arrow only - not on Eiva.Fletcher, and not on the shim."
 
     Fletcher_Interop --> binding_abi_h
-    Fletcher_Core_cs --> Fletcher_Interop
-    Fletcher_Arrow_cs --> Fletcher_Core_cs
-    Fletcher_PubSub_cs --> Fletcher_Core_cs
-    Fletcher_PubSubArrow_cs --> Fletcher_Arrow_cs
-    Fletcher_PubSubArrow_cs --> Fletcher_PubSub_cs
-    Fletcher_GatewayClient_cs --> Fletcher_Core_cs
+    Fletcher_Codec_cs --> Fletcher_Interop
+    Fletcher_PubSub_cs --> Fletcher_Codec_cs
+    Fletcher_PubSub_cs --> Fletcher_Interop
+    Fletcher_SubscriberArrow_cs --> Fletcher_PubSub_cs
+    Fletcher_SubscriberArrow_cs --> Fletcher_Codec_cs
+    Fletcher_Generated_cs --> Fletcher_Codec_cs
 ```
+
+The three C# packages are D-BIND-14′'s: `Eiva.Fletcher.Interop`,
+`Eiva.Fletcher` (every managed tier above the interop, in ONE namespace today —
+the component-named namespaces D-BIND-14′ allows were not needed) and
+`Eiva.Fletcher.GatewayClient`. Until 2026-09-25 this diagram drew six boxes from
+the pre-ruling design, including a managed `IPubSubProvider` that D-BIND-24
+refused.
 
 ---
 
@@ -415,7 +434,13 @@ sequenceDiagram
     Note over TS,Cli: today the app passes Topic + Schema by hand.<br/>BIND-T generates Publisher/Subscriber classes<br/>that bind both in.
 ```
 
-## 6. Sequence — C# publish (planned)
+## 6. Sequence — C# publish (planned; its lower half built)
+
+**Built at BIND-4:** everything from `fl_codec_open` down, driven today by
+`Publisher.Publish(topic, rows, i)` over a `BoundRows` — the generated
+`SensorReading` and `Publisher(T)` at the top are BIND-6's. And the provider
+is today a registered built-in (`inprocess`, `fastdds`, `xrce`), not a
+`DriverProvider`: that arrives with PDA-ABI.
 
 ```mermaid
 sequenceDiagram
@@ -446,7 +471,12 @@ sequenceDiagram
     Drv->>Net: send
 ```
 
-## 7. Sequence — C# subscribe (planned)
+## 7. Sequence — C# subscribe (planned; its lower half built)
+
+**Built at BIND-4:** the subscribe, the arrival wait, the delivery thunk and
+`fl_decode_rows`, driven today by a `RowHandler` over the raw row — the
+generated `Subscriber(T)` and `FromArrow` are BIND-6's. The provider caveat of
+diagram 6 applies.
 
 ```mermaid
 sequenceDiagram
@@ -475,6 +505,7 @@ sequenceDiagram
     ABI->>Int: invoke managed fn ptr
     Int->>CsSub: ReadOnlySpan(byte) + schema + attachments
     Note over Int,CsSub: ALL THREE are borrowed for the call.<br/>No async. Nothing may escape.<br/>Copy what you keep.
+    Note over Int,CsSub: the thunk counts in-flight deliveries and keeps a per-thread<br/>stack of delivery frames - a Dispose or new Subscribe on the<br/>SAME PROVIDER from a handler is refused in managed code<br/>(D-BIND-18, amended by D-BIND-50 and D-BIND-51)
     CsSub->>ABI: fl_decode_rows(codec, bytes, len, count, out)
     Note over ABI: ONE codec (D-BIND-1): generated C# reads and writes NO wire bytes.<br/>Decode touches no provider and takes no lock the delivery path holds,<br/>so it is callable from INSIDE this callback — which is where a subscriber wants it.
     ABI-->>CsSub: ArrowArray the caller imports and OWNS
@@ -500,7 +531,7 @@ flowchart LR
         S2["fletcher-pubsub-arrow"]
         S3["Fast DDS driver"]
     end
-    subgraph dotnet[".NET consumer (planned)"]
+    subgraph dotnet[".NET consumer (built - published at BIND-9)"]
         D1["Eiva.Fletcher<br/>codec + Arrow tier + pub/sub"]
         D2["Eiva.Fletcher.Interop<br/>native assets per RID"]
     end
@@ -529,12 +560,14 @@ isolates native assets to `Interop` alone and CI asserts `GatewayClient` has no
 
 ## Known gaps in these diagrams
 
-*Swept 2026-09-18 against the tree. Three of the five have closed since these
-diagrams were drawn on 2026-08-31; they are marked rather than deleted, because a
-gap that closed is worth distinguishing from a gap nobody re-checked.*
+*Swept 2026-09-18 against the tree, and again 2026-09-25 at BIND-4's close. Three
+of the first five have closed since these diagrams were drawn on 2026-08-31; they
+are marked rather than deleted, because a gap that closed is worth distinguishing
+from a gap nobody re-checked.*
 
 1. ~~**The binding ABI's function set is not designed yet.**~~ ✅ **CLOSED
-   2026-09-17.** BIND-1 landed `c-abi/include/fletcher/abi/binding.h` — 912 lines,
+   2026-09-17.** BIND-1 landed `c-abi/include/fletcher/abi/binding.h` — 912 lines then (1,013, and 44 entry
+   points at ABI 0.5, once BIND-4 closed),
    pure C99, reviewed as a *specification* over two cycles
    (`plans/reviews/BIND-1-design-review.md`), with every declaration derived from
    the seam spec and its § named. The value-transfer hop that was provisional here
@@ -559,3 +592,8 @@ gap that closed is worth distinguishing from a gap nobody re-checked.*
    struct — it has no definition anywhere in the tree, and its knobs are lines in
    the provider's configuration document. So diagram 2's XML-profile depiction is
    **today's code**, not a target state.
+6. **Diagrams 6 and 7 draw the TARGET, not today's code** (added 2026-09-25). The
+   generated C# classes at their top are BIND-6's and the `DriverProvider` at their
+   bottom is PDA-ABI's. What sits between — the interop tier, the binding ABI, the
+   fused publish, the delivery thunk and the decode — is built, and each diagram now
+   says so above it. Diagram 2 marks the same split with `<<built>>`.

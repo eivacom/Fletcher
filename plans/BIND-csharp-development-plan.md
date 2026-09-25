@@ -658,6 +658,22 @@ writes the C# arm of `CallerTier` (the tier BIND actually wraps, per §9) and ad
 at least one case to the C++ suite as §12.1 expects. **Carries the per-row publish
 benchmark** that settles B-2 (D-BIND-37, moved here from BIND-3).
 
+**As built — BIND-4 closed 2026-09-25.** The design above held; what it did not
+foresee is recorded as rulings in `BIND-locked-decisions.md`. Three entry points
+the header lacked, each found by writing its caller and each an ABI minor bump:
+`fl_blob_create` (D-BIND-42, see N-6a), `fl_schema_retain` (D-BIND-43) and
+`fl_schema_copy` (D-BIND-46). Two managed signatures corrected against the native
+contract, with no ABI change: `AttachmentsBuilder` owns its entries and caches the
+sealed set, because `fl_attachments_builder_build` empties the native builder
+(D-BIND-44), and the `RowWriter` publish takes `int minBytes` explicitly
+(D-BIND-45). Bucket 3 ports 21 of its 23 `pubsub` cases; two assert the C++
+fan-out's own bookkeeping and are ruled unportable (D-BIND-47). The benchmark's
+shape and verdict are D-BIND-48 and D-BIND-49 (B-2). From the review: D-BIND-50
+and D-BIND-51 amend D-BIND-18's thunk (S-2, and the constraints note §2),
+D-BIND-52 implements the schema-watch pair in the shim (ABI 0.5, no C# surface
+yet), and D-BIND-53 and D-BIND-54 settle bounded-payload overflow (B-6). The item's
+record is its `BIND-progress-log.md` entry.
+
 **BIND-5 — Arrow subscriber + oracle end to end.** Managed batching: copy borrowed
 rows, decode N per native call, deliver `RecordBatch`. Dictionary re-folding
 deferred to DICT (D-BIND-8). The copy oracle run with the C# producer is this
@@ -1180,7 +1196,7 @@ the numbering is shared so a ruling can cite one number.
 | Q10 | 18786 exclusion classes: generator tests and provider-internal tests stay in C++ (P-5) | ✅ **LOCKED 2026-09-11**: both classes, documented | closing 18786 |
 | Q11 | Are any Flight (20061) consumers C++ processes hosting .NET, or hosting two bindings? (B-4) | ✅ **Answered 2026-09-11: no** — consumers are .NET processes with this binding only. D-BIND-17's check covers the detectable case; a future C++ host is a STOP-AND-ASK under P1 | BIND-2 design |
 | Q12 | Is BIND-Rust in this round? (plan open decision 5) | ✅ **Ruled 2026-09-11: next round** | scope |
-| Q20 | Landing order against PR #128 (P-7): does BIND wait for the FastDDS modernization branch to land? | ✅ **RULED 2026-09-15: no** (D-BIND-29). #129 first; BIND-1 declares the schema-watch pair as `kNotSupported`; re-examined at the BIND-1 → BIND-2 boundary; whoever lands second moves `c-abi`'s three pins to `0.5.1-alpha` | BIND-1, BIND-2 |
+| Q20 | Landing order against PR #128 (P-7): does BIND wait for the FastDDS modernization branch to land? | ✅ **RULED 2026-09-15: no** (D-BIND-29). #129 first; BIND-1 declares the schema-watch pair as `kNotSupported`; re-examined at the BIND-1 → BIND-2 boundary; whoever lands second moves `c-abi`'s three pins to `0.5.1-alpha`. **The schema-watch clause is superseded (D-BIND-52, 2026-09-25):** the seam grew the pair (#128) and the shim forwards to it, ABI 0.5 | BIND-1, BIND-2 |
 | Q19 | Confirm the reading of 16353's "make C# emit Rust-native accessor classes" as *C# accessor classes equivalent to the Rust-native ones* (plan open decision 4; the literal phrasing would mean C# emitting Rust and looks like a copy-paste from the RBA feature) | ✅ **CONFIRMED 2026-09-11**: equivalence reading; ADO 16353 text to be corrected | BIND-7 |
 
 ---

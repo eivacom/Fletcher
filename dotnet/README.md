@@ -51,13 +51,13 @@ executed, not merely compiled.
 
 ## Status — round BIND
 
-At **BIND-0** the three packages are **empty** and that is the deliverable: the
-lanes (`ci.dotnet.yml`, `ci.c-abi.yml`) restore, build, test and pack on both
-platforms before there is any real code to get wrong. Seam §12.4's lesson is the
+At **BIND-0** the three packages were **empty**, and that was the deliverable: the
+lanes (`ci.dotnet.yml`, `ci.c-abi.yml`) restored, built, tested and packed on both
+platforms before there was any real code to get wrong. Seam §12.4's lesson is the
 reason — PR #126's first lane run found seven defects that local green could not,
 three of them Linux-only.
 
-What is *not* empty is the one question BIND-0 had to answer before the design
+What was *not* empty was the one question BIND-0 had to answer before the design
 could stand: **risk N-9**, whether `Apache.Arrow` can carry every type in the
 mapping across the Arrow C Data Interface. `tests/Fletcher.Tests/
 ArrowCDataInterfaceTests.cs` round-trips one array per Arrow type the wire-format
@@ -67,6 +67,15 @@ field metadata. All 17 types pass on `Apache.Arrow` **23.0.0**, which is why the
 version is pinned exactly rather than floated: bumping it re-runs that
 verification.
 
-Then: **BIND-3** brings `Interop` and the codec/Arrow tier, **BIND-4** pub/sub,
-**BIND-5** `SubscriberArrow`, **BIND-8** the gateway client, **BIND-9** the
-packaging and the publish pipeline.
+**Since then (2026-09-25).** **BIND-3** built `Eiva.Fletcher.Interop` and the
+codec/Arrow tier (`FletcherCodec`, `BoundRows`), and **BIND-4** the pub/sub tier
+(`ProviderRegistry`, `Publisher`, `Subscriber`, `SchemaArrival`), all over the
+native shim in [`../c-abi`](../c-abi/README.md) at ABI 0.5. A transport is chosen
+by selector string and C# never implements one (D-BIND-24).
+`Eiva.Fletcher.GatewayClient` is still empty. The suites that need a real
+transport live under `integration-tests/` and are deliberately not in
+`Fletcher.slnx`, so `dotnet test Fletcher.slnx` stays a unit run.
+
+Next: **BIND-5** `SubscriberArrow`, **BIND-6** generated C# rows, **BIND-8** the
+gateway client, **BIND-9** the packaging and the publish pipeline. Item by item:
+[`plans/BIND-progress-log.md`](../plans/BIND-progress-log.md).
