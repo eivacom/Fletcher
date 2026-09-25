@@ -265,3 +265,88 @@ defect this round. And `ci.dotnet.yml` checks out SPARSELY: the goldens `SchemaI
 were simply absent in CI, which produced 63 passing tests instead of 74 rather than a red one —
 **a lane that gains a FILE dependency needs its checkout AND its path filter in the same
 commit.**
+
+## BIND-4 — Pub/sub in `Eiva.Fletcher` (2026-09-25)
+
+**Forcing tests:** bucket 3 over `inprocess`; bucket 4 over `fastdds`/`xrce` by selector; the C#
+arm of `CallerTier` with a total mapping; the per-row publish benchmark recorded → 🟢
+(⚪ → 🟢; the row was never set 🔴 while the item ran, which is a bookkeeping slip, recorded
+rather than rewritten)
+**What landed:** the pub/sub tier, in four slices, then a review and its fixes.
+**4a** (`029aed3`, `883de25`, `1ab3e70`) the ABI's value tier — attachments, blobs, shared
+schemas — and the subscriber half, the arrival, `fl_blob_create` (D-BIND-42) and
+`fl_schema_retain` (D-BIND-43). **4b** (`0d85e67`, `a79cd5f`, `5435fea`) the provider vocabulary,
+the attachments write end (D-BIND-44), and `Publisher` with `minBytes` explicit (D-BIND-45).
+**4c** (`b46391f`, `f45b683`) the delivery path, `fl_schema_copy` and the completeness sweep
+(D-BIND-46), and the managed refusal layer. **4d** (`828be6d` … `8cdb44b`) BIND-3's D1 closed,
+bucket 3 ported with two cases ruled unportable (D-BIND-47), bucket 4 as one body over every
+transport, the CallerTier arm with a case given back to the C++ suite, and the per-row publish
+benchmark (D-BIND-48/49).
+
+**Thirteen maintainer rulings, D-BIND-42 to D-BIND-54.** Three were missing declarations found by
+writing their callers (42, 43, 46 — each an ABI minor bump); two were managed signatures frozen
+without a correct native contract (44, 45 — no ABI change); one narrowed what the round counts
+as owed (47); two shaped and then accepted the benchmark (48, 49 — the fused per-row path at
+1.95× generated C++, batch at 1.23×, a lone non-Arrow row at 19.6× and two-thirds of that
+Apache.Arrow's; no D-BIND-1 STOP-AND-ASK); and **five came out of the review**: 50 and 51 amend
+D-BIND-18, 52 implements the schema-watch pair (ABI 0.5), 53 amends bullet 8, and 54 narrows
+the format exception to a codec-origin `InvalidArgument`, so the overflow bullet 8 proves arrives
+as exactly `FletcherException` rather than as the malformed-input subclass.
+
+**The review is the part of this item worth reading first** (`plans/reviews/BIND-4-codereview.md`,
+`BIND-4-conformance.md`). **Method:** three reviewers with FRESH context — native shim, managed
+tier, tests and CI — each finding then re-verified end to end, several by reproduction or
+measurement. **Outcome on first reading: 6 BLOCKERs, conformance 6 of 12, and BIND-4 did not
+close.** Two blockers were design defects in the lifetime and refusal layer, both carried in from
+D-BIND-18 and both reproduced: a SIBLING cancelled from inside a delivery could have its
+`GCHandle` freed under a delivery on another thread, because the seam's "begins" is passing the
+gate and the managed counter increments later (D-BIND-50); and the refusal was keyed per
+Subscriber where the seam's rule is per PROVIDER, so disposing another Subscriber from a handler
+TERMINATED THE PROCESS — the fixed tests crash the host against the old check (D-BIND-51). The
+other four were checks that did not guard what they claimed: `pr_gate` ignored the
+transport-conformance lane's result; the CallerTier checker counted strings (a skipped or
+commented-out mirror passed — the old checker accepts eight of ten fixture fakes); nine mirrors
+could not fail for their property, one mirroring a different case entirely; and six drain tests
+passed on `inprocess`'s own mutex. **Making the mirrors faithful found a seventh defect (B7):**
+`Unsubscribe` returned at once for a subscription already marked retired, so a cancel racing a
+self-cancel came back while the handler still ran. **Writing a missing test found an eighth
+thing, in a provider rather than the binding:** Fast DDS dropped an oversized row silently on
+its only live publish path — recorded as D-BIND-53 / risk B-6, then decided (report it) and,
+by the maintainer's ruling, fixed ON THIS BRANCH rather than on `main` (`9255c19`), so bullet 8
+holds over a real transport; `main` keeps the drop until #129 lands. Fixes: `1fe40fa` (B1,
+B2), `319ad02` (B3–B6, B7, bullet 11's missing tests, stale records), `1e4cc50` (Q1), `a16c083`
+(Q2), `9255c19` and `c42763e` (the provider fix and bullet 8's transport test), `309c321`
+(D-BIND-54). **All six blockers, B7 and both questions are resolved, and the conformance
+review's re-grade reads 12 of 12; the 17 DEBT and 8 NIT items other than those fixed stay open
+and, by the round's convention, do not loop the item. So does the public-surface disagreement the
+conformance review lists, which is code or document owed row by row and not yet decided.**
+
+**The contrast with BIND-3 is the finding to keep.** BIND-3's same-author review found no defect
+in the handle lifetimes. BIND-4's riskiest properties were enforced by a comment and by tests
+that could not fail, a same-author pass read both as sound, and fresh context found them in an
+afternoon. Every remaining BIND review should be run that way.
+
+**Verification, with the two halves stated apart because they are not equally strong.**
+**CI-CONFIRMED at `a16c083`** (`ci.pr` run 36128538622, first attempt): **50/50** jobs green,
+read by count, not badge. Managed **261/261** on all four legs (Linux and Windows, net8.0 and
+net10.0); c-abi **71/71** on both platforms; cross-transport **12/12** on both;
+binding-abi-conformance **11/11** on both. **LOCAL ONLY at `309c321`** (Windows): managed
+**263/263** on both TFMs, cross-transport **13/13** over a shim rebuilt from the tree, c-abi
+**71/71**, the format lane clean. The three commits after `a16c083` (`9255c19`, `c42763e`,
+`309c321`) postdate the last complete CI run, and were held back so as not to cancel it; their
+run comes with the push. Every new test in the review fixes was shown to fail against the old
+behaviour by a compiling mutation, except where the property is the native Subscriber's (the drain
+mirrors), which the review states.
+
+**Found by building rather than by reasoning, and worth not rediscovering.** A mutation that
+"fails as expected" must be checked to COMPILE: an `if (true)` mutation left unreachable code, CS0162
+became an error under TreatWarningsAsErrors, and every "failure" was a build failure. The Edit tool
+decodes `\uXXXX` in the text it is given — a C# `"\uE000"` landed as the raw, invisible character;
+build such values in code (`char.ConvertFromUtf32`). `inprocess` delivers one at a time PER
+INSTANCE, so a case that needs two deliveries in flight on one Subscriber cannot be built from
+managed code — but one that needs them on two Subscribers can, over two instances. A repeat
+cancel must reach native: the seam's no-op for a fully cancelled id and its wait for a retiring
+one are two different answers a managed short-circuit collapses into one. And a gateway test that
+publishes once over Fast DDS failed 2 times in 340 runs, never under forced CPU load, with a
+TRANSIENT_LOCAL + RELIABLE QoS that should have made "dropped before the match" impossible —
+flagged separately, cause not established.

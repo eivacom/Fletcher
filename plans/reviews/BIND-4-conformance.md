@@ -75,3 +75,27 @@ and deciding which is not this review's to do.
 - **To close BIND-4:** bullets 5, 10 and 11 must be met; bullet 8 proven; Q1 ruled; bullets 2 and 4's
   stale text corrected. The two design defects under bullet 5 each need a maintainer decision before
   code.
+
+---
+
+## Re-graded at close-out (`309c321`, 2026-09-25)
+
+The verdicts above are left as found, at `8cdb44b`. This is what each unmet bullet reads now, and
+what moved it.
+
+| # | Was | Now | What moved it |
+|---|---|---|---|
+| 4 | awaits a ruling (Q1) | ✅ | **D-BIND-52** (maintainer): the shim implements the schema-watch pair, ABI 0.4 → 0.5, C# exposure owed to a later ruling (`1e4cc50`). The entry-point count corrected in `319ad02` |
+| 5 | ❌ NOT MET | ✅ | B1 → **D-BIND-50**, B2 → **D-BIND-51** (`1fe40fa`); B7, found while fixing B5, in `319ad02`. The fixed tests fail, or crash the host, against the old code |
+| 6 | 🟨 PARTIAL | ✅ | `SubscriberTests.AnInfiniteWaitActuallyWaitsUntilTheSchemaArrives` (`319ad02`) |
+| 8 | ❔ UNPROVEN | ✅ | **D-BIND-53** and its amendment: `ErrorTests.ARowThatDoesNotFitAFixedWindowIsPayloadTooLarge` on a real native status, and `CrossTransportTests.ABoundedPayloadOverflowSurfacesAsPayloadTooLarge` over Fast DDS after the provider fix (`9255c19`, `c42763e`). **D-BIND-54** (`309c321`): both now pin the exact type, `FletcherException`, not the malformed-input subclass |
+| 10 | 🟨 PARTIAL | ✅ | B3: `pr_gate` reads the transport lane's result. B4: the totality checker counts live, named, asserting mirrors and proves ten fakes are refused. B5/B6: the mirrors fail for their named property, and those that cannot are declared structurally weaker with the reason (`319ad02`) |
+| 11 | ❌ NOT MET | ✅ | `AttachmentsBuilderTests.KeysWhoseUtf16AndUtf8OrdersDisagreeAreOrderedByUtf8Bytes` (U+E000 against U+1F600, both build orders) and the infinite-wait test above (`319ad02`) |
+
+Bullet 2's stale `RowWriter` signature was corrected in the tracker in `319ad02`.
+
+**Outcome: 12 of 12 live bullets CONFORM. BIND-4 closes.**
+
+**Still open, and not a bullet:** the public-surface disagreement listed above. Each row is code
+owed or a document amendment owed, and none has been decided. BIND-3's D3 and N1/N2 are carried
+forward unchanged.
