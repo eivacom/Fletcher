@@ -281,3 +281,45 @@ handle lifetimes, and said the two riskiest things were "enforced by a type and 
 than by a comment". BIND-4's riskiest things — the sibling carve-out and the per-provider refusal —
 were enforced by a comment and by tests that could not fail, and a same-author review read both as
 sound.
+
+---
+
+## Resolution log
+
+The findings above are left as found; this section records what happened to each.
+
+| Finding | Resolution |
+|---|---|
+| **B1** carve-out frees under a sibling | ✅ `1fe40fa`, **D-BIND-50** (maintainer): the free waits for a thread-pool re-cancel that drains |
+| **B2** per-Subscriber refusal | ✅ `1fe40fa`, **D-BIND-51** (maintainer): a per-thread frame stack, queried by provider |
+| **B3** `pr_gate` ignores the transport lane | ✅ its result is read; `pr_gate` now needs 26 and reads 26 |
+| **B4** the checker counts strings | ✅ a mirror must be a live, named, asserting test; C++ macros it cannot parse fail the run; `scripts/test_check_caller_tier_mapping.py` proves ten ways to fake a mirror are refused (the previous checker accepted eight of them) and runs in the lane |
+| **B5** nine weak mirrors | ✅ seven now mirror their C++ case — `CancellingOnAnotherSubscriber…` over two `inprocess` instances, the only way to put two deliveries in flight. `UnsubscribeOfAnUnknownIdIsANoOp` now reaches native and checks a live bystander, but cannot cancel a never-issued id (a typed handle makes one unrepresentable), which its comment states. `CancellingASibling…` is declared **structurally weaker** in its XML docs with the reason, as the file already did for two others |
+| **B6** drain mirrors pass on the provider's mutex | ✅ five keep a sibling subscription on the cancelled topic, so the provider is never entered. `DestructorDrains…` cannot (Dispose cancels every subscription, so its last cancel always enters the provider) and is declared **structurally weaker** |
+| **D16** unsequenced hold windows | ✅ in every rewritten case the hold starts from an at-cancel latch, and latch timeouts are recorded and asserted rather than ignored |
+| **D17** stale `c-abi/README.md` and entry-point count | ✅ corrected |
+| **Q1** schema-watch pair | ⏸ awaits a ruling |
+
+**A NEW DEFECT, found by making B5's mirrors faithful — B7.** `Subscriber.Unsubscribe` returned
+at once for a subscription already marked retired. After a handler cancelled itself (the
+carve-out, which does not drain), another thread's cancel of the same subscription therefore came
+back while the handler was still running — the "second exception to a promise that has one" the
+seam's ruling of 2026-09-04 removed, reintroduced one tier up. The old
+`ACancelRacingASelfCancelWaitsForThatHandler` parked before self-cancelling and so never reached
+it. **Fixed:** a repeat cancel reaches native, whose cancel of a retiring id waits for its drain and
+of a fully cancelled id is a no-op. The faithful mirror fails against the old code.
+
+**A SECOND NEW FINDING, for a ruling — Q2.** Writing bullet 8's missing test (a payload over the
+bound surfaces as `FletcherException(PayloadTooLarge)`) found that it **does not hold on Fast DDS's
+default publish path**: a 512-byte row through a provider bounded at 128 bytes published without an
+exception. The provider documents this as deliberate and pins it
+(`sample_writer.hpp`; `FastDDSPubSubProviderTest.DataSharingOversizedRowDoesNotThrow`): on the
+loaned flow an oversized row throws `kPayloadTooLarge`, on the serialize flow it is **dropped and
+logged**. From C#, a row over the bound can vanish with no exception. The behaviour came from `main`
+(#128), so the choices are an amendment to bullet 8 or a change to the provider; the test is held
+out until that is ruled.
+
+**Not done here, and not claimed:** the six B6 drain mirrors and the two-provider mirror guard
+properties of the NATIVE Subscriber, so falsifying them would take a shim built with the drain
+removed; they rest on the reviewer's argument, verified against `in_process_provider.cpp`. The 17
+DEBT and 8 NIT items other than D16/D17 are open and, by the round's convention, do not loop the item.

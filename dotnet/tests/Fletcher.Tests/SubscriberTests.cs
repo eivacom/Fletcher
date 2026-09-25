@@ -19,6 +19,7 @@ using System.Buffers;
 using System.Collections.Generic;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 
 using Apache.Arrow;
 
@@ -466,6 +467,46 @@ public class SubscriberTests : IDisposable
             Assert.Equal(FletcherStatus.Pending, wait.Status);
             Assert.Null(wait.Schema);
             Assert.False(wait.HasSchema);
+        }
+
+        result.Subscription.Dispose();
+    }
+
+    [Fact]
+    public async Task AnInfiniteWaitActuallyWaitsUntilTheSchemaArrives()
+    {
+        // BIND-4's bullet asks that `Wait(Timeout.InfiniteTimeSpan)` WAITS. The
+        // only earlier test of it waited on a schema that already existed, so it
+        // returned at once - true of a build that mapped Infinite to "do not wait"
+        // just as much as of a correct one (BIND-4 conformance review, bullet 11).
+        // Here nothing has announced the topic, so the wait has nothing to return
+        // until a publisher declares it: still running after a pause, and done -
+        // with the schema - once the declaration lands.
+        byte[] document = Encoding.UTF8.GetBytes("schema_carriage=carried");
+        using PubSubProviderHandle carrying = ProviderRegistry.Create(
+            ProviderSelector.Parse("inprocess"), new ProviderConfig { Document = document });
+        using var subscriber = new Subscriber(carrying);
+        using var publisher = new Publisher(carrying);
+
+        TopicPath topic = TopicPath.Of("bind", "infinitewait");
+        SubscribeResult result = subscriber.Subscribe(topic, (_, _, _) => { });
+
+        using (result.Schema)
+        {
+            Task<SchemaWaitResult> waiting = Task.Run(() => result.Schema.Wait(Timeout.InfiniteTimeSpan));
+
+            Task first = await Task.WhenAny(waiting, Task.Delay(TimeSpan.FromMilliseconds(200)));
+            Assert.NotSame(waiting, first);
+
+            publisher.CreateTopic(topic, CodecFixtures.Scalar().Schema);
+
+            Task done = await Task.WhenAny(waiting, Task.Delay(TimeSpan.FromSeconds(10)));
+            Assert.Same(waiting, done);
+
+            SchemaWaitResult wait = await waiting;
+            Assert.Equal(FletcherStatus.Ok, wait.Status);
+            Assert.True(wait.HasSchema);
+            wait.Schema?.Dispose();
         }
 
         result.Subscription.Dispose();

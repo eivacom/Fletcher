@@ -68,6 +68,49 @@ public class AttachmentsBuilderTests
         Assert.Equal(Encoding.UTF8.GetBytes("zulu"), EntryAt(set, 2).Key);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void KeysWhoseUtf16AndUtf8OrdersDisagreeAreOrderedByUtf8Bytes(bool emojiFirst)
+    {
+        // THE TWO MAPPING TRAPS BIND-4's BULLET NAMES (conformance review,
+        // bullet 11). The test above uses ASCII keys, where every ordering agrees,
+        // so it could not tell a byte-ordered set from one ordered by .NET string
+        // comparison. These two keys disagree:
+        //
+        //   U+E000   UTF-16 E000        UTF-8 EE 80 80
+        //   U+1F600  UTF-16 D83D DE00   UTF-8 F0 9F 98 80
+        //
+        // By UTF-16 code units the supplementary-plane key sorts FIRST (its high
+        // surrogate D83D is below E000); by UTF-8 bytes it sorts SECOND (F0 is above
+        // EE). The wire orders by bytes, so the sealed set must too - whichever
+        // order the caller inserted them in, which is why this is a theory.
+        string privateUse = char.ConvertFromUtf32(0xE000);
+        string supplementary = char.ConvertFromUtf32(0x1F600);
+
+        using var builder = new AttachmentsBuilder();
+        if (emojiFirst)
+        {
+            builder.Set(supplementary, [1]);
+            builder.Set(privateUse, [2]);
+        }
+        else
+        {
+            builder.Set(privateUse, [2]);
+            builder.Set(supplementary, [1]);
+        }
+
+        AttachmentsHandle set = builder.Build();
+
+        Assert.Equal(2, (int)NativeMethods.fl_attachments_size(set));
+        Assert.Equal(new byte[] { 0xEE, 0x80, 0x80 }, EntryAt(set, 0).Key);
+        Assert.Equal(new byte[] { 0xF0, 0x9F, 0x98, 0x80 }, EntryAt(set, 1).Key);
+
+        // And the precondition that makes this a trap rather than a coincidence:
+        // .NET's own ordinal order is the OTHER way round.
+        Assert.True(string.CompareOrdinal(supplementary, privateUse) < 0);
+    }
+
     [Fact]
     public void SettingAKeyTwiceReplacesItRatherThanDuplicatingIt()
     {

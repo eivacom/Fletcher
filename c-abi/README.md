@@ -9,8 +9,14 @@ Fletcher C++ library or sees a C++ type.
 c-abi/
   include/fletcher/abi/binding.h   the ABI: pure C99, versioned, append-only within a major
   src/binding_version.c            fl_binding_abi_version()
+  src/binding.cpp                  every other entry point: registry, publisher, subscriber,
+                                   arrival, attachments, blobs, schemas, the codec surface
+  src/nanoarrow_codec.*            the Arrow-array codec behind fl_codec_* / fl_rows_*
+  src/containment.*                the one site that turns a C++ exception into fl_status
+  src/single_copy.*                the one-copy-per-process marker (D-BIND-17)
   src/builtins.cpp                 registers the three built-in providers into the shim
   tests/                           the shim's own tests (gtest + the C99 self-containment probe)
+  benchmarks/                      BIND-4d-v's per-row publish benchmark (not built by CI)
   test_package/                    a C program that consumes the package as a binding would
 ```
 
@@ -75,8 +81,14 @@ the write window and its one-call writer, the delivery callback, the three-step
 codec surface, and the single-copy marker. It is reviewed **as a specification**:
 what is expensive to get wrong here is the ownership wording, not the syntax.
 
-**Only `fl_binding_abi_version()` is implemented.** Every other declaration is
-what the following items build: BIND-2 the codec, BIND-3 the interop tier,
-BIND-4 pub/sub. Calling one before its item lands is a link error rather than a
-run-time surprise, because the symbol is not exported until then — which is also
-why the lane's export check still sees exactly one name.
+**Every declaration is now implemented: 44 entry points, ABI 0.4.** BIND-2 built
+the codec surface and the publisher chain, BIND-3 the interop tier above it, and
+BIND-4 the rest — the subscriber half, the arrival, attachments and blobs, and the
+three entry points the header turned out to be missing (`fl_blob_create`,
+`fl_schema_retain`, `fl_schema_copy`: D-BIND-42, 43, 46), each an ABI minor bump.
+The schema-watch pair (`fl_subscriber_subscribe_schema` / `_unsubscribe_schema`) is
+declared and answers `FL_NOT_SUPPORTED` per D-BIND-29; the seam has since grown the
+pair, and whether the shim now implements it is an open question in the BIND-4
+review (`plans/reviews/BIND-4-codereview.md`, Q1). (This paragraph said "only
+`fl_binding_abi_version()` is implemented" until the BIND-4 review found it stale
+since BIND-2c.)

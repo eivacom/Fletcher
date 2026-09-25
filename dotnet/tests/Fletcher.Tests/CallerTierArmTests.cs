@@ -128,39 +128,45 @@ public class CallerTierArmTests : IDisposable
     [Fact]
     public async Task NoCallbackAfterUnsubscribeReturns()
     {
+        // THE C++ SHAPE, EXACTLY (rewritten after the BIND-4 review, D16). The
+        // first version pumped rows and cancelled after a fixed sleep, with no
+        // proof the handler ever ran and no window it could be wrong in. The
+        // window this clause exists for is precise: a fan-out snapshot is loaded,
+        // its FIRST entry is parked, and the SECOND is cancelled before the loop
+        // reaches it. `inprocess` delivers on the publishing thread in
+        // registration order, so that window is made here with a latch.
         TopicPath topic = Declare("nocallbackafter");
-        int afterReturn = 0;
-        var cancelled = new ManualResetEventSlim(false);
+        using var firstEntered = new Flag();
+        using var releaseFirst = new Flag();
+        int secondCalls = 0;
+        int releaseTimedOut = 0;
 
-        SubscribeResult result = _subscriber.Subscribe(topic, (_, _, _) =>
+        SubscribeResult first = _subscriber.Subscribe(topic, (_, _, _) =>
         {
-            if (cancelled.IsSet)
+            firstEntered.Set();
+            if (!releaseFirst.WaitFor(Generous))
             {
-                Interlocked.Increment(ref afterReturn);
+                Volatile.Write(ref releaseTimedOut, 1);
             }
         });
-        result.Schema.Dispose();
+        SubscribeResult second = _subscriber.Subscribe(topic, (_, _, _) => Interlocked.Increment(ref secondCalls));
+        first.Schema.Dispose();
+        second.Schema.Dispose();
 
-        var stop = new ManualResetEventSlim(false);
-        Task pump = Task.Run(() =>
-        {
-            while (!stop.IsSet)
-            {
-                PublishOne(topic);
-            }
-        });
+        Task delivery = Task.Run(() => PublishOne(topic));
+        firstEntered.MustFire("the first handler never started");
+        Assert.Equal(0, Volatile.Read(ref secondCalls));
 
-        Thread.Sleep(20);
-        result.Subscription.Dispose();
-        cancelled.Set();
+        // The snapshot holding `second` is loaded and the loop has not reached it.
+        // `first` stays live, so the topic is not emptied and the provider is not
+        // entered: this cancel is the Subscriber tier's alone.
+        second.Subscription.Dispose();
+        releaseFirst.Set();
+        Assert.True(await CompletesWithin(delivery, Generous), "the delivery never finished");
 
-        // The pump keeps publishing for a while AFTER the cancel returned. Any
-        // callback in that window is the defect this clause exists to catch.
-        Thread.Sleep(50);
-        stop.Set();
-        await CompletesWithin(pump, Generous);
-
-        Assert.Equal(0, Volatile.Read(ref afterReturn));
+        Assert.Equal(0, Volatile.Read(ref releaseTimedOut));
+        Assert.Equal(0, Volatile.Read(ref secondCalls));
+        first.Subscription.Dispose();
     }
 
     /// <summary>Mirrors CallerTier.UnsubscribeWaitsForAnInFlightDelivery.</summary>
@@ -171,19 +177,33 @@ public class CallerTierArmTests : IDisposable
         // whatever the handler was using. The handler is released only once the
         // main thread has committed to the cancel, so "the cancel returned first"
         // cannot be an artefact of scheduling order.
+        //
+        // THE SIBLING IS THE POINT (BIND-4 review, B6). Cancelling the topic's
+        // ONLY subscription empties it, and the last cancel then enters the
+        // provider - whose mutex `inprocess` holds across the delivery. That
+        // mutex alone would make the cancel wait, so a Subscriber tier with no
+        // drain at all passed. The sibling keeps the topic non-empty, so the only
+        // thing that can make this cancel wait is the tier it is named after.
         TopicPath topic = Declare("waitsinflight");
         using var entered = new Flag();
         using var release = new Flag();
         using var atUnsubscribe = new Flag();
         int exited = 0;
+        int releaseTimedOut = 0;
 
         SubscribeResult result = _subscriber.Subscribe(topic, (_, _, _) =>
         {
             entered.Set();
-            Assert.True(release.WaitFor(Generous), "the releaser never ran");
+            if (!release.WaitFor(Generous))
+            {
+                Volatile.Write(ref releaseTimedOut, 1);
+            }
+
             Volatile.Write(ref exited, 1);
         });
+        SubscribeResult sibling = _subscriber.Subscribe(topic, (_, _, _) => { });
         result.Schema.Dispose();
+        sibling.Schema.Dispose();
 
         Task delivery = Task.Run(() => PublishOne(topic));
         entered.MustFire("the handler never started");
@@ -199,9 +219,11 @@ public class CallerTierArmTests : IDisposable
         result.Subscription.Dispose();
         int exitedAtReturn = Volatile.Read(ref exited);
 
-        await CompletesWithin(Task.WhenAll(releaser, delivery), Generous);
+        Assert.True(await CompletesWithin(Task.WhenAll(releaser, delivery), Generous));
 
+        Assert.Equal(0, Volatile.Read(ref releaseTimedOut));
         Assert.Equal(1, exitedAtReturn);
+        sibling.Subscription.Dispose();
     }
 
     /// <summary>Mirrors CallerTier.UnsubscribeOfAnUnknownIdIsANoOp.</summary>
@@ -210,18 +232,36 @@ public class CallerTierArmTests : IDisposable
     {
         // Cancelling something not live is an ordinary answer, not an error: a
         // foreign-runtime finaliser has nowhere to put an exception.
-        TopicPath topic = Declare("unknownid");
-        int delivered = 0;
+        //
+        // WHAT THE MANAGED SURFACE CAN AND CANNOT SAY. The C++ case cancels an id
+        // never issued (`gone + 4096`, `0`); a managed caller cannot, because a
+        // `Subscription` is a typed handle and an arbitrary id is unrepresentable
+        // by design. What it CAN do is cancel the same subscription repeatedly -
+        // and since the review (B5) every repeat reaches native rather than
+        // stopping at a managed short-circuit, so this exercises the seam's
+        // idempotence for real. The second half is the one that matters: the
+        // no-op must disturb a LIVE subscription on another topic not at all.
+        TopicPath liveTopic = Declare("unknownidlive");
+        TopicPath goneTopic = Declare("unknownidgone");
+        int liveCalls = 0;
+        int goneCalls = 0;
 
-        SubscribeResult result = _subscriber.Subscribe(topic, (_, _, _) => Interlocked.Increment(ref delivered));
-        result.Schema.Dispose();
+        SubscribeResult live = _subscriber.Subscribe(liveTopic, (_, _, _) => Interlocked.Increment(ref liveCalls));
+        SubscribeResult gone = _subscriber.Subscribe(goneTopic, (_, _, _) => Interlocked.Increment(ref goneCalls));
+        live.Schema.Dispose();
+        gone.Schema.Dispose();
 
-        result.Subscription.Dispose();
-        result.Subscription.Dispose();
-        result.Subscription.Dispose();
+        gone.Subscription.Dispose();
+        gone.Subscription.Dispose();
+        gone.Subscription.Dispose();
 
-        PublishOne(topic);
-        Assert.Equal(0, Volatile.Read(ref delivered));
+        PublishOne(liveTopic);
+        PublishOne(goneTopic);
+        Assert.Equal(1, Volatile.Read(ref liveCalls));
+        Assert.Equal(0, Volatile.Read(ref goneCalls));
+        Assert.True(live.Subscription.IsLive);
+
+        live.Subscription.Dispose();
     }
 
     // ── Cancellation from inside a delivery ─────────────────────────────────
@@ -373,29 +413,49 @@ public class CallerTierArmTests : IDisposable
     [Fact]
     public async Task ReentrantSubscribeFromInsideDeliveryDoesNotDeadlock()
     {
-        // THE MANAGED ANSWER DIFFERS FROM THE C++ ONE, and that is the mirror
-        // rather than a gap. C++ reaches the provider and is refused with
-        // kReentrantCall; the managed surface refuses it FIRST, in managed code,
-        // because a status returned into a transport callback has no caller to
-        // read it (D-BIND-18). Either way the property asserted is the same: it
-        // does not deadlock, and the refusal is visible.
+        // THE SAME TOPIC, AS IN C++ (rewritten after the BIND-4 review, B5). The
+        // first version subscribed to a FRESH topic and asserted a refusal - a
+        // duplicate of `SubscribingToANewTopicFromInsideADeliveryIsRefusedByName`
+        // - and claimed C++ was refused too, which it is not. The C++ case
+        // re-subscribes to the topic whose delivery is running: the seam SERVES
+        // that (the provider-level subscription already exists), the new
+        // subscription does not join the fan-out already in progress, and it
+        // receives the next row. The managed door asks the same question
+        // (`Subscriber.Subscribe` serves a topic this Subscriber holds), so the
+        // managed answer here is the C++ answer, not a different one.
         TopicPath topic = Declare("reentrantsub");
-        TopicPath fresh = Declare("reentrantsubnew");
         var faults = new List<Exception>();
         _subscriber.HandlerFaulted += (_, e) => faults.Add(e.Exception);
 
+        int outerCalls = 0;
+        int addedCalls = 0;
+        Subscription? added = null;
+
         SubscribeResult result = _subscriber.Subscribe(topic, (_, _, _) =>
         {
-            SubscribeResult nested = _subscriber.Subscribe(fresh, (_, _, _) => { });
+            if (Interlocked.Increment(ref outerCalls) != 1)
+            {
+                return;
+            }
+
+            SubscribeResult nested = _subscriber.Subscribe(topic, (_, _, _) => Interlocked.Increment(ref addedCalls));
             nested.Schema.Dispose();
+            added = nested.Subscription;
         });
         result.Schema.Dispose();
 
         Task work = Task.Run(() => PublishOne(topic));
         Assert.True(await CompletesWithin(work, Generous), "a re-entrant subscribe deadlocked");
 
-        Exception fault = Assert.Single(faults);
-        Assert.IsType<InvalidOperationException>(fault);
+        Assert.Empty(faults);
+        Assert.NotNull(added);
+        Assert.True(added!.IsLive, "the re-entrant Subscribe never produced a live subscription");
+        Assert.Equal(0, Volatile.Read(ref addedCalls));
+
+        PublishOne(topic);
+        Assert.Equal(1, Volatile.Read(ref addedCalls));
+
+        added.Dispose();
         result.Subscription.Dispose();
     }
 
@@ -465,45 +525,68 @@ public class CallerTierArmTests : IDisposable
     [Fact]
     public void AReleasedIdIsNeverReused()
     {
-        // C++ asserts a uint64 id is never handed out twice. The managed surface
-        // hands out HANDLES rather than numbers, so the mirror asserts the property
-        // the ids existed to give: a retired subscription never becomes live again,
-        // and a later subscription is a different object that does not disturb it.
+        // THE IDS THEMSELVES, AS IN C++ (rewritten after the BIND-4 review, B5).
+        // The first version compared two freshly allocated handle objects and a
+        // managed flag - neither can fail. The native id is what a stale handle
+        // would address, so it is what must never come back: read here through the
+        // test assembly's InternalsVisibleTo, 32 subscribe/cancel rounds, strictly
+        // increasing and never repeated.
         TopicPath topic = Declare("neverreused");
+        var seen = new HashSet<ulong>();
+        ulong previous = 0;
 
-        SubscribeResult first = _subscriber.Subscribe(topic, (_, _, _) => { });
-        first.Schema.Dispose();
-        first.Subscription.Dispose();
+        for (int i = 0; i < 32; i++)
+        {
+            SubscribeResult result = _subscriber.Subscribe(topic, (_, _, _) => { });
+            result.Schema.Dispose();
+            ulong id = result.Subscription.Id;
 
-        SubscribeResult second = _subscriber.Subscribe(topic, (_, _, _) => { });
-        second.Schema.Dispose();
+            Assert.True(seen.Add(id), $"id {id} was handed out twice");
+            Assert.True(id > previous, $"ids stopped increasing at iteration {i}");
+            previous = id;
 
-        Assert.NotSame(first.Subscription, second.Subscription);
-        Assert.False(first.Subscription.IsLive);
-        Assert.True(second.Subscription.IsLive);
+            result.Subscription.Dispose();
+        }
 
-        second.Subscription.Dispose();
-        Assert.False(first.Subscription.IsLive);
+        Assert.Equal(32, seen.Count);
     }
 
     /// <summary>Mirrors CallerTier.DestructorDrainsAnInFlightDelivery.</summary>
+    /// <remarks>
+    /// WEAKER THAN ITS C++ ORIGINAL, AND THE LIMIT IS STRUCTURAL (BIND-4 review,
+    /// B6). Disposing a Subscriber cancels EVERY subscription it holds, so its last
+    /// cancel on the topic always enters the provider - and `inprocess` holds its
+    /// mutex across the delivery, so that entry waits for the handler whether or
+    /// not the Subscriber tier drained first. A sibling cannot keep the provider out
+    /// of it here, as it does in the other drain mirrors: a sibling on THIS
+    /// Subscriber is cancelled by the same Dispose, and one on another Subscriber
+    /// over the same `inprocess` instance would contend for its single per-topic
+    /// callback slot. So this asserts the promise a caller relies on - Dispose does
+    /// not return while a handler runs - and not WHICH layer keeps it; the C++ case
+    /// pins the layer.
+    /// </remarks>
     [Fact]
     public async Task DestructorDrainsAnInFlightDelivery()
     {
-        // Disposing a Subscriber while one of its deliveries is running must wait
-        // for it. Run on a fresh Subscriber, because disposing the fixture's would
-        // break every later assertion in this instance.
+        // Run on a fresh Subscriber, because disposing the fixture's would break
+        // every later assertion in this instance.
         TopicPath topic = Declare("destructordrains");
         var subscriber = new Subscriber(_provider);
 
         using var entered = new Flag();
         using var release = new Flag();
+        using var atDispose = new Flag();
         int exited = 0;
+        int releaseTimedOut = 0;
 
         SubscribeResult result = subscriber.Subscribe(topic, (_, _, _) =>
         {
             entered.Set();
-            release.WaitFor(Generous);
+            if (!release.WaitFor(Generous))
+            {
+                Volatile.Write(ref releaseTimedOut, 1);
+            }
+
             Volatile.Write(ref exited, 1);
         });
         result.Schema.Dispose();
@@ -511,16 +594,22 @@ public class CallerTierArmTests : IDisposable
         Task delivery = Task.Run(() => PublishOne(topic));
         entered.MustFire("the handler never started");
 
+        // The hold window starts only once the main thread has committed to the
+        // dispose (D16): a releaser that slept first would let a descheduled main
+        // thread reach Dispose after the handler had already been released.
         Task releaser = Task.Run(() =>
         {
+            atDispose.MustFire("the main thread never reached the dispose");
             Thread.Sleep(HoldWindow);
             release.Set();
         });
 
+        atDispose.Set();
         subscriber.Dispose();
         int exitedAtReturn = Volatile.Read(ref exited);
 
-        await CompletesWithin(Task.WhenAll(releaser, delivery), Generous);
+        Assert.True(await CompletesWithin(Task.WhenAll(releaser, delivery), Generous));
+        Assert.Equal(0, Volatile.Read(ref releaseTimedOut));
         Assert.Equal(1, exitedAtReturn);
     }
 
@@ -528,35 +617,71 @@ public class CallerTierArmTests : IDisposable
     [Fact]
     public async Task CancellingOnAnotherSubscriberWaitsForItsDelivery()
     {
-        TopicPath topic = Declare("othersubscriber");
-        using var other = new Subscriber(_provider);
+        // THE C++ PROPERTY, MADE CONSTRUCTIBLE (rewritten after the BIND-4 review,
+        // B5). C++: X's HANDLER cancels a subscription on Y while Y's delivery is
+        // parked, and must wait - the skip is keyed on the subscriber, and X is not
+        // inside a delivery on Y. The first version cancelled from the test thread,
+        // so a process-wide depth predicate - the regression the case guards -
+        // stayed green. Here X's handler really runs inside a delivery while Y's is
+        // parked on another thread, which `inprocess` allows only across TWO
+        // instances (it delivers one at a time per instance). The seam's predicate
+        // is per Subscriber, so two providers change nothing it asks - and Y keeps a
+        // sibling on its topic, so Q's provider is never entered and its mutex
+        // cannot stand in for Y's drain (B6).
+        using PubSubProviderHandle q = ProviderRegistry.Create(ProviderSelector.Parse("inprocess"), new ProviderConfig());
+        using var qPublisher = new Publisher(q);
+        using var y = new Subscriber(q);
+        TopicPath yTopic = TopicPath.Of("callertier", "othersubscribery");
+        qPublisher.CreateTopic(yTopic, _batch.Schema);
+        TopicPath xTopic = Declare("othersubscriberx");
 
-        using var entered = new Flag();
-        using var release = new Flag();
-        int exited = 0;
+        using var yEntered = new Flag();
+        using var releaseY = new Flag();
+        using var xAtCancel = new Flag();
+        int yExited = 0;
+        int yExitedAtReturn = -1;
+        int releaseTimedOut = 0;
 
-        SubscribeResult result = other.Subscribe(topic, (_, _, _) =>
+        SubscribeResult ySub = y.Subscribe(yTopic, (_, _, _) =>
         {
-            entered.Set();
-            release.WaitFor(Generous);
-            Volatile.Write(ref exited, 1);
-        });
-        result.Schema.Dispose();
+            yEntered.Set();
+            if (!releaseY.WaitFor(Generous))
+            {
+                Volatile.Write(ref releaseTimedOut, 1);
+            }
 
-        Task delivery = Task.Run(() => PublishOne(topic));
-        entered.MustFire("the handler never started");
+            Volatile.Write(ref yExited, 1);
+        });
+        SubscribeResult ySibling = y.Subscribe(yTopic, (_, _, _) => { });
+        ySub.Schema.Dispose();
+        ySibling.Schema.Dispose();
+
+        SubscribeResult xSub = _subscriber.Subscribe(xTopic, (_, _, _) =>
+        {
+            xAtCancel.Set();
+            ySub.Subscription.Dispose();
+            Volatile.Write(ref yExitedAtReturn, Volatile.Read(ref yExited));
+        });
+        xSub.Schema.Dispose();
+
+        Task yDelivery = Task.Run(() => qPublisher.Publish(yTopic, _rows, 0));
+        yEntered.MustFire("Y's handler never started");
 
         Task releaser = Task.Run(() =>
         {
+            xAtCancel.MustFire("X's handler never reached the cancel");
             Thread.Sleep(HoldWindow);
-            release.Set();
+            releaseY.Set();
         });
 
-        result.Subscription.Dispose();
-        int exitedAtReturn = Volatile.Read(ref exited);
+        PublishOne(xTopic); // runs X's handler on this thread
 
-        await CompletesWithin(Task.WhenAll(releaser, delivery), Generous);
-        Assert.Equal(1, exitedAtReturn);
+        Assert.True(await CompletesWithin(Task.WhenAll(releaser, yDelivery), Generous));
+        Assert.Equal(0, Volatile.Read(ref releaseTimedOut));
+        Assert.Equal(1, Volatile.Read(ref yExitedAtReturn));
+
+        xSub.Subscription.Dispose();
+        ySibling.Subscription.Dispose();
     }
 
     /// <summary>Mirrors CallerTier.ADuplicateCancelWaitsForTheDrainInProgress.</summary>
@@ -565,53 +690,110 @@ public class CallerTierArmTests : IDisposable
     {
         // TWO THREADS cancelling one subscription: both must return only once the
         // handler has finished, so both may free handler state on return.
+        //
+        // THE C++ SHAPE (rewritten after the BIND-4 review, B6 and D16). The first
+        // version asserted `exited` only after BOTH cancels had returned, so a
+        // duplicate that returned at once was invisible; and it cancelled the
+        // topic's only subscription, so the provider's mutex did the waiting. Now
+        // the winner is proved to be draining before the duplicate starts, the
+        // duplicate's own return is what is checked, and a sibling keeps the
+        // provider out of it.
         TopicPath topic = Declare("duplicatecancel");
         using var entered = new Flag();
         using var release = new Flag();
+        using var winnerAtCancel = new Flag();
+        using var duplicateAtCancel = new Flag();
         int exited = 0;
+        int winnerReturned = 0;
+        int releaseTimedOut = 0;
 
         SubscribeResult result = _subscriber.Subscribe(topic, (_, _, _) =>
         {
             entered.Set();
-            release.WaitFor(Generous);
+            if (!release.WaitFor(Generous))
+            {
+                Volatile.Write(ref releaseTimedOut, 1);
+            }
+
             Volatile.Write(ref exited, 1);
         });
+        SubscribeResult sibling = _subscriber.Subscribe(topic, (_, _, _) => { });
         result.Schema.Dispose();
+        sibling.Schema.Dispose();
 
         Task delivery = Task.Run(() => PublishOne(topic));
         entered.MustFire("the handler never started");
 
+        Task winner = Task.Run(() =>
+        {
+            winnerAtCancel.Set();
+            result.Subscription.Dispose();
+            Volatile.Write(ref winnerReturned, 1);
+        });
+        winnerAtCancel.MustFire("the winning cancel never started");
+
+        // Let the winner get into the drain, and prove it is still there, so a
+        // short wait cannot green this case without reaching the branch it names.
+        Thread.Sleep(100);
+        Assert.Equal(0, Volatile.Read(ref winnerReturned));
+
         Task releaser = Task.Run(() =>
         {
+            duplicateAtCancel.MustFire("the duplicate cancel never started");
             Thread.Sleep(HoldWindow);
             release.Set();
         });
 
-        Task first = Task.Run(() => result.Subscription.Dispose());
-        Task second = Task.Run(() => result.Subscription.Dispose());
+        duplicateAtCancel.Set();
+        result.Subscription.Dispose(); // the duplicate
+        int duplicateSawItExit = Volatile.Read(ref exited);
 
-        Assert.True(await CompletesWithin(Task.WhenAll(first, second), Generous),
-            "a duplicate cancel did not return");
-        Assert.Equal(1, Volatile.Read(ref exited));
-
-        await CompletesWithin(Task.WhenAll(releaser, delivery), Generous);
+        Assert.True(await CompletesWithin(Task.WhenAll(winner, releaser, delivery), Generous));
+        Assert.Equal(0, Volatile.Read(ref releaseTimedOut));
+        Assert.Equal(1, duplicateSawItExit);
+        sibling.Subscription.Dispose();
     }
 
     /// <summary>Mirrors CallerTier.ACancelOfAFullyRetiredIdReturnsWithoutWaiting.</summary>
     [Fact]
     public async Task ACancelOfAFullyRetiredIdReturnsWithoutWaiting()
     {
-        // Nothing is in flight, so this must be immediate rather than merely
-        // eventual - a retired id that still waited on something would make
-        // teardown unpredictable.
-        TopicPath topic = Declare("fullyretired");
+        // THE OTHER HALF OF THE DUPLICATE-CANCEL RULING, AS IN C++ (rewritten
+        // after the BIND-4 review, B5): "being cancelled right now" waits, "fully
+        // cancelled" does not - and the way to tell them apart is to cancel a
+        // fully retired subscription WHILE an unrelated delivery is parked, and see
+        // that the cancel does not wait for it. The first version had nothing in
+        // flight and stopped at a managed short-circuit before native; since the
+        // review a repeat cancel reaches native, so this is the seam's no-op
+        // branch, observed.
+        TopicPath retiredTopic = Declare("fullyretired");
+        TopicPath busyTopic = Declare("fullyretiredbusy");
 
-        SubscribeResult result = _subscriber.Subscribe(topic, (_, _, _) => { });
-        result.Schema.Dispose();
-        result.Subscription.Dispose();
+        SubscribeResult retired = _subscriber.Subscribe(retiredTopic, (_, _, _) => { });
+        retired.Schema.Dispose();
+        retired.Subscription.Dispose(); // completes: now fully cancelled
 
-        Task again = Task.Run(() => result.Subscription.Dispose());
-        Assert.True(await CompletesWithin(again, TimeSpan.FromSeconds(2)), "cancelling a retired subscription waited on something");
+        using var otherEntered = new Flag();
+        using var releaseOther = new Flag();
+        int otherExited = 0;
+        SubscribeResult other = _subscriber.Subscribe(busyTopic, (_, _, _) =>
+        {
+            otherEntered.Set();
+            releaseOther.WaitFor(Generous);
+            Volatile.Write(ref otherExited, 1);
+        });
+        other.Schema.Dispose();
+
+        Task delivery = Task.Run(() => PublishOne(busyTopic));
+        otherEntered.MustFire("the unrelated handler never started");
+
+        retired.Subscription.Dispose();
+        Assert.Equal(0, Volatile.Read(ref otherExited));
+
+        releaseOther.Set();
+        Assert.True(await CompletesWithin(delivery, Generous));
+        Assert.Equal(1, Volatile.Read(ref otherExited));
+        other.Subscription.Dispose();
     }
 
     /// <summary>Mirrors CallerTier.ASubscribeDuringADrainKeepsItsProviderSubscription.</summary>
@@ -621,30 +803,52 @@ public class CallerTierArmTests : IDisposable
         // C++ observes the provider-level subscription surviving. The managed
         // surface cannot see that, so the mirror asserts what it exists to
         // guarantee: a subscription taken while another is draining still receives.
+        //
+        // WITH A REAL DRAIN WINDOW (rewritten after the BIND-4 review, B5). The
+        // first version subscribed the newcomer while no cancel was running at all,
+        // and cancelled the draining subscription only after its delivery had
+        // finished - there was no drain to land in. Now the topic's LAST
+        // subscription is cancelled on its own thread while its handler is parked,
+        // that cancel is proved to be still blocked, and only then does the
+        // newcomer subscribe. Over `inprocess` the newcomer's own Subscribe may
+        // wait for the delivery too, so it runs on its own thread as well.
         TopicPath topic = Declare("subduringdrain");
-        using var entered = new Flag();
-        using var release = new Flag();
-        int late = 0;
+        using var parked = new Flag();
+        using var releaseParked = new Flag();
+        using var cancellerAtCancel = new Flag();
+        int cancellerReturned = 0;
+        int newcomerCalls = 0;
 
         SubscribeResult draining = _subscriber.Subscribe(topic, (_, _, _) =>
         {
-            entered.Set();
-            release.WaitFor(Generous);
+            parked.Set();
+            releaseParked.WaitFor(Generous);
         });
         draining.Schema.Dispose();
 
         Task delivery = Task.Run(() => PublishOne(topic));
-        entered.MustFire("the draining handler never started");
+        parked.MustFire("the draining handler never started");
 
-        SubscribeResult fresh = _subscriber.Subscribe(topic, (_, _, _) => Interlocked.Increment(ref late));
+        Task canceller = Task.Run(() =>
+        {
+            cancellerAtCancel.Set();
+            draining.Subscription.Dispose();
+            Volatile.Write(ref cancellerReturned, 1);
+        });
+        cancellerAtCancel.MustFire("the canceller never started");
+        Thread.Sleep(100);
+        Assert.Equal(0, Volatile.Read(ref cancellerReturned));
+
+        Task<SubscribeResult> newcomer = Task.Run(
+            () => _subscriber.Subscribe(topic, (_, _, _) => Interlocked.Increment(ref newcomerCalls)));
+
+        releaseParked.Set();
+        Assert.True(await CompletesWithin(Task.WhenAll(canceller, newcomer, delivery), Generous));
+        SubscribeResult fresh = await newcomer;
         fresh.Schema.Dispose();
 
-        release.Set();
-        Assert.True(await CompletesWithin(delivery, Generous));
-        draining.Subscription.Dispose();
-
         PublishOne(topic);
-        Assert.Equal(1, Volatile.Read(ref late));
+        Assert.Equal(1, Volatile.Read(ref newcomerCalls));
         fresh.Subscription.Dispose();
     }
 
@@ -652,19 +856,41 @@ public class CallerTierArmTests : IDisposable
     [Fact]
     public async Task ACancelRacingASelfCancelWaitsForThatHandler()
     {
+        // THE C++ ORDER, WHICH IS THE WHOLE CASE (rewritten after the BIND-4
+        // review, B5). The handler cancels ITSELF FIRST - the carve-out, which does
+        // not drain - and only THEN parks. A cancel of the same subscription from
+        // another thread must still wait for that handler: the carve-out belongs to
+        // the handler's own frame, not to every other caller. The first version
+        // parked BEFORE self-cancelling, so the carve-out never ran while the other
+        // cancel was waiting.
+        //
+        // MADE FAITHFUL, THIS CASE FOUND A DEFECT: the managed `Unsubscribe`
+        // returned at once for a subscription already marked retired, so the other
+        // thread's cancel came back while the handler was still running. A repeat
+        // cancel now reaches native, which waits for the retirement in progress.
+        // The sibling keeps the topic non-empty, so the provider is never entered
+        // and its mutex cannot do the waiting instead (B6).
         TopicPath topic = Declare("racingselfcancel");
         using var entered = new Flag();
         using var release = new Flag();
+        using var otherAtCancel = new Flag();
         int exited = 0;
+        int releaseTimedOut = 0;
         SubscribeResult result = default;
 
+        SubscribeResult sibling = _subscriber.Subscribe(topic, (_, _, _) => { });
         result = _subscriber.Subscribe(topic, (_, _, _) =>
         {
+            result.Subscription.Dispose(); // the carve-out: does not drain
             entered.Set();
-            release.WaitFor(Generous);
-            result.Subscription.Dispose();
+            if (!release.WaitFor(Generous))
+            {
+                Volatile.Write(ref releaseTimedOut, 1);
+            }
+
             Volatile.Write(ref exited, 1);
         });
+        sibling.Schema.Dispose();
         result.Schema.Dispose();
 
         Task delivery = Task.Run(() => PublishOne(topic));
@@ -672,15 +898,19 @@ public class CallerTierArmTests : IDisposable
 
         Task releaser = Task.Run(() =>
         {
+            otherAtCancel.MustFire("the other thread never reached its cancel");
             Thread.Sleep(HoldWindow);
             release.Set();
         });
 
-        Task outside = Task.Run(() => result.Subscription.Dispose());
-        Assert.True(await CompletesWithin(outside, Generous), "a cancel racing a self-cancel did not return");
-        Assert.Equal(1, Volatile.Read(ref exited));
+        otherAtCancel.Set();
+        result.Subscription.Dispose(); // another thread, the same subscription
+        int otherSawItExit = Volatile.Read(ref exited);
 
-        await CompletesWithin(Task.WhenAll(releaser, delivery), Generous);
+        Assert.True(await CompletesWithin(Task.WhenAll(releaser, delivery), Generous));
+        Assert.Equal(0, Volatile.Read(ref releaseTimedOut));
+        Assert.Equal(1, otherSawItExit);
+        sibling.Subscription.Dispose();
     }
 
     /// <summary>Mirrors CallerTier.ConcurrentFirstSubscribesCreateOneProviderSubscription.</summary>
@@ -715,33 +945,57 @@ public class CallerTierArmTests : IDisposable
     }
 
     /// <summary>Mirrors CallerTier.CancellingASiblingRunningOnAnotherThreadKeepsItPublished.</summary>
+    /// <remarks>
+    /// WEAKER THAN ITS C++ ORIGINAL, AND THE LIMIT IS STRUCTURAL (BIND-4 review,
+    /// B5). The C++ window is a sibling's callback PARKED on one thread while a
+    /// handler on the same Subscriber, on another thread, cancels it - two
+    /// deliveries in flight on ONE Subscriber. A Subscriber sits over one provider,
+    /// and `inprocess` delivers one at a time per instance, so that window cannot
+    /// be built from managed code, exactly as for
+    /// <see cref="CrossCancellingDeliveriesDoNotDeadlock"/>. The first version
+    /// claimed it anyway: sibling and canceller ran in one fan-out on one thread,
+    /// the sibling had finished before it was cancelled, and its assertions were
+    /// true of any build.
+    ///
+    /// What IS observable: a handler cancels a sibling on ANOTHER topic (a spare
+    /// keeps that topic non-empty, as in C++); a third thread, never inside a
+    /// delivery, then cancels the same sibling and returns; and the sibling never
+    /// receives again. The managed half of the lifetime rule this case exists for -
+    /// the carve-out defers its free until a drain has been waited for - is pinned
+    /// by <c>ReentrancyTests.CancellingASiblingFromInsideAHandlerDefersTheFreeUntilADrainHasBeenWaitedFor</c>
+    /// (D-BIND-50).
+    /// </remarks>
     [Fact]
     public async Task CancellingASiblingRunningOnAnotherThreadKeepsItPublished()
     {
-        // Cancelling a SIBLING from inside a delivery does not wait for it, and
-        // must not lose the row the sibling is already handling.
-        TopicPath topic = Declare("siblingpublished");
-        using var siblingEntered = new Flag();
-        int siblingCompleted = 0;
-        SubscribeResult sibling = default;
+        TopicPath siblingTopic = Declare("siblingpublished");
+        TopicPath cancellerTopic = Declare("siblingpublishedcanceller");
+        int siblingCalls = 0;
+        int handlerCancelled = 0;
 
-        sibling = _subscriber.Subscribe(topic, (_, _, _) =>
+        SubscribeResult spare = _subscriber.Subscribe(siblingTopic, (_, _, _) => { });
+        SubscribeResult sibling = _subscriber.Subscribe(siblingTopic, (_, _, _) => Interlocked.Increment(ref siblingCalls));
+        SubscribeResult canceller = _subscriber.Subscribe(cancellerTopic, (_, _, _) =>
         {
-            siblingEntered.Set();
-            Thread.Sleep(HoldWindow);
-            Interlocked.Increment(ref siblingCompleted);
+            sibling.Subscription.Dispose();
+            Volatile.Write(ref handlerCancelled, 1);
         });
-        SubscribeResult canceller = _subscriber.Subscribe(topic, (_, _, _) => sibling.Subscription.Dispose());
+        spare.Schema.Dispose();
         sibling.Schema.Dispose();
         canceller.Schema.Dispose();
 
-        Task work = Task.Run(() => PublishOne(topic));
-        Assert.True(await CompletesWithin(work, Generous), "cancelling a sibling from a delivery blocked");
+        PublishOne(cancellerTopic);
+        Assert.Equal(1, Volatile.Read(ref handlerCancelled));
+        Assert.False(sibling.Subscription.IsLive);
 
-        siblingEntered.MustFire("the sibling never received the row it was already handling");
-        Assert.Equal(1, Volatile.Read(ref siblingCompleted));
+        Task third = Task.Run(() => sibling.Subscription.Dispose());
+        Assert.True(await CompletesWithin(third, Generous), "a third thread's cancel of the sibling never returned");
+
+        PublishOne(siblingTopic);
+        Assert.Equal(0, Volatile.Read(ref siblingCalls));
 
         canceller.Subscription.Dispose();
+        spare.Subscription.Dispose();
     }
 
     /// <summary>Mirrors CallerTier.SubscribingToANewTopicFromInsideADeliveryIsRefusedByName.</summary>
@@ -797,50 +1051,84 @@ public class CallerTierArmTests : IDisposable
     [Fact]
     public async Task TheCallerTierDoorIsReachedBeforeItCanBlock()
     {
-        // The refusal happens at the DOOR - before anything can wait on anything -
-        // which is why a handler that subscribes to a new topic gets an exception
-        // rather than a hang. Asserted as a bound on how long the refused call took
-        // while another delivery is deliberately held open: a door reached after a
-        // lock would have waited for the holder.
-        TopicPath held = Declare("doorheld");
+        // THE C++ INTERLEAVING (rewritten after the BIND-4 review, B5). Thread B
+        // is inside a Subscribe to topic W, which over `inprocess` cannot finish
+        // while a delivery holds the provider's mutex; a handler running inside that
+        // very delivery then subscribes to W too. With the door BEFORE the wait, the
+        // handler is refused by name and returns, the delivery ends, and B
+        // completes. With the door behind the wait, the handler waits on B and B on
+        // the handler.
+        //
+        // The first version declared a topic INSIDE the held window - `CreateTopic`
+        // takes the same mutex - so its test thread blocked until the holder's latch
+        // timed out (10 s, every run) and its stopwatch then timed a refusal with
+        // nothing held. Every topic is declared up front now, and the handler's
+        // latch result is checked rather than ignored.
+        TopicPath trigger = Declare("doortrigger");
         TopicPath wanted = Declare("doorwanted");
-
-        using var entered = new Flag();
-        using var release = new Flag();
-        using var other = new Subscriber(_provider);
-
-        SubscribeResult holder = other.Subscribe(held, (_, _, _) =>
-        {
-            entered.Set();
-            release.WaitFor(Generous);
-        });
-        holder.Schema.Dispose();
-
-        Task delivery = Task.Run(() => _publisher.Publish(held, _rows, 0));
-        entered.MustFire("the holding handler never started");
 
         var faults = new List<Exception>();
         _subscriber.HandlerFaulted += (_, e) => faults.Add(e.Exception);
 
-        SubscribeResult probe = _subscriber.Subscribe(Declare("doorprobe"), (_, _, _) =>
+        using var handlerRunning = new Flag();
+        using var bStarted = new Flag();
+        int bParkedInTime = 0;
+        long refusalMs = -1;
+
+        SubscribeResult probe = _subscriber.Subscribe(trigger, (_, _, _) =>
         {
-            SubscribeResult nested = _subscriber.Subscribe(wanted, (_, _, _) => { });
-            nested.Schema.Dispose();
+            handlerRunning.Set();
+
+            // B is started only now, so its Subscribe lands while this delivery
+            // holds the provider. Give it a moment to reach the provider's door.
+            if (bStarted.WaitFor(Generous))
+            {
+                Volatile.Write(ref bParkedInTime, 1);
+            }
+
+            Thread.Sleep(50);
+
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
+                SubscribeResult nested = _subscriber.Subscribe(wanted, (_, _, _) => { });
+                nested.Schema.Dispose();
+            }
+            finally
+            {
+                // Timed whether it returned or threw: the claim is about how long
+                // the call took to answer, and a refusal answers by throwing.
+                Interlocked.Exchange(ref refusalMs, clock.ElapsedMilliseconds);
+            }
         });
         probe.Schema.Dispose();
 
-        var clock = System.Diagnostics.Stopwatch.StartNew();
-        _publisher.Publish(Declare("doorprobe"), _rows, 0);
-        clock.Stop();
+        Task<SubscribeResult> b = Task.Run(() =>
+        {
+            handlerRunning.MustFire("the trigger handler never ran");
+            bStarted.Set();
+            return _subscriber.Subscribe(wanted, (_, _, _) => { });
+        });
 
-        release.Set();
-        Assert.True(await CompletesWithin(delivery, Generous));
+        Task delivery = Task.Run(() => PublishOne(trigger));
 
-        Assert.Single(faults);
-        Assert.True(clock.Elapsed < HoldWindow,
-            $"the refusal took {clock.ElapsedMilliseconds} ms - it waited on something before refusing");
+        Assert.True(await CompletesWithin(Task.WhenAll(delivery, b), Generous),
+            "the delivery or B never finished: the door is behind a blocking wait again");
+        Assert.Equal(1, Volatile.Read(ref bParkedInTime));
 
+        Exception fault = Assert.Single(faults);
+        Assert.IsType<InvalidOperationException>(fault);
+        Assert.Contains(wanted.ToKey(), fault.Message, StringComparison.Ordinal);
+
+        // The refusal did not wait for B, nor for the delivery it ran inside.
+        long answeredIn = Interlocked.Read(ref refusalMs);
+        Assert.True(answeredIn >= 0, "the nested Subscribe never ran");
+        Assert.True(answeredIn < HoldWindow.TotalMilliseconds,
+            $"the refusal took {answeredIn} ms - it waited on something before refusing");
+
+        SubscribeResult bResult = await b;
+        bResult.Schema.Dispose();
+        bResult.Subscription.Dispose();
         probe.Subscription.Dispose();
-        holder.Subscription.Dispose();
     }
 }

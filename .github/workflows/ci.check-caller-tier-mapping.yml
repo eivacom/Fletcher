@@ -37,6 +37,7 @@ on:
       - "integration-tests/pubsub-conformance/src/caller_tier.cpp"
       - "dotnet/tests/Fletcher.Tests/CallerTierArmTests.cs"
       - "scripts/check_caller_tier_mapping.py"
+      - "scripts/test_check_caller_tier_mapping.py"
       - ".github/workflows/ci.check-caller-tier-mapping.yml"
 
 jobs:
@@ -59,16 +60,12 @@ jobs:
 
       # A check that cannot fail proves nothing, and this one is cheap enough to
       # prove on every run rather than trusting a note that someone once tested it.
-      # The fixture removes a mirror marker from a COPY; the script must reject it.
-      # If this step ever passes silently, the check above has stopped checking.
-      - name: Prove the check still fails when a mirror is missing
-        run: |
-          set -e
-          mkdir -p /tmp/negative
-          sed '0,/<summary>Mirrors CallerTier\./s//<summary>marker removed by the negative fixture./' \
-            dotnet/tests/Fletcher.Tests/CallerTierArmTests.cs > /tmp/negative/arm.cs
-          if python3 scripts/check_caller_tier_mapping.py --cs /tmp/negative/arm.cs; then
-            echo "::error::the mapping check PASSED on a file with a mirror removed - it has stopped checking"
-            exit 1
-          fi
-          echo "the mapping check correctly rejected a missing mirror"
+      # The first version proved ONE failure mode here (a marker removed), and a
+      # skipped, commented-out or assertion-free mirror all passed as "total"
+      # (BIND-4 review, B4). The fixture test applies each of those - and a renamed
+      # method, a stale marker and an unparsed C++ macro - to COPIES of the two
+      # files, requires each to be rejected FOR ITS OWN REASON, and requires the
+      # real files to be accepted. If this step ever passes while the check above
+      # has stopped checking, a fixture is missing.
+      - name: Prove the check refuses every way a mirror can be faked
+        run: python3 scripts/test_check_caller_tier_mapping.py

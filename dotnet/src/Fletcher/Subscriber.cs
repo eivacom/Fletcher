@@ -423,12 +423,23 @@ public sealed unsafe class Subscriber : IDisposable
     {
         ArgumentNullException.ThrowIfNull(subscription);
 
-        if (_disposed || subscription.Retired)
+        if (_disposed)
         {
-            // Cancelling something that is not live is a no-op, not an error: a
+            // Cancelling on a released subscriber is a no-op, not an error: a
             // foreign-runtime finaliser cannot let an exception escape.
             return;
         }
+
+        // A subscription that is ALREADY retired still reaches native, and that is
+        // not waste. Native's cancel of a fully cancelled id is a no-op - the seam
+        // makes it one - but its cancel of an id that is still RETIRING waits for
+        // that retirement's drain. The first version short-circuited on `Retired`,
+        // so a thread cancelling a subscription whose handler had just cancelled
+        // itself (the carve-out, which does not drain) returned while that handler
+        // was still running - the "second exception to a promise that has one" the
+        // seam's ruling of 2026-09-04 removed, reintroduced one tier up. Found when
+        // `ACancelRacingASelfCancelWaitsForThatHandler` was made to mirror its C++
+        // case faithfully (BIND-4 review, B5).
 
         SubscriptionState? state;
         lock (_gate)

@@ -1129,8 +1129,10 @@ subscribe, **so that** I am a full Fletcher client with no protocol SDK on my bu
   `ProviderRegistry.Create` → opaque `PubSubProviderHandle` (D-BIND-24);
   `PayloadBound.IsValid/Min/Max`. **No name query** on the registry.
 - `Publisher`: `CreateTopic(TopicPath, Schema)`, `Publish(TopicPath, BoundRows,
-  int)`, `Publish(TopicPath, BoundRows)`, `Publish(TopicPath, RowWriter)`,
-  `PublishRaw`, `ListTopics`, `IDisposable`.
+  int)`, `Publish(TopicPath, BoundRows)`, `Publish(TopicPath, RowWriter, int
+  minBytes)` (the `minBytes` since D-BIND-45 — this bullet still read
+  `Publish(TopicPath, RowWriter)` until the BIND-4 review), `PublishRaw`,
+  `ListTopics`, `IDisposable`.
   **The attachments argument carries a managed design decision (D-BIND-44,
   2026-09-22): `AttachmentsBuilder` owns its entries and CACHES the sealed set,
   because `fl_attachments_builder_build` empties the native builder** — a publish
@@ -1159,8 +1161,10 @@ subscribe, **so that** I am a full Fletcher client with no protocol SDK on my bu
   named a call that did not exist. Found the same way, by writing the thunk that
   has to call it. Minor 2 → 3, with the same coupled managed handshake; the
   handshake test's cases, derived as offsets by D-BIND-42, moved on their own.
-  **The native half of BIND-4 is COMPLETE: 43 declared entry points, 43 defined,
-  checked mechanically in both directions.**
+  **The native half of BIND-4 is COMPLETE: 44 declared entry points, 44 defined,
+  checked mechanically in both directions** (43 at ABI 0.3; D-BIND-46's
+  `fl_schema_copy` made it 44 at 0.4, and this count was stale until the BIND-4
+  review).
 - **Thunk discipline per D-BIND-18**: per-subscription in-flight counter and
   `retired` flag, the last one out frees the `GCHandle`; thread-static marker;
   managed refusal of `Dispose` from a handler; managed refusal of a synchronous

@@ -654,6 +654,7 @@ jobs:
             ${{ needs.integration-test-protoc-gateway-client-ts.result }},
             ${{ needs.integration-test-pubsub-arrow-fastdds.result }},
             ${{ needs.integration-test-pubsub-conformance.result }},
+            ${{ needs.integration-test-pubsub-transport-conformance.result }},
             ${{ needs.integration-test-protoc-gen-fletcher-npm.result }},
             ${{ needs.integration-test-protoc-gen-fletcher-rust.result }},
             ${{ needs.integration-test-protoc-plugin-cli.result }}
