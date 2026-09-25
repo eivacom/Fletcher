@@ -768,36 +768,44 @@ fl_status fl_subscriber_unsubscribe(fl_subscriber* subscriber, uint64_t subscrip
     });
 }
 
-/// The schema watch, answering FL_NOT_SUPPORTED as the header declares it does.
+/// The schema watch (D-BIND-52): the seam's `SubscribeSchema`, forwarded.
 ///
-/// This is the one place in this file where a defined symbol reports that it
-/// cannot do the thing, and it is not a stub standing in for missing work: the
-/// seam has no SubscribeSchema/UnsubscribeSchema pair yet (D-BIND-29), so "this
-/// build cannot do it" is the true answer rather than a stand-in for "not linked
-/// yet". The message names the route that DOES work, because a binding author
-/// reading only the status would otherwise have to go back to the header to
-/// learn there is one.
+/// Every rule the header states is the SEAM's, not this file's - the per-subscriber
+/// count, the idempotence per topic, the refusal from inside a delivery, the
+/// `kNotSupported` from a transport with no schema channel - so nothing here
+/// re-implements one. What this file owns is the handle and the order: the arrival
+/// is allocated BEFORE the watch is registered, for the reason
+/// `fl_subscriber_subscribe` gives, so that once the seam has counted a watch
+/// nothing left can throw and strand it without a handle to answer through.
+///
+/// Until D-BIND-52 this answered FL_NOT_SUPPORTED with a message saying the seam
+/// had no such pair (D-BIND-29) - true when written, false once #128 reached this
+/// branch.
 fl_status fl_subscriber_subscribe_schema(fl_subscriber* subscriber, fl_topic topic,
                                          fl_schema_arrival** out_arrival, fl_error* err) {
-    (void)subscriber;
-    (void)topic;
-    (void)out_arrival;
-    return Contain(err, FL_ORIGIN_SEAM, [] {
-        throw PubSubError(PubSubStatus::kNotSupported,
-                          "fl_subscriber_subscribe_schema: the seam does not carry a schema "
-                          "watch yet (D-BIND-29); subscribe to the topic and wait on the "
-                          "arrival fl_subscriber_subscribe returns");
+    return Contain(err, FL_ORIGIN_SEAM, [&] {
+        RequireOut(out_arrival, "fl_subscriber_subscribe_schema");
+        if (subscriber == nullptr) {
+            throw PubSubError(PubSubStatus::kInvalidArgument,
+                              "fl_subscriber_subscribe_schema: subscriber must not be null");
+        }
+
+        auto arrival = std::make_unique<fl_schema_arrival>(fletcher::SchemaArrival{});
+        arrival->arrival = subscriber->subscriber->SubscribeSchema(ToSegments(topic));
+        *out_arrival = arrival.release();
     });
 }
 
+/// Releases one watch. A no-op for a topic this subscriber does not watch - the
+/// seam's rule, so teardown may call it unconditionally.
 fl_status fl_subscriber_unsubscribe_schema(fl_subscriber* subscriber, fl_topic topic,
                                            fl_error* err) {
-    (void)subscriber;
-    (void)topic;
-    return Contain(err, FL_ORIGIN_SEAM, [] {
-        throw PubSubError(PubSubStatus::kNotSupported,
-                          "fl_subscriber_unsubscribe_schema: the seam does not carry a schema "
-                          "watch yet (D-BIND-29); nothing was ever registered to release");
+    return Contain(err, FL_ORIGIN_SEAM, [&] {
+        if (subscriber == nullptr) {
+            throw PubSubError(PubSubStatus::kInvalidArgument,
+                              "fl_subscriber_unsubscribe_schema: subscriber must not be null");
+        }
+        subscriber->subscriber->UnsubscribeSchema(ToSegments(topic));
     });
 }
 

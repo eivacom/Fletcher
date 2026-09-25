@@ -1164,7 +1164,9 @@ subscribe, **so that** I am a full Fletcher client with no protocol SDK on my bu
   **The native half of BIND-4 is COMPLETE: 44 declared entry points, 44 defined,
   checked mechanically in both directions** (43 at ABI 0.3; D-BIND-46's
   `fl_schema_copy` made it 44 at 0.4, and this count was stale until the BIND-4
-  review).
+  review). **The schema-watch pair is implemented since D-BIND-52 (2026-09-25,
+  ABI 0.5):** the seam grew it (#128), so the `kNotSupported` stub the clause
+  above names now forwards to it; C# exposure is owed to a later ruling.
 - **Thunk discipline per D-BIND-18**: per-subscription in-flight counter and
   `retired` flag, the last one out frees the `GCHandle`; thread-static marker;
   managed refusal of `Dispose` from a handler; managed refusal of a synchronous

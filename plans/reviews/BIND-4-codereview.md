@@ -298,7 +298,7 @@ The findings above are left as found; this section records what happened to each
 | **B6** drain mirrors pass on the provider's mutex | ✅ five keep a sibling subscription on the cancelled topic, so the provider is never entered. `DestructorDrains…` cannot (Dispose cancels every subscription, so its last cancel always enters the provider) and is declared **structurally weaker** |
 | **D16** unsequenced hold windows | ✅ in every rewritten case the hold starts from an at-cancel latch, and latch timeouts are recorded and asserted rather than ignored |
 | **D17** stale `c-abi/README.md` and entry-point count | ✅ corrected |
-| **Q1** schema-watch pair | ⏸ awaits a ruling |
+| **Q1** schema-watch pair | ✅ **D-BIND-52** (maintainer): implemented in the shim, ABI 0.4 → 0.5; C# exposure owed to a later ruling. c-abi tests: `inprocess` refuses with the transport's own message, the refusal from inside a delivery wins over `kNotSupported`, and over real Fast DDS a watch is pending, resolves on announce, is idempotent, and its last release ends a still-pending arrival |
 
 **A NEW DEFECT, found by making B5's mirrors faithful — B7.** `Subscriber.Unsubscribe` returned
 at once for a subscription already marked retired. After a handler cancelled itself (the

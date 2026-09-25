@@ -81,14 +81,15 @@ the write window and its one-call writer, the delivery callback, the three-step
 codec surface, and the single-copy marker. It is reviewed **as a specification**:
 what is expensive to get wrong here is the ownership wording, not the syntax.
 
-**Every declaration is now implemented: 44 entry points, ABI 0.4.** BIND-2 built
+**Every declaration is now implemented: 44 entry points, ABI 0.5.** BIND-2 built
 the codec surface and the publisher chain, BIND-3 the interop tier above it, and
 BIND-4 the rest — the subscriber half, the arrival, attachments and blobs, and the
 three entry points the header turned out to be missing (`fl_blob_create`,
 `fl_schema_retain`, `fl_schema_copy`: D-BIND-42, 43, 46), each an ABI minor bump.
-The schema-watch pair (`fl_subscriber_subscribe_schema` / `_unsubscribe_schema`) is
-declared and answers `FL_NOT_SUPPORTED` per D-BIND-29; the seam has since grown the
-pair, and whether the shim now implements it is an open question in the BIND-4
-review (`plans/reviews/BIND-4-codereview.md`, Q1). (This paragraph said "only
+The schema-watch pair (`fl_subscriber_subscribe_schema` / `_unsubscribe_schema`)
+answered `FL_NOT_SUPPORTED` per D-BIND-29 until the seam grew it (#128); since
+**D-BIND-52** it forwards to the seam (ABI 0.4 → 0.5), and `FL_NOT_SUPPORTED` now
+means only that the transport has no schema channel — of the built-ins, only
+`fastdds` has one. The C# surface does not expose it yet. (This paragraph said "only
 `fl_binding_abi_version()` is implemented" until the BIND-4 review found it stale
 since BIND-2c.)

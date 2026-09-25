@@ -1517,3 +1517,33 @@ accessors do, for capstone parity (Q18).
   **Consequences.** Tests: disposing another Subscriber on the same provider from a handler is
   refused with a managed exception; the nested route is refused; a cross-provider dispose is
   served. No ABI or public-surface change.
+
+- **D-BIND-52 — the shim IMPLEMENTS the schema-watch pair now; the C# surface does not expose it
+  yet.** *LOCKED BY THE MAINTAINER 2026-09-25,* answering Q1 of
+  `plans/reviews/BIND-4-codereview.md`.
+
+  **WHY NOW.** D-BIND-29 declared `fl_subscriber_subscribe_schema` / `_unsubscribe_schema` and
+  had them answer `FL_NOT_SUPPORTED` "until the seam provides them". The seam now does —
+  `Subscriber::SubscribeSchema` / `UnsubscribeSchema`, from `f33973c` (#128), which reached this
+  branch through the merge of `main` — so the stub's message ("the seam does not carry a schema
+  watch yet") became false, and the header's own rule ("nothing here is ever stubbed out to
+  return FL_NOT_SUPPORTED because it has not been written yet") had one standing exception left.
+
+  **WHAT IT IS.** The two entry points forward to the seam's pair, whose contract `binding.h`
+  already stated under "when implemented" and now states as the contract: never blocks; resolves
+  when a publisher announces the topic, with the same arrival a subscribe would get; counted per
+  subscriber and idempotent per topic; the LAST release ends a still-pending arrival with
+  `FL_SUBSCRIPTION_ENDED`; always refused with `FL_REENTRANT_CALL` from inside a delivery on the
+  subscriber's provider; `FL_NOT_SUPPORTED` — now meaning what the header says it means — from a
+  transport with no schema channel (`inprocess`, and today every built-in but Fast DDS).
+  **ABI 0.4 → 0.5**, because a binding learns what works from the version, and
+  `NativeLoader.HeaderVersionMinor` moves in the same commit (the exact-minor handshake).
+
+  **WHAT IT IS NOT.** No C# member calls it. The frozen public surface
+  (`BIND-csharp-public-surface.md`) lists no schema watch, and adding one is a public-surface
+  change this ruling does not make; managed exposure is **OWED**, for a later ruling. Rust, next
+  round, binds the ABI and inherits the pair as it stands.
+
+  **Declined:** exposing it in C# now (widens BIND-4 and the frozen surface without a separate
+  ruling); deferring it and only correcting the message (keeps a declared-but-unimplemented pair
+  in a header whose rule forbids one).

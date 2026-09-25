@@ -29,6 +29,7 @@
 #include <cstring>
 #include <fletcher/core/write_buffer.hpp>
 #include <memory>
+#include <random>
 #include <string>
 #include <thread>
 #include <vector>
@@ -1337,7 +1338,11 @@ TEST(Subscriber, AttachmentsReachTheHandlerAndARetainedBlobOutlivesTheDelivery) 
 /// unhelpful when there IS a way to get a schema; the header's own justification
 /// for declaring the pair early is that a surface reviewed with a known hole in
 /// it gets reviewed twice, and the hole has to say what to do instead.
-TEST(Subscriber, TheSchemaWatchPairAnswersNotSupportedAndSaysWhatToUseInstead) {
+TEST(Subscriber, ASchemaWatchOnATransportWithoutASchemaChannelIsNotSupported) {
+    // D-BIND-52: the pair forwards to the seam now, so FL_NOT_SUPPORTED means what
+    // the header says it means everywhere - THIS TRANSPORT has no out-of-band
+    // schema channel - and the message is the transport's, not a stand-in. Until
+    // D-BIND-52 this test pinned a stub that blamed the seam for lacking the pair.
     SubscriberFixture fx;
     fl_error err = {};
     const fl_str segments[] = {Str("bind"), Str("watch")};
@@ -1347,13 +1352,207 @@ TEST(Subscriber, TheSchemaWatchPairAnswersNotSupportedAndSaysWhatToUseInstead) {
     EXPECT_EQ(fl_subscriber_subscribe_schema(fx.subscriber(), topic, &arrival, &err),
               FL_NOT_SUPPORTED);
     EXPECT_EQ(arrival, nullptr) << "a refused call must not write its out parameter";
-    EXPECT_NE(MessageOf(err).find("D-BIND-29"), std::string::npos) << MessageOf(err);
-    EXPECT_NE(MessageOf(err).find("fl_subscriber_subscribe"), std::string::npos) << MessageOf(err);
+    EXPECT_NE(MessageOf(err).find("schema-only subscription"), std::string::npos) << MessageOf(err);
     fl_error_dispose(&err);
 
-    EXPECT_EQ(fl_subscriber_unsubscribe_schema(fx.subscriber(), topic, &err), FL_NOT_SUPPORTED);
-    EXPECT_NE(MessageOf(err).find("D-BIND-29"), std::string::npos) << MessageOf(err);
+    // Releasing what was never watched is a no-op, not an error - teardown may
+    // call it unconditionally.
+    EXPECT_EQ(fl_subscriber_unsubscribe_schema(fx.subscriber(), topic, &err), FL_OK)
+        << MessageOf(err);
+}
+
+namespace {
+
+/// What a delivery observed when it tried to open a schema watch.
+struct WatchFromInsideDelivery {
+    fl_subscriber* subscriber = nullptr;
+    fl_topic topic = {};
+    fl_status status = FL_OK;
+    bool ran = false;
+
+    static void OnDelivery(void* ctx, uint64_t, const uint8_t*, size_t, const fl_schema*,
+                           const fl_attachments*) {
+        auto* self = static_cast<WatchFromInsideDelivery*>(ctx);
+        fl_error err = {};
+        fl_schema_arrival* arrival = nullptr;
+        self->status =
+            fl_subscriber_subscribe_schema(self->subscriber, self->topic, &arrival, &err);
+        self->ran = true;
+        if (arrival != nullptr) fl_schema_arrival_dispose(arrival);
+        fl_error_dispose(&err);
+    }
+};
+
+}  // namespace
+
+TEST(Subscriber, ASchemaWatchIsRefusedFromInsideADelivery) {
+    // ALWAYS refused from inside a delivery on the subscriber's provider - the
+    // seam's rule, raised at its caller tier before anything waits, and so the
+    // same answer whether or not the transport has a schema channel at all. Over
+    // `inprocess`, which has none, the reentrancy answer must still win: a shim
+    // that asked the transport first would answer FL_NOT_SUPPORTED here.
+    SubscriberFixture fx;
+    AbiFixture abi;
+    fl_error err = {};
+
+    ArrowSchema schema = {};
+    ASSERT_TRUE(arrow::ExportSchema(*abi.batch().schema(), &schema).ok());
+    const fl_str segments[] = {Str("bind"), Str("watchreentry")};
+    const fl_topic topic = {segments, 2};
+    ASSERT_EQ(fl_publisher_create_topic(fx.publisher(), topic, &schema, &err), FL_OK)
+        << MessageOf(err);
+    schema.release(&schema);
+
+    WatchFromInsideDelivery probe;
+    probe.subscriber = fx.subscriber();
+    probe.topic = topic;
+    uint64_t id = 0;
+    fl_schema_arrival* arrival = nullptr;
+    ASSERT_EQ(fl_subscriber_subscribe(fx.subscriber(), topic, &WatchFromInsideDelivery::OnDelivery,
+                                      &probe, &id, &arrival, &err),
+              FL_OK)
+        << MessageOf(err);
+
+    ASSERT_EQ(fl_publisher_publish_row(fx.publisher(), topic, abi.rows(), 0, nullptr, &err), FL_OK)
+        << MessageOf(err);
+
+    ASSERT_TRUE(probe.ran) << "the delivery never ran, so this case controlled nothing";
+    EXPECT_EQ(probe.status, FL_REENTRANT_CALL);
+
+    ASSERT_EQ(fl_subscriber_unsubscribe(fx.subscriber(), id, &err), FL_OK) << MessageOf(err);
+    fl_schema_arrival_dispose(arrival);
+}
+
+TEST(Subscriber, TheSchemaWatchRefusesNullArguments) {
+    SubscriberFixture fx;
+    fl_error err = {};
+    const fl_str segments[] = {Str("bind"), Str("watchnull")};
+    const fl_topic topic = {segments, 2};
+    fl_schema_arrival* arrival = nullptr;
+
+    EXPECT_EQ(fl_subscriber_subscribe_schema(nullptr, topic, &arrival, &err), FL_INVALID_ARGUMENT);
     fl_error_dispose(&err);
+    EXPECT_EQ(fl_subscriber_subscribe_schema(fx.subscriber(), topic, nullptr, &err),
+              FL_INVALID_ARGUMENT);
+    fl_error_dispose(&err);
+    EXPECT_EQ(fl_subscriber_unsubscribe_schema(nullptr, topic, &err), FL_INVALID_ARGUMENT);
+    fl_error_dispose(&err);
+    EXPECT_EQ(arrival, nullptr);
+}
+
+namespace {
+
+/// A provider, publisher and subscriber over REAL Fast DDS - the one built-in with
+/// a schema channel, so the only place the working half of the watch can be seen.
+///
+/// Fast DDS is a real bus: a domain of its own, away from the ones the
+/// integration suites use (137, 142), and a topic unique to this process, so a
+/// concurrent job on the same runner cannot answer this test's watch.
+class FastDdsFixture {
+   public:
+    FastDdsFixture() {
+        const fl_provider_config config = {0, 211, {nullptr, 0}};
+        EXPECT_EQ(fl_provider_create(Str("fastdds"), &config, &provider_, &err_), FL_OK)
+            << MessageOf(err_);
+        EXPECT_EQ(fl_publisher_create(provider_, &publisher_, &err_), FL_OK) << MessageOf(err_);
+        EXPECT_EQ(fl_subscriber_create(provider_, &subscriber_, &err_), FL_OK) << MessageOf(err_);
+    }
+
+    ~FastDdsFixture() {
+        fl_subscriber_destroy(subscriber_);
+        fl_publisher_destroy(publisher_);
+        fl_provider_destroy(provider_);
+    }
+
+    FastDdsFixture(const FastDdsFixture&) = delete;
+    FastDdsFixture& operator=(const FastDdsFixture&) = delete;
+
+    fl_publisher* publisher() const { return publisher_; }
+    fl_subscriber* subscriber() const { return subscriber_; }
+
+   private:
+    fl_error err_ = {};
+    fl_provider* provider_ = nullptr;
+    fl_publisher* publisher_ = nullptr;
+    fl_subscriber* subscriber_ = nullptr;
+};
+
+std::string UniqueSegment() {
+    std::random_device device;
+    std::string out = "w";
+    for (int i = 0; i < 4; ++i) out += std::to_string(device());
+    return out;
+}
+
+}  // namespace
+
+TEST(Subscriber, AFastDdsSchemaWatchResolvesWhenThePublisherAnnouncesTheTopic) {
+    FastDdsFixture fx;
+    AbiFixture abi;
+    fl_error err = {};
+    const std::string unique = UniqueSegment();
+    const fl_str segments[] = {Str("bind"), Str("watch"), Str(unique.c_str())};
+    const fl_topic topic = {segments, 3};
+
+    fl_schema_arrival* first = nullptr;
+    ASSERT_EQ(fl_subscriber_subscribe_schema(fx.subscriber(), topic, &first, &err), FL_OK)
+        << MessageOf(err);
+    ASSERT_NE(first, nullptr) << "out_arrival is written on success";
+
+    // NEVER BLOCKS, and nothing has announced the topic yet.
+    fl_schema not_yet = {};
+    EXPECT_EQ(fl_schema_arrival_wait(first, 0, &not_yet, &err), FL_PENDING) << MessageOf(err);
+
+    // Idempotent per topic: a second watch is answered, and is released separately.
+    fl_schema_arrival* second = nullptr;
+    ASSERT_EQ(fl_subscriber_subscribe_schema(fx.subscriber(), topic, &second, &err), FL_OK)
+        << MessageOf(err);
+
+    ArrowSchema schema = {};
+    ASSERT_TRUE(arrow::ExportSchema(*abi.batch().schema(), &schema).ok());
+    ASSERT_EQ(fl_publisher_create_topic(fx.publisher(), topic, &schema, &err), FL_OK)
+        << MessageOf(err);
+    schema.release(&schema);
+
+    fl_schema resolved = {};
+    ASSERT_EQ(fl_schema_arrival_wait(first, 10000, &resolved, &err), FL_OK) << MessageOf(err);
+    ASSERT_NE(resolved.schema, nullptr)
+        << "Fast DDS carries schemas, so the schema-less form is wrong here";
+    EXPECT_EQ(resolved.schema->n_children, 2);
+    fl_schema_release(&resolved);
+
+    EXPECT_EQ(fl_subscriber_unsubscribe_schema(fx.subscriber(), topic, &err), FL_OK)
+        << MessageOf(err);
+    EXPECT_EQ(fl_subscriber_unsubscribe_schema(fx.subscriber(), topic, &err), FL_OK)
+        << MessageOf(err);
+    fl_schema_arrival_dispose(second);
+    fl_schema_arrival_dispose(first);
+}
+
+TEST(Subscriber, TheLastReleaseEndsAPendingFastDdsSchemaWatch) {
+    // A waiter is answered, never left hanging: a watch released before any
+    // publisher announced the topic ends its arrival rather than leaving it
+    // pending forever.
+    FastDdsFixture fx;
+    fl_error err = {};
+    const std::string unique = UniqueSegment();
+    const fl_str segments[] = {Str("bind"), Str("unwatched"), Str(unique.c_str())};
+    const fl_topic topic = {segments, 3};
+
+    fl_schema_arrival* arrival = nullptr;
+    ASSERT_EQ(fl_subscriber_subscribe_schema(fx.subscriber(), topic, &arrival, &err), FL_OK)
+        << MessageOf(err);
+    fl_schema pending = {};
+    ASSERT_EQ(fl_schema_arrival_wait(arrival, 0, &pending, &err), FL_PENDING) << MessageOf(err);
+
+    ASSERT_EQ(fl_subscriber_unsubscribe_schema(fx.subscriber(), topic, &err), FL_OK)
+        << MessageOf(err);
+
+    fl_schema ended = {};
+    EXPECT_EQ(fl_schema_arrival_wait(arrival, 0, &ended, &err), FL_SUBSCRIPTION_ENDED)
+        << MessageOf(err);
+    EXPECT_EQ(ended.schema, nullptr) << "*out is untouched on FL_SUBSCRIPTION_ENDED";
+    fl_schema_arrival_dispose(arrival);
 }
 
 /// Every refusal the subscriber surface owes, and the two calls that are

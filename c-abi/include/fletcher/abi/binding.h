@@ -161,7 +161,7 @@ extern "C" {
  * fl_binding_abi_version() at load time; `Eiva.Fletcher.Interop` does exactly
  * that in its static constructor. */
 #define FL_BINDING_ABI_VERSION_MAJOR 0
-#define FL_BINDING_ABI_VERSION_MINOR 4
+#define FL_BINDING_ABI_VERSION_MINOR 5
 #define FL_BINDING_ABI_VERSION                                   \
     ((uint32_t)(((uint32_t)FL_BINDING_ABI_VERSION_MAJOR << 16) | \
                 (uint32_t)FL_BINDING_ABI_VERSION_MINOR))
@@ -872,24 +872,46 @@ FL_ABI_EXPORT fl_status fl_subscriber_subscribe(fl_subscriber* subscriber, fl_to
 FL_ABI_EXPORT fl_status fl_subscriber_unsubscribe(fl_subscriber* subscriber,
                                                   uint64_t subscription_id, fl_error* err);
 
-/* Watch a topic's schema without subscribing to its data.
+/* Watch a topic's schema without subscribing to its data. Since ABI 0.5.
  *
- * Declared here, and answering FL_NOT_SUPPORTED, until the seam grows the
- * SubscribeSchema/UnsubscribeSchema pair currently in flight (D-BIND-29). The
- * pair is declared now rather than later because this header is reviewed as a
- * specification and a surface reviewed with a known hole in it gets reviewed
- * twice; the pre-1.0 exemption covers the shape changing if the seam's does.
+ * NEVER BLOCKS. Resolves when a publisher announces the topic, and answers with
+ * the same arrival a subscribe on that topic would. `out_arrival` receives an
+ * arrival the caller OWNS and disposes; it is written only on success.
  *
- * When implemented: never blocks, resolves when a publisher announces the topic,
- * and answers with the same arrival a subscribe on that topic would. A watch
- * registers no callback and delivers nothing, so it has no id - it is counted
- * per subscriber and idempotent per topic, and the provider's watch is released
- * by the last unsubscribe_schema. A data unsubscribe does not release it, and
- * holding a watch does not keep a data subscription alive. */
+ * A watch registers no callback and delivers nothing, so it has no id: it is
+ * COUNTED per subscriber and idempotent per topic - a second watch on a topic this
+ * subscriber already watches is answered from the cached arrival and never
+ * reaches the transport - and the transport's watch is released by the LAST
+ * fl_subscriber_unsubscribe_schema, or by fl_subscriber_destroy for whatever is
+ * still outstanding. A data unsubscribe does not release it, and holding a watch
+ * does not keep a data subscription alive.
+ *
+ * ALWAYS refused with FL_REENTRANT_CALL from inside a delivery on this
+ * subscriber's provider - unlike fl_subscriber_subscribe, whose answer depends on
+ * whether the transport has to be entered at all.
+ *
+ * FL_NOT_SUPPORTED means what it says everywhere in this header: this transport
+ * has no out-of-band schema channel. Of the built-ins only `fastdds` has one;
+ * `inprocess` and `xrce` refuse. Subscribe to the data instead - its arrival still
+ * answers the schema.
+ *
+ * (Declared from BIND-1 but answering FL_NOT_SUPPORTED until the seam grew the
+ * pair - D-BIND-29 - and implemented once it did: D-BIND-52.) */
 FL_ABI_EXPORT fl_status fl_subscriber_subscribe_schema(fl_subscriber* subscriber, fl_topic topic,
                                                        fl_schema_arrival** out_arrival,
                                                        fl_error* err);
 
+/* Release one of this subscriber's watches on `topic`. Since ABI 0.5.
+ *
+ * The transport is entered only by the LAST release. Releasing a topic this
+ * subscriber does not watch is a no-op, not an error, like cancelling an unknown
+ * id - so teardown may call it unconditionally. A still-pending arrival handed out
+ * by fl_subscriber_subscribe_schema then answers FL_SUBSCRIPTION_ENDED: a waiter
+ * is answered, never left hanging - unless a live data subscription shares the
+ * topic, whose arrival it then is and which stays pending until its own schema
+ * arrives. Refused with FL_REENTRANT_CALL from inside a delivery on this
+ * subscriber's provider, with the count restored, so the watch stays this
+ * subscriber's to release later or at destruction. */
 FL_ABI_EXPORT fl_status fl_subscriber_unsubscribe_schema(fl_subscriber* subscriber, fl_topic topic,
                                                          fl_error* err);
 

@@ -1133,6 +1133,9 @@ blocking or architectural, **S** = inherited from the seam, **N** = .NET interop
   declared-but-`kNotSupported`, so a header reviewed as a specification is not reopened
   at BIND-4; the order is re-examined at the **BIND-1 → BIND-2 boundary**, which is
   where the genuine dependency on the rewritten `Codec` sits.
+  **Closed 2026-09-25 (D-BIND-52):** #128 landed on `main` and reached this branch by
+  merge, so the seam has the pair; the shim now implements it (ABI 0.5). The C#
+  surface does not expose it yet — owed to a later ruling.
   `TsVisitor.DescriptorByteIdentical`, the no-drift test and BIND-2's byte-identity
   oracle are what prove neither party moved wire bytes — and if BIND-2 goes first, that
   oracle becomes a standing guard on #128's rewrite. *Ruled at BIND-0; re-examined at
