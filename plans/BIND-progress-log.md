@@ -398,3 +398,28 @@ subscriber participant (status=255)" just after the Agent established the sessio
 push did not touch (nothing under the providers, `pubsub`, `core` or the conformance suite changed;
 the lane ran only because `c-abi` did). It passed on the re-run and has passed on every earlier run of
 this branch: recorded as an intermittent XRCE failure, cause not established, not as fixed.
+
+## BIND-5 — `SubscriberArrow` and the copy oracle from C# (in progress, 2026-09-28)
+
+**5a - `SubscriberArrow`, locally, not yet committed.** Batch-first as C++: flush on `MaxRows`, on a
+deadline armed by the window's first event, or on close; one native decode per window, a
+row-by-row second pass only when a row in it is corrupt, so attachments stay aligned. The surface
+was ruled first (D-BIND-59): one `RecordBatchHandler` for both forms, owned `AttachmentsBuilder`
+copies, the handler owns a `RecordBatch?`. `test_pubsub_arrow`'s 33 cases: 32 mapped, 1 excluded by
+D-BIND-8; the mapping is the header of `SubscriberArrowTests.cs`.
+
+**The port found a real defect (D-BIND-60).** Porting `PublishTypeMismatchThrowsToCaller` showed the
+shim published rows bound under ANOTHER schema unchecked - an int64 row reached an int32 topic's
+subscriber as 9 bytes. C++ cannot reach this (one codec per topic); a binding's rows carry their own.
+Both publish entry points now refuse it. **The fix surfaced something not understood:** throwing while
+a `lock_guard` was held left the mutex locked for the next call, which standalone MSVC repros did not
+reproduce. The shipped code throws after release; the cause is an open finding, not a fix.
+
+Locally: managed **313/313** (net8, net10), c-abi **78/78**, transport **25 of 33** - the 8 `xrce` cases
+need a MicroXRCEAgent this machine does not have - with the new Fast DDS schema-watch case green.
+Falsified: six managed mutations (fallback off, no closing flush, drop-only window skipped, silent
+absorb, misaligned attachments, options dropped) and the shim check's removal, each caught by the
+cases named for it. **A lesson from the tooling, again:** a `conan build` that needed remote
+credentials sat on a prompt for ten minutes, and the mutation script that was meant to run first had
+already failed on a cp1252 decode - so for that stretch nothing was mutated. Mutate bytes, and build
+the existing tree with `cmake --build`.

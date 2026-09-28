@@ -1906,3 +1906,60 @@ accessors do, for capstone parity (Q18).
   kept in mind as cheap supporting tests, but an `ArrayPool`-staging publish passes an allocation
   check); building the attachment publish path now (ABI and lifetime surface for a need no consumer
   has stated).
+
+- **D-BIND-59 — `SubscriberArrow` has ONE handler shape: per-row delivery is a batch of one, and
+  a row's attachments arrive as owned `AttachmentsBuilder` copies.** *LOCKED BY THE MAINTAINER
+  2026-09-28,* in two questions, at the start of BIND-5a.
+
+  **THE QUESTIONS.** The public-surface note drew two handler delegates, `RowBatchHandler` for
+  `Subscribe` and `RecordBatchHandler` for `SubscribeBatched`, and left open what a batch handler
+  receives for attachments - the borrowed `AttachmentsView` cannot outlive a delivery, and a batch
+  outlives every delivery it holds.
+
+  **THE RULING.**
+  1. **Per-row is `SubscribeBatched` with `MaxRows = 1`.** `Subscribe(topic, handler, topicOptions?)`
+     takes the same `RecordBatchHandler` and flushes on every row, as C++'s per-row `SubscriberArrow`
+     is a window of one. `RowBatchHandler` is dropped from the note. A caller who wants the borrowed
+     row itself uses `Subscriber` and `RowHandler`, which is where D-BIND-58's delivery-view claim is.
+  2. **Attachments are the existing `AttachmentsBuilder`, filled with owned copies,** index-aligned
+     with the batch's rows, with read accessors added (`KeyAt`, `ValueAt`, `TryFind`). No new type.
+  3. **Carried with it, not asked separately:** the handler OWNS the batch and disposes it; the batch
+     is `RecordBatch?` - zero rows when a window held only dropped rows, NULL only when the topic's
+     schema could not be opened (every row dropped for the life of the subscription); `SubscriberArrow`
+     forwards `TopicOptions` on both forms and exposes `SubscribeSchema`/`UnsubscribeSchema`, so it
+     answers the same bucket-3 cases `Subscriber` does (D-BIND-57). Dictionaries arrive as their value
+     type (D-BIND-8), so `FinishFailureIsReportedNotFatal` is excluded - there is no re-fold to fail.
+
+  **Declined:** a second delegate for the per-row form (two shapes for one window rule); a new
+  owned-attachments type (the builder already holds exactly an owned key/value set).
+
+- **D-BIND-60 — the shim refuses rows bound under a schema other than the topic's.** *LOCKED BY THE
+  MAINTAINER 2026-09-28,* in two questions, when BIND-5a's port found the defect.
+
+  **THE DEFECT.** C++'s `PublisherArrow` holds one codec per topic, so a type mismatch
+  (`PublishTypeMismatchThrowsToCaller`) cannot reach the wire. A binding's `BoundRows` carry THEIR
+  OWN codec, and `fl_publisher_publish_row`/`_rows` encoded them with it, unchecked: a probe
+  published an int64 row onto an int32 topic and it was delivered, 9 bytes, decoded as garbage. A
+  same-width mismatch (float32 for int32) is not even detectably wrong on arrival.
+
+  **THE RULING.** Fixed **in the shim**, **inside 5a** (not a follow-up item). `fl_codec` computes its
+  `DeclaredSchema` once; `fl_rows` carries it; `fl_publisher` records each topic's declaration after
+  the seam accepts it; both publish entry points compare with the seam's own `ConflictsWith` and
+  refuse FL_INVALID_ARGUMENT before encoding. A topic this publisher did not declare is left to the
+  seam, as before. `binding.h` documents the rule on both functions; ABI stays 0.6 (no signature
+  changes, and a publish that was accepted before was a silent corruption, not a contract). Tests:
+  c-abi `Publisher.RowsBoundUnderAnotherSchemaAreRefusedOnBothPublishes` /
+  `...UnderTheDeclaredSchemaAreServed`; C# `SubscriberArrowTests.RowsOfAnotherSchemaAreRefused...` /
+  `APublishAfterARefusedOneStillDelivers`.
+
+  **AN OPEN FINDING, NOT FIXED.** The first version threw the `PubSubError` while holding a
+  `std::lock_guard` on the new mutex; the NEXT call then failed FL_INTERNAL, "resource deadlock would
+  occur" - the guard's destructor had not run on the way out through `Contain`. Standalone MSVC repros
+  (`/EHsc`, `/EHs`, the `catch(...)`-and-rethrow classification pattern) did not reproduce it. The
+  shipped code computes under the lock and throws after release, which is correct whatever the cause.
+  **Cause not established;** it may mean destructors are skipped on some shim error path, which would
+  matter beyond this mutex. Owed: a follow-up that reproduces it inside the shim's own build flags.
+
+  **Declined:** a managed-only check in `Publisher.Publish` (Rust and every later binding would owe it
+  again, and it could not use the seam's comparison); deferring to a follow-up item (the port cannot
+  claim `PublishTypeMismatchThrowsToCaller` without it).

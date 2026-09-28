@@ -97,8 +97,9 @@ subscription. A typed handle makes that unrepresentable.
 | `Codec(shared_ptr<arrow::Schema>)`, `EncodeRow`, `DecodeRow` | `FletcherCodec(Apache.Arrow.Schema)` (`fl_codec_open`, once per schema) — `Bind(RecordBatch) → BoundRows` (`fl_rows_bind`, once per batch; the array is **borrowed**, and `BoundRows.Dispose()` unbinds **then** releases the export), `Encode(BoundRows, int row, IBufferWriter<byte>)` (`fl_encode_row`, bytes in hand), `Decode(ReadOnlySpan<byte>)`, `DecodeBatch(ReadOnlySpan<byte>, int count)` (`fl_decode_rows`), `Schema`, `DecodedSchema` (what a decode produces: the same object as `Schema` unless the schema carries a dictionary, which the wire carries as its value type — D-BIND-39), `IDisposable`. **No method returns encoded bytes**; the zero-copy path is `Publisher.Publish(topic, rows, i)` (D-BIND-23) |
 | `ArrowRow = vector<shared_ptr<arrow::Scalar>>` | **no analogue** — see Q14. `Apache.Arrow` has no `Scalar` type, so the C# unit of one row is `(RecordBatch batch, int row)` |
 | `PublisherArrow` — `CreateTopic`, `Publish(ArrowRow)`, `PublishDirect` | folded into `Publisher` (the C# `Publish` is already Arrow-typed) |
-| `SubscriberArrow::Subscribe(segments, SubscribeCallback)` per-row | `SubscriberArrow.Subscribe(TopicPath, RowBatchHandler)` with `BatchOptions.MaxRows = 1` , or the generated typed subscriber |
-| `SubscriberArrow::Subscribe(segments, RecordBatchCallback, BatchOptions)` | `SubscribeBatched(TopicPath, RecordBatchHandler, BatchOptions?)` — the primary shape |
+| `SubscriberArrow::Subscribe(segments, SubscribeCallback, TopicOptions = {})` per-row | `SubscriberArrow.Subscribe(TopicPath, RecordBatchHandler, TopicOptions?)` - the SAME handler, a window of one (`MaxRows = 1`, D-BIND-59); the borrowed row itself is `Subscriber` + `RowHandler`, or the generated typed subscriber |
+| `SubscriberArrow::Subscribe(segments, RecordBatchCallback, BatchOptions, TopicOptions = {})` | `SubscribeBatched(TopicPath, RecordBatchHandler, BatchOptions?, TopicOptions?)` — the primary shape. `RecordBatchHandler(RecordBatch? batch, IReadOnlyList<AttachmentsBuilder> attachments, BatchStatus status)`: the handler OWNS the batch; zero rows when a window held only dropped rows, NULL only when the topic's schema cannot be opened; row `i`'s attachments are owned copies at index `i`, read with `KeyAt`/`ValueAt`/`TryFind` (D-BIND-59) |
+| `SubscriberArrow::SubscribeSchema` / `UnsubscribeSchema` (#128) | forwarded to the wrapped `Subscriber`'s (D-BIND-59) |
 | `BatchOptions {max_rows, timeout}` | `sealed class BatchOptions { long MaxRows = 8000 · TimeSpan Timeout = 1 min }` |
 | `BatchStatus {Reason, rows_dropped}` | `readonly struct BatchStatus { BatchReason Reason · long RowsDropped }`, `enum BatchReason { RowLimit, Timeout, Closing }` |
 | `ImportArrowSchema(SharedSchema)` | `SchemaHandle.ToArrowSchema()` — the one safe conversion, exposed once |
@@ -359,8 +360,12 @@ classDiagram
     }
     class SubscriberArrow {
         +SubscriberArrow(PubSubProviderHandle provider)
-        +Subscribe(TopicPath topic, RowBatchHandler handler) SubscribeResult
-        +SubscribeBatched(TopicPath topic, RecordBatchHandler handler, BatchOptions options) SubscribeResult
+        +Subscribe(TopicPath topic, RecordBatchHandler handler, TopicOptions topicOptions) SubscribeResult
+        +SubscribeBatched(TopicPath topic, RecordBatchHandler handler, BatchOptions options, TopicOptions topicOptions) SubscribeResult
+        +Unsubscribe(Subscription subscription) void
+        +SubscribeSchema(TopicPath topic) SchemaArrival
+        +UnsubscribeSchema(TopicPath topic) void
+        +ulong AbsorbedCallbackFailures
         +Dispose() void
     }
     class BatchOptions {
@@ -382,7 +387,7 @@ classDiagram
     }
     class RecordBatchHandler {
         <<delegate>>
-        +Invoke(RecordBatch batch, IReadOnlyList~AttachmentsBuilder~ attachments, BatchStatus status) void
+        +Invoke(RecordBatch? batch, IReadOnlyList~AttachmentsBuilder~ attachments, BatchStatus status) void
     }
     ProviderRegistry ..> ProviderSelector : takes
     ProviderRegistry ..> ProviderConfig : takes
@@ -394,6 +399,7 @@ classDiagram
     }
     Publisher ..> TopicOptions : takes
     Subscriber ..> TopicOptions : takes
+    SubscriberArrow ..> TopicOptions : takes
     Publisher o-- PubSubProviderHandle : shares
     Subscriber o-- PubSubProviderHandle : shares
     SubscriberArrow *-- Subscriber : wraps

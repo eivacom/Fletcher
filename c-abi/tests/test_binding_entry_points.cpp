@@ -1848,3 +1848,65 @@ TEST(TopicOptions, FastDdsRefusesAProfileItsDocumentDoesNotDefine) {
         << "the refusal should name the profile: " << MessageOf(err);
     fl_error_dispose(&err);
 }
+
+// ── Rows bound under another schema (D-BIND-60) ─────────────────────────────
+//
+// Found porting `PublisherArrowTest.PublishTypeMismatchThrowsToCaller` at BIND-5a:
+// the shim published rows bound under one schema on a topic declared with another,
+// and a mismatch of equal width decodes, silently, into the wrong fields.
+
+namespace {
+
+/// The fixture's shape with `id` as float32: the same width as its int32, so a
+/// subscriber of the declared schema would decode these bytes without complaint.
+fl_status DeclareAsFloat(fl_publisher* publisher, const fl_topic& topic, fl_error* err) {
+    auto schema = arrow::schema(
+        {arrow::field("id", arrow::float32(), false), arrow::field("label", arrow::utf8(), true)});
+    ArrowSchema exported = {};
+    EXPECT_TRUE(arrow::ExportSchema(*schema, &exported).ok());
+    const fl_status status = fl_publisher_create_topic(publisher, topic, &exported, err);
+    exported.release(&exported);
+    return status;
+}
+
+}  // namespace
+
+TEST(Publisher, RowsBoundUnderAnotherSchemaAreRefusedOnBothPublishes) {
+    SubscriberFixture fx;
+    AbiFixture abi;
+    fl_error err = {};
+    const fl_str segments[] = {Str("bind"), Str("mismatch")};
+    const fl_topic topic = {segments, 2};
+    ASSERT_EQ(DeclareAsFloat(fx.publisher(), topic, &err), FL_OK) << MessageOf(err);
+
+    EXPECT_EQ(fl_publisher_publish_row(fx.publisher(), topic, abi.rows(), 0, nullptr, &err),
+              FL_INVALID_ARGUMENT);
+    EXPECT_NE(MessageOf(err).find("declared with"), std::string::npos) << MessageOf(err);
+    fl_error_dispose(&err);
+
+    EXPECT_EQ(fl_publisher_publish_rows(fx.publisher(), topic, abi.rows(), 0, 3, nullptr, &err),
+              FL_INVALID_ARGUMENT)
+        << MessageOf(err);
+    fl_error_dispose(&err);
+}
+
+TEST(Publisher, RowsBoundUnderTheDeclaredSchemaAreServed) {
+    // The control: the refusal above is about the SCHEMA, not a check that
+    // refuses every bound publish.
+    SubscriberFixture fx;
+    AbiFixture abi;
+    fl_error err = {};
+    const fl_str segments[] = {Str("bind"), Str("match")};
+    const fl_topic topic = {segments, 2};
+    ArrowSchema schema = {};
+    ASSERT_TRUE(arrow::ExportSchema(*abi.batch().schema(), &schema).ok());
+    ASSERT_EQ(fl_publisher_create_topic(fx.publisher(), topic, &schema, &err), FL_OK)
+        << MessageOf(err);
+    schema.release(&schema);
+
+    EXPECT_EQ(fl_publisher_publish_row(fx.publisher(), topic, abi.rows(), 0, nullptr, &err), FL_OK)
+        << MessageOf(err);
+    EXPECT_EQ(fl_publisher_publish_rows(fx.publisher(), topic, abi.rows(), 0, 3, nullptr, &err),
+              FL_OK)
+        << MessageOf(err);
+}

@@ -41,6 +41,8 @@
 #include <cstring>
 #include <fletcher/core/status.hpp>
 #include <fletcher/core/write_buffer.hpp>
+#include <fletcher/pubsub/internal/schema_conflict.hpp>
+#include <fletcher/pubsub/internal/segments.hpp>
 #include <fletcher/pubsub/owned_schema.hpp>
 #include <fletcher/pubsub/provider_registry.hpp>
 #include <memory>
@@ -474,7 +476,7 @@ fl_status fl_rows_bind(const fl_codec* codec, const struct ArrowArray* array, fl
         // Every buffer of every child is validated HERE, once per batch, by
         // `ArrowArrayViewSetArray` inside BoundRows. The per-row publish path
         // below therefore validates nothing and allocates nothing.
-        *out = new fl_rows(codec->codec, *array);
+        *out = new fl_rows(codec->codec, codec->declared, *array);
     });
 }
 
@@ -579,8 +581,16 @@ fl_status fl_publisher_create_topic_with_options(fl_publisher* publisher, fl_top
         // this returns. N-5: the C Data Interface's `release` and the seam's
         // owner-handle protocol are two different lifetimes, and this is the one
         // place they meet.
-        publisher->publisher->CreateTopic(ToSegments(topic), OwnedSchema::DeepCopy(schema),
+        std::vector<std::string> segments = ToSegments(topic);
+        publisher->publisher->CreateTopic(segments, OwnedSchema::DeepCopy(schema),
                                           ToTopicOptions(options));
+
+        // Recorded only once the seam accepted the declaration, so a refused one
+        // leaves nothing behind. The first declaration's schema is the topic's: a
+        // re-declaration the seam accepted is identical to it by the same bytes.
+        std::lock_guard lock(publisher->declared_mu);
+        publisher->declared.try_emplace(fletcher::internal::JoinSegments(segments),
+                                        fletcher::internal::DeclaredSchema::Encode(schema));
     });
 }
 
@@ -624,6 +634,36 @@ fl_status fl_publisher_publish_raw(fl_publisher* publisher, fl_topic topic, fl_w
  * 0` for a foreign-language producer (2d), and it is why no encode entry point
  * in this header returns bytes: a function that hands the row back has already
  * put it somewhere other than the transport. */
+namespace {
+
+/// D-BIND-60: rows bound under one schema must not be published on a topic declared
+/// with another. The seam's Publisher sees only the bytes the encoder writes, so a
+/// mismatch of equal width would reach a subscriber and decode, silently, into the
+/// wrong fields. C++ `PublisherArrow` cannot make the mistake because it owns ONE
+/// codec per topic; a binding's rows carry their own, so the shim checks here, with
+/// the seam's own comparison. A topic this publisher did not declare is left to the
+/// seam, which answers for it as before.
+void RequireRowsMatchTopic(fl_publisher& publisher, const std::vector<std::string>& segments,
+                           const fl_rows& rows, const char* entry) {
+    if (!rows.declared) return;
+    const std::string key = fletcher::internal::JoinSegments(segments);
+    bool conflicts = false;
+    {
+        std::lock_guard lock(publisher.declared_mu);
+        const auto found = publisher.declared.find(key);
+        conflicts =
+            found != publisher.declared.end() && rows.declared->ConflictsWith(found->second);
+    }
+    if (conflicts) {
+        throw PubSubError(
+            PubSubStatus::kInvalidArgument,
+            std::string(entry) + ": the rows were bound under a different schema from the one '" +
+                key + "' was declared with; bind them with a codec opened over the topic's schema");
+    }
+}
+
+}  // namespace
+
 fl_status fl_publisher_publish_row(fl_publisher* publisher, fl_topic topic, const fl_rows* rows,
                                    int64_t i, const fl_attachments* atts, fl_error* err) {
     fl_origin origin = FL_ORIGIN_SEAM;
@@ -632,8 +672,10 @@ fl_status fl_publisher_publish_row(fl_publisher* publisher, fl_topic topic, cons
             throw PubSubError(PubSubStatus::kInvalidArgument,
                               "fl_publisher_publish_row: publisher and rows must not be null");
         }
+        const std::vector<std::string> segments = ToSegments(topic);
+        RequireRowsMatchTopic(*publisher, segments, *rows, "fl_publisher_publish_row");
         publisher->publisher->Publish(
-            ToSegments(topic),
+            segments,
             [&](fletcher::WriteBuffer& out) {
                 // Re-attributed so a malformed row is reported as the CODEC's
                 // failure even though the entry point is a seam one. The flag is
@@ -666,6 +708,7 @@ fl_status fl_publisher_publish_rows(fl_publisher* publisher, fl_topic topic, con
         // per row, which is the only reason this is not just a loop the caller
         // could have written — and it is why the signature takes a range.
         const std::vector<std::string> segments = ToSegments(topic);
+        RequireRowsMatchTopic(*publisher, segments, *rows, "fl_publisher_publish_rows");
         for (int64_t n = 0; n < count; ++n) {
             const fl_attachments* atts = atts_per_row == nullptr ? nullptr : atts_per_row[n];
             publisher->publisher->Publish(

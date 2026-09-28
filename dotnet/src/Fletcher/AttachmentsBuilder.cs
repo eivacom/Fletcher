@@ -45,6 +45,44 @@ public sealed class AttachmentsBuilder : IDisposable
     /// <summary>How many entries are pending.</summary>
     public int Count => _entries.Count;
 
+    /// <summary>The key of entry <paramref name="index"/>, as bytes.</summary>
+    /// <remarks>
+    /// Read access, for the builders <see cref="SubscriberArrow"/> hands a batch
+    /// handler as each row's owned attachments (D-BIND-59). Entries are in the order
+    /// they were set; a delivered builder was filled in the seam's key-byte order, so
+    /// its order IS the wire's. The span is valid until the next <c>Set</c> or
+    /// <c>Clear</c>.
+    /// </remarks>
+    public ReadOnlySpan<byte> KeyAt(int index)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return _entries[index].Key;
+    }
+
+    /// <summary>The value of entry <paramref name="index"/>, as bytes.</summary>
+    public ReadOnlySpan<byte> ValueAt(int index)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return _entries[index].Value;
+    }
+
+    /// <summary>Find an entry by its key bytes.</summary>
+    public bool TryFind(ReadOnlySpan<byte> key, out ReadOnlySpan<byte> value)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        foreach (KeyValuePair<byte[], byte[]> entry in _entries)
+        {
+            if (entry.Key.AsSpan().SequenceEqual(key))
+            {
+                value = entry.Value;
+                return true;
+            }
+        }
+
+        value = default;
+        return false;
+    }
+
     /// <summary>Add an entry, or replace the value of one already present.</summary>
     /// <param name="key">The key, as bytes. Copied.</param>
     /// <param name="value">The value, as bytes. Copied.</param>

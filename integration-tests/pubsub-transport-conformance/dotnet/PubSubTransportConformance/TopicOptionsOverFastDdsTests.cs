@@ -286,4 +286,40 @@ public sealed class TopicOptionsOverFastDdsTests : IDisposable
 
         Assert.Equal(FletcherStatus.SubscriptionEnded, arrival.Wait(TimeSpan.Zero).Status);
     }
+
+    /// <summary>
+    /// BIND-5a - mirrors SubscriberArrowTest.SubscribeSchemaYieldsAnImportableSchemaWithoutADataSubscription.
+    /// </summary>
+    /// <remarks>
+    /// Here, not in the unit lane, because only a provider with a schema channel can
+    /// answer it; the unit lane has the NotSupported half over `inprocess`. The
+    /// arrival is the SubscriberArrow's own, and the schema it yields is imported
+    /// back into Arrow - the C++ case's "importable".
+    /// </remarks>
+    [Fact]
+    public void ASubscriberArrowSchemaWatchYieldsTheDeclaredSchema()
+    {
+        var schema = new Schema(
+        [
+            new Field("id", Int32Type.Default, nullable: true),
+            new Field("label", StringType.Default, nullable: true),
+        ], metadata: null);
+        TopicPath topic = Unique("arrowwatch");
+
+        using var arrow = new SubscriberArrow(_provider);
+        using SchemaArrival arrival = arrow.SubscribeSchema(topic);
+        _publisher.CreateTopic(topic, schema);
+
+        SchemaWaitResult result = arrival.Wait(TimeSpan.FromSeconds(10));
+        using (result.Schema)
+        {
+            Assert.Equal(FletcherStatus.Ok, result.Status);
+            Schema imported = result.Schema!.ToArrowSchema();
+            Assert.Equal(["id", "label"], [imported.FieldsList[0].Name, imported.FieldsList[1].Name]);
+            Assert.IsType<Int32Type>(imported.FieldsList[0].DataType);
+            Assert.IsType<StringType>(imported.FieldsList[1].DataType);
+        }
+
+        arrow.UnsubscribeSchema(topic);
+    }
 }

@@ -131,12 +131,30 @@ public sealed class Subscription : IDisposable
 
     internal void MarkRetired() => Retired = true;
 
+    /// <summary>Who cancels this subscription, when it is not its Subscriber directly.</summary>
+    /// <remarks>
+    /// Set by <see cref="SubscriberArrow"/>: a batched subscription must deliver its
+    /// closing flush and stop its timer BEFORE the data subscription is cancelled, so
+    /// disposing the handle has to go through the tier that owns the batcher.
+    /// </remarks>
+    internal Action<Subscription>? Canceller { get; set; }
+
     /// <summary>Cancel the subscription.</summary>
     /// <remarks>
     /// Cancelling something already cancelled is a NO-OP rather than an error -
     /// the seam's rule, forwarded - so teardown may call this unconditionally.
     /// </remarks>
-    public void Dispose() => _owner.Unsubscribe(this);
+    public void Dispose()
+    {
+        if (Canceller is { } cancel)
+        {
+            cancel(this);
+        }
+        else
+        {
+            _owner.Unsubscribe(this);
+        }
+    }
 }
 
 /// <summary>What a subscribe call returns.</summary>
@@ -256,6 +274,9 @@ public sealed unsafe class Subscriber : IDisposable
     /// (D-BIND-51). Any Subscriber over the same provider counts, because the
     /// provider is what refuses to be entered, not the Subscriber.
     /// </remarks>
+    /// <summary>Whether this thread is inside a delivery on this subscriber's provider, for the tier above.</summary>
+    internal bool InDeliveryOnThisProvider => InDeliveryOnProvider();
+
     private bool InDeliveryOnProvider()
     {
         Subscriber?[]? frames = _frames;

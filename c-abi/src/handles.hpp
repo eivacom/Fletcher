@@ -25,12 +25,15 @@
 
 #include <atomic>
 #include <fletcher/core/types.hpp>
+#include <fletcher/pubsub/internal/schema_conflict.hpp>
 #include <fletcher/pubsub/provider.hpp>
 #include <fletcher/pubsub/publisher.hpp>
 #include <fletcher/pubsub/schema_arrival.hpp>
 #include <fletcher/pubsub/subscriber.hpp>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -66,15 +69,26 @@ struct BlobOwner {
 /// happened to be reused. One `shared_ptr` makes the order not matter.
 struct fl_codec {
     explicit fl_codec(const ArrowSchema& schema)
-        : codec(std::make_shared<fletcher::abi::NanoarrowCodec>(schema)) {}
+        : codec(std::make_shared<fletcher::abi::NanoarrowCodec>(schema)),
+          declared(std::make_shared<const fletcher::internal::DeclaredSchema>(
+              fletcher::internal::DeclaredSchema::Encode(&schema))) {}
     std::shared_ptr<fletcher::abi::NanoarrowCodec> codec;
+
+    /// The codec's schema in the ONE form the seam compares schemas in (D-BIND-60),
+    /// computed once here so a publish compares bytes and encodes nothing.
+    std::shared_ptr<const fletcher::internal::DeclaredSchema> declared;
 };
 
 struct fl_rows {
-    fl_rows(std::shared_ptr<fletcher::abi::NanoarrowCodec> c, const ArrowArray& array)
-        : codec(std::move(c)), rows(std::make_unique<fletcher::abi::BoundRows>(*codec, array)) {}
+    fl_rows(std::shared_ptr<fletcher::abi::NanoarrowCodec> c,
+            std::shared_ptr<const fletcher::internal::DeclaredSchema> d, const ArrowArray& array)
+        : codec(std::move(c)),
+          declared(std::move(d)),
+          rows(std::make_unique<fletcher::abi::BoundRows>(*codec, array)) {}
 
     std::shared_ptr<fletcher::abi::NanoarrowCodec> codec;
+    /// The schema these rows were bound under, as the codec computed it (D-BIND-60).
+    std::shared_ptr<const fletcher::internal::DeclaredSchema> declared;
     std::unique_ptr<fletcher::abi::BoundRows> rows;
 };
 
@@ -139,6 +153,12 @@ struct fl_publisher {
     /// order the caller destroys its handles in.
     std::shared_ptr<fletcher::PubSubProvider> provider;
     std::unique_ptr<fletcher::Publisher> publisher;
+
+    /// The schema each topic was declared with through THIS publisher, keyed by the
+    /// joined topic (D-BIND-60). The seam's own Publisher cannot check a bound row
+    /// against it - it only ever sees bytes - so the shim does, before encoding.
+    std::mutex declared_mu;
+    std::unordered_map<std::string, fletcher::internal::DeclaredSchema> declared;
 };
 
 /// The read end, and it holds the provider for the same reason `fl_publisher`

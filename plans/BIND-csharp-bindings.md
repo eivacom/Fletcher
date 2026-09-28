@@ -1287,6 +1287,18 @@ codec step.
 - **The `test_pubsub_arrow` file set** ported over `inprocess` - 33 cases at D-BIND-57,
   which re-derived it from 15 after #128; the options and schema-watch cases among them
   use what D-BIND-57 added.
+  **Surface ruled 2026-09-28 (D-BIND-59):** `Subscribe` and `SubscribeBatched` take the one
+  `RecordBatchHandler` (per-row is `MaxRows = 1`; `RowBatchHandler` dropped); attachments are owned
+  `AttachmentsBuilder` copies aligned with the rows; the handler owns a `RecordBatch?`;
+  `TopicOptions` on both forms and the schema watch are forwarded. **The port found a defect
+  (D-BIND-60):** the shim published rows bound under ANOTHER schema unchecked; both publish entry
+  points now refuse them FL_INVALID_ARGUMENT - the lock-across-throw it surfaced is an OPEN finding,
+  cause not established. **5a, locally:** 32 of 33 mapped (27 in
+  `dotnet/tests/Fletcher.Tests/SubscriberArrowTests.cs`, whose header holds the mapping, the rest
+  answered by existing publisher/options rows and one Fast DDS case in the transport lane),
+  `FinishFailureIsReportedNotFatal` excluded by D-BIND-8; managed **313/313**, transport **25 of 33**
+  (the 8 `xrce` cases need a MicroXRCEAgent this machine does not have; TopicOptionsOverFastDds 12/12), c-abi **78/78**, six managed mutations and the shim check's
+  removal each caught.
 - **The copy oracle run with the C# producer** is this item's acceptance: zero-copy
   for rows and attachments, from managed code, falsifiable.
   **Amended 2026-09-28 (D-BIND-58)**, because it could not be met as written:

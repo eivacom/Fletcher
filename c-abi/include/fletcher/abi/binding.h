@@ -1021,7 +1021,14 @@ FL_ABI_EXPORT void fl_rows_unbind(fl_rows* rows);
  *
  * The codec runs INSIDE the seam's publish, writing straight into the provider's
  * window: no intermediate bytes exist, and the copy oracle counts zero encode
- * copies. `atts` is BORROWED and may be NULL. */
+ * copies. `atts` is BORROWED and may be NULL.
+ *
+ * ROWS MUST BE BOUND UNDER THE TOPIC'S SCHEMA (D-BIND-60). On a topic THIS
+ * publisher declared, rows whose codec was opened over a provably different
+ * schema are refused with FL_INVALID_ARGUMENT before anything is encoded - by the
+ * comparison the seam uses for a conflicting re-declaration. Without it a
+ * mismatch of equal width reached a subscriber and decoded, silently, into the
+ * wrong fields. A topic declared elsewhere is the seam's to answer for. */
 FL_ABI_EXPORT fl_status fl_publisher_publish_row(fl_publisher* publisher, fl_topic topic,
                                                  const fl_rows* rows, int64_t i,
                                                  const fl_attachments* atts, fl_error* err);
@@ -1029,7 +1036,8 @@ FL_ABI_EXPORT fl_status fl_publisher_publish_row(fl_publisher* publisher, fl_top
 /* 3b. PUBLISH rows [first, first + count) - N samples, one crossing.
  *
  * `atts_per_row` is NULL for none, or an array of `count` pointers, each of
- * which may itself be NULL. All BORROWED. */
+ * which may itself be NULL. All BORROWED. The schema rule of
+ * fl_publisher_publish_row applies, checked once for the whole range. */
 FL_ABI_EXPORT fl_status fl_publisher_publish_rows(fl_publisher* publisher, fl_topic topic,
                                                   const fl_rows* rows, int64_t first, int64_t count,
                                                   const fl_attachments* const* atts_per_row,
