@@ -1852,6 +1852,14 @@ accessors do, for capstone parity (Q18).
   **286/286** on both TFMs; transport **32/32**. **Falsified:** eight compiling mutations - the
   publisher or subscriber dropping the options, the profile crossing a byte short, no managed refusal
   of a watch inside a delivery, `UnsubscribeSchema` never reaching native - each failing its test.
+  **CI-confirmed at `bdd4fba`** (`ci.pr` run 36153470901, 50/50 on its second attempt): managed **286/286** on all four
+  legs, transport **32/32** and c-abi **76/76** on both platforms, binding-abi **11/11**, pubsub-conformance
+  **146/146**, the XRCE interop lane green. The first attempt failed ONE case on Windows -
+  `XrceCrossProcess/ProviderConformance.SubscribeNeverBlocksSchemaArrivesLater`, "XRCE: failed to create
+  subscriber participant (status=255)" just after the Agent established the session - in a suite this
+  push did not touch (nothing under the providers, `pubsub`, `core` or the conformance suite changed;
+  the lane ran only because `c-abi` did). It passed on the re-run and has passed on every earlier run of
+  this branch: recorded as an intermittent XRCE failure, cause not established, not as fixed. BIND-4 re-closes on that run.
 
   **Declined:** freezing bucket 3 at the port (BIND-4's own file-set rule says otherwise); a new
   tracker item (the bullet is BIND-4's); changing the existing two functions' signatures (breaks the

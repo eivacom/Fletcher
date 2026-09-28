@@ -114,3 +114,7 @@ re-derived the matrix. The 26 new cases are mapped by D-BIND-57 (12 over `inproc
 DDS, 3 excluded); the bullet is met when CI is green over them, by count, and
 `scripts/check_test_matrix.py` now makes a stale file set fail a pull request rather than pass a
 review.
+
+**Met at `bdd4fba` (`ci.pr` run 36153470901).** The 26 cases run - 12 in the unit lane, 11 in the transport
+lane - and every count is read from the run: managed 286 on all four legs, transport 32 on both
+platforms. **12 of 12, and BIND-4 closes on that run**, with the matrix checker green beside it.

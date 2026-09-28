@@ -817,7 +817,7 @@ Kind: 🟪 spec · 🟦 impl · 🔬 proof · ⚙ pipelines · 📓 docs
 | BIND-1 | The binding ABI header, reviewed as a specification (no implementation) | A | 🟪 | BIND-0 | `BindingAbi.CompilesAsC99AndIsSelfContained` | 🟢 |
 | BIND-2 | Nanoarrow schema-driven codec + publish fusion + the oracle's ABI producer | A | 🟦 | BIND-1 | `NanoarrowCodec.ByteIdenticalToArrowBridge` + `CopyAccounting.BindingProducerWritesInPlace` | 🟢 |
 | BIND-3 | `Eiva.Fletcher.Interop` + codec/Arrow tier in `Eiva.Fletcher` | A | 🟦 | BIND-2 | Every PROTO-MAPPING type round-trips through the binding (D-BIND-39, was "Bucket 1 green"); `ErrorTests.EveryHardCaseKeepsItsMessage` | 🟢 |
-| BIND-4 | Pub/sub in `Eiva.Fletcher`: registry, `Publisher`, `Subscriber`, `SchemaArrival`, thunk discipline, error handling | A | 🟦 | BIND-3 | Bucket 3 over `inprocess`; Bucket 4 over `fastdds`/`xrce` by selector; C# arm of `CallerTier`; per-row publish benchmark recorded (D-BIND-37) | 🔴 reopened again 2026-09-25 (D-BIND-57): bucket 3's file set grew by 26 cases when #128 was merged in, after the port; back to 🟢 when they are mapped and CI is green by count. (D-BIND-56 re-closed it on `78ac363` first: bucket 4 over `xrce`.) |
+| BIND-4 | Pub/sub in `Eiva.Fletcher`: registry, `Publisher`, `Subscriber`, `SchemaArrival`, thunk discipline, error handling | A | 🟦 | BIND-3 | Bucket 3 over `inprocess`; Bucket 4 over `fastdds`/`xrce` by selector; C# arm of `CallerTier`; per-row publish benchmark recorded (D-BIND-37) | 🟢 (reopened twice on 2026-09-25 and re-closed on CI: D-BIND-56 at `78ac363`, bucket 4 over `xrce`; D-BIND-57 at `bdd4fba`, bucket 3's 49-case file set mapped and the matrix checked) |
 | BIND-5 | `SubscriberArrow` batch-first + the copy oracle end-to-end from C# | A | 🔬 | BIND-4 | `pubsub-arrow` cases; copy oracle green with the **C#** producer | ⚪ |
 | BIND-6 | C# backend on the IR: type table + visitor → `<stem>.fletcher.cs` | B | 🟦 | — (GIR) | `CsharpVisitor.*` in `protoc/tests`; no-drift test unchanged | ⚪ |
 | BIND-7 | Arrow view + accessor emitters (`csharp_accessor`) + capstone third arm | B | 🟦 | BIND-6, BIND-3 | `accessor-capstone` C# arm `observed == expected`; `StructArray` windowing fixture at non-zero offset | ⚪ |
@@ -1227,7 +1227,8 @@ subscribe, **so that** I am a full Fletcher client with no protocol SDK on my bu
   which is the mechanism, observed - and it struck again at #128 (D-BIND-57): bucket 3's
   `pubsub` file set went 23 → 49 after it was ported, 26 of them per-topic options and
   the schema watch. They are mapped - 12 over `inprocess`, 11 over Fast DDS in the
-  transport lane - and 3 more are excluded, so 44 of 49 are mapped and 5 excluded;
+  transport lane - and 3 more are excluded, so 44 of 49 are mapped and 5 excluded
+  (**met at `bdd4fba`**, `ci.pr` run 36153470901);
   the **C# arm of `CallerTier`** with a total mapping onto the C++ cases; at least
   one case added to the C++ suite (seam §12.1).
   **Reopened 2026-09-25 (D-BIND-56):** bucket 4 had never run over `xrce` - its

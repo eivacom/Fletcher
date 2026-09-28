@@ -389,3 +389,12 @@ Locally: c-abi **76/76**, managed **286/286**, transport **32/32**, eight compil
 caught. **The lesson is about a rule this log already wrote down**: "a lane that gains a FILE
 dependency needs its checkout AND its path filter" was learned for CI; the matrix needed the same
 treatment - a table that says "re-run the command" is a table nobody re-runs.
+
+**Re-closed (D-BIND-57).** CI-confirmed at `bdd4fba` (`ci.pr` run 36153470901, 50/50 on its second attempt): managed **286/286** on all four
+legs, transport **32/32** and c-abi **76/76** on both platforms, binding-abi **11/11**, pubsub-conformance
+**146/146**, the XRCE interop lane green. The first attempt failed ONE case on Windows -
+`XrceCrossProcess/ProviderConformance.SubscribeNeverBlocksSchemaArrivesLater`, "XRCE: failed to create
+subscriber participant (status=255)" just after the Agent established the session - in a suite this
+push did not touch (nothing under the providers, `pubsub`, `core` or the conformance suite changed;
+the lane ran only because `c-abi` did). It passed on the re-run and has passed on every earlier run of
+this branch: recorded as an intermittent XRCE failure, cause not established, not as fixed.
