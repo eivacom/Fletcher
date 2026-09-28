@@ -41,6 +41,14 @@ on:
 # and protoc/tests/ along; that is a few hundred KB and is the price of the
 # check. A new consumer of a path outside this lane's checkout must add it HERE
 # and to ci.pr.yml's dotnet filter, in the same commit.
+#
+# integration-tests/copy-probe is the second such entry (D-BIND-62). The copy
+# oracle's C# leg, Fletcher.CopyOracle.Tests, loads the PROBE shim, which c-abi
+# builds only under `with_probe_shim` and which links that test-only package. So
+# the loop creates it before c-abi, builds c-abi with the option, and passes both
+# shims in: the shipped one to Fletcher.Tests, the probe to Fletcher.CopyOracle.Tests.
+# The shipped shim in that package is the same build as the release one; the
+# option only ADDS the probe beside it.
 jobs:
   linux:
     runs-on: ubuntu-latest
@@ -56,6 +64,7 @@ jobs:
             fastdds-pubsub-provider
             xrcedds-pubsub-provider
             c-abi
+            integration-tests/copy-probe
             protoc/tests/golden
 
       - name: Pull devcontainer image
@@ -87,9 +96,11 @@ jobs:
           docker run --rm             -v "${GITHUB_WORKSPACE}:/workspace"             -w /workspace             -e CI=true             fletcher-build             bash -c '
               set -e
               PROFILE=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release
-              for COMPONENT in core pubsub fastdds-pubsub-provider xrcedds-pubsub-provider c-abi; do
+              for COMPONENT in core pubsub fastdds-pubsub-provider xrcedds-pubsub-provider integration-tests/copy-probe c-abi; do
+                OPTS=""
+                if [ "$COMPONENT" = c-abi ]; then OPTS="-o &:with_probe_shim=True"; fi
                 echo "::group::conan create $COMPONENT"
-                (cd /workspace/$COMPONENT && conan create . --build=missing -pr:a=$PROFILE)
+                (cd /workspace/$COMPONENT && conan create . --build=missing -pr:a=$PROFILE $OPTS)
                 echo "::endgroup::"
               done
 
@@ -99,13 +110,19 @@ jobs:
                 exit 1
               fi
               echo "staging shim: $SHIM"
+              PROBE=$(find ~/.conan2/p -path "*/p/lib/libfletcher-c-abi-probe.so" -type f -print -quit)
+              if [ -z "$PROBE" ]; then
+                echo "::error::libfletcher-c-abi-probe.so not found in the Conan cache after conan create"
+                exit 1
+              fi
+              echo "staging probe shim: $PROBE"
 
               cd /workspace/dotnet
               echo "::group::dotnet --info"
               dotnet --info
               echo "::endgroup::"
               dotnet restore Fletcher.slnx --locked-mode
-              dotnet build Fletcher.slnx -c Release --no-restore -p:FletcherNativeShim="$SHIM"
+              dotnet build Fletcher.slnx -c Release --no-restore -p:FletcherNativeShim="$SHIM" -p:FletcherProbeShim="$PROBE"
               dotnet test Fletcher.slnx -c Release --no-build --logger "trx;LogFileName=linux.trx"
               dotnet pack Fletcher.slnx -c Release --no-build -o /workspace/dotnet/artifacts
             '
@@ -146,6 +163,7 @@ jobs:
             fastdds-pubsub-provider
             xrcedds-pubsub-provider
             c-abi
+            integration-tests/copy-probe
             protoc/tests/golden
 
       # global-json-file, not a literal version: dotnet/global.json is the single
@@ -165,10 +183,13 @@ jobs:
         shell: bash
         run: |
           set -e
-          PROFILE=.conan-profiles/Windows-msvc194-x86_64-Release
-          for COMPONENT in core pubsub fastdds-pubsub-provider xrcedds-pubsub-provider c-abi; do
+          # Absolute, because integration-tests/copy-probe is two levels deep.
+          PROFILE="$PWD/.conan-profiles/Windows-msvc194-x86_64-Release"
+          for COMPONENT in core pubsub fastdds-pubsub-provider xrcedds-pubsub-provider integration-tests/copy-probe c-abi; do
+            OPTS=()
+            if [ "$COMPONENT" = c-abi ]; then OPTS=(-o "&:with_probe_shim=True"); fi
             echo "::group::conan create $COMPONENT"
-            (cd "$COMPONENT" && conan create . --build=missing -pr:a="../$PROFILE")
+            (cd "$COMPONENT" && conan create . --build=missing -pr:a="$PROFILE" "${OPTS[@]}")
             echo "::endgroup::"
           done
 
@@ -187,6 +208,13 @@ jobs:
           fi
           echo "staging shim: $SHIM"
           echo "path=$SHIM" >> "$GITHUB_OUTPUT"
+          PROBE=$(find ~/.conan2/p -path '*/p/bin/fletcher-c-abi-probe.dll' -type f -print -quit)
+          if [ -z "$PROBE" ]; then
+            echo "::error::fletcher-c-abi-probe.dll not found in the Conan cache after conan create"
+            exit 1
+          fi
+          echo "staging probe shim: $PROBE"
+          echo "probe=$PROBE" >> "$GITHUB_OUTPUT"
 
       - name: Restore, build, test
         shell: bash
@@ -197,7 +225,7 @@ jobs:
           set -e
           dotnet --info
           dotnet restore Fletcher.slnx --locked-mode
-          dotnet build Fletcher.slnx -c Release --no-restore -p:FletcherNativeShim="${{ steps.shim.outputs.path }}"
+          dotnet build Fletcher.slnx -c Release --no-restore -p:FletcherNativeShim="${{ steps.shim.outputs.path }}" -p:FletcherProbeShim="${{ steps.shim.outputs.probe }}"
           dotnet test Fletcher.slnx -c Release --no-build --logger "trx;LogFileName=windows.trx"
 
       # No pack here: the packages are platform-neutral managed assemblies, and

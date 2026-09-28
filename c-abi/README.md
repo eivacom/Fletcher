@@ -66,6 +66,25 @@ conan create .                  --build=missing -pr:a=../.conan-profiles/<profil
 No Conan remote hosts the `fletcher-*` packages, so the dependencies have to be
 in the local cache first; `ci.c-abi.yml` does exactly the above.
 
+### The probe shim (`with_probe_shim`, test-only)
+
+```bash
+conan create ../integration-tests/copy-probe --build=missing -pr:a=../.conan-profiles/<profile>
+conan create . --build=missing -pr:a=../.conan-profiles/<profile> -o "&:run_tests=True" -o "&:with_probe_shim=True"
+```
+
+This builds `fletcher-c-abi-probe` beside the shim. It uses the same object
+library and entry points, but its builtins also register the copy oracle's
+`SeamProbeProvider` as `probe`. Two test-only entry points go with it,
+`fl_test_probe_loan` and `fl_test_probe_score`, declared in
+`probe/include/fletcher/abi/test/probe.h` and never in `binding.h`.
+
+A binding selects `probe` by name and publishes through its real path. The copy
+oracle's own `Judge()` then scores what the probe saw (D-BIND-58, D-BIND-61,
+D-BIND-62). The shipped shim still registers exactly three providers
+(`TheShippedShimHasNoProbe`). The option stays in the package ID, so a package
+built with it cannot pass for the release one. Its suite is `c_abi_probe_tests`.
+
 ## Status — round BIND
 
 **BIND-0** brought the component up: the two lanes run on both platforms, and

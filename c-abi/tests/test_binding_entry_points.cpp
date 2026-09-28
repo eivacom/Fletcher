@@ -698,6 +698,22 @@ TEST(BindingEntryPoints, TheSelectorIsClassifiedBeforeItIsResolved) {
     fl_error_dispose(&err);
 }
 
+/// The shipped shim registers EXACTLY the three built-ins: `probe` is the probe
+/// shim's alone (D-BIND-24, D-BIND-62). If a build ever compiled the probe's
+/// builtins into this shim, the registry's refusal would stop naming three and
+/// the name would resolve - both caught here.
+TEST(BindingEntryPoints, TheShippedShimHasNoProbe) {
+    fl_error err = {};
+    fl_provider* provider = nullptr;
+    const fl_provider_config config = {};
+
+    EXPECT_EQ(fl_provider_create(Str("probe"), &config, &provider, &err), FL_INVALID_ARGUMENT)
+        << MessageOf(err);
+    EXPECT_NE(MessageOf(err).find("available: fastdds, inprocess, xrce"), std::string::npos)
+        << MessageOf(err);
+    fl_error_dispose(&err);
+}
+
 /// `fl_error_dispose` is safe on a zeroed struct and safe twice — which is what
 /// lets every binding put it in a `finally` without a null check first.
 TEST(BindingEntryPoints, ErrorDisposeIsSafeOnAZeroedStructAndTwice) {

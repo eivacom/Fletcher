@@ -689,7 +689,11 @@ deferred to DICT (D-BIND-8). The copy oracle run with the C# producer is this
 item's acceptance, not BIND-2's stand-in. **How, ruled 2026-09-28 (D-BIND-58):** a
 test-only shim variant registers the probe so C#'s real `Publisher.Publish` is scored; the
 attachments claim is the delivery view, and a zero-copy managed publish of attachments is
-deferred with a trigger. **Surface, ruled 2026-09-28 (D-BIND-59):** one handler shape - per-row
+deferred with a trigger. **Scored, ruled 2026-09-28 (D-BIND-61):** by the source address of the
+window's payload bytes, which `WriteBuffer::Append` exposes on an always-full probe window; controls
+are a staging publish and a copied export. **Placed (D-BIND-62):** the instrument in a test-only
+`fletcher-copy-probe` package; the probe shim only under c-abi's `with_probe_shim` option; the C#
+leg is `dotnet/tests/Fletcher.CopyOracle.Tests`. **Surface, ruled 2026-09-28 (D-BIND-59):** one handler shape - per-row
 is a batch of one - and attachments as owned `AttachmentsBuilder` copies. **Found by the port and
 fixed in the shim (D-BIND-60):** a publish of rows bound under another schema is refused
 FL_INVALID_ARGUMENT, which C++'s one-codec-per-topic `PublisherArrow` makes impossible.

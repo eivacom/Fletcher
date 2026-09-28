@@ -1313,6 +1313,21 @@ codec step.
     (D-BIND-44, accepted); a zero-copy managed publish (`fl_blob_wrap` over pinned memory,
     ABI 0.7) is deferred until a consumer's attachments are large enough to cost a copy.
   * `SubscriberArrow` copies borrowed rows by design, so no zero-copy claim covers it.
+  * **How the fused publish is scored (D-BIND-61):** by the SOURCE of the window's payload bytes,
+    seen through `WriteBuffer::Append` on an always-full probe window; `encode_copies == 0` iff the
+    payload arrived from the C# batch's own buffer. Controls, each exactly 1: a staging publish
+    (`Encode` + `PublishRaw`) and a copied export.
+  * **Where it lives (D-BIND-62):** a test-only package, `fletcher-copy-probe`, shared with
+    `pubsub-conformance`; c-abi builds `fletcher-c-abi-probe` only under `with_probe_shim`.
+  * **5b, locally, not yet committed:** `dotnet/tests/Fletcher.CopyOracle.Tests` (5 cases, in
+    `Fletcher.slnx`) runs C#'s real `Publisher.Publish` into the probe: the fused publish scores
+    `encode_copies == 0` and `row_copies == 0`, the staging and copied-export controls score 1, and
+    a handler's `AttachmentsView` carries the loaned bytes by address (`attachment_copies == 0`, with
+    its own control). The same claims at the C level are in `c_abi_probe_tests` (7). Local results:
+    copy-probe **13/13**, c-abi **86/86** (78 + `TheShippedShimHasNoProbe` + 7), conformance
+    CopyAccounting/SeamVocabulary **28/28**, managed **313/313** plus oracle **5/5** on net8 and
+    net10. Mutations caught: `Publisher.Publish` staging the row, `Bind` exporting a copy, and five
+    mutations of the instrument's scoring and fault rules.
 
 ### BIND-6 — C# row emitter
 

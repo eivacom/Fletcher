@@ -38,6 +38,7 @@ jobs:
             arrow-bridge
             fastdds-pubsub-provider
             xrcedds-pubsub-provider
+            integration-tests/copy-probe
             .github
             .conan-profiles
 
@@ -54,7 +55,13 @@ jobs:
       # under `run_tests` in c-abi's recipe and never linked into the shipped
       # shim. A developer whose cache already holds it will not notice it missing
       # here; CI has no cache and does.
-      - name: Build fletcher-core, fletcher-pubsub, arrow-bridge and the two providers (dependencies)
+      #
+      # fletcher-copy-probe is here for the PROBE SHIM (D-BIND-62): c-abi requires
+      # it only under `with_probe_shim`, which this lane turns on so that the probe
+      # shim's own suite runs beside the shipped shim's. Created with its tests,
+      # so the instrument is checked on both platforms before anything scores
+      # with it. It is test-only and never released.
+      - name: Build fletcher-core, fletcher-pubsub, arrow-bridge, the two providers and the copy probe (dependencies)
         shell: bash
         working-directory: c-abi
         run: |
@@ -64,11 +71,12 @@ jobs:
           conan create ../arrow-bridge --build=missing -pr:a=$PROFILE
           conan create ../fastdds-pubsub-provider --build=missing -pr:a=$PROFILE
           conan create ../xrcedds-pubsub-provider --build=missing -pr:a=$PROFILE
+          conan create ../integration-tests/copy-probe --build=missing -pr:a=$PROFILE -o "&:run_tests=True"
 
       - name: Build and test
         shell: bash
         working-directory: c-abi
-        run: conan create . --build=missing -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release -o "&:run_tests=True"
+        run: conan create . --build=missing -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release -o "&:run_tests=True" -o "&:with_probe_shim=True"
 
       # The per-RID size of the shim is a release-facing number (the NuGet
       # package carries one of these per RID), so it is measured on every run
@@ -114,6 +122,7 @@ jobs:
             arrow-bridge
             fastdds-pubsub-provider
             xrcedds-pubsub-provider
+            integration-tests/copy-probe
             .github
             .conan-profiles
 
@@ -142,7 +151,8 @@ jobs:
               conan create ../arrow-bridge --build=missing -pr:a=$PROFILE
               conan create ../fastdds-pubsub-provider --build=missing -pr:a=$PROFILE
               conan create ../xrcedds-pubsub-provider --build=missing -pr:a=$PROFILE
-              conan create . --build=missing -pr:a=$PROFILE -o "&:run_tests=True"
+              conan create ../integration-tests/copy-probe --build=missing -pr:a=$PROFILE -o "&:run_tests=True"
+              conan create . --build=missing -pr:a=$PROFILE -o "&:run_tests=True" -o "&:with_probe_shim=True"
 
               SHIM=$(find ~/.conan2/p -path "*/p/lib/libfletcher-c-abi.so" -type f -print -quit)
               if [ -z "$SHIM" ]; then

@@ -1,220 +1,34 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-// The instrument behind `copy_accounting.hpp`: the probe provider and its two
-// control variants, the accounting encoder, and the one pure Judge(). The
-// argument for all of it lives in README.md. Deliberately gtest-free — the
-// assertions live in `copy_clauses.cpp`.
+// The harness half of `copy_accounting.hpp`: the runners, the accounting
+// encoder and the round-trip drivers. The probe provider, its control variants
+// and the one pure Judge() are `fletcher-copy-probe`'s (D-BIND-62). The argument
+// for all of it lives in README.md. Deliberately gtest-free — the assertions
+// live in `copy_clauses.cpp`.
 
 #include "fletcher/conformance/copy_accounting.hpp"
 
 #include <algorithm>
-#include <array>
 #include <cstring>
 #include <exception>
+#include <fletcher/copy_probe/seam_probe_provider.hpp>
 #include <fletcher/pubsub/in_process_provider.hpp>
 #include <fletcher/pubsub/publisher.hpp>
 #include <fletcher/pubsub/subscriber.hpp>
 #include <stdexcept>
 #include <string>
-#include <unordered_map>
 #include <utility>
 
 namespace fletcher {
 namespace conformance {
 namespace {
 
-/// Sample an address while its storage is still live (see `Address`).
-Address At(const void* p) { return reinterpret_cast<Address>(p); }
-
-std::string JoinTopic(const Topic& topic) {
-    std::string out;
-    for (const std::string& segment : topic) {
-        if (!out.empty()) out += '/';
-        out += segment;
-    }
-    return out;
-}
-
-/// A fixed arena of slots. The slots are MEMBERS, so P5's liveness precondition
-/// holds by construction rather than by argument. Slots rotate so the loaned
-/// bytes and the row of one publish never share an address.
-class Arena {
-   public:
-    static constexpr size_t kSlots = 4;
-    /// Above kLargeRowBytes; FixedWriteBuffer throws on overflow, so an
-    /// undersized slot is a loud failure rather than a silent truncation.
-    static constexpr size_t kSlotBytes = 8192;
-
-    uint8_t* NextSlot() {
-        uint8_t* base = slots_[cursor_].data();
-        cursor_ = (cursor_ + 1) % kSlots;
-        return base;
-    }
-
-    /// Scribbles on the way out, so "the owner died and the bytes happen to still
-    /// be there" is not a way to pass. Without this the ownership leg would rely
-    /// on an allocator not reusing the block — which is luck, not a measurement.
-    ~Arena() {
-        for (auto& slot : slots_) slot.fill(0xDD);
-    }
-
-   private:
-    std::array<std::array<uint8_t, kSlotBytes>, kSlots> slots_{};
-    size_t cursor_ = 0;
-};
-
-/// A growable window owned by THIS HARNESS. Every refill allocates the
-/// replacement while the old block is still held, so relocation is
-/// unconditional and observable (README, refill).
-class GrowableProbeBuffer : public WriteBuffer {
-   public:
-    GrowableProbeBuffer() : WriteBuffer(nullptr, 0) {}
-
-   private:
-    static constexpr size_t kStep = 128;
-
-    void AppendSlow(const uint8_t* data, size_t len) override {
-        Grow(len);
-        std::memcpy(data_ + pos_, data, len);
-        pos_ += len;
-    }
-
-    void AppendZerosSlow(size_t len) override {
-        Grow(len);
-        std::memset(data_ + pos_, 0, len);
-        pos_ += len;
-    }
-
-    void Grow(size_t len) {
-        std::vector<uint8_t> next(pos_ + std::max<size_t>(len, kStep));
-        if (pos_ > 0) std::memcpy(next.data(), buf_.data(), pos_);
-        buf_ = std::move(next);
-        data_ = buf_.data();
-        capacity_ = buf_.size();
-    }
-
-    std::vector<uint8_t> buf_;
-};
-
-/// A schema-less transport passes null throughout (spec §7 clause 1); this
-/// oracle measures bytes, not schemas.
-const SharedSchema& NoSchema() {
-    static const SharedSchema kNone{};
-    return kNone;
-}
-
-/// One class, three behaviours, so no control can drift from the thing it
-/// controls: `kZeroCopy` delivers the arena slot itself (positive control — a
-/// red there means the measurement is wrong), `kStaging` stages the row and
-/// deep-copies every blob (negative control), `kGrowable` encodes into a
-/// harness-owned growable window (refill control).
-enum class ProbeMode { kZeroCopy, kStaging, kGrowable };
-
-class SeamProbeProvider : public PubSubProvider {
-   public:
-    explicit SeamProbeProvider(ProbeMode mode) : mode_(mode) {}
-
-    void CreateTopic(const std::vector<std::string>&, OwnedSchema) override {}
-
-    void Publish(const std::vector<std::string>& topic_segments, const RowEncoder& encoder,
-                 const Attachments& attachments) override {
-        SubscribeCallback* cb = Callback(topic_segments);
-
-        if (mode_ == ProbeMode::kGrowable) {
-            // The buffer outlives the callback, so P5 holds here too.
-            GrowableProbeBuffer buffer;
-            encoder(buffer);
-            if (cb != nullptr) (*cb)(buffer.Data(), buffer.Position(), NoSchema(), attachments);
-            return;
-        }
-
-        uint8_t* slot = arena_->NextSlot();
-        FixedWriteBuffer buffer(slot, Arena::kSlotBytes);
-        encoder(buffer);
-        if (cb == nullptr) return;
-
-        if (mode_ == ProbeMode::kZeroCopy && loan_len_ == 0) {
-            (*cb)(slot, buffer.Position(), NoSchema(), attachments);
-            return;
-        }
-
-        // The caller's set, copied SHALLOWLY: copying shared_ptrs moves no
-        // payload byte, so it is not a copy under this oracle's definition (P3).
-        Attachments delivered = attachments;
-        if (loan_len_ > 0) {
-            // Where §3.2 USED to bite, and now does not: `Blob` is an owner plus
-            // a span, so bytes this provider already holds cross where they lie.
-            // The owner is the arena itself — a real one, so the blob keeps
-            // those bytes alive past the delivery exactly as a transport loan
-            // handle would.
-            delivered.Set(loan_key_, Blob(arena_, loan_base_, loan_len_));
-        }
-
-        if (mode_ != ProbeMode::kStaging) {
-            (*cb)(slot, buffer.Position(), NoSchema(), delivered);
-            return;
-        }
-
-        // The control's whole job: move every payload byte to a second address
-        // while keeping the content identical, so `memcmp` cannot tell the
-        // difference and only provenance can.
-        const std::vector<uint8_t> staged(slot, slot + buffer.Position());
-        Attachments deep;
-        for (size_t i = 0; i < delivered.size(); ++i) {
-            const Blob& blob = delivered.ValueAt(i);
-            deep.Set(std::string(delivered.KeyAt(i)),
-                     blob.empty()
-                         ? blob
-                         : Blob(std::vector<uint8_t>(blob.data(), blob.data() + blob.size())));
-        }
-        (*cb)(staged.data(), staged.size(), NoSchema(), deep);
-    }
-
-    [[nodiscard]] SubscriptionResult Subscribe(const std::vector<std::string>& topic_segments,
-                                               SubscribeCallback callback) override {
-        callbacks_[JoinTopic(topic_segments)] = std::move(callback);
-        // Schema-less by construction (§7 clause 1): kOk with a null schema.
-        return {SchemaArrival::Ready(nullptr)};
-    }
-
-    void Unsubscribe(const std::vector<std::string>& topic_segments) override {
-        callbacks_.erase(JoinTopic(topic_segments));
-    }
-
-    /// Park `payload` in an arena slot — memory this provider owns and a real
-    /// transport would have been LOANED — and make every later `Publish`
-    /// deliver those bytes under `key`. Returns the arena base: the address the
-    /// delivered blob would carry if the seam could carry borrowed memory.
-    const uint8_t* LoanForDelivery(std::string key, const std::vector<uint8_t>& payload) {
-        if (payload.size() > Arena::kSlotBytes) {
-            throw std::overflow_error("SeamProbeProvider::LoanForDelivery: slot overflow");
-        }
-        uint8_t* base = arena_->NextSlot();
-        std::memcpy(base, payload.data(), payload.size());
-        loan_key_ = std::move(key);
-        loan_base_ = base;
-        loan_len_ = payload.size();
-        return base;
-    }
-
-   private:
-    SubscribeCallback* Callback(const std::vector<std::string>& topic_segments) {
-        auto it = callbacks_.find(JoinTopic(topic_segments));
-        if (it == callbacks_.end() || !it->second) return nullptr;
-        return &it->second;
-    }
-
-    // Held by shared_ptr because a Blob handed over from it must be able to OWN
-    // it: that is the whole §3.2 contract a transport loan has to satisfy, and
-    // the probe has to satisfy it too or it is not standing in for one.
-    std::shared_ptr<Arena> arena_ = std::make_shared<Arena>();
-    ProbeMode mode_;
-    std::unordered_map<std::string, SubscribeCallback> callbacks_;
-    std::string loan_key_;
-    const uint8_t* loan_base_ = nullptr;
-    size_t loan_len_ = 0;
-};
+// The probe and its control variants live in `fletcher-copy-probe` since
+// D-BIND-62, with the ledger; the runners and drivers below are this harness's.
+using copy_probe::At;
+using copy_probe::ProbeMode;
+using copy_probe::SeamProbeProvider;
 
 /// Calls the provider directly at the seam.
 class DirectRunner : public CopyRunner {
@@ -443,42 +257,6 @@ void ReadRetainedBlob(CopyLedger& ledger, const Blob& retained) {
 }
 
 }  // namespace
-
-CopyVerdict Judge(const CopyLedger& ledger) {
-    CopyVerdict verdict;
-
-    // The CLIENT's half, which §8.1 used to begin after. A staged row is copied
-    // into the window before the window base is sampled, so `row_copies` below
-    // is a clean zero for it either way — this is the only field that can tell
-    // the two producers apart.
-    //
-    // Left EMPTY when the producer sampler never ran, which is the rule the
-    // ledger states: an unsampled leg must fail as itself rather than default
-    // into "the client copied the row". Every pre-existing leg is unsampled, so
-    // this is the difference between six legs carrying a manufactured verdict
-    // and six legs carrying none.
-    if (ledger.produced_at != 0) {
-        verdict.encode_copies = ledger.produced_in_window ? 0u : 1u;
-    }
-
-    // Strict equality, not containment — see the header for the in-place
-    // memmove that containment would score as zero.
-    const bool row_is_the_encode_window = ledger.delivered_data != 0 &&
-                                          ledger.delivered_data == ledger.encode_base &&
-                                          ledger.delivered_len == ledger.encode_len;
-    verdict.row_copies = row_is_the_encode_window ? 0 : 1;
-
-    for (const AttachmentTrace& trace : ledger.attachments) {
-        const bool same_bytes = trace.delivered_data != 0 &&
-                                trace.delivered_data == trace.published_data &&
-                                trace.delivered_len == trace.published_len;
-        if (!same_bytes) ++verdict.attachment_copies;
-    }
-
-    verdict.refill_moves = ledger.refill_moves;
-    verdict.refill_bytes = ledger.refill_bytes;
-    return verdict;
-}
 
 std::vector<uint8_t> CopyPayload(size_t len) {
     std::vector<uint8_t> payload(len);

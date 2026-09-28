@@ -133,3 +133,25 @@ add_test(
 # `pubsub-arrow/tests/CMakeLists.txt`.
 set_tests_properties(BindingAbi.CompilesAsC99AndIsSelfContained PROPERTIES
     TIMEOUT 300)
+
+# ---------------------------------------------------------------------------
+# The PROBE SHIM's own suite (D-BIND-61, D-BIND-62), only when the probe shim is
+# built. A SEPARATE executable, linking `fletcher-c-abi-probe` and never the
+# shipped shim: one shim per process, which D-BIND-17's single-copy check would
+# enforce at load anyway. Built beside the probe shim for the loader reason the
+# `c_abi_tests` comment above gives.
+#
+# 30 s, for the reason the gtest rows above state: the probe is in-process and
+# synchronous, so every row is work, never a wait.
+if(FLETCHER_BUILD_PROBE_SHIM)
+    add_executable(c_abi_probe_tests
+        test_probe_shim.cpp)
+    target_link_libraries(c_abi_probe_tests PRIVATE
+        GTest::gtest_main
+        fletcher-c-abi-probe
+        arrow::arrow)
+    set_target_properties(c_abi_probe_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY $<TARGET_FILE_DIR:fletcher-c-abi-probe>)
+    gtest_discover_tests(c_abi_probe_tests DISCOVERY_MODE PRE_TEST
+        PROPERTIES TIMEOUT 30)
+endif()

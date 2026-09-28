@@ -27,9 +27,14 @@ class FletcherCAbiConan(ConanFile):
     package_type = "shared-library"
     settings = "os", "compiler", "build_type", "arch"
 
-    options = {"run_tests": [True, False]}
+    # `with_probe_shim` builds the TEST-ONLY `fletcher-c-abi-probe` beside the shim
+    # (D-BIND-62). Unlike `run_tests` it stays in the package ID: a package built
+    # with it CONTAINS the probe, so it must never be mistaken for the release
+    # one, which is built without it.
+    options = {"run_tests": [True, False], "with_probe_shim": [True, False]}
     default_options = {
         "run_tests": False,
+        "with_probe_shim": False,
         # Inherited in spirit from the fastdds-pubsub-provider recipe, and
         # restated here because THIS is the artifact the decision is about: the
         # eProsima chain is linked statically INTO the shim, so the NuGet package
@@ -47,6 +52,7 @@ class FletcherCAbiConan(ConanFile):
         "include/*",
         "cmake/*",
         "tests/*",
+        "probe/*",
     )
 
     def requirements(self):
@@ -58,6 +64,10 @@ class FletcherCAbiConan(ConanFile):
         self.requires("fletcher-pubsub/0.5.1-alpha")
         self.requires("fletcher-fastdds-pubsub-provider/0.5.1-alpha")
         self.requires("fletcher-xrcedds-pubsub-provider/0.5.1-alpha")
+        if self.options.with_probe_shim:
+            # TEST-ONLY and never released: the copy oracle's instrument, which
+            # the probe shim registers and scores with (D-BIND-62).
+            self.requires("fletcher-copy-probe/0.5.0-alpha")
         if self.options.run_tests:
             self.requires("gtest/1.17.0")
             # The byte-identity oracle, and TEST-ONLY. The shipped shim must not
@@ -84,6 +94,8 @@ class FletcherCAbiConan(ConanFile):
         tc = CMakeToolchain(self)
         if self.options.run_tests:
             tc.cache_variables["FLETCHER_BUILD_TESTS"] = "ON"
+        if self.options.with_probe_shim:
+            tc.cache_variables["FLETCHER_BUILD_PROBE_SHIM"] = "ON"
         tc.generate()
 
     def build(self):
@@ -120,6 +132,22 @@ class FletcherCAbiConan(ConanFile):
              src=self.build_folder,
              dst=os.path.join(self.package_folder, "lib"),
              keep_path=False)
+        # The probe shim, when built: beside the shipped one, under its own name,
+        # so no pattern above can pick it up by accident and a lane has to ask for
+        # it by name.
+        if self.options.with_probe_shim:
+            copy(self, "*fletcher-c-abi-probe.dll",
+                 src=self.build_folder,
+                 dst=os.path.join(self.package_folder, "bin"),
+                 keep_path=False)
+            copy(self, "*libfletcher-c-abi-probe.so*",
+                 src=self.build_folder,
+                 dst=os.path.join(self.package_folder, "lib"),
+                 keep_path=False)
+            copy(self, "*.h",
+                 src=os.path.join(self.source_folder, "probe", "include"),
+                 dst=os.path.join(self.package_folder, "probe", "include"),
+                 keep_path=True)
         copy(self, "*.cmake",
              src=os.path.join(self.source_folder, "cmake"),
              dst=os.path.join(self.package_folder, "cmake"),

@@ -51,6 +51,7 @@ jobs:
             fastdds-pubsub-provider
             xrcedds-pubsub-provider
             c-abi
+            integration-tests/copy-probe
             integration-tests/pubsub-conformance
             .conan-profiles
             .github
@@ -85,7 +86,7 @@ jobs:
             fletcher-build \
             bash -c "set -e && \
                      PROFILE=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release && \
-                     for COMPONENT in core pubsub fastdds-pubsub-provider xrcedds-pubsub-provider c-abi; do \
+                     for COMPONENT in core pubsub fastdds-pubsub-provider xrcedds-pubsub-provider c-abi integration-tests/copy-probe; do \
                        echo '::group::conan create '\$COMPONENT && \
                        (cd \$COMPONENT && conan create . --build=missing -pr:a=\$PROFILE) && \
                        echo '::endgroup::'; \
@@ -118,6 +119,7 @@ jobs:
             fastdds-pubsub-provider
             xrcedds-pubsub-provider
             c-abi
+            integration-tests/copy-probe
             integration-tests/pubsub-conformance
             .conan-profiles
             .github
@@ -170,9 +172,15 @@ jobs:
           # all because the copy oracle's binding leg links the shim (BIND-2d,
           # D-BIND-34). A dependency added to a recipe and not to its lane is the
           # mistake `fPIC` and `arrow-bridge` each cost this round a CI cycle.
-          for COMPONENT in core pubsub fastdds-pubsub-provider xrcedds-pubsub-provider c-abi; do
+          #
+          # `integration-tests/copy-probe` is the copy oracle's instrument, moved out
+          # of this harness into a test-only package so the binding shim's probe
+          # variant scores with the same Judge() (D-BIND-62). Two levels deep, so the
+          # profile path is absolute.
+          PROFILE="$PWD/$PROFILE"
+          for COMPONENT in core pubsub fastdds-pubsub-provider xrcedds-pubsub-provider c-abi integration-tests/copy-probe; do
             echo "::group::conan create $COMPONENT"
-            (cd "$COMPONENT" && conan create . --build=missing -pr:a="../$PROFILE")
+            (cd "$COMPONENT" && conan create . --build=missing -pr:a="$PROFILE")
             echo "::endgroup::"
           done
 

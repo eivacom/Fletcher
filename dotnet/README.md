@@ -29,6 +29,7 @@ dotnet/
   .editorconfig              what `dotnet format --verify-no-changes` enforces
   src/…                      the three packages
   tests/Fletcher.Tests/      unit tests
+  tests/Fletcher.CopyOracle.Tests/  the copy oracle over C#'s real publish, against the PROBE shim (BIND-5b)
 ```
 
 ## Building
@@ -38,6 +39,12 @@ dotnet restore Fletcher.slnx
 dotnet build Fletcher.slnx -c Release
 dotnet test Fletcher.slnx -c Release
 ```
+
+The tests load native shims, which a source build has to stage: pass
+`-p:FletcherNativeShim=<fletcher-c-abi>` for `Fletcher.Tests` and
+`-p:FletcherProbeShim=<fletcher-c-abi-probe>` for `Fletcher.CopyOracle.Tests`
+(c-abi built with `with_probe_shim`, see `c-abi/README.md`). A project whose
+shim is missing FAILS with the loader's diagnostic rather than skipping.
 
 The SDK version is pinned twice on purpose — `global.json` here and
 `DOTNET_SDK_VERSION` in `.devcontainer/Dockerfile` — so the container, CI and a

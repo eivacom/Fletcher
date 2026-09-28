@@ -147,6 +147,55 @@ target_link_libraries(fletcher-c-abi PRIVATE
     fletcher-fastdds-pubsub-provider::fletcher-fastdds-pubsub-provider
     fletcher-xrcedds-pubsub-provider::fletcher-xrcedds-pubsub-provider)
 
+# ── The PROBE SHIM (D-BIND-58, D-BIND-61, D-BIND-62) ────────────────
+#
+# TEST-ONLY, and off unless asked for: `fletcher-c-abi-probe` is the shim with
+# `SeamProbeProvider` registered as the builtin `probe`, so a binding's REAL
+# publish path can be scored by the copy oracle. It is a separate artifact, never
+# a mode of the shipped one - the shipped shim still registers exactly three
+# providers and nothing outside can add one (D-BIND-24).
+#
+# The same object library and the same entry-point sources as the shipped shim;
+# only the builtins differ (`probe/src/builtins_probe.cpp` in place of
+# `src/builtins.cpp`), plus the `fl_test_*` exports, declared in a test header of
+# their own and never in binding.h. Same visibility rules and the same version
+# script, which already exports `fl_*`.
+option(FLETCHER_BUILD_PROBE_SHIM "Build the test-only probe shim" OFF)
+if(FLETCHER_BUILD_PROBE_SHIM)
+    find_package(fletcher-copy-probe CONFIG REQUIRED)
+
+    add_library(fletcher-c-abi-probe SHARED
+        src/binding_version.c
+        src/binding.cpp
+        probe/src/builtins_probe.cpp
+        probe/src/probe_exports.cpp)
+    target_compile_features(fletcher-c-abi-probe PRIVATE c_std_99 cxx_std_20)
+    set_target_properties(fletcher-c-abi-probe PROPERTIES
+        C_VISIBILITY_PRESET hidden
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON)
+    target_compile_definitions(fletcher-c-abi-probe PRIVATE FLETCHER_C_ABI_BUILDING)
+    if(NOT MSVC)
+        target_link_options(fletcher-c-abi-probe PRIVATE
+            "LINKER:--exclude-libs,ALL"
+            "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/cmake/exports.map")
+        set_target_properties(fletcher-c-abi-probe PROPERTIES
+            LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/cmake/exports.map)
+    endif()
+    target_include_directories(fletcher-c-abi-probe
+        PUBLIC
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/probe/include>
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(fletcher-c-abi-probe PRIVATE
+        fletcher-c-abi-impl
+        fletcher-copy-probe::fletcher-copy-probe
+        fletcher-pubsub::fletcher-pubsub
+        fletcher-fastdds-pubsub-provider::fletcher-fastdds-pubsub-provider
+        fletcher-xrcedds-pubsub-provider::fletcher-xrcedds-pubsub-provider)
+endif()
+
 option(FLETCHER_BUILD_TESTS "Build unit tests" OFF)
 if(FLETCHER_BUILD_TESTS)
     enable_testing()

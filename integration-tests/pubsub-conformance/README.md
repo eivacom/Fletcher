@@ -270,13 +270,19 @@ storage still lands at a different address than the *live* encode window.
 | `RefillMovementIsCountedNotFailed` | the refill counter is live: non-zero on a growable window, zero on a fixed one |
 | `JudgeArithmeticIsSound` | the pure verdict function, without a provider |
 
-Subjects: `SeamProbe` (a fixed-arena provider in this harness — the positive
+Subjects: `SeamProbe` (a fixed-arena provider — the positive
 control, proving the seam *permits* zero-copy), `InProcessLoopback` (the real
 `InProcessPubSubProvider` at the seam) and `InProcessViaPubSub` (the same
 provider through `Publisher`/`Subscriber`, so the layers *above* the seam are
 measured too). All same-process by construction: an address means nothing across
 an address space, so a cross-process or off-thread subject cannot be built here
 at all, and the ledger is unsynchronised to keep it that way.
+
+**Where the instrument lives (D-BIND-62).** The ledger, `Judge()` and
+`SeamProbeProvider` are in the test-only package
+[`fletcher-copy-probe`](../copy-probe/README.md), not in this harness, so that
+c-abi's probe shim scores a binding's real publish path with the same `Judge()`.
+The runners, the drivers and every clause stay here, unchanged.
 
 **Refill is permitted and its cost is published, not failed** — §3.1 clause 1
 allows bytes to move "inside a refill, which must preserve them verbatim", and
@@ -344,7 +350,12 @@ returned when `Take` returns and a buffered pre-schema backlog can outlive it.
   exist until BIND-3), and the publisher wrapper `fl_publisher_publish_row`,
   which this instrument cannot score at all — it samples from inside the
   `RowEncoder` frame, and the fusion resolves its own provider rather than
-  being handed the probe (D-BIND-34).
+  being handed the probe (D-BIND-34). **Both are now scored elsewhere (BIND-5b):**
+  `dotnet/tests/Fletcher.CopyOracle.Tests` runs C#'s `Publisher.Publish`
+  through `fl_publisher_publish_row` into the probe, which c-abi's probe shim
+  registers as `probe`. The score comes from the source of the window's payload
+  bytes (D-BIND-61). The negative controls are a staged managed publish and a
+  copied export.
   It also remains a permission rather than a guarantee at the seam itself: a
   client that ignores the call composes its row elsewhere and `Append`s it, pays
   one whole-row copy, and the seam cannot stop it — `StagingProducerIsCaught` is

@@ -9,6 +9,9 @@ project(pubsub-conformance-integration CXX)
 # of retiring the README's stand-in caveat.
 find_package(fletcher-c-abi CONFIG REQUIRED)
 find_package(fletcher-pubsub CONFIG REQUIRED)
+# The copy oracle's instrument - ledger, Judge(), the probe provider - shared
+# with the binding shim's probe variant (D-BIND-62).
+find_package(fletcher-copy-probe CONFIG REQUIRED)
 find_package(fletcher-fastdds-pubsub-provider CONFIG REQUIRED)
 find_package(GTest REQUIRED)
 
@@ -179,6 +182,7 @@ add_executable(conformance_copy_accounting
     src/binding_producer.cpp)
 target_link_libraries(conformance_copy_accounting PRIVATE
     conformance_support
+    fletcher-copy-probe::fletcher-copy-probe
     fletcher-c-abi::fletcher-c-abi
     GTest::gtest_main)
 
@@ -191,7 +195,7 @@ target_link_libraries(conformance_copy_accounting PRIVATE
 # path today (review debt C2-1).
 #
 # It links the copy oracle's instrument, not a second one, so there is exactly
-# one scoring path in this harness.
+# one scoring path in this harness - `fletcher-copy-probe`'s, since D-BIND-62.
 #
 # Keeps gtest_main: it spawns no child and opens no pipe.
 add_executable(conformance_seam_vocabulary
@@ -199,6 +203,7 @@ add_executable(conformance_seam_vocabulary
     src/copy_accounting.cpp)
 target_link_libraries(conformance_seam_vocabulary PRIVATE
     conformance_support
+    fletcher-copy-probe::fletcher-copy-probe
     GTest::gtest_main)
 
 # ── The provider-registry suite ─────────────────────────────────────

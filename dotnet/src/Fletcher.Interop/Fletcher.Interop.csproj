@@ -35,6 +35,10 @@
          status numbers exceptions; it is the intended and only consumer. -->
     <InternalsVisibleTo Include="Fletcher" />
     <InternalsVisibleTo Include="Fletcher.Tests" />
+    <!-- BIND-5b's copy oracle reaches the provider's native handle and the ABI's
+         own types, to hand the probe shim's `fl_test_*` entry points what they
+         score (D-BIND-61). A test assembly, never shipped. -->
+    <InternalsVisibleTo Include="Fletcher.CopyOracle.Tests" />
   </ItemGroup>
 
 </Project>

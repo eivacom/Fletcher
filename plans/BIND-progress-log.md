@@ -426,3 +426,43 @@ cases named for it. **A lesson from the tooling, again:** a `conan build` that n
 credentials sat on a prompt for ten minutes, and the mutation script that was meant to run first had
 already failed on a cp1252 decode - so for that stretch nothing was mutated. Mutate bytes, and build
 the existing tree with `cmake --build`.
+
+**5b - the copy oracle from C#, locally, not yet committed.** Two rulings came first. D-BIND-61:
+the fused publish is scored by the SOURCE of the window's payload bytes, which
+`WriteBuffer::Append` exposes on a window kept exactly full. The controls are a staged publish and a
+copied export. D-BIND-62: the instrument moves into a test-only package, `fletcher-copy-probe`, and
+c-abi builds `fletcher-c-abi-probe` only under `with_probe_shim`. The mechanism was explained in
+detail before the second asking; the first asking was set aside unanswered.
+
+**What was built.**
+- The package holds the ledger and `Judge()`, moved unchanged; `SeamProbeProvider`, now public, with
+  a fourth mode `kTracing`; and the tracing window.
+- pubsub-conformance names the moved types through `using` declarations, so no clause changed.
+- c-abi's probe shim is a second SHARED target over the same object library. Its own builtins file
+  adds `probe`, and it exports two `fl_test_*` entry points from a test header.
+- `Fletcher.CopyOracle.Tests` stages the probe shim under the shipped shim's name, so
+  `Eiva.Fletcher.Interop` loads it exactly as it loads the real one.
+- The CI lanes are wired in: c-abi creates the package with its tests and runs the probe suite;
+  dotnet passes both shims; pubsub-conformance creates the package.
+
+**Measured, locally.** C#'s fused publish scores `encode_copies == 0`: the payload is appended from
+the RecordBatch's own buffer. It also scores `row_copies == 0`: the handler's span IS the window.
+The staged managed publish and the copied export each score exactly 1. Two mutations of the SHIPPED
+managed code went red: `Publisher.Publish` encoding into managed memory then publishing raw, and
+`FletcherCodec.Bind` exporting a deep copy. Those are the two managed failure modes D-BIND-58 named,
+and the acceptance case caught each one.
+
+**A mutation survived, and it found a hole.** Disabling the tracing window's "records tile the window"
+check left all nine of its tests green. The check could never fire, because records are pushed where
+the last one ended by construction. The guard D-BIND-61 actually relies on is the position check in
+`Reconcile`, and that one returned early when nothing had been recorded yet. So bytes written unseen
+before the first record would not have faulted. The unreachable loop is gone and the early return is
+closed. Four tests now drive the fault path through a subclass that writes past the window's back,
+standing in for the future inline append the guard exists for. Five instrument mutations are now each
+caught, and the package has 13 tests.
+
+**Lessons, again, from the tooling.**
+- A mutation loop leaves the LAST mutant's build in the Conan cache as the latest revision. Every
+  result after it was checked against the clean revision, the stale ones were removed, and everything
+  was rebuilt from clean sources before these numbers were taken.
+- A heredoc ate a backslash twice. The scripts that need escapes are now written as files.

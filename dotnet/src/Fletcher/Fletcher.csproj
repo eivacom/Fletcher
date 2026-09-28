@@ -24,6 +24,10 @@
     <!-- Errors.ThrowIfFailed is internal: it takes an FlError, which is an
          interop type and not part of this package's public surface. -->
     <InternalsVisibleTo Include="Fletcher.Tests" />
+    <!-- BIND-5b's copy oracle reaches the provider's native handle and the ABI's
+         own types, to hand the probe shim's `fl_test_*` entry points what they
+         score (D-BIND-61). A test assembly, never shipped. -->
+    <InternalsVisibleTo Include="Fletcher.CopyOracle.Tests" />
   </ItemGroup>
 
   <ItemGroup>

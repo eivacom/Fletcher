@@ -95,6 +95,7 @@ jobs:
               - '.devcontainer/**'
             c-abi:
               - 'c-abi/**'
+              - 'integration-tests/copy-probe/**'
               - 'core/**'
               - 'pubsub/**'
               - 'arrow-bridge/**'
@@ -115,6 +116,7 @@ jobs:
             dotnet:
               - 'dotnet/**'
               - 'c-abi/**'
+              - 'integration-tests/copy-probe/**'
               - 'protoc/tests/golden/**'
               - '.github/workflows/ci.pr.yml'
               - '.github/workflows/ci.dotnet.yml'
@@ -320,6 +322,7 @@ jobs:
               - 'fastdds-pubsub-provider/**'
               - 'xrcedds-pubsub-provider/**'
               - 'c-abi/**'
+              - 'integration-tests/copy-probe/**'
               - 'integration-tests/pubsub-conformance/**'
               - '.github/workflows/ci.pr.yml'
               - '.github/workflows/ci.integration-test.pubsub-conformance.yml'

@@ -1963,3 +1963,68 @@ accessors do, for capstone parity (Q18).
   **Declined:** a managed-only check in `Publisher.Publish` (Rust and every later binding would owe it
   again, and it could not use the seam's comparison); deferring to a follow-up item (the port cannot
   claim `PublishTypeMismatchThrowsToCaller` without it).
+
+- **D-BIND-61 - the probe scores C#'s FUSED publish by the SOURCE of the window's payload bytes,
+  seen through `WriteBuffer::Append`; the negative controls are a staging publish and a copied
+  export.** *LOCKED BY THE MAINTAINER 2026-09-28,* in two questions, at the start of BIND-5b, after
+  the mechanism was explained in detail.
+
+  **WHY D-BIND-58 WAS NOT ENOUGH.** It said the probe scores `encode_copies` "from inside the
+  encoder". The ledger gets that number from the PRODUCER reporting where it composed the row
+  (`produced_at == the window's cursor`); BIND-2d's producer was harness code and could report. On
+  the fused path (`Publisher.Publish(topic, rows, i)` -> `fl_publisher_publish_row`) the producer is
+  the codec inside the shim, and nothing reports - so a correct publish and one that encoded into
+  managed memory and went through `PublishRaw` both score `row_copies == 0` and neither yields an
+  `encode_copies`.
+
+  **THE RULING.**
+  1. **Trace sources.** The codec writes a binary field with `WriteBinary` -> `Append(data, len)`,
+     `data` pointing into the Arrow buffer the C Data export shares. `Append` is inline and reaches
+     the virtual `AppendSlow(src, len)` only when the window is full, so the probe's window is kept
+     EXACTLY full (`capacity == pos` between writes, over a fixed arena slot that never moves):
+     every `Append`/`AppendByte`/`AppendFixed` is recorded with its source, `AppendZeros` as zeros,
+     and `AppendInPlace` as a lent span whose contents have no source. The C# test supplies A, the
+     address of the payload in its own batch; `encode_copies == 0` iff the payload arrived in one
+     recorded `Append` with `src == A` and the payload's length. `Judge()` is unchanged:
+     `produced_at` is the address the payload came from, `produced_in_window` means "no
+     intermediate". `row_copies` is scored as today.
+  2. **Controls, each exactly 1:** a STAGING publish (`FletcherCodec.Encode` into managed memory,
+     then `PublishRaw` - the payload arrives through a lent span) and a COPIED EXPORT (A recorded,
+     then a deep copy of the batch bound and published - the payload arrives from A' != A).
+
+  **Bounds, stated with it.** Only variable-length fields carry provenance - scalars are read by
+  value and appended from a stack temporary - so the leg uses a one-binary-field row, as BIND-2d
+  did, and the claim is for payload bytes. A write the probe did not record must FAIL the leg: the
+  probe asserts its records cover exactly `[0, Position())`, so an `Append` that one day bypasses
+  the capacity check makes the leg red, not vacuously green. It proves the managed side added no
+  intermediate; it trusts the codec to be the encoder, as every leg does.
+
+  **Declined:** classifying by path (in-place fill = staged: a route check, blind to a copied
+  export); scoring the `RowWriter` form only (leaves the main path unmeasured, the bullet unmet),
+  and with it a staging-`RowWriter` control.
+
+- **D-BIND-62 - the copy-oracle instrument moves into a TEST-ONLY package, `fletcher-copy-probe`,
+  and c-abi builds the probe shim only under an option.** *LOCKED BY THE MAINTAINER 2026-09-28,* in
+  one question, completing D-BIND-58's "test support both can use", which named no home.
+
+  **WHY IT NEEDED A RULING.** CI builds c-abi with `conan create`, which sees only `c-abi/`, so c-abi
+  cannot reach an instrument under `integration-tests/`; and the probe shim links c-abi's internal
+  object library, so it can only be built in c-abi's own CMake.
+
+  **THE RULING.** A new recipe, `integration-tests/copy-probe/` (`fletcher-copy-probe`), holds the
+  instrument - the ledger, `Judge()`, `SeamProbeProvider` and D-BIND-61's tracing window; the gtest
+  clauses and runners stay in `pubsub-conformance`, which requires the package. It is NEVER released.
+  c-abi requires it only under a new `with_probe_shim` option, and only then builds
+  `fletcher-c-abi-probe`: the object library, the probe registered as a builtin, and `fl_test_*`
+  exports declared in a test header of their own, never `binding.h`. The dotnet and transport lanes
+  build c-abi with the option; release packages are built without it and so cannot contain the probe.
+
+  **Declined:** shipping the instrument as `fletcher/pubsub/testing/` headers (test code inside a
+  product package); owning it in `c-abi/tests` (the lanes would dig a DLL out of Conan's build folder,
+  and the conformance harness would depend on c-abi's test tree).
+
+  **As built (BIND-5b), one sentence of the ruling narrowed:** it said "the dotnet and transport
+  lanes build c-abi with the option". Only the lanes that LOAD the probe shim do: `ci.dotnet.yml`,
+  for `Fletcher.CopyOracle.Tests`, and `ci.c-abi.yml`, for `c_abi_probe_tests`. The transport lane
+  never loads it and builds c-abi as before. The pubsub-conformance lane creates the package, which
+  its harness now requires.
