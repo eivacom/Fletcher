@@ -19,7 +19,22 @@
 //   * a window of only dropped rows still delivers a zero-row batch, so the loss
 //     is reported rather than silent;
 //   * a schema the codec cannot open drops every row for the subscription's
-//     life, and each report carries a NULL batch.
+//     life, and each report carries a NULL batch;
+//   * a window never holds more than it can decode (D-BIND-63): a row that would
+//     take it past the ceiling flushes it first, as RowLimit, and a row that
+//     alone exceeds the ceiling is dropped and counted.
+//
+// ── The ceiling, and how it differs from C++'s ─────────────────────────────
+// C++'s batcher flushes early when an append would overflow an Arrow 32-bit
+// offset: 2^31-2 bytes (or elements) in one column's builder
+// (`BatchCapacityExceeded`). This batcher holds RAW rows until flush, so it
+// bounds the raw window instead - which bounds every column's value bytes too,
+// since a column's bytes are a subset of the rows'. The number is C++'s, lowered
+// to `Array.MaxLength` (55 bytes less), the most one managed buffer can hold. So
+// the same topic splits at the same place give or take the rows' framing bytes,
+// never later than C++ would. What it does NOT bound, as C++ does, is ELEMENT
+// counts: a list of bit-packed booleans can hold 2^31 elements in 256 MiB. That
+// window fails to decode and is dropped whole, and reported - not silent.
 //
 // Per-row delivery is the same thing with MaxRows = 1 (D-BIND-59): a row
 // arrives as a one-row batch, flushed on the delivery thread as it lands.
@@ -115,17 +130,36 @@ public sealed class BatchOptions
 /// <summary>A subscriber that delivers RecordBatches (D-BIND-25).</summary>
 public sealed class SubscriberArrow : IDisposable
 {
+    /// <summary>
+    /// The most one window may hold, in raw row bytes (D-BIND-63): C++'s Arrow
+    /// builder limit, 2^31-2, lowered to what one managed buffer can hold.
+    /// </summary>
+    internal static readonly long DefaultWindowByteCeiling = Math.Min((1L << 31) - 2, System.Array.MaxLength);
+
     private readonly Subscriber _subscriber;
     private readonly object _gate = new();
     private readonly Dictionary<ulong, Batcher> _batchers = [];
+    private readonly long _windowByteCeiling;
     private long _absorbed;
     private bool _disposed;
 
     /// <summary>Create an Arrow subscriber over a provider.</summary>
     public SubscriberArrow(PubSubProviderHandle provider)
+        : this(provider, DefaultWindowByteCeiling)
+    {
+    }
+
+    /// <summary>
+    /// With a lower window ceiling, so the split can be tested without
+    /// allocating gigabytes. Not public: the ceiling is C++'s, not a knob.
+    /// </summary>
+    internal SubscriberArrow(PubSubProviderHandle provider, long windowByteCeiling)
     {
         ArgumentNullException.ThrowIfNull(provider);
+        ArgumentOutOfRangeException.ThrowIfLessThan(windowByteCeiling, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(windowByteCeiling, DefaultWindowByteCeiling);
         _subscriber = new Subscriber(provider);
+        _windowByteCeiling = windowByteCeiling;
     }
 
     /// <summary>Batch handlers that threw, absorbed by this subscriber.</summary>
@@ -165,7 +199,7 @@ public sealed class SubscriberArrow : IDisposable
         }
 
         int maxRows = (int)Math.Clamp(options.MaxRows, 1, int.MaxValue);
-        var batcher = new Batcher(this, handler, maxRows, options.Timeout);
+        var batcher = new Batcher(this, handler, maxRows, options.Timeout, _windowByteCeiling);
 
         SubscribeResult result = _subscriber.Subscribe(topic, batcher.OnRow, topicOptions);
         batcher.SubscriptionId = result.Subscription.Id;
@@ -277,6 +311,7 @@ public sealed class SubscriberArrow : IDisposable
         private readonly RecordBatchHandler _handler;
         private readonly int _maxRows;
         private readonly TimeSpan _timeout;
+        private readonly long _byteCeiling;
 
         // State, under _gate. Never held while the handler runs.
         private readonly object _gate = new();
@@ -296,12 +331,13 @@ public sealed class SubscriberArrow : IDisposable
         // Re-entrant, so a handler that unsubscribes serves its own closing flush.
         private readonly object _deliver = new();
 
-        internal Batcher(SubscriberArrow owner, RecordBatchHandler handler, int maxRows, TimeSpan timeout)
+        internal Batcher(SubscriberArrow owner, RecordBatchHandler handler, int maxRows, TimeSpan timeout, long byteCeiling)
         {
             _owner = owner;
             _handler = handler;
             _maxRows = maxRows;
             _timeout = timeout;
+            _byteCeiling = byteCeiling;
         }
 
         internal ulong SubscriptionId { get; set; }
@@ -316,31 +352,58 @@ public sealed class SubscriberArrow : IDisposable
             }
 
             bool full;
-            lock (_gate)
+            while (true)
             {
-                if (_stopped)
+                lock (_gate)
                 {
-                    return;
+                    if (_stopped)
+                    {
+                        return;
+                    }
+
+                    if (_codec is null && !_undecodable)
+                    {
+                        Resolve(schema);
+                    }
+
+                    // Alone past the ceiling: no window could decode it, so it is
+                    // dropped and counted - C++'s "the row alone exceeds the budget".
+                    if (_undecodable || row.Length > _byteCeiling)
+                    {
+                        _dropped++;
+                        ArmDeadline();
+                        return;
+                    }
+
+                    // Fits once the pending window is out of the way: flush it first,
+                    // outside the gate, then look again - another delivery may have
+                    // added to the new window in between (D-BIND-63).
+                    if (_rows.WrittenCount + (long)row.Length <= _byteCeiling)
+                    {
+                        try
+                        {
+                            row.CopyTo(_rows.GetSpan(row.Length));
+                        }
+                        catch (OutOfMemoryException)
+                        {
+                            // The copy is the only allocation that grows with the data;
+                            // a failed one is a lost row, reported as one - never an
+                            // absorbed handler fault.
+                            _dropped++;
+                            ArmDeadline();
+                            return;
+                        }
+
+                        _rows.Advance(row.Length);
+                        _ends.Add(_rows.WrittenCount);
+                        _attachments.Add(attachments);
+                        ArmDeadline();
+                        full = _ends.Count >= _maxRows;
+                        break;
+                    }
                 }
 
-                if (_codec is null && !_undecodable)
-                {
-                    Resolve(schema);
-                }
-
-                if (_undecodable)
-                {
-                    _dropped++;
-                    ArmDeadline();
-                    return;
-                }
-
-                row.CopyTo(_rows.GetSpan(row.Length));
-                _rows.Advance(row.Length);
-                _ends.Add(_rows.WrittenCount);
-                _attachments.Add(attachments);
-                ArmDeadline();
-                full = _ends.Count >= _maxRows;
+                Flush(BatchReason.RowLimit);
             }
 
             if (full)

@@ -1328,6 +1328,10 @@ codec step.
     CopyAccounting/SeamVocabulary **28/28**, managed **313/313** plus oracle **5/5** on net8 and
     net10. Mutations caught: `Publisher.Publish` staging the row, `Bind` exporting a copy, and five
     mutations of the instrument's scoring and fault rules.
+  * **Found by the C++/C# sequence review during 5b's CI, and fixed (D-BIND-63):** the 5a batcher
+    had no byte ceiling. Its window now splits where C++'s does (`Array.MaxLength`, just under C++'s
+    2^31-2), and a row alone past the ceiling is a counted drop. Three cases were added; managed is
+    now **316/316**, and two mutations are each caught.
 
 ### BIND-6 — C# row emitter
 

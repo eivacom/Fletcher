@@ -100,7 +100,7 @@ subscription. A typed handle makes that unrepresentable.
 | `SubscriberArrow::Subscribe(segments, SubscribeCallback, TopicOptions = {})` per-row | `SubscriberArrow.Subscribe(TopicPath, RecordBatchHandler, TopicOptions?)` - the SAME handler, a window of one (`MaxRows = 1`, D-BIND-59); the borrowed row itself is `Subscriber` + `RowHandler`, or the generated typed subscriber |
 | `SubscriberArrow::Subscribe(segments, RecordBatchCallback, BatchOptions, TopicOptions = {})` | `SubscribeBatched(TopicPath, RecordBatchHandler, BatchOptions?, TopicOptions?)` — the primary shape. `RecordBatchHandler(RecordBatch? batch, IReadOnlyList<AttachmentsBuilder> attachments, BatchStatus status)`: the handler OWNS the batch; zero rows when a window held only dropped rows, NULL only when the topic's schema cannot be opened; row `i`'s attachments are owned copies at index `i`, read with `KeyAt`/`ValueAt`/`TryFind` (D-BIND-59) |
 | `SubscriberArrow::SubscribeSchema` / `UnsubscribeSchema` (#128) | forwarded to the wrapped `Subscriber`'s (D-BIND-59) |
-| `BatchOptions {max_rows, timeout}` | `sealed class BatchOptions { long MaxRows = 8000 · TimeSpan Timeout = 1 min }` |
+| `BatchOptions {max_rows, timeout}` | `sealed class BatchOptions { long MaxRows = 8000 · TimeSpan Timeout = 1 min }`. A window also splits at a fixed byte ceiling, C++'s 2^31-2 lowered to `Array.MaxLength`; it is not an option (D-BIND-63) |
 | `BatchStatus {Reason, rows_dropped}` | `readonly struct BatchStatus { BatchReason Reason · long RowsDropped }`, `enum BatchReason { RowLimit, Timeout, Closing }` |
 | `ImportArrowSchema(SharedSchema)` | `SchemaHandle.ToArrowSchema()` — the one safe conversion, exposed once |
 

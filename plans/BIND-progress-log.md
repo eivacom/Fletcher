@@ -466,3 +466,24 @@ caught, and the package has 13 tests.
   result after it was checked against the clean revision, the stale ones were removed, and everything
   was rebuilt from clean sources before these numbers were taken.
 - A heredoc ate a backslash twice. The scripts that need escapes are now written as files.
+
+**A review while 5b's CI ran: the C++ and C# calling sequences, side by side.** Asked for by the
+maintainer, and read-only until a finding was ruled on.
+
+- **Publish side.** C# is at least as zero-copy as C++, and better on the fused path. C++'s
+  `PublisherArrow::Publish(ArrowRow)` stages every row in a `thread_local` scratch vector, so that a
+  type mismatch reaches its caller as `std::invalid_argument`. C#'s `fl_publisher_publish_row`
+  encodes in the provider's window. D-BIND-60's pre-check refuses the mismatch, and Fast DDS now
+  rethrows encoder failures after `write()`.
+- **Arrow subscribe side.** C# copies rows and attachments where C++ keeps borrowed bytes, as ruled
+  (D-BIND-25, D-BIND-58, D-BIND-59).
+- **One real divergence, ruled and fixed the same hour (D-BIND-63):** C++ splits a batch window
+  before it overflows Arrow's 32-bit offsets, and C# had no ceiling at all.
+- **Smaller findings, recorded for the fresh-context review:**
+  - the copy oracle measures `fl_publisher_publish_row` but not `fl_publisher_publish_rows`;
+  - `fl_publisher_publish_rows` does not check `first + count` against the batch before publishing;
+  - a codec failure inside a fused publish probably carries a transport-dependent status (not
+    verified);
+  - C++'s batch callbacks can overlap across its two threads, where C# serialises them, so a
+    row-limit flush on the delivery thread can wait behind a timer-thread handler;
+  - C++'s staging copy is not written down on the public-surface note.

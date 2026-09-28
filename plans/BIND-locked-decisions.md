@@ -2028,3 +2028,36 @@ accessors do, for capstone parity (Q18).
   for `Fletcher.CopyOracle.Tests`, and `ci.c-abi.yml`, for `c_abi_probe_tests`. The transport lane
   never loads it and builds c-abi as before. The pubsub-conformance lane creates the package, which
   its harness now requires.
+
+- **D-BIND-63 - `SubscriberArrow`'s window has C++'s ceiling: a row that would take it past the
+  ceiling flushes it first, as RowLimit, and a row that alone exceeds it is dropped and counted.**
+  *LOCKED BY THE MAINTAINER 2026-09-28,* in one question, after a review comparing the C++ and C#
+  calling sequences found the gap while 5b's CI ran.
+
+  **THE GAP.** C++'s batcher flushes early when an append would overflow an Arrow 32-bit offset
+  (`BatchCapacityExceeded`, 2^31-2 bytes or elements in one builder) and appends the row again. C#'s
+  batcher, as 5a shipped it, appended raw rows to an `ArrayBufferWriter` with no bound. At about 2 GiB
+  the copy threw, the Subscriber thunk absorbed it as a HANDLER fault rather than a counted drop, and
+  every later row of that window was lost the same way. It is reachable with the defaults: 8000 rows
+  and 1 minute on a topic of 1 MB binary rows reach 2 GiB after about 2000 rows.
+
+  **THE RULING.** Mirror C++, with no new public API.
+  1. The ceiling is C++'s number, `2^31-2`, lowered to `Array.MaxLength` (55 bytes less), the most one
+     managed buffer can hold: `SubscriberArrow.DefaultWindowByteCeiling`. An internal constructor
+     takes a lower one, for tests only.
+  2. A row that would take the pending window past it flushes the window first, reported as
+     `RowLimit` as C++ reports its split, and then starts the next window. The check is repeated
+     after the flush, since another delivery may have added to the new window in between.
+  3. A row that alone exceeds the ceiling is dropped and counted in `RowsDropped`.
+  4. A failure to copy a row into the window is counted as a drop, never absorbed as a handler fault.
+
+  **How it differs from C++, stated with it.** C# bounds the RAW window, because it holds raw rows
+  until flush, while C++ bounds each column's builder. The raw bound implies the column bound, since
+  a column's bytes are a subset of the rows'. So the same topic splits at the same place give or take
+  the rows' framing bytes, never later than C++. What it does not bound, as C++ does, is ELEMENT
+  counts: a list of bit-packed booleans can reach 2^31 elements in 256 MiB. That window fails to
+  decode and is dropped whole and reported, not silently.
+
+  **Declined:** a public `BatchOptions.MaxBytes` (a knob with no C++ counterpart, and a surface
+  change); documenting the limit only (rows lost as handler faults, and C++ behaving differently for
+  the same topic).

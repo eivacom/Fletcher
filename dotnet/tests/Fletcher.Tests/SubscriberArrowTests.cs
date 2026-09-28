@@ -66,7 +66,8 @@
 // no Finish() to fail and nothing to construct. The neighbouring property - a
 // window that cannot be decoded is reported, never fatal - is
 // ASchemaTheCodecCannotOpenDropsEveryRow's and ACorruptRowIsDroppedAndTheBatchStaysAligned's.
-// So the file set is 33: 32 mapped, 1 excluded.
+// So the file set is 33: 32 mapped, 1 excluded. Three more cases pin the window
+// ceiling (D-BIND-63), which C++ enforces at 2 GiB and no C++ case can reach.
 using System;
 using System.Collections.Generic;
 using System.Threading;
@@ -698,6 +699,77 @@ public sealed class SubscriberArrowTests : IDisposable
         Assert.Equal([2, 2, 1], [seen[0].Rows, seen[1].Rows, seen[2].Rows]);
         Assert.Equal([BatchReason.RowLimit, BatchReason.RowLimit, BatchReason.Closing], [seen[0].Status.Reason, seen[1].Status.Reason, seen[2].Status.Reason]);
         Assert.All(seen, d => Assert.Equal(0, d.Status.RowsDropped));
+    }
+
+    // ── The window ceiling (D-BIND-63) ──────────────────────────────────────
+    //
+    // No C++ mirror in `test_pubsub_arrow`: its BatchCapacityExceeded split needs
+    // 2 GiB in one builder. The rule is the same one - a row that would take the
+    // window past the ceiling flushes it first, one that alone exceeds it is
+    // dropped and counted - shown here with a ceiling of a few rows' bytes.
+
+    private static int RowBytes(int x, string name)
+    {
+        using RecordBatch batch = Row(x, name);
+        using var codec = new FletcherCodec(TwoColumns);
+        using BoundRows rows = codec.Bind(batch);
+        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+        codec.Encode(rows, 0, buffer);
+        return buffer.WrittenCount;
+    }
+
+    [Fact]
+    public void ARowThatWouldPassTheCeilingFlushesTheWindowFirst()
+    {
+        int one = RowBytes(1, "same");
+        using var bounded = new SubscriberArrow(_provider, windowByteCeiling: (one * 2) + (one / 2));
+        TopicPath topic = Declared("ceiling");
+        SubscribeResult result = bounded.SubscribeBatched(topic, _sink.Handler, Options(100_000, Long));
+        result.Schema.Dispose();
+
+        Publish(topic, 1, "same");
+        Publish(topic, 2, "same");
+        Assert.Empty(_sink.Snapshot());
+
+        Publish(topic, 3, "same");  // would make three rows: two go first
+        Delivery first = Assert.Single(_sink.Snapshot());
+        Assert.Equal(2, first.Rows);
+        Assert.Equal(BatchReason.RowLimit, first.Status.Reason);
+        Assert.Equal(0, first.Status.RowsDropped);
+
+        result.Subscription.Dispose();
+        List<Delivery> seen = _sink.Snapshot();
+        Assert.Equal(2, seen.Count);
+        Assert.Equal(1, seen[1].Rows);
+        Assert.Equal(3, ((Int32Array)seen[1].Batch!.Column(0)).GetValue(0));
+        Assert.Equal(BatchReason.Closing, seen[1].Status.Reason);
+    }
+
+    [Fact]
+    public void ARowLargerThanTheCeilingIsDroppedAndCounted()
+    {
+        int one = RowBytes(1, "small");
+        using var bounded = new SubscriberArrow(_provider, windowByteCeiling: one + 4);
+        TopicPath topic = Declared("toolarge");
+        SubscribeResult result = bounded.SubscribeBatched(topic, _sink.Handler, Options(100_000, Long));
+        result.Schema.Dispose();
+
+        Publish(topic, 1, "small");
+        Publish(topic, 2, new string('x', 64));  // alone past the ceiling
+        result.Subscription.Dispose();
+
+        Delivery only = Assert.Single(_sink.Snapshot());
+        Assert.Equal(1, only.Rows);
+        Assert.Equal(1, only.Status.RowsDropped);
+        Assert.Equal(0UL, bounded.AbsorbedCallbackFailures);
+    }
+
+    [Fact]
+    public void TheDefaultCeilingIsTheMostOneManagedBufferHolds()
+    {
+        Assert.Equal(Math.Min((1L << 31) - 2, System.Array.MaxLength), SubscriberArrow.DefaultWindowByteCeiling);
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => new SubscriberArrow(_provider, SubscriberArrow.DefaultWindowByteCeiling + 1));
     }
 
     /// <summary>A handler that throws is absorbed and counted, and the next batch still arrives.</summary>
