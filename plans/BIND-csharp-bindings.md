@@ -1319,7 +1319,7 @@ codec step.
     (`Encode` + `PublishRaw`) and a copied export.
   * **Where it lives (D-BIND-62):** a test-only package, `fletcher-copy-probe`, shared with
     `pubsub-conformance`; c-abi builds `fletcher-c-abi-probe` only under `with_probe_shim`.
-  * **5b, locally, not yet committed:** `dotnet/tests/Fletcher.CopyOracle.Tests` (5 cases, in
+  * **5b, committed at `38d6d78`:** `dotnet/tests/Fletcher.CopyOracle.Tests` (5 cases, in
     `Fletcher.slnx`) runs C#'s real `Publisher.Publish` into the probe: the fused publish scores
     `encode_copies == 0` and `row_copies == 0`, the staging and copied-export controls score 1, and
     a handler's `AttachmentsView` carries the loaned bytes by address (`attachment_copies == 0`, with
@@ -1328,6 +1328,9 @@ codec step.
     CopyAccounting/SeamVocabulary **28/28**, managed **313/313** plus oracle **5/5** on net8 and
     net10. Mutations caught: `Publisher.Publish` staging the row, `Bind` exporting a copy, and five
     mutations of the instrument's scoring and fault rules.
+    **CI-confirmed at `38d6d78`** (`ci.pr` run 36443379137, 50/50 on its first attempt): copy-probe **13/13** and c-abi **86/86** on both platforms, managed **313/313** and the oracle **5/5** on all four legs, pubsub-conformance **146/146**, transport **33/33** and binding-abi **11/11** on both platforms.
+    The Linux probe shim, its version script and the staged `libfletcher-c-abi.so` name all held on their first run.
+    D-BIND-63 followed at `255ad43` and moved managed to 316; its own CI run is the next one.
   * **Found by the C++/C# sequence review during 5b's CI, and fixed (D-BIND-63):** the 5a batcher
     had no byte ceiling. Its window now splits where C++'s does (`Array.MaxLength`, just under C++'s
     2^31-2), and a row alone past the ceiling is a counted drop. Three cases were added; managed is

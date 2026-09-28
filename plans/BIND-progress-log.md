@@ -427,7 +427,7 @@ credentials sat on a prompt for ten minutes, and the mutation script that was me
 already failed on a cp1252 decode - so for that stretch nothing was mutated. Mutate bytes, and build
 the existing tree with `cmake --build`.
 
-**5b - the copy oracle from C#, locally, not yet committed.** Two rulings came first. D-BIND-61:
+**5b - the copy oracle from C#, committed at `38d6d78`.** Two rulings came first. D-BIND-61:
 the fused publish is scored by the SOURCE of the window's payload bytes, which
 `WriteBuffer::Append` exposes on a window kept exactly full. The controls are a staged publish and a
 copied export. D-BIND-62: the instrument moves into a test-only package, `fletcher-copy-probe`, and
@@ -460,6 +460,8 @@ before the first record would not have faulted. The unreachable loop is gone and
 closed. Four tests now drive the fault path through a subclass that writes past the window's back,
 standing in for the future inline append the guard exists for. Five instrument mutations are now each
 caught, and the package has 13 tests.
+
+**CI-confirmed at `38d6d78`** (`ci.pr` run 36443379137, 50/50 on its first attempt): copy-probe **13/13** and c-abi **86/86** on both platforms, managed **313/313** and the oracle **5/5** on all four legs, pubsub-conformance **146/146**, transport **33/33** and binding-abi **11/11** on both platforms. The Linux probe shim, its version script and the staged `libfletcher-c-abi.so` name all held on their first run.
 
 **Lessons, again, from the tooling.**
 - A mutation loop leaves the LAST mutant's build in the Conan cache as the latest revision. Every
