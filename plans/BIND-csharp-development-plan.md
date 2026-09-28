@@ -686,7 +686,10 @@ mapped, and `scripts/check_test_matrix.py` now guards the matrix on every pull r
 **BIND-5 — Arrow subscriber + oracle end to end.** Managed batching: copy borrowed
 rows, decode N per native call, deliver `RecordBatch`. Dictionary re-folding
 deferred to DICT (D-BIND-8). The copy oracle run with the C# producer is this
-item's acceptance, not BIND-2's stand-in.
+item's acceptance, not BIND-2's stand-in. **How, ruled 2026-09-28 (D-BIND-58):** a
+test-only shim variant registers the probe so C#'s real `Publisher.Publish` is scored; the
+attachments claim is the delivery view, and a zero-copy managed publish of attachments is
+deferred with a trigger.
 
 **BIND-6 — C# row emitter.** `csharp_backend_type_table` + `csharp_backend_visitor`
 on the IR, reusing `cpp_backend::BuildFlattenedFieldList`. Emitted per message:

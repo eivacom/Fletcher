@@ -818,7 +818,7 @@ Kind: 🟪 spec · 🟦 impl · 🔬 proof · ⚙ pipelines · 📓 docs
 | BIND-2 | Nanoarrow schema-driven codec + publish fusion + the oracle's ABI producer | A | 🟦 | BIND-1 | `NanoarrowCodec.ByteIdenticalToArrowBridge` + `CopyAccounting.BindingProducerWritesInPlace` | 🟢 |
 | BIND-3 | `Eiva.Fletcher.Interop` + codec/Arrow tier in `Eiva.Fletcher` | A | 🟦 | BIND-2 | Every PROTO-MAPPING type round-trips through the binding (D-BIND-39, was "Bucket 1 green"); `ErrorTests.EveryHardCaseKeepsItsMessage` | 🟢 |
 | BIND-4 | Pub/sub in `Eiva.Fletcher`: registry, `Publisher`, `Subscriber`, `SchemaArrival`, thunk discipline, error handling | A | 🟦 | BIND-3 | Bucket 3 over `inprocess`; Bucket 4 over `fastdds`/`xrce` by selector; C# arm of `CallerTier`; per-row publish benchmark recorded (D-BIND-37) | 🟢 (reopened twice on 2026-09-25 and re-closed on CI: D-BIND-56 at `78ac363`, bucket 4 over `xrce`; D-BIND-57 at `bdd4fba`, bucket 3's 49-case file set mapped and the matrix checked) |
-| BIND-5 | `SubscriberArrow` batch-first + the copy oracle end-to-end from C# | A | 🔬 | BIND-4 | `pubsub-arrow` cases; copy oracle green with the **C#** producer | ⚪ |
+| BIND-5 | `SubscriberArrow` batch-first + the copy oracle end-to-end from C# | A | 🔬 | BIND-4 | `pubsub-arrow` cases; copy oracle green with the **C#** producer (D-BIND-58) | 🔴 |
 | BIND-6 | C# backend on the IR: type table + visitor → `<stem>.fletcher.cs` | B | 🟦 | — (GIR) | `CsharpVisitor.*` in `protoc/tests`; no-drift test unchanged | ⚪ |
 | BIND-7 | Arrow view + accessor emitters (`csharp_accessor`) + capstone third arm | B | 🟦 | BIND-6, BIND-3 | `accessor-capstone` C# arm `observed == expected`; `StructArray` windowing fixture at non-zero offset | ⚪ |
 | BIND-T | TS `Publisher`/`Subscriber` emitter | C | 🟦 | — | `TsVisitor.DescriptorByteIdentical` still green + new emitter cases | ⚪ |
@@ -1289,6 +1289,17 @@ codec step.
   use what D-BIND-57 added.
 - **The copy oracle run with the C# producer** is this item's acceptance: zero-copy
   for rows and attachments, from managed code, falsifiable.
+  **Amended 2026-09-28 (D-BIND-58)**, because it could not be met as written:
+  * **Rows:** a TEST-ONLY shim variant registers `SeamProbeProvider` (never shipped; its
+    `fl_test_*` exports live in a test header, not `binding.h`), and C#'s real
+    `Publisher.Publish` into it scores `encode_copies == 0`; a deliberately staging managed
+    publish scores exactly 1 as the negative control. The probe moves into test support
+    shared with `integration-tests/pubsub-conformance`.
+  * **Attachments:** the DELIVERY view - a handler's `AttachmentsView` is the transport's own
+    bytes, by address, `attachment_copies == 0`. Publishing attachments from C# copies
+    (D-BIND-44, accepted); a zero-copy managed publish (`fl_blob_wrap` over pinned memory,
+    ABI 0.7) is deferred until a consumer's attachments are large enough to cost a copy.
+  * `SubscriberArrow` copies borrowed rows by design, so no zero-copy claim covers it.
 
 ### BIND-6 — C# row emitter
 

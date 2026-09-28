@@ -1865,3 +1865,44 @@ accessors do, for capstone parity (Q18).
   tracker item (the bullet is BIND-4's); changing the existing two functions' signatures (breaks the
   header's append-only rule for a one-form convenience); keeping the watch owed (nine cases would be
   recorded as owed rather than ported); re-deriving by hand (it was the hand that forgot).
+
+- **D-BIND-58 — BIND-5's copy oracle scores the REAL managed publish through a test-only shim that
+  registers the probe; the attachments claim is the DELIVERY view, and a zero-copy managed publish
+  of attachments is deferred with a trigger.** *LOCKED BY THE MAINTAINER 2026-09-28,* in two
+  questions, before BIND-5's code.
+
+  **WHY THE BULLET COULD NOT BE MET AS WRITTEN.** It asked for "the copy oracle run with the C#
+  producer ... zero-copy for rows and attachments, from managed code, falsifiable". The oracle
+  scores through `SeamProbeProvider`, a harness-private C++ provider the shipped shim cannot select
+  (D-BIND-24), which is why BIND-2 could measure only `fl_encode_row` into the probe's window
+  (D-BIND-34). That route cannot catch either way a MANAGED producer loses zero-copy: `Publisher.
+  Publish` staging the encoded row in managed memory, or the C Data Interface export copying the
+  Arrow buffers. And managed attachments are copied on publish BY RULING - into the builder
+  (D-BIND-44) and again by `fl_blob_create` (D-BIND-42 allows no view-only blob). `SubscriberArrow`
+  copies borrowed rows by design, so no zero-copy claim covers it: the claim is publish, and the
+  borrowed delivery view (`RowHandler`, `AttachmentsView`).
+
+  **THE RULING.**
+  1. **Rows: a test-only shim variant with the probe registered, never shipped.** Built from
+     c-abi's existing object library plus `SeamProbeProvider` plus a small `fl_test_*` export set that
+     reads the ledger, in a test header of its own - NOT `binding.h`. C# selects it by name and calls
+     the real `Publisher.Publish`; the probe scores `encode_copies` from inside the encoder, by the
+     same `Judge()` as every other leg, and a deliberately staging managed publish must score exactly
+     1 as the negative control. D-BIND-34 rejected a registration seam IN THE SHIPPED shim; a separate
+     test artifact does not reopen that door, and only one copy of Fletcher is loaded, so D-BIND-17
+     holds. The probe moves out of `integration-tests/pubsub-conformance` into test support both can
+     use, rather than being copied.
+  2. **Attachments: the delivery view, now.** The bullet is amended: publishing attachments from C#
+     copies (D-BIND-44, accepted - sidecar metadata); what is proven is that a handler's
+     `AttachmentsView` hands it the transport's OWN bytes, by address, scored as
+     `attachment_copies == 0`. **Deferred, with a trigger:** a zero-copy managed publish of
+     attachments - an owned-by-callback blob over pinned managed memory (`fl_blob_wrap`), which would
+     reopen D-BIND-42 and D-BIND-44 at ABI 0.7 - when a consumer's attachments are large enough that
+     the copy costs. The pattern `BlobHandle` follows (D-BIND-55).
+
+  **Declined:** a managed mirror of D-BIND-34 (a native library lending a window to `fl_encode_row`
+  would measure the codec path BIND-2 already measured and miss both managed failure modes);
+  amending to proxies (pointer equality on the export and zero managed allocation per publish -
+  kept in mind as cheap supporting tests, but an `ArrayPool`-staging publish passes an allocation
+  check); building the attachment publish path now (ABI and lifetime surface for a need no consumer
+  has stated).
