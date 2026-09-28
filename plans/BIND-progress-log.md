@@ -401,7 +401,7 @@ this branch: recorded as an intermittent XRCE failure, cause not established, no
 
 ## BIND-5 — `SubscriberArrow` and the copy oracle from C# (in progress, 2026-09-28)
 
-**5a - `SubscriberArrow`, locally, not yet committed.** Batch-first as C++: flush on `MaxRows`, on a
+**5a - `SubscriberArrow`, committed at `0da07c7`.** Batch-first as C++: flush on `MaxRows`, on a
 deadline armed by the window's first event, or on close; one native decode per window, a
 row-by-row second pass only when a row in it is corrupt, so attachments stay aligned. The surface
 was ruled first (D-BIND-59): one `RecordBatchHandler` for both forms, owned `AttachmentsBuilder`
@@ -416,7 +416,10 @@ a `lock_guard` was held left the mutex locked for the next call, which standalon
 reproduce. The shipped code throws after release; the cause is an open finding, not a fix.
 
 Locally: managed **313/313** (net8, net10), c-abi **78/78**, transport **25 of 33** - the 8 `xrce` cases
-need a MicroXRCEAgent this machine does not have - with the new Fast DDS schema-watch case green.
+need a MicroXRCEAgent this machine does not have - with the new Fast DDS schema-watch case green. **CI-confirmed at `0da07c7`** (`ci.pr` run
+36405073609, 50/50 on its first attempt): managed **313/313** on all four legs, transport **33/33**
+and c-abi **78/78** on both platforms - the `xrce` cases included, and the shim fix on Linux -
+binding-abi **11/11**, pubsub-conformance **146/146**.
 Falsified: six managed mutations (fallback off, no closing flush, drop-only window skipped, silent
 absorb, misaligned attachments, options dropped) and the shim check's removal, each caught by the
 cases named for it. **A lesson from the tooling, again:** a `conan build` that needed remote
