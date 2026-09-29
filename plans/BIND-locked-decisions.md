@@ -2275,3 +2275,34 @@ accessors do, for capstone parity (Q18).
   **Declined:** honouring `csharp_namespace` (CS0101 beside protoc's output); following protoc
   throughout, with `Outer.Types.Inner` (one type would be named differently in C# than in every
   other Fletcher language).
+  *(Enum member naming: answered by D-BIND-70 the same day.)*
+
+- **D-BIND-70 - generated C# names enum members by protoc's C# rule: strip the enum-name prefix,
+  then PascalCase.** *LOCKED BY THE MAINTAINER 2026-09-29,* in one question, at the BIND-5 →
+  BIND-6 boundary.
+
+  **WHY.** D-BIND-8 rules a real C# `enum`, int32-backed, and says nothing about member names. The
+  only precedent is C++, which copies the proto names verbatim from the descriptor
+  (`protoc/src/generator.cpp`, `EmitEnumClass`), so C++ callers write `Color::COLOR_RED`.
+  TypeScript and Rust expose an enum field as int32 and emit no names. `EnumIdentity::symbols`
+  holds the raw names (`protoc/src/ir.cpp`) and BIND-6 is its first reader. Verbatim names are
+  unidiomatic in C#, and analysers flag the underscores (CA1707).
+
+  **THE RULING.**
+  - **Members:** strip the enum-name prefix, then PascalCase what is left, as protoc's C# generator
+    does: `COLOR_UNSPECIFIED`, `COLOR_RED`, `COLOR_DARK_BLUE` in `enum Color` become
+    `Unspecified`, `Red`, `DarkBlue`. This extends D-BIND-69's choice to borrow protoc's
+    identifier rule.
+  - **Numbers:** every member keeps its proto number verbatim, so wire bytes are unchanged and
+    open proto3 enums still round-trip (D-BIND-8).
+  - **The type name:** a nested enum is flattened like a nested message under D-BIND-69
+    (`Player_Color`).
+  - **The accepted cost:** the same value is `Color::COLOR_RED` in C++ and `Color.Red` in C#, so
+    cross-language documentation states the mapping.
+
+  **Left to BIND-6, answered by protoc's rule where it has one:** a remainder that starts with a
+  digit, two members that collide after stripping, a value with no prefix to strip, and
+  `allow_alias` duplicates. A case protoc's rule does not answer is raised as a question.
+
+  **Declined:** verbatim like C++ (unidiomatic, analyser noise); PascalCase keeping the prefix
+  (`ColorRed`, which repeats the type name in every member).

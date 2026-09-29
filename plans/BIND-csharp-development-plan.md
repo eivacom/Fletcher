@@ -717,8 +717,10 @@ publish of a consumer with zero trim warnings is the reflection-free proof.
 ignoring `option csharp_namespace` so our types never share one with protoc's
 (CS0101); nested messages flat as `Outer_Inner`, as in C++, TS and Rust, not
 protoc's `Outer.Types.Inner`; PascalCase properties with protoc's `_` suffix on a
-clash with the class name. Enum member naming and an MSBuild `.targets` are separate
-questions at the same boundary.
+clash with the class name. **Enum members, ruled 2026-09-29 (D-BIND-70):** protoc's
+C# rule, prefix stripped then PascalCase (`COLOR_RED` → `Color.Red`, where C++ keeps
+`Color::COLOR_RED`), numbers verbatim. An MSBuild `.targets` is a separate question
+at the same boundary.
 
 **BIND-7 — Views + accessors + capstone.** Two emitters under one token; the
 `StructArray.Fields` windowing question settled empirically first and recorded in

@@ -452,7 +452,10 @@ Hard rules, straight from GIR and the rulings:
   is no golden to re-baseline — but the no-drift test must prove the *existing*
   outputs are untouched when the new tokens are passed.
 - **Enums**: a **real `enum`** with the proto symbols, int32-backed (GIR-7,
-  D-BIND-8).
+  D-BIND-8). **Member names by protoc's C# rule (D-BIND-70, ruled 2026-09-29):**
+  strip the enum-name prefix and PascalCase the rest, so `COLOR_RED` is `Color.Red`
+  where C++ has `Color::COLOR_RED`. Numbers are verbatim; a nested enum's type name
+  is flat, `Player_Color` (D-BIND-69).
 - **Temporal values are lossless** (D-BIND-26): `Timestamp` and `Duration` map to
   `long`-backed structs carrying the unit, with `ToDateTimeOffset()` /
   `ToTimeSpan()` as explicit conversions; `DateTime` ticks are 100 ns and would
@@ -1383,6 +1386,10 @@ codec step.
   after a C# keyword compiles. Test cases for each, including a `.proto` that sets
   `csharp_namespace` and one whose type is generated beside protoc's C# output in one
   project without CS0101.
+- **Enum members per D-BIND-70:** prefix stripped, then PascalCase (`COLOR_DARK_BLUE`
+  → `DarkBlue`), each with its proto number. Test cases for the edge cases protoc's
+  rule answers (a remainder starting with a digit, members colliding after stripping,
+  no prefix, `allow_alias`), and a round trip showing the wire bytes match C++'s.
 - Per service method, `<Service>_<Method>Publisher` (`Topic`, `TopicKey`,
   `Schema`, `Publish(T)`, `Publish(T, AttachmentsBuilder)`,
   `Publish(IEnumerable<T>)`) and `<Service>_<Method>Subscriber`

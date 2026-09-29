@@ -139,7 +139,7 @@ share its class's name (`Player.Player_`).
 | Generated C++ | Generated C# |
 |---|---|
 | `class <Msg>` — setters, getters, `EncodeTo`, `Encode`, `DecodeInto`, ctors from bytes | `sealed class <Msg>` — properties, `static Schema Schema { get }`, `static RecordBatch ToArrow(IEnumerable<Msg>)`, `static <Msg> FromArrow(StructArray, int)`. **No `EncodeTo`/`DecodeInto`** — generated C# writes no wire bytes |
-| nested `enum` | real C# `enum`, int32-backed (D-BIND-8) |
+| nested `enum` | real C# `enum`, int32-backed (D-BIND-8); a nested one is flat, `Player_Color` (D-BIND-69). Members by protoc's C# rule, prefix stripped then PascalCase: C++ `Color::COLOR_RED` is C# `Color.Red`, same number (D-BIND-70) |
 | `<Msg>Schema()` → `OwnedSchema` | `<Msg>.Schema` → `Apache.Arrow.Schema`, metadata preserved |
 | `class <Msg>View` (row-oriented, over a Scalar) | `readonly struct <Msg>View` over `(StructArray, int)` |
 | `class <Msg>Accessor` — `Make(RecordBatch)`, `Make(StructArray)`, column getters, `RowView` | `sealed class <Msg>Accessor` — `TryMake(RecordBatch, out)`, `TryMake(StructArray, out)`, column getters, `readonly struct RowView`. `TryMake` is the documented deviation from C++ `Make`-throws and Rust `Result` |
