@@ -115,7 +115,7 @@ class SeamProbeProvider : public PubSubProvider {
    public:
     explicit SeamProbeProvider(ProbeMode mode) : mode_(mode) {}
 
-    void CreateTopic(const std::vector<std::string>&, OwnedSchema) override {}
+    void CreateTopic(const std::vector<std::string>&, TopicDeclaration) override {}
 
     void Publish(const std::vector<std::string>& topic_segments, const RowEncoder& encoder,
                  const Attachments& attachments) override {
@@ -172,8 +172,8 @@ class SeamProbeProvider : public PubSubProvider {
     }
 
     [[nodiscard]] SubscriptionResult Subscribe(const std::vector<std::string>& topic_segments,
-                                               SubscribeCallback callback) override {
-        callbacks_[JoinTopic(topic_segments)] = std::move(callback);
+                                               SubscriptionRequest request) override {
+        callbacks_[JoinTopic(topic_segments)] = std::move(request.callback);
         // Schema-less by construction (§7 clause 1): kOk with a null schema.
         return {SchemaArrival::Ready(nullptr)};
     }
@@ -223,7 +223,7 @@ class DirectRunner : public CopyRunner {
         : provider_(std::move(provider)) {}
 
     void Subscribe(const Topic& topic, PubSubProvider::SubscribeCallback cb) override {
-        (void)provider_->Subscribe(topic, std::move(cb));
+        (void)provider_->Subscribe(topic, {std::move(cb)});
     }
 
     void Publish(const Topic& topic, const PubSubProvider::RowEncoder& encoder,

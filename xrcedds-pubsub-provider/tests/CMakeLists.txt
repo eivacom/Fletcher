@@ -74,7 +74,7 @@ gtest_discover_tests(xrce_provider_tests DISCOVERY_MODE PRE_TEST
 # would fail for a reason that has nothing to do with the annotation being
 # present. The annotation is kept because it IS effective for MSVC consumers.
 #
-# Consequence to know: for the virtual provider Subscribe methods, #56's
+# Consequence to know: for the virtual provider Subscribe method, #56's
 # compile-time guarantee holds on MSVC only. The non-virtual surfaces
 # (SubscriberArrow::Subscribe, PublisherArrow::ListTopics, the core/codec
 # helpers) are diagnosed on both compilers.

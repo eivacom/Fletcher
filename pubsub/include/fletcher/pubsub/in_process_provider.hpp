@@ -51,15 +51,18 @@ void RegisterInProcessProvider(ProviderRegistry& registry);
 /// another thread blocks on that mutex until the delivery in flight has
 /// returned, so no callback for a cancelled topic can outlive the call.
 ///
-/// **Every seam method — the four data-path methods, the two schema-only
-/// ones and the two options-taking ones — is refused from inside a delivery
-/// on this instance and this thread**, with `PubSubError(kReentrantCall)`, at
-/// a door BEFORE any lock (spec §6 clause 6, owner ruling 2026-09-05). The
-/// mutex being non-recursive is therefore not what stands between a handler
-/// and a deadlock — the door is; the mutex is the backstop, and a handler
-/// that reached it would get MSVC's "resource deadlock would occur" rather
-/// than a hang. Another THREAD calling during a delivery is not re-entrancy
-/// and is served.
+/// **Every seam method — the four data-path methods and the two schema-only
+/// ones — is refused from inside a delivery on this instance and this thread**, with
+/// `PubSubError(kReentrantCall)`, at a door BEFORE any lock (spec §6 clause 6).
+/// The mutex being non-recursive is therefore not
+/// what stands between a handler and a deadlock — the door is; the mutex is
+/// the backstop, and a handler that reached it would get MSVC's "resource
+/// deadlock would occur" rather than a hang. Another THREAD calling during a
+/// delivery is not re-entrancy and is served.
+///
+/// A rejecting `SubscriptionRequest::check`'s "the data side never opens" (provider.hpp) means,
+/// for this provider: a rejection known inside the call installs nothing; a later one clears the
+/// channel under `mu`, so `Publish` finds nothing to deliver to.
 class InProcessPubSubProvider : public PubSubProvider {
    public:
     explicit InProcessPubSubProvider(const ProviderConfig& config = {});
@@ -75,8 +78,11 @@ class InProcessPubSubProvider : public PubSubProvider {
     /// Under `schema_carriage=carried` a declaration with no schema is refused
     /// (`kInvalidArgument`): a schema-carrying transport has nothing to carry.
     /// (The mode is a document key; the enum that once spelled it is private to
-    /// the provider's own translation unit.)
-    void CreateTopic(const std::vector<std::string>& topic_segments, OwnedSchema schema) override;
+    /// the provider's own translation unit.) A non-zero `declaration.max_payload_bytes` or a
+    /// non-empty `declaration.profile` is refused `kNotSupported`: this provider has no notion of
+    /// either.
+    void CreateTopic(const std::vector<std::string>& topic_segments,
+                     TopicDeclaration declaration) override;
 
     void Publish(const std::vector<std::string>& topic_segments, const RowEncoder& encoder,
                  const Attachments& attachments = {}) override;
@@ -84,8 +90,13 @@ class InProcessPubSubProvider : public PubSubProvider {
     // [[nodiscard]] is NOT inherited from the PubSubProvider base declaration and the diagnostic
     // keys off the STATIC type at the call site, so the annotation must be repeated on every
     // concrete override or it never fires where applications actually call (#56).
+    //
+    // A non-empty `request.profile` is refused `kNotSupported`: this provider knows no profiles.
+    // `request.check`, when non-empty, is called once against the announced schema before the
+    // data side opens, framed against reentrancy, never invoked with a null schema (in kCarried an
+    // undeclared topic's check waits for `CreateTopic`), and a throw is absorbed as `false`.
     [[nodiscard]] SubscriptionResult Subscribe(const std::vector<std::string>& topic_segments,
-                                               SubscribeCallback callback) override;
+                                               SubscriptionRequest request) override;
 
     void Unsubscribe(const std::vector<std::string>& topic_segments) override;
 

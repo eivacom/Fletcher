@@ -704,19 +704,21 @@ TEST_P(ProviderConformance, AnotherThreadIsNotRefusedDuringADelivery) {
 // `publishes_into_subject_instance` names structurally rather than by matching on
 // a label.
 //
-// `SubscribeSchema`/`UnsubscribeSchema` and `DeclareTopicWithOptions`/`SubscribeWithOptions` beside
-// `Subscribe`: all four are LOCAL-ONLY on every subject (subject.hpp), never routed over the peer
-// pipe, so their assertion is unconditional on all six subjects too — the same reason `Subscribe`'s
-// is. The options pair is passed an EMPTY `TopicOptions{}`: the door is checked before the support
-// check, so the refusal is `kReentrantCall` regardless of whether the provider under test honours
-// options at all.
+// `SubscribeSchema`/`UnsubscribeSchema`/`DeclareTopicWith`/`SubscribeWith` beside `Subscribe`: all
+// five are LOCAL-ONLY on every subject (subject.hpp), never routed over the peer pipe, so their
+// assertion is unconditional on all six subjects too — the same reason `Subscribe`'s is.
+// `DeclareTopicWith` and `SubscribeWith` are passed a request with EVERY optional field non-empty
+// (`profile`, `max_payload_bytes`, `check`), so what they pin is door-before-field-refusal: the
+// re-entrancy door answers `kReentrantCall` before any of those fields is ever looked at, on a
+// provider that could otherwise have answered `kNotSupported` or `kInvalidArgument` for one of
+// them.
 TEST_P(ProviderConformance, EveryProviderMethodIsRefusedFromInsideADelivery) {
     const bool reentrant_publish = GetParam().publishes_into_subject_instance;
 
     const Topic driver = Fresh("refused_driver");
     const Topic derived = Fresh("refused_derived");
     const Topic watched = Fresh("refused_watched");
-    const Topic derived_options = Fresh("refused_derived_options");
+    const Topic derived_local = Fresh("refused_derived_local");
     CONF_MUST_DECLARE(driver, DataSchema());
 
     Reply declare_reply = Reply::HarnessFailure("the handler never got there");
@@ -724,8 +726,8 @@ TEST_P(ProviderConformance, EveryProviderMethodIsRefusedFromInsideADelivery) {
     std::atomic<int32_t> subscribe_status{kNothingRecorded};
     std::atomic<int32_t> subscribe_schema_status{kNothingRecorded};
     std::atomic<int32_t> unsubscribe_schema_status{kNothingRecorded};
-    std::atomic<int32_t> declare_with_options_status{kNothingRecorded};
-    std::atomic<int32_t> subscribe_with_options_status{kNothingRecorded};
+    std::atomic<int32_t> declare_with_status{kNothingRecorded};
+    std::atomic<int32_t> subscribe_with_status{kNothingRecorded};
     std::atomic<int> entered{0};
     Latch handled;
 
@@ -763,24 +765,28 @@ TEST_P(ProviderConformance, EveryProviderMethodIsRefusedFromInsideADelivery) {
                 unsubscribe_schema_status.store(kNonSeamException);
             }
             try {
-                Subject().DeclareTopicWithOptions(
-                    derived_options, MakeConformanceSchema(DataSchema()), TopicOptions{});
-                declare_with_options_status.store(kReturnedWithoutThrowing);
+                Subject().DeclareTopicWith(derived_local,
+                                           {.schema = MakeConformanceSchema(DataSchema()),
+                                            .profile = "x",
+                                            .max_payload_bytes = 1024});
+                declare_with_status.store(kReturnedWithoutThrowing);
             } catch (const PubSubError& e) {
-                declare_with_options_status.store(static_cast<int32_t>(e.status()));
+                declare_with_status.store(static_cast<int32_t>(e.status()));
             } catch (...) {
-                declare_with_options_status.store(kNonSeamException);
+                declare_with_status.store(kNonSeamException);
             }
             try {
-                SubscriptionResult opened = Subject().SubscribeWithOptions(
-                    watched, [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
-                    TopicOptions{});
+                SubscriptionResult opened = Subject().SubscribeWith(
+                    watched, {.callback = [](const uint8_t*, size_t, const SharedSchema&,
+                                             const Attachments&) {},
+                              .profile = "x",
+                              .check = [](const SharedSchema&) { return true; }});
                 (void)opened;
-                subscribe_with_options_status.store(kReturnedWithoutThrowing);
+                subscribe_with_status.store(kReturnedWithoutThrowing);
             } catch (const PubSubError& e) {
-                subscribe_with_options_status.store(static_cast<int32_t>(e.status()));
+                subscribe_with_status.store(static_cast<int32_t>(e.status()));
             } catch (...) {
-                subscribe_with_options_status.store(kNonSeamException);
+                subscribe_with_status.store(kNonSeamException);
             }
             handled.Set();
         });
@@ -805,18 +811,14 @@ TEST_P(ProviderConformance, EveryProviderMethodIsRefusedFromInsideADelivery) {
         << "UnsubscribeSchema from inside a delivery answered with "
         << StatusText(unsubscribe_schema_status.load())
         << "; §6 clause 6 refuses the schema-only methods too";
-    EXPECT_EQ(declare_with_options_status.load(),
-              static_cast<int32_t>(PubSubStatus::kReentrantCall))
-        << "DeclareTopicWithOptions from inside a delivery answered with "
-        << StatusText(declare_with_options_status.load())
-        << "; §6 clause 6 refuses the options-taking methods too, before the support check ever "
-           "runs";
-    EXPECT_EQ(subscribe_with_options_status.load(),
-              static_cast<int32_t>(PubSubStatus::kReentrantCall))
-        << "SubscribeWithOptions from inside a delivery answered with "
-        << StatusText(subscribe_with_options_status.load())
-        << "; §6 clause 6 refuses the options-taking methods too, before the support check ever "
-           "runs";
+    EXPECT_EQ(declare_with_status.load(), static_cast<int32_t>(PubSubStatus::kReentrantCall))
+        << "DeclareTopicWith from inside a delivery answered with "
+        << StatusText(declare_with_status.load())
+        << "; §6 clause 6 refuses the door before any field of a non-empty request is looked at";
+    EXPECT_EQ(subscribe_with_status.load(), static_cast<int32_t>(PubSubStatus::kReentrantCall))
+        << "SubscribeWith from inside a delivery answered with "
+        << StatusText(subscribe_with_status.load())
+        << "; §6 clause 6 refuses the door before any field of a non-empty request is looked at";
 
     if (reentrant_publish) {
         // `refused()`, never "!ok()": Reply's third outcome exists precisely so a
@@ -850,6 +852,269 @@ TEST_P(ProviderConformance, EveryProviderMethodIsRefusedFromInsideADelivery) {
     CONF_MUST_PUBLISH(derived, 78);
     EXPECT_TRUE(after.WaitForSeq(78, Deadline()))
         << "the provider stopped serving after refusing a re-entrant call";
+}
+
+// ── Checked subscribe (provider.hpp's own `SubscriptionRequest::check` contract) ────
+//
+// The `check` field's contract, doc'd beside it in provider.hpp: it runs once, gates whether the
+// data side opens, and never delivers a row it rejected. What "later" means differs by whether the
+// schema was already known when SubscribeWith was called with a non-empty `check` (synchronous:
+// throws) or arrives after (asynchronous: the arrival fails kSchemaConflict) — every clause below
+// runs the asynchronous shape, since it opens the checked subscription before CONF_MUST_DECLARE.
+
+namespace {
+
+// A checked subscribe has no ScopedSubscription-equivalent constructor (suite.hpp's
+// ScopedSubscription always calls Subscribe, never SubscribeWith with a `check`), so each clause
+// below unsubscribes through its own guard, the same shape as ScopedSubscription's destructor: a
+// collector still alive when a delivery thread calls into it is the bug that type exists to make
+// unrepresentable, on every exit path including an ASSERT_ failure. Declare it AFTER the Collector
+// it feeds, for the same reason.
+class CheckedSubscriptionGuard {
+   public:
+    CheckedSubscriptionGuard(ProviderSubject& subject, Topic topic)
+        : subject_(subject), topic_(std::move(topic)) {}
+    ~CheckedSubscriptionGuard() { Run(); }
+    // Idempotent, so it is also safe to call explicitly before destruction —
+    // ARejectedCheckedSubscriptionLeavesTheTopicReusable needs the topic freed mid-test, before a
+    // fresh subscription reuses it, and the destructor's own call then finds nothing left to do.
+    void Run() {
+        if (ran_) return;
+        ran_ = true;
+        try {
+            subject_.Unsubscribe(topic_);
+        } catch (...) {
+        }
+    }
+    CheckedSubscriptionGuard(const CheckedSubscriptionGuard&) = delete;
+    CheckedSubscriptionGuard& operator=(const CheckedSubscriptionGuard&) = delete;
+
+   private:
+    ProviderSubject& subject_;
+    Topic topic_;
+    bool ran_ = false;
+};
+
+}  // namespace
+
+// A rejecting check never lets a row cross, on the two paths a rejection reaches the caller: a
+// synchronous throw (this clause's harness order — the checked subscribe before the declaration —
+// never takes it, but a provider is free to learn of the conflict earlier and throw anyway) or the
+// arrival failing kSchemaConflict. A schema-less transport runs no check at all and delivers like
+// a plain Subscribe.
+TEST_P(ProviderConformance, ACheckedSubscriptionThatRejectsNeverDelivers) {
+    const Topic topic = Fresh("checked_reject");
+    std::atomic<int> check_calls{0};
+    Collector collector;
+    std::optional<CheckedSubscriptionGuard> guard;
+
+    bool threw = false;
+    PubSubStatus thrown_status = PubSubStatus::kOk;
+    SubscriptionResult result;
+    try {
+        result = Subject().SubscribeWith(
+            topic, {.callback = collector.Callback(), .check = [&](const SharedSchema&) {
+                        check_calls.fetch_add(1);
+                        return false;
+                    }});
+        guard.emplace(Subject(), topic);
+    } catch (const PubSubError& e) {
+        threw = true;
+        thrown_status = e.status();
+    }
+
+    CONF_MUST_DECLARE(topic, DataSchema());
+    // `AwaitDataMatched` only for Absent, deliberately: on Fast DDS (always Carried) a rejected
+    // checked subscription never opens its data reader (provider.hpp), so waiting for it to match a
+    // writer would wait out the whole clause budget for a match that structurally cannot happen —
+    // the row is asserted absent regardless of match status there. The schema-less (Absent) branch
+    // calls it, matching every other delivery clause's own convention, since its row IS expected to
+    // arrive.
+    if (!Carried()) {
+        Subject().AwaitDataMatched(topic, RemainingBudget());
+    }
+    CONF_MUST_PUBLISH(topic, 1);
+
+    if (Carried()) {
+        if (threw) {
+            EXPECT_EQ(thrown_status, PubSubStatus::kSchemaConflict)
+                << "a rejecting checked subscribe threw "
+                << internal::PubSubStatusName(thrown_status) << ", not kSchemaConflict";
+        } else {
+            SharedSchema schema;
+            const PubSubStatus wait_status = result.schema.Wait(RemainingBudget(), &schema);
+            EXPECT_EQ(wait_status, PubSubStatus::kSchemaConflict)
+                << "a rejecting checked subscription's arrival answered "
+                << internal::PubSubStatusName(wait_status) << ", not kSchemaConflict";
+        }
+        EXPECT_EQ(check_calls.load(), 1)
+            << "the rejecting check ran " << check_calls.load() << " times, not exactly once";
+
+        // Fence: a second, plain subscription on a fresh topic, declared, matched and published,
+        // proves the transport is still delivering before the negative below is read.
+        const Topic fence_topic = Fresh("checked_reject_fence");
+        Collector fence_collector;
+        ScopedSubscription fence_sub(Subject(), fence_topic, fence_collector.Callback());
+        CONF_MUST_DECLARE(fence_topic, DataSchema());
+        Subject().AwaitDataMatched(fence_topic, RemainingBudget());
+        CONF_MUST_PUBLISH(fence_topic, 1);
+        ASSERT_TRUE(fence_collector.WaitForSeq(1, Deadline()))
+            << "the fence row never arrived; the harness itself is stalled";
+
+        EXPECT_EQ(collector.Count(), 0u)
+            << "a row was delivered to a checked subscription its own check rejected";
+    } else {
+        EXPECT_FALSE(threw) << "a schema-less transport refused the checked subscribe outright: "
+                            << internal::PubSubStatusName(thrown_status);
+        EXPECT_EQ(check_calls.load(), 0) << "a schema-less transport ran the check anyway";
+        EXPECT_TRUE(collector.WaitForSeq(1, Deadline()))
+            << "the row never reached a schema-less transport's unchecked delivery";
+    }
+}
+
+// An accepting check is indistinguishable from a plain Subscribe from there: every row is
+// delivered, and the check ran exactly once regardless of how many rows follow.
+TEST_P(ProviderConformance, ACheckedSubscriptionThatAcceptsDeliversLikeSubscribe) {
+    const Topic topic = Fresh("checked_accept");
+    std::atomic<int> check_calls{0};
+    std::atomic<bool> saw_non_null{false};
+    Collector collector;
+
+    SubscriptionResult result = Subject().SubscribeWith(
+        topic, {.callback = collector.Callback(), .check = [&](const SharedSchema& announced) {
+                    check_calls.fetch_add(1);
+                    if (announced != nullptr) saw_non_null.store(true);
+                    return true;
+                }});
+    (void)result;
+    CheckedSubscriptionGuard guard(Subject(), topic);
+
+    CONF_MUST_DECLARE(topic, DataSchema());
+    Subject().AwaitDataMatched(topic, RemainingBudget());
+    CONF_MUST_PUBLISH(topic, 1);
+    CONF_MUST_PUBLISH(topic, 2);
+
+    ASSERT_TRUE(collector.WaitForCount(2, Deadline()))
+        << "only " << collector.Count()
+        << " of 2 rows arrived on an accepting checked subscription";
+
+    if (Carried()) {
+        EXPECT_EQ(check_calls.load(), 1)
+            << "the accepting check ran " << check_calls.load() << " times, not exactly once";
+        EXPECT_TRUE(saw_non_null.load())
+            << "the check never saw a non-null schema on a carrying transport";
+    } else {
+        EXPECT_EQ(check_calls.load(), 0) << "a schema-less transport ran the check anyway";
+    }
+}
+
+// The check itself is framed exactly like a delivery (provider.hpp: "the provider frames the call
+// with internal::DeliveryScope"), so a seam call from inside it is refused kReentrantCall — the
+// same door an ordinary callback is refused at.
+TEST_P(ProviderConformance, ACheckCannotEnterTheProvider) {
+    const Topic topic = Fresh("checked_reentrant");
+    std::atomic<int32_t> recorded{kNothingRecorded};
+    Collector collector;
+
+    SubscriptionResult result = Subject().SubscribeWith(
+        topic, {.callback = collector.Callback(), .check = [&](const SharedSchema&) {
+                    try {
+                        Subject().Unsubscribe(Fresh("never_subscribed"));
+                        recorded.store(kReturnedWithoutThrowing);
+                    } catch (const PubSubError& e) {
+                        recorded.store(static_cast<int32_t>(e.status()));
+                    } catch (...) {
+                        recorded.store(kNonSeamException);
+                    }
+                    return true;
+                }});
+    (void)result;
+    CheckedSubscriptionGuard guard(Subject(), topic);
+
+    CONF_MUST_DECLARE(topic, DataSchema());
+    Subject().AwaitDataMatched(topic, RemainingBudget());
+    CONF_MUST_PUBLISH(topic, 1);
+    ASSERT_TRUE(collector.WaitForSeq(1, Deadline())) << "the row never arrived";
+
+    if (Carried()) {
+        EXPECT_EQ(recorded.load(), static_cast<int32_t>(PubSubStatus::kReentrantCall))
+            << "a checked subscription's check called back into the provider and got "
+            << StatusText(recorded.load());
+    } else {
+        EXPECT_EQ(recorded.load(), kNothingRecorded)
+            << "a schema-less transport ran the check anyway, recording "
+            << StatusText(recorded.load());
+    }
+}
+
+// Unsubscribe is the one documented way out of a rejected checked subscription (provider.hpp: "the
+// subscription stays registered until Unsubscribe"), and once called the topic is fully reusable: a
+// plain Subscribe afterwards declares and delivers exactly as if nothing had been registered there
+// before. On the in-process provider a second Subscribe on a topic that already carries a
+// registration replaces it regardless of Unsubscribe (the in-process provider's `Subscribe`, in its
+// `if (slot.schema)` branch, installs a fresh channel unconditionally), so that subject cannot show
+// Unsubscribe made the difference — only that the topic stays usable either way. Fast DDS's
+// rejected checked subscription never opens a data reader at all (provider.hpp), so there the
+// resubscribe really is a fresh registration and Unsubscribe's role is the one this clause pins. On
+// XRCE a rejected checked subscription keeps its data reader until Unsubscribe deletes the reader
+// and its subscriber, and the resubscribe recreates both.
+TEST_P(ProviderConformance, ARejectedCheckedSubscriptionLeavesTheTopicReusable) {
+    const Topic topic = Fresh("checked_reject_reuse");
+    Collector collector;
+    std::optional<CheckedSubscriptionGuard> guard;
+
+    bool threw = false;
+    PubSubStatus thrown_status = PubSubStatus::kOk;
+    SubscriptionResult result;
+    try {
+        result = Subject().SubscribeWith(
+            topic,
+            {.callback = collector.Callback(), .check = [](const SharedSchema&) { return false; }});
+        guard.emplace(Subject(), topic);
+    } catch (const PubSubError& e) {
+        threw = true;
+        thrown_status = e.status();
+    }
+
+    CONF_MUST_DECLARE(topic, DataSchema());
+    // Only for Absent, for the same reason ACheckedSubscriptionThatRejectsNeverDelivers's own
+    // publish is: a rejected checked subscription never opens a data reader on Fast DDS, so waiting
+    // for a match here would wait out the whole clause budget on the Carried subjects.
+    if (!Carried()) {
+        Subject().AwaitDataMatched(topic, RemainingBudget());
+    }
+    CONF_MUST_PUBLISH(topic, 1);
+
+    if (Carried()) {
+        if (threw) {
+            EXPECT_EQ(thrown_status, PubSubStatus::kSchemaConflict)
+                << "a rejecting checked subscribe threw "
+                << internal::PubSubStatusName(thrown_status) << ", not kSchemaConflict";
+        } else {
+            SharedSchema schema;
+            const PubSubStatus wait_status = result.schema.Wait(RemainingBudget(), &schema);
+            EXPECT_EQ(wait_status, PubSubStatus::kSchemaConflict)
+                << "a rejecting checked subscription's arrival answered "
+                << internal::PubSubStatusName(wait_status) << ", not kSchemaConflict";
+        }
+    } else {
+        EXPECT_FALSE(threw) << "a schema-less transport refused the checked subscribe outright: "
+                            << internal::PubSubStatusName(thrown_status);
+        EXPECT_TRUE(collector.WaitForSeq(1, Deadline()))
+            << "the row never reached a schema-less transport's unchecked delivery";
+    }
+
+    if (!threw) {
+        guard->Run();  // the freeing act this clause pins
+    }
+
+    Collector after;
+    ScopedSubscription resub(Subject(), topic, after.Callback());
+    Subject().AwaitDataMatched(topic, RemainingBudget());
+    CONF_MUST_PUBLISH(topic, 2);
+    EXPECT_TRUE(after.WaitForSeq(2, Deadline()))
+        << "the topic did not accept a plain Subscribe after the rejected checked subscription was "
+           "unsubscribed";
 }
 
 }  // namespace conformance

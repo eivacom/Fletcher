@@ -10,6 +10,7 @@
 #include <cstring>
 #include <fletcher/arrow_bridge/codec.hpp>
 #include <fletcher/core/write_buffer.hpp>
+#include <fletcher/pubsub/internal/schema_check.hpp>
 #include <fletcher/pubsub/internal/segments.hpp>
 #include <fletcher/pubsub/provider.hpp>
 #include <fletcher/pubsub_arrow/publisher_arrow.hpp>
@@ -30,12 +31,18 @@ using namespace fletcher;
 
 class MockProvider : public PubSubProvider {
    public:
-    void CreateTopic(const std::vector<std::string>& segments, OwnedSchema schema) override {
+    // `last_create_options` is recorded on every call, so the forwarding tests below read back
+    // what the Arrow-tier overloads passed through, whether it carries an empty or a non-empty
+    // profile/bound.
+    void CreateTopic(const std::vector<std::string>& segments,
+                     TopicDeclaration declaration) override {
         std::string key = fletcher::internal::JoinSegments(segments);
         topics_created.push_back(key);
-        if (schema) {
-            schemas_[key] = OwnedSchema::DeepCopy(schema.get());
+        if (declaration.schema) {
+            schemas_[key] = OwnedSchema::DeepCopy(declaration.schema.get());
         }
+        last_create_options = TopicOptions{.profile = declaration.profile,
+                                           .max_payload_bytes = declaration.max_payload_bytes};
     }
 
     void Publish(const std::vector<std::string>& segments, const RowEncoder& encoder,
@@ -59,14 +66,19 @@ class MockProvider : public PubSubProvider {
     }
 
     SubscriptionResult Subscribe(const std::vector<std::string>& segments,
-                                 SubscribeCallback callback) override {
+                                 SubscriptionRequest request) override {
         std::string key = fletcher::internal::JoinSegments(segments);
-        callbacks_[key] = std::move(callback);
+        last_subscribe_options = TopicOptions{.profile = request.profile};
         auto it = schemas_.find(key);
         SharedSchema schema;
         if (it != schemas_.end()) {
             schema = MakeSharedSchema(OwnedSchema::DeepCopy(it->second.get()));
         }
+        if (request.check && !fletcher::internal::RunSchemaCheck(this, request.check, schema)) {
+            throw PubSubError(PubSubStatus::kSchemaConflict,
+                              "MockProvider: check rejected the schema");
+        }
+        callbacks_[key] = std::move(request.callback);
         return {SchemaArrival::Ready(std::move(schema))};
     }
 
@@ -74,28 +86,9 @@ class MockProvider : public PubSubProvider {
         callbacks_.erase(fletcher::internal::JoinSegments(segments));
     }
 
-    // Recorded rather than refused: this MockProvider supports per-topic options, so the
-    // forwarding tests below can observe what the Arrow-tier overloads pass through.
-    void CreateTopicWithOptions(const std::vector<std::string>& segments, OwnedSchema schema,
-                                const TopicOptions& options) override {
-        create_topic_with_options_count++;
-        last_create_options = options;
-        CreateTopic(segments, std::move(schema));
-    }
-
-    SubscriptionResult SubscribeWithOptions(const std::vector<std::string>& segments,
-                                            SubscribeCallback callback,
-                                            const TopicOptions& options) override {
-        subscribe_with_options_count++;
-        last_subscribe_options = options;
-        return Subscribe(segments, std::move(callback));
-    }
-
     std::vector<std::string> topics_created;
     // Raw bytes handed to the RowEncoder on each underlying Publish() call, one entry per call.
     std::vector<std::vector<uint8_t>> published;
-    int create_topic_with_options_count = 0;
-    int subscribe_with_options_count = 0;
     TopicOptions last_create_options;
     TopicOptions last_subscribe_options;
 
@@ -109,16 +102,29 @@ class MockProvider : public PubSubProvider {
 // `subscribe_count` staying 0 is the whole point of the test.
 class SchemaOnlyProvider : public PubSubProvider {
    public:
-    void CreateTopic(const std::vector<std::string>& segments, OwnedSchema schema) override {
+    // No notion of a profile or a per-topic bound, so a non-empty one is kNotSupported
+    // (provider.hpp's general rule).
+    void CreateTopic(const std::vector<std::string>& segments,
+                     TopicDeclaration declaration) override {
+        if (!declaration.profile.empty() || declaration.max_payload_bytes != 0) {
+            throw PubSubError(PubSubStatus::kNotSupported,
+                              "SchemaOnlyProvider: no notion of a profile or a per-topic bound");
+        }
         std::string key = fletcher::internal::JoinSegments(segments);
-        if (schema) {
-            schemas_[key] = OwnedSchema::DeepCopy(schema.get());
+        if (declaration.schema) {
+            schemas_[key] = OwnedSchema::DeepCopy(declaration.schema.get());
         }
     }
 
     void Publish(const std::vector<std::string>&, const RowEncoder&, const Attachments&) override {}
 
-    SubscriptionResult Subscribe(const std::vector<std::string>&, SubscribeCallback) override {
+    // No notion of a profile, so a non-empty one is kNotSupported (provider.hpp's general rule).
+    SubscriptionResult Subscribe(const std::vector<std::string>&,
+                                 SubscriptionRequest request) override {
+        if (!request.profile.empty()) {
+            throw PubSubError(PubSubStatus::kNotSupported,
+                              "SchemaOnlyProvider: no notion of a profile");
+        }
         ++subscribe_count;
         return {SchemaArrival::Ready(nullptr)};
     }
@@ -187,7 +193,6 @@ TEST(PublisherArrowTest, CreateTopicForwardsTopicOptions) {
     TopicOptions options{.profile = "reliable", .max_payload_bytes = 4096};
     pub.CreateTopic(kTopic, TestSchema(), options);
 
-    EXPECT_EQ(mock->create_topic_with_options_count, 1);
     ASSERT_EQ(mock->topics_created.size(), 1u);
     EXPECT_EQ(mock->last_create_options, options);
 }
@@ -352,13 +357,13 @@ TEST(SubscriberArrowTest, SubscribeForwardsTopicOptions) {
     TopicOptions options{.profile = "reliable"};
     static_cast<void>(sub.Subscribe(kTopic, [](ArrowRow, Attachments) {}, options));
 
-    EXPECT_EQ(mock->subscribe_with_options_count, 1);
     EXPECT_EQ(mock->last_subscribe_options, options);
 }
 
-// Optional means optional: SchemaOnlyProvider never overrode SubscribeWithOptions, so the base
-// class's default refusal is what SubscriberArrow forwards for a non-empty options request.
-TEST(SubscriberArrowTest, SubscribeWithOptionsOnATransportWithoutOneThrowsNotSupported) {
+// SchemaOnlyProvider's own refusal: it carries no notion of a profile, so it throws
+// kNotSupported for a non-empty one itself (provider.hpp's general rule), and that is what
+// SubscriberArrow forwards through.
+TEST(SubscriberArrowTest, SubscribeCarryingAProfileOnATransportWithoutOneThrowsNotSupported) {
     auto provider = std::make_shared<SchemaOnlyProvider>();
     SubscriberArrow sub(provider);
 
@@ -521,7 +526,6 @@ TEST(SubscriberArrowBatchTest, SubscribeForwardsTopicOptions) {
     static_cast<void>(
         sub.Subscribe(kTopic, sink.callback(), SubscriberArrow::BatchOptions{}, options));
 
-    EXPECT_EQ(mock->subscribe_with_options_count, 1);
     EXPECT_EQ(mock->last_subscribe_options, options);
 }
 

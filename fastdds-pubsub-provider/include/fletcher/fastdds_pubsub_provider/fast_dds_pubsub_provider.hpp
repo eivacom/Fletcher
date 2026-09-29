@@ -222,11 +222,13 @@ class FastDDSLoggingStatusListener : public FastDDSStatusListener {
 /// `max_payload_bytes`. `Publish` on a topic this provider never `CreateTopic`d
 /// — including one it only `Subscribe`d to — is `kTopicNotDeclared`.
 ///
-/// `CreateTopicWithOptions` and `SubscribeWithOptions` (`TopicOptions`, below) add three more, all
-/// `kInvalidArgument`: a `profile` naming no `<data_writer>` / `<data_reader>` profile the document
-/// defines, quoting the name; a re-declaration of an already-declared topic with a different
-/// non-empty profile or a different `max_payload_bytes`; and a non-zero `max_payload_bytes` on
-/// `SubscribeWithOptions`, which always follows its publisher's announced bound instead.
+/// `CreateTopic`'s `declaration.profile` and `Subscribe`'s `request.profile` (`TopicDeclaration` /
+/// `SubscriptionRequest`, `pubsub/provider.hpp`) add three more, all `kInvalidArgument`: a
+/// `profile` naming no `<data_writer>` / `<data_reader>` profile the document defines, quoting the
+/// name; a re-declaration of an already-declared topic with a different non-empty profile or a
+/// different `max_payload_bytes`; and a non-zero `declaration.max_payload_bytes` this provider
+/// cannot bound. `SubscriptionRequest` carries no payload-bound field at all: a subscription always
+/// follows its publisher's announced bound.
 ///
 /// The companion schema channel (`__schema` topic) always uses RELIABLE +
 /// KEEP_LAST(depth=1) + TRANSIENT_LOCAL, bounded at the fixed
@@ -255,50 +257,50 @@ class FastDDSPubSubProvider : public PubSubProvider {
     FastDDSPubSubProvider(const FastDDSPubSubProvider&) = delete;
     FastDDSPubSubProvider& operator=(const FastDDSPubSubProvider&) = delete;
 
-    void CreateTopic(const std::vector<std::string>& topic_segments, OwnedSchema schema) override;
+    /// Declares a topic and its schema; called on the publisher side. `declaration.schema`
+    /// describes the Arrow structure of rows on this topic; ownership transfers to the provider.
+    /// `declaration.profile` selects a `<data_writer>` profile by name for THIS topic's writer,
+    /// ahead of the document's per-topic-name lookup and its default profile; a name the document
+    /// does not define is `kInvalidArgument`, quoting it — resolved before any lock, like the
+    /// bound below, so an unknown name is refused the same way on a fresh declaration and on a
+    /// re-declaration alike. `declaration.max_payload_bytes` is this topic's own publisher bound —
+    /// the type name this topic's writer registers and the bound it announces on `__schema` — in
+    /// place of the provider's own bound for this topic only; `PayloadBytes()` itself is unchanged
+    /// and still answers the provider's own configured bound. Zero means "this topic follows the
+    /// provider's own bound". A bound `IsPayloadBound` rejects is `kInvalidArgument`, quoting it,
+    /// checked before any lock. Re-declaring an already-declared topic with a different non-empty
+    /// profile, or a different non-zero bound, is `kInvalidArgument`; an identical re-declaration
+    /// (or one with empty fields, which name neither) is idempotent.
+    void CreateTopic(const std::vector<std::string>& topic_segments,
+                     TopicDeclaration declaration) override;
 
     void Publish(const std::vector<std::string>& topic_segments, const RowEncoder& encoder,
                  const Attachments& attachments = {}) override;
 
+    /// An empty `request.callback` is `kInvalidArgument`: a subscription needs somewhere to
+    /// deliver a sample to. `request.profile` selects a `<data_reader>` profile by name for this
+    /// subscription's reader, resolved the moment `Subscribe` runs, before any lock, so an unknown
+    /// name is refused synchronously rather than surfacing later when the schema thread opens the
+    /// reader. A subscription always follows whatever bound its publisher announces on `__schema`;
+    /// `SubscriptionRequest` carries no field of its own for one.
+    ///
+    /// `request.check`, when non-empty, gates the data side: no data reader is created until it
+    /// returns `true`, so the wrong-type writer it rejected never matches this participant. It
+    /// runs once, under the schema thread's lock, on whichever thread first learns the topic's
+    /// schema: the calling thread, also holding the provider mutex, when the schema is already
+    /// known; the schema thread, holding its own lock alone, when it arrives later. If a
+    /// `SubscribeSchema` watch keeps the schema side open past `Unsubscribe`, the topic's arrival
+    /// is re-armed to the known schema. The contract is in `PubSubProvider::Subscribe`
+    /// (`pubsub/provider.hpp`).
+    //
     // [[nodiscard]] is NOT inherited from the PubSubProvider base declaration and
     // the diagnostic keys off the STATIC type at the call site, so the annotation
     // must be repeated on every concrete override or it never fires where
     // applications actually call.
     [[nodiscard]] SubscriptionResult Subscribe(const std::vector<std::string>& topic_segments,
-                                               SubscribeCallback callback) override;
+                                               SubscriptionRequest request) override;
 
     void Unsubscribe(const std::vector<std::string>& topic_segments) override;
-
-    /// `CreateTopic` with per-topic options (`TopicOptions`, pubsub/provider.hpp).
-    /// `options.profile` selects a `<data_writer>` profile by name for THIS topic's writer, ahead
-    /// of the document's per-topic-name lookup and its default profile; a name the document does
-    /// not define is `kInvalidArgument`, quoting it. `options.max_payload_bytes` is this topic's
-    /// own publisher bound — the type name this topic's writer registers and the bound it announces
-    /// on `__schema` — in place of the provider's own bound for this topic only; `PayloadBytes()`
-    /// itself is unchanged and still answers the provider's own configured bound. Zero means "this
-    /// topic follows the provider's own bound", the same as `CreateTopic`. A bound
-    /// `IsPayloadBound` rejects is `kInvalidArgument`, quoting it, checked before any lock.
-    /// Re-declaring an already-declared topic with a different non-empty profile, or a different
-    /// non-zero bound, is `kInvalidArgument`; an identical re-declaration (or one with empty
-    /// options, which names neither field) is the same idempotent no-op `CreateTopic` is.
-    /// `CreateTopic` is a one-line delegation to this with `TopicOptions{}`, so every one of its
-    /// refusals is this method's.
-    void CreateTopicWithOptions(const std::vector<std::string>& topic_segments, OwnedSchema schema,
-                                const TopicOptions& options) override;
-
-    /// `Subscribe` with per-topic options. `options.profile` selects a `<data_reader>` profile by
-    /// name for this subscription's reader, resolved the moment `Subscribe` runs, before any lock,
-    /// so an unknown name is refused synchronously rather than surfacing later when the schema
-    /// thread opens the reader. `options.max_payload_bytes` is always `kInvalidArgument`: a
-    /// subscription follows whatever bound its publisher announces on `__schema` and never carries
-    /// one of its own. `Subscribe` is a one-line delegation to this with `TopicOptions{}`.
-    //
-    // [[nodiscard]] is NOT inherited from the PubSubProvider base declaration and the diagnostic
-    // keys off the STATIC type at the call site, so the annotation must be repeated here too (see
-    // Subscribe above) or it never fires where applications actually call.
-    [[nodiscard]] SubscriptionResult SubscribeWithOptions(
-        const std::vector<std::string>& topic_segments, SubscribeCallback callback,
-        const TopicOptions& options) override;
 
     /// Both optional seam methods are served here: the `__schema` channel this provider already
     /// runs for every subscription IS the schema-only subscription, so a watch is that channel
@@ -309,8 +311,8 @@ class FastDDSPubSubProvider : public PubSubProvider {
 
     void UnsubscribeSchema(const std::vector<std::string>& topic_segments) override;
 
-    /// The bound for topics declared WITHOUT a `TopicOptions::max_payload_bytes` override (see
-    /// `CreateTopicWithOptions`) — `ProviderConfig::max_payload_bytes` exactly as given, or 65536
+    /// The bound for topics declared WITHOUT a `TopicDeclaration::max_payload_bytes` override (see
+    /// `CreateTopic`) — `ProviderConfig::max_payload_bytes` exactly as given, or 65536
     /// if it was 0 (unset). An unsupported one never gets past the constructor. It is the bound
     /// such a topic's writer registers in its type name and the size a published row has to fit;
     /// it says nothing about what this provider's subscriptions use, since a subscriber's reader
@@ -320,9 +322,10 @@ class FastDDSPubSubProvider : public PubSubProvider {
     /// The XML document the provider loads when `ProviderConfig::document` is empty: one
     /// `<data_writer is_default_profile="true">` and one `<data_reader is_default_profile="true">`
     /// profile (RELIABLE, VOLATILE, KEEP_LAST 25) plus the participant anchor, and five named
-    /// `<data_writer>`/`<data_reader>` pairs, selectable through `TopicOptions::profile` on
-    /// `CreateTopic` and `Subscribe` with no document of your own: `fire_and_forget` (BEST_EFFORT,
-    /// VOLATILE, KEEP_LAST 1) drops a lagging sample rather than retransmit it; `latest` (RELIABLE,
+    /// `<data_writer>`/`<data_reader>` pairs, selectable through `TopicDeclaration::profile` /
+    /// `SubscriptionRequest::profile` on `CreateTopic` and `Subscribe` with no document of your
+    /// own: `fire_and_forget` (BEST_EFFORT, VOLATILE, KEEP_LAST 1) drops a lagging sample rather
+    /// than retransmit it; `latest` (RELIABLE,
     /// VOLATILE, KEEP_LAST 1) sends the newest value, resent if lost, and never replays to a late
     /// subscriber; `store_latest` (RELIABLE, TRANSIENT_LOCAL, KEEP_LAST 1) replays the last value
     /// to a late subscriber; `store_history` (RELIABLE, TRANSIENT_LOCAL, KEEP_LAST 25) replays the

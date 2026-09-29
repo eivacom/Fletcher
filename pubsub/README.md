@@ -27,35 +27,43 @@ are refused with `kReentrantCall` like every other seam method.
 
 ### TopicOptions
 
-`TopicOptions` (`provider.hpp`) is a per-topic, OPTIONAL options struct: a
+`TopicOptions` (`provider.hpp`) is a per-topic, OPTIONAL options struct at the CALLER tier: a
 `profile` — opaque text the provider interprets, the way it interprets
 `ProviderConfig::document` — and `max_payload_bytes`, a publisher-side payload
 bound for that one topic. A default-constructed (empty) `TopicOptions` means
 "the provider's defaults" and is exactly what `CreateTopic` / `Subscribe`
-already do — passing one changes nothing for a caller who never uses it.
+already do — passing one changes nothing for a caller who never uses it. A `PubSubProvider`
+implementation never sees a `TopicOptions` directly; see the request structs below for what
+crosses the seam.
 
-The provider tier gets two OPTIONAL seam methods for it,
-`CreateTopicWithOptions` and `SubscribeWithOptions`, both modelled on
-`SubscribeSchema` / `UnsubscribeSchema`: their default bodies delegate to
-`CreateTopic` / `Subscribe` when `options` is empty and refuse
-`PubSubStatus::kNotSupported` otherwise, so a provider that knows no profiles
-or per-topic bounds stays conforming with no code of its own. Segments are
-validated, and the re-entrancy door checked, before that support decision —
-exactly like every other seam method (§6 clause 6).
+### The seam's own request structs
+
+`PubSubProvider::CreateTopic` and `PubSubProvider::Subscribe` each take one append-only request
+struct, `TopicDeclaration` and `SubscriptionRequest`. Their fields, the refusal rules and the
+`check` contract are documented in `provider.hpp` and spec §2.
+
+### The caller tier
 
 `Publisher::CreateTopic` and `Subscriber::Subscribe` each take `options` as a defaulted third
 argument (`= {}`) rather than a second overload — `TopicOptions` is a namespace-scope aggregate, so
-the default is legal, and an option-less call site is unchanged. Both always reach the provider
-through the `*WithOptions` form (`CreateTopicWithOptions` / `SubscribeWithOptions`); the provider's
-own default delegates to the pure form when `options` is empty, so a provider that overrides only
-the pure form sees no behaviour change for option-less callers. The conflict check is field-wise,
-not whole-struct: a re-declaration, or a later local subscriber on the same topic, may repeat or
-omit a field already in force, but never change one — and naming a field that was never set before
-is a conflict too, against the stored EMPTY value, because the topic or subscription already exists
-without it. A conflicting field is `PubSubStatus::kInvalidArgument`. Subscribers never carry a
-payload bound of their own (they follow what the publisher announces), so a non-zero
-`max_payload_bytes` on a `Subscribe` call is `kInvalidArgument` too — refused by the provider tier's
-own default, before its empty/support check ever runs.
+the default is legal, and an option-less call site is unchanged. Both build the seam's own request
+struct on every call — `{std::move(schema), options.profile, options.max_payload_bytes}` for
+`CreateTopic`, `{std::move(dispatch), options.profile, check}` for `Subscribe` — so a provider
+that refuses a non-empty `profile` or bound sees exactly that refusal, unchanged, whatever wrapper
+the call arrived through. The conflict check is field-wise, not whole-struct: a re-declaration, or
+a later local subscriber on the same topic, may repeat or omit a field already in force, but never
+change one — and naming a field that was never set before is a conflict too, against the stored
+EMPTY value, because the topic or subscription already exists without it. A conflicting field is
+`PubSubStatus::kInvalidArgument`. Subscribers never carry a payload bound of their own (they follow
+what the publisher announces), so a non-zero `max_payload_bytes` on a `Subscribe` call is
+`kInvalidArgument` too — refused by `Subscriber` itself, before any state is touched, since the
+seam's own `SubscriptionRequest` has no such field to carry it in.
+
+`Subscriber` gets one more `Subscribe` overload for the check (`subscriber.hpp`): it takes an
+`OwnedSchema` a topic must announce exactly (Arrow IPC byte equality — `CreateTopic`'s own conflict
+comparison). The first call on a topic carries the comparison to the provider as
+`SubscriptionRequest::check`; a later call on the same topic merges against the stored bytes and is
+`kInvalidArgument`/`kSchemaConflict` synchronously.
 
 ### Vendored nanoarrow
 

@@ -16,13 +16,13 @@ namespace {
 class StubProvider : public PubSubProvider {
    public:
     void CreateTopic(const std::vector<std::string>& /*segments*/,
-                     OwnedSchema /*schema*/) override {}
+                     TopicDeclaration /*declaration*/) override {}
 
     void Publish(const std::vector<std::string>& /*segments*/, const RowEncoder& /*encoder*/,
                  const Attachments& /*attachments*/) override {}
 
     SubscriptionResult Subscribe(const std::vector<std::string>& /*segments*/,
-                                 SubscribeCallback /*callback*/) override {
+                                 SubscriptionRequest /*request*/) override {
         return {};
     }
 
@@ -43,8 +43,9 @@ int main() {
     pub.CreateTopic({"hello", "world"}, schema);
     assert(pub.ListTopics().size() == 1);
 
-    // TopicOptions: an empty options struct is never refused — the base class's default
-    // delegates straight to CreateTopic, so StubProvider stays conforming with no change.
+    // TopicOptions: an empty options struct is never refused — Publisher::CreateTopic folds it
+    // straight into TopicDeclaration's own empty fields, so StubProvider stays conforming with
+    // no change.
     pub.CreateTopic({"another", "topic"}, schema, TopicOptions{});
     assert(pub.ListTopics().size() == 2);
 

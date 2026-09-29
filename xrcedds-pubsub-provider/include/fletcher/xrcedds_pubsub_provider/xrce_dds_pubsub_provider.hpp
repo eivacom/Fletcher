@@ -50,16 +50,15 @@ void RegisterXrceProvider(ProviderRegistry& registry);
 ///    any DDS peer's, or the two never meet. `uint32_t` at the seam and `uint16_t` on the XRCE
 ///    wire, so a value **above 65535 is refused, never narrowed** — a truncated domain id is a
 ///    wrong answer with no error.
-///  - `max_payload_bytes` — the bound for a topic `CreateTopic` declares WITHOUT
-///    `TopicOptions::max_payload_bytes` (see `CreateTopicWithOptions` below for the per-topic
-///    override); **0 means unset** and resolves to 65536. It is also the type name a topic this
-///    client only SUBSCRIBES to is created at (`Subscribe` takes no options), and the bound it
-///    announces on `__schema`: a Fast
-///    DDS subscriber follows that announcement and needs no agreement, but this client's own
-///    subscriber still needs it equal to its Fast DDS publisher's, or the two never discover each
-///    other and no diagnostic says so. A value `IsPayloadBound` rejects is refused with
-///    `PubSubError(kInvalidArgument)` before any socket. Write it as `kPayloadBytes<N>` to be told
-///    at compile time instead.
+///  - `max_payload_bytes` — the bound for a topic `CreateTopic` declares with a zero
+///    `TopicDeclaration::max_payload_bytes` (a non-zero one overrides it for that topic alone);
+///    **0 means unset** and resolves to 65536. It is also the type name a topic this
+///    client only SUBSCRIBES to is created at (`Subscribe` takes no per-topic bound), and the bound
+///    it announces on `__schema`: a Fast DDS subscriber follows that announcement and needs no
+///    agreement, but this client's own subscriber still needs it equal to its Fast DDS publisher's,
+///    or the two never discover each other and no diagnostic says so. A value `IsPayloadBound`
+///    rejects is refused with `PubSubError(kInvalidArgument)` before any socket. Write it as
+///    `kPayloadBytes<N>` to be told at compile time instead.
 ///  - `document` — **`key=value`, one setting per line**, read only by this provider (locked
 ///    decision 8: Fletcher gains no parser and no config dependency). An empty document means
 ///    every published default, which is what every caller got before this existed.
@@ -109,12 +108,12 @@ void RegisterXrceProvider(ProviderRegistry& registry);
 /// within `connect_timeout_ms` — including an unresolvable hostname, which the client's resolver
 /// decides, not Fletcher.
 ///
-/// `CreateTopicWithOptions` (`TopicOptions`, pubsub/provider.hpp) adds two refusals of its own, at
-/// `CreateTopic` time rather than construction: `TopicOptions::profile` non-empty is
+/// `CreateTopic`'s `TopicDeclaration` (pubsub/provider.hpp) adds two refusals of its own, at
+/// `CreateTopic` time rather than construction: `declaration.profile` non-empty is
 /// `kNotSupported` — this client's document has no profiles to select among; an unusable or
-/// conflicting `TopicOptions::max_payload_bytes` is `kInvalidArgument`, the same as an unusable
-/// one in `ProviderConfig`. `Subscribe` takes no options at all — a subscription's reader is
-/// entirely config-driven, from `ProviderConfig::max_payload_bytes`.
+/// conflicting `declaration.max_payload_bytes` is `kInvalidArgument`, the same as an unusable
+/// one in `ProviderConfig`. `Subscribe`'s `SubscriptionRequest` carries no bound field at all — a
+/// subscription's reader is entirely config-driven, from `ProviderConfig::max_payload_bytes`.
 ///
 /// ── Not settable at all any more (disclosed narrowing) ──────────────────────────────────────
 /// The XRCE reliable-stream history depth and the run-loop pump quantum were typed fields and
@@ -134,25 +133,22 @@ class XrceDDSPubSubProvider : public PubSubProvider {
     XrceDDSPubSubProvider(const XrceDDSPubSubProvider&) = delete;
     XrceDDSPubSubProvider& operator=(const XrceDDSPubSubProvider&) = delete;
 
-    void CreateTopic(const std::vector<std::string>& topic_segments, OwnedSchema schema) override;
-
-    /// `CreateTopic` with per-topic options (`TopicOptions`, pubsub/provider.hpp).
-    /// `options.profile` is always `kNotSupported`: this client's document is `key=value`, four
-    /// fixed keys, with no notion of a named profile to select. `options.max_payload_bytes` is this
-    /// topic's own bound — the registered type this call creates the topic at, and the bound it
-    /// announces on `__schema` — in place of `ProviderConfig::max_payload_bytes` for this topic
-    /// only; zero means "this topic follows the provider's own bound", same as `CreateTopic`. A
-    /// bound `IsPayloadBound` rejects, or a re-declaration at a different non-zero bound, is
-    /// `kInvalidArgument`; an identical re-declaration, or one with empty options, is the same
-    /// idempotent no-op `CreateTopic` is.
+    /// `declaration.profile` is always `kNotSupported`: this client's document is `key=value`, four
+    /// fixed keys, with no notion of a named profile to select. `declaration.max_payload_bytes` is
+    /// this topic's own bound — the registered type this call creates the topic at, and the bound
+    /// it announces on `__schema` — in place of `ProviderConfig::max_payload_bytes` for this topic
+    /// only; zero means "this topic follows the provider's own bound". A bound `IsPayloadBound`
+    /// rejects, or a re-declaration at a different non-zero bound, is `kInvalidArgument`; an
+    /// identical re-declaration, or one with an empty `declaration.max_payload_bytes`, is the same
+    /// idempotent no-op an unchanged re-declaration always is.
     /// A topic a `Subscribe` on this instance created FIRST keeps that reader's bound regardless of
-    /// what this call asks for — `Subscribe` takes no options, so a topic it creates stays
-    /// config-driven, at `ProviderConfig::max_payload_bytes`. A `TopicOptions::max_payload_bytes`
+    /// what this call asks for — `Subscribe` takes no per-topic bound, so a topic it creates stays
+    /// config-driven, at `ProviderConfig::max_payload_bytes`. A `declaration.max_payload_bytes`
     /// that names a DIFFERENT bound for such a topic is refused `kInvalidArgument` before any XRCE
     /// call, not silently adopted — the reader was already created at its own bound and cannot
-    /// migrate. `CreateTopic` is a one-line delegation to this with `TopicOptions{}`.
-    void CreateTopicWithOptions(const std::vector<std::string>& topic_segments, OwnedSchema schema,
-                                const TopicOptions& options) override;
+    /// migrate.
+    void CreateTopic(const std::vector<std::string>& topic_segments,
+                     TopicDeclaration declaration) override;
 
     void Publish(const std::vector<std::string>& topic_segments, const RowEncoder& encoder,
                  const Attachments& attachments = {}) override;
@@ -161,8 +157,17 @@ class XrceDDSPubSubProvider : public PubSubProvider {
     // the diagnostic keys off the STATIC type at the call site, so the annotation
     // must be repeated on every concrete override or it never fires where
     // applications actually call (#56).
+    //
+    // `request.check`, when set, runs before any row is delivered, not before the data reader
+    // exists: the reader is created here exactly as an unchecked subscription creates it, ahead of
+    // any schema, and `OnTopic` buffers pre-schema rows in `pending` the same way. A `false` from
+    // the check clears that buffer and the delivery channel, so nothing buffered or received
+    // afterwards is ever delivered — but the reader itself stays open and the Agent keeps
+    // streaming to it until `Unsubscribe`, the one door out. `request.profile` is always
+    // `kNotSupported` (this provider's document has no profiles to select among); a subscription
+    // carries no bound of its own, so `SubscriptionRequest` has no such field at all.
     [[nodiscard]] SubscriptionResult Subscribe(const std::vector<std::string>& topic_segments,
-                                               SubscribeCallback callback) override;
+                                               SubscriptionRequest request) override;
 
     void Unsubscribe(const std::vector<std::string>& topic_segments) override;
 

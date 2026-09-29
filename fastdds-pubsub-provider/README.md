@@ -680,6 +680,69 @@ same plain, bounded type as the data channel. **No profile name is ever consulte
 a Fletcher-internal implementation detail and not configurable. It is bounded at the fixed
 `kSchemaPayloadBytes` (`pubsub/include/fletcher/pubsub/payload_bound.hpp`), not a property.
 
+#### Discovery server
+
+SIMPLE multicast discovery is Fast DDS's default, and Fletcher leaves it in place; on a routed network, or wherever multicast is
+blocked, point the participant at a Fast DDS Discovery Server instead. Both routes below are Fast
+DDS's own mechanism — Fletcher adds no setting of its own.
+
+**Route 1: an environment variable, no document change.** Set `ROS_DISCOVERY_SERVER` before the
+process starts, e.g. `ROS_DISCOVERY_SERVER=192.168.1.10:11811`. Entries are `;`-separated
+`ip[:port]` (IPv4), `[ipv6][:port]`, or `UDPv4:[host]:port` / `TCPv4:[host]:port`; a missing port
+defaults to 11811. This route works unchanged with the default document, because the built-in
+participant block (see [The published starting point](#the-published-starting-point)) sets no
+`discovery_config` and so leaves the protocol SIMPLE — Fast DDS only applies the variable to a
+SIMPLE participant. `FASTDDS_ENVIRONMENT_FILE` names a JSON file (`{"ROS_DISCOVERY_SERVER": "..."}`)
+that is consulted first, if set.
+
+**Route 2: in the document.** Add this inside `fletcher_participant`:
+
+```xml
+<participant profile_name="fletcher_participant">
+  <rtps>
+    <name>FletcherParticipant</name>
+    <builtin>
+      <discovery_config>
+        <discoveryProtocol>CLIENT</discoveryProtocol>
+        <discoveryServersList>
+          <locator>
+            <udpv4>
+              <address>192.168.1.10</address>
+              <port>11811</port>
+            </udpv4>
+          </locator>
+        </discoveryServersList>
+      </discovery_config>
+    </builtin>
+  </rtps>
+</participant>
+```
+
+This replaces route 1, not adds to it: with any XML `discoveryProtocol` other than SIMPLE, Fast DDS
+ignores `ROS_DISCOVERY_SERVER` entirely — nothing is merged.
+
+- No server GUID prefix is needed in 3.4.0: `m_DiscoveryServers` is a plain locator list.
+- `<port>` omitted leaves the locator's own default, which is NOT 11811 — always write it.
+- A document is a per-process choice (see [Known limits of the document](#known-limits-of-the-document)),
+  so every provider in that process becomes a client of that one server.
+
+`SUPER_CLIENT` is the same idea for a participant that must see every endpoint the server knows,
+not just what it goes on to match.
+
+**Running the server.** The Fast DDS conan package ships `fast-discovery-server-1.0.1.exe`; it
+needs the `42` (SERVER) command index as its first argument:
+
+```
+fast-discovery-server-1.0.1.exe 42 -l 192.168.1.10 -p 11811
+```
+
+(`-l/--udp-address` is the listen address, default any; `-p/--udp-port` defaults to 11811; `-t/-q`
+are the TCP equivalents.) `fastdds.bat discovery ...` (needs the `py` launcher) adds the index for
+you. The server is a separate, long-running process — it must be up before either side can
+discover the other.
+
+`FastDdsConfig.AClientAnchorResolvesToTheDiscoveryServer` pins the XML shape from route 2.
+
 ### Delivery guarantees
 
 The provider upholds the `PubSubProvider::SubscribeCallback` contract:
@@ -759,16 +822,16 @@ pub.Publish(Telemetry().set_device_id(1).set_value(98.6));
 TelemetryFeed_TelemetryStreamSubscriber sub(provider);
 uint64_t sub_id = sub.Subscribe([](Telemetry msg, fletcher::Attachments att) {
     // Called on a Fast DDS internal listener thread.
-});
+}).subscription_id;
 ```
 
 Or used directly through the `PubSubProvider` interface:
 
 ```cpp
-provider->CreateTopic({"my", "topic"}, schema);
+provider->CreateTopic({"my", "topic"}, {schema});
 provider->Publish({"my", "topic"}, encoded_row);
-provider->Subscribe({"my", "topic"}, [](const uint8_t* data, size_t len,
-                                          SharedSchema, Attachments) { ... });
+provider->Subscribe({"my", "topic"}, {[](const uint8_t* data, size_t len,
+                                          SharedSchema, Attachments) { ... }});
 provider->Unsubscribe({"my", "topic"});
 ```
 
@@ -819,6 +882,23 @@ on the topic it takes the `__schema` reader down and ends a still-pending arriva
 `kSubscriptionEnded`; with a live data subscription sharing the channel it clears the watch only,
 and those endpoints go with that subscription's `Unsubscribe`. Both are safe to call on a topic
 that has neither.
+
+### Subscribing only if the schema is the one you expect
+
+`SubscriptionRequest::check` (`pubsub/provider.hpp` has the contract) gates the data side. On this
+provider that means no Fast DDS `DataReader` exists until the check passes, so a rejected
+subscription never matches the topic's writer, whatever bound or type it carries; it stays
+registered, with no data reader, until `Unsubscribe`.
+
+- **Thread and lock.** The check runs once, under the provider's schema lock, on whichever thread
+  first learns the schema: the calling thread, also holding the provider mutex, when the schema is
+  already known (a `SubscribeSchema` watch resolved it, or this provider published the topic); the
+  schema thread, holding only the schema lock, when it arrives later. A seam call from inside it is
+  refused `kReentrantCall`, and it must not block.
+- **Watch re-arm.** A `SubscribeSchema` watch on the channel sees the same conflict. If it keeps the
+  schema side open past `Unsubscribe`, the topic's arrival is re-armed to the known schema, so a
+  later check-free `Subscribe` gets a working one; an arrival the watch already holds keeps
+  reporting the conflict.
 
 ### Per-topic QoS overrides
 
@@ -886,16 +966,17 @@ other way to say the same thing, per CALL rather than per document. The user-fac
 are `fletcher::Publisher::CreateTopic(segments, schema, options)` and
 `fletcher::Subscriber::Subscribe(segments, cb, options)` — each takes a `TopicOptions` alongside the
 arguments the option-less call already takes, defaulting to `TopicOptions{}`, which is exactly the
-option-less call. Both forward to this provider's own seam methods,
-`FastDDSPubSubProvider::CreateTopicWithOptions` / `SubscribeWithOptions` — the shape a provider
-*implementer* overrides; an application reaches options through `Publisher` / `Subscriber`, not
-those two directly.
+option-less call. Both translate it into this provider's own seam structs,
+`fletcher::TopicDeclaration` / `fletcher::SubscriptionRequest` (`pubsub/provider.hpp`), and forward
+into `FastDDSPubSubProvider::CreateTopic` / `Subscribe` — the same two methods the option-less call
+reaches, with an empty `profile` and `max_payload_bytes` field instead of a populated one; an
+application reaches options through `Publisher` / `Subscriber`, not the provider directly.
 
 | | `profile` | `max_payload_bytes` |
 |---|---|---|
-| `CreateTopic` (with options) | selects a `<data_writer>` profile by name, ahead of the document's per-topic-name lookup and its default; an unknown name is `kInvalidArgument`, quoting it | this topic's own publisher bound — type name, announced bound, row ceiling; `IsPayloadBound` rejects it as `kInvalidArgument`; 0 follows `PayloadBytes()` |
+| `CreateTopic` (`declaration.profile` / `.max_payload_bytes`) | selects a `<data_writer>` profile by name, ahead of the document's per-topic-name lookup and its default; an unknown name is `kInvalidArgument`, quoting it | this topic's own publisher bound — type name, announced bound, row ceiling; `IsPayloadBound` rejects it as `kInvalidArgument`; 0 follows `PayloadBytes()` |
 | re-declaration | a different non-empty profile is `kInvalidArgument` | a different non-zero bound is `kInvalidArgument` |
-| `Subscribe` (with options) | selects a `<data_reader>` profile by name, resolved (and refused, if unknown) synchronously at `Subscribe` time | always `kInvalidArgument` — a subscription follows whatever bound its publisher announces, never one of its own |
+| `Subscribe` (`request.profile`) | selects a `<data_reader>` profile by name, resolved (and refused, if unknown) synchronously at `Subscribe` time | no such field on `SubscriptionRequest` — a subscription follows whatever bound its publisher announces, never one of its own; `Subscriber::Subscribe` itself refuses a non-zero `TopicOptions::max_payload_bytes` before it ever reaches the provider |
 | empty options | exactly the option-less call | exactly the option-less call |
 
 Every one of the built-in profiles (see [Built-in profiles](#built-in-profiles)) is reached this
@@ -1158,4 +1239,4 @@ The `upload` job only runs from `cd.fastdds-pubsub-provider.yml`
 
 ## Runtime requirements
 
-The Fast DDS runtime (discovery server or default multicast discovery) must be reachable at the configured domain ID. On a single machine with no network configuration, the default multicast discovery works out of the box. For multi-host deployments, configure Fast DDS via its XML profile mechanism or a discovery server — see the [Fast DDS documentation](https://fast-dds.docs.eprosima.com/).
+The Fast DDS runtime (discovery server or default multicast discovery) must be reachable at the configured domain ID. On a single machine with no network configuration, the default multicast discovery works out of the box. For multi-host deployments, point the participant at a Fast DDS Discovery Server or configure it via the XML profile mechanism — see [Discovery server](#discovery-server), or the [Fast DDS documentation](https://fast-dds.docs.eprosima.com/) for more detail.

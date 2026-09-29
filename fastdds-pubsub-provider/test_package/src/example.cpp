@@ -58,14 +58,14 @@ int main() {
     FastDDSPubSubProvider pub_provider(config, &match);
     FastDDSPubSubProvider sub_provider(config);
 
-    pub_provider.CreateTopic({"example", "topic"}, MakeSchema());
+    pub_provider.CreateTopic({"example", "topic"}, {MakeSchema()});
 
     std::mutex mutex;
     std::condition_variable cv;
     int32_t received = -1;
     SubscriptionResult result = sub_provider.Subscribe(
         {"example", "topic"},
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+        {[&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             if (len >= 5) {
                 int32_t v;
                 std::memcpy(&v, data + 1, sizeof(v));
@@ -73,7 +73,7 @@ int main() {
                 received = v;
                 cv.notify_all();
             }
-        });
+        }});
 
     // One waiting mechanism, with a deadline and a typed outcome.
     SharedSchema schema;

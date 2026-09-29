@@ -34,9 +34,3 @@ void DiscardConcreteFastDDSProvider(fletcher::FastDDSPubSubProvider& provider) {
 void DiscardConcreteFastDDSProviderSubscribeSchema(fletcher::FastDDSPubSubProvider& provider) {
     provider.SubscribeSchema({"probe"});
 }
-
-// The same forcing shape again, for the concrete override of SubscribeWithOptions: just as liable
-// to lose its [[nodiscard]] silently on a future edit as the two above were.
-void DiscardConcreteFastDDSProviderSubscribeWithOptions(fletcher::FastDDSPubSubProvider& provider) {
-    provider.SubscribeWithOptions({"probe"}, {}, fletcher::TopicOptions{});
-}

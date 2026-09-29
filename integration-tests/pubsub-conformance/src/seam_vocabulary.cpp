@@ -347,9 +347,9 @@ TEST(SeamVocabulary, LaterDeclarationNeverReachesALiveSubscription) {
 
     std::vector<bool> had_schema;
     SubscriptionResult first = provider->Subscribe(
-        topic, [&](const uint8_t*, size_t, const SharedSchema& schema, const Attachments&) {
+        topic, {[&](const uint8_t*, size_t, const SharedSchema& schema, const Attachments&) {
             had_schema.push_back(schema != nullptr);
-        });
+        }});
 
     // Fixed when Subscribe returned, and it was fixed at "no schema".
     SharedSchema out;
@@ -359,7 +359,7 @@ TEST(SeamVocabulary, LaterDeclarationNeverReachesALiveSubscription) {
     provider->Publish(topic, [](WriteBuffer& buf) { buf.AppendByte(0x01); });
 
     // A declaration lands AFTER the subscription exists.
-    provider->CreateTopic(topic, MakeConformanceSchema(SchemaId::kA));
+    provider->CreateTopic(topic, {MakeConformanceSchema(SchemaId::kA)});
     provider->Publish(topic, [](WriteBuffer& buf) { buf.AppendByte(0x02); });
 
     ASSERT_EQ(had_schema.size(), 2u) << "both rows should have been delivered";
@@ -379,7 +379,7 @@ TEST(SeamVocabulary, LaterDeclarationNeverReachesALiveSubscription) {
     // declarations reach only new subscriptions", not "declarations are lost".
     provider->Unsubscribe(topic);
     SubscriptionResult second = provider->Subscribe(
-        topic, [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
+        topic, {[](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}});
     out = nullptr;
     EXPECT_EQ(second.schema.Wait(std::chrono::milliseconds(0), &out), PubSubStatus::kOk);
     EXPECT_NE(out, nullptr) << "a subscription created after the declaration must see it";
@@ -394,9 +394,10 @@ TEST(SeamVocabulary, LaterDeclarationNeverReachesALiveSubscription) {
 // `SplitTopic("")` yields an empty vector — which is why it is refused at the
 // door rather than trusted not to happen.
 //
-// Asserted on all eight seam methods, each passed an EMPTY `TopicOptions{}` where relevant so the
-// assertion is about the segment door, not about options support: the check lives in one place
-// (`internal::RequireSegments`), and this is what says all eight still route through it.
+// Asserted on all six seam methods, each passed a `TopicDeclaration` / `SubscriptionRequest` with
+// every optional field empty where relevant, so the assertion is about the segment door and not
+// about a struct field: the check lives in one place (`internal::RequireSegments`), and this is
+// what says all six still route through it.
 TEST(SeamVocabulary, EmptyTopicSegmentListIsRefusedAtEveryEntryPoint) {
     InProcessPubSubProvider provider;
     const Topic none;
@@ -412,14 +413,14 @@ TEST(SeamVocabulary, EmptyTopicSegmentListIsRefusedAtEveryEntryPoint) {
         return false;
     };
 
-    EXPECT_TRUE(refused([&] { provider.CreateTopic(none, MakeConformanceSchema(SchemaId::kA)); }))
+    EXPECT_TRUE(refused([&] { provider.CreateTopic(none, {MakeConformanceSchema(SchemaId::kA)}); }))
         << "CreateTopic accepted an empty topic";
     EXPECT_TRUE(refused([&] {
         provider.Publish(none, [](WriteBuffer& buf) { buf.AppendByte(0x01); });
     })) << "Publish accepted an empty topic";
     EXPECT_TRUE(refused([&] {
         static_cast<void>(provider.Subscribe(
-            none, [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}));
+            none, {[](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}}));
     })) << "Subscribe accepted an empty topic";
     EXPECT_TRUE(refused([&] { provider.Unsubscribe(none); }))
         << "Unsubscribe accepted an empty topic";
@@ -427,18 +428,10 @@ TEST(SeamVocabulary, EmptyTopicSegmentListIsRefusedAtEveryEntryPoint) {
         << "SubscribeSchema accepted an empty topic";
     EXPECT_TRUE(refused([&] { provider.UnsubscribeSchema(none); }))
         << "UnsubscribeSchema accepted an empty topic";
-    EXPECT_TRUE(refused([&] {
-        provider.CreateTopicWithOptions(none, MakeConformanceSchema(SchemaId::kA), TopicOptions{});
-    })) << "CreateTopicWithOptions accepted an empty topic";
-    EXPECT_TRUE(refused([&] {
-        static_cast<void>(provider.SubscribeWithOptions(
-            none, [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
-            TopicOptions{}));
-    })) << "SubscribeWithOptions accepted an empty topic";
 
     // And a one-segment topic is still perfectly ordinary — the refusal is of
     // EMPTY, not of short.
-    EXPECT_NO_THROW(provider.CreateTopic({"solo"}, OwnedSchema{}));
+    EXPECT_NO_THROW(provider.CreateTopic({"solo"}, {}));
 }
 
 // ── §3.5 rung 2 — the segment list IS the topic (PDA-DEC-A5) ─────────
@@ -463,8 +456,8 @@ TEST(SeamVocabulary, EmptyTopicSegmentListIsRefusedAtEveryEntryPoint) {
 //      (owner ruling 2026-09-04).
 //
 // This is the SIBLING of the empty-list case above and is deliberately beside
-// it: same provider, same eight methods, same shape of assertion. Both rules
-// live in `internal::RequireSegments`, and asserting all eight methods is what
+// it: same provider, same six methods, same shape of assertion. Both rules
+// live in `internal::RequireSegments`, and asserting all six methods is what
 // says the door is still the one door every entry point routes through.
 //
 // The peer subjects are excluded by construction, not by omission:
@@ -508,7 +501,7 @@ TEST(SeamVocabulary, AmbiguousTopicSegmentsAreRefusedAtEveryEntryPoint) {
         const std::string& why = entry.second;
 
         EXPECT_TRUE(refused([&] {
-            provider.CreateTopic(topic, MakeConformanceSchema(SchemaId::kA));
+            provider.CreateTopic(topic, {MakeConformanceSchema(SchemaId::kA)});
         })) << "CreateTopic accepted "
             << why;
         EXPECT_TRUE(refused([&] {
@@ -517,7 +510,7 @@ TEST(SeamVocabulary, AmbiguousTopicSegmentsAreRefusedAtEveryEntryPoint) {
             << why;
         EXPECT_TRUE(refused([&] {
             static_cast<void>(provider.Subscribe(
-                topic, [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}));
+                topic, {[](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}}));
         })) << "Subscribe accepted "
             << why;
         EXPECT_TRUE(refused([&] { provider.Unsubscribe(topic); }))
@@ -526,62 +519,48 @@ TEST(SeamVocabulary, AmbiguousTopicSegmentsAreRefusedAtEveryEntryPoint) {
             << "SubscribeSchema accepted " << why;
         EXPECT_TRUE(refused([&] { provider.UnsubscribeSchema(topic); }))
             << "UnsubscribeSchema accepted " << why;
-        EXPECT_TRUE(refused([&] {
-            provider.CreateTopicWithOptions(topic, MakeConformanceSchema(SchemaId::kA),
-                                            TopicOptions{});
-        })) << "CreateTopicWithOptions accepted "
-            << why;
-        EXPECT_TRUE(refused([&] {
-            static_cast<void>(provider.SubscribeWithOptions(
-                topic, [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
-                TopicOptions{}));
-        })) << "SubscribeWithOptions accepted "
-            << why;
     }
 
     // The bound on the narrowing. A dot, a space, a hyphen and a SINGLE leading
     // underscore are not wrong and must still work — the safe-charset option
     // was rejected for exactly this reason. Without these rows a build that
     // refused every topic would be green above.
-    EXPECT_NO_THROW(provider.CreateTopic({"vessel.bow", "depth-raw"}, OwnedSchema{}));
-    EXPECT_NO_THROW(provider.CreateTopic({"_private", "two words"}, OwnedSchema{}));
+    EXPECT_NO_THROW(provider.CreateTopic({"vessel.bow", "depth-raw"}, {}));
+    EXPECT_NO_THROW(provider.CreateTopic({"_private", "two words"}, {}));
 }
 
-// ── §2 — TopicOptions, empty means defaults ──
+// ── §2 — TopicDeclaration / SubscriptionRequest, empty field means default ──
 //
-// A default-constructed `TopicOptions` is never refused and behaves exactly like
-// the pure form it delegates to (provider.hpp): the base class's own body is what
-// this pins, over a real provider that overrides neither method. `InProcessPubSubProvider`
-// is the one this binary can construct; the claim is provider-agnostic by
-// construction (it is the BASE class's behaviour), and the provider-specific half
-// of the options story — Fast DDS resolving a real profile, honouring a real
-// bound — is that provider's own suite's job, not this one's.
-TEST(SeamVocabulary, EmptyTopicOptionsAreNeverRefused) {
+// A default-constructed field — `profile` empty, `max_payload_bytes` zero, `check` empty — is
+// never refused and behaves exactly like a call that omits it (provider.hpp), pinned over
+// `InProcessPubSubProvider`'s own `CreateTopic`/`Subscribe` bodies directly. The claim is
+// provider-agnostic by construction, and the provider-specific half of the field story — Fast DDS
+// resolving a real profile, honouring a real bound — is that provider's own suite's job, not this
+// one's.
+TEST(SeamVocabulary, EmptyRequestFieldsAreNeverRefused) {
     InProcessPubSubProvider provider;
     const Topic topic = FreshTopic("SeamVocabularyEmptyOptions");
 
-    EXPECT_NO_THROW(
-        provider.CreateTopicWithOptions(topic, MakeConformanceSchema(SchemaId::kA), TopicOptions{}))
-        << "CreateTopicWithOptions({}) was refused, though it must behave exactly like CreateTopic";
+    EXPECT_NO_THROW(provider.CreateTopic(topic, {MakeConformanceSchema(SchemaId::kA)}))
+        << "CreateTopic({schema}) was refused";
 
     Collector collector;
-    SubscriptionResult result =
-        provider.SubscribeWithOptions(topic, collector.Callback(), TopicOptions{});
+    SubscriptionResult result = provider.Subscribe(topic, {collector.Callback()});
 
     SharedSchema schema;
     ASSERT_EQ(result.schema.Wait(std::chrono::seconds(5), &schema), PubSubStatus::kOk)
         << result.schema.Message();
-    EXPECT_NE(schema, nullptr) << "the declared schema never reached SubscribeWithOptions({})";
+    EXPECT_NE(schema, nullptr) << "the declared schema never reached Subscribe({callback})";
 
     provider.Publish(topic, [](WriteBuffer& buf) { EncodeRow(buf, 1); });
     EXPECT_TRUE(
         collector.WaitForCount(1, std::chrono::steady_clock::now() + std::chrono::seconds(5)))
-        << "a row published after SubscribeWithOptions({}) never reached the callback";
+        << "a row published after Subscribe({callback}) never reached the callback";
 
     provider.Unsubscribe(topic);
 }
 
-// ── The same addendum — a non-empty option is never silent ─────────────
+// ── The same addendum — a non-empty field is never silent ─────────────
 //
 // A provider with no notion of `profile` — every provider today but Fast DDS —
 // refuses a non-empty one `kNotSupported`; a provider that DOES resolve profiles
@@ -592,10 +571,14 @@ TEST(SeamVocabulary, EmptyTopicOptionsAreNeverRefused) {
 // this pins, is the SHAPE of the answer: never `kOk`, never anything else, and
 // never a silent success — checked here over the one provider this binary can
 // construct, which takes the `kNotSupported` branch.
+//
+// `SubscriptionRequest` carries no payload bound of its own (provider.hpp): `Subscriber::Subscribe`
+// refuses a non-zero caller-tier bound itself, before any provider is reached (see pubsub's own
+// suite), so there is no subscription-bound row; `declare_bound_status` below is
+// `TopicDeclaration`'s own field, the one place a payload bound still crosses this seam.
 TEST(SeamVocabulary, NonEmptyOptionsAreRefusedOrHonouredByStatus) {
     InProcessPubSubProvider provider;
     const Topic topic = FreshTopic("SeamVocabularyNonEmptyOptions");
-    const TopicOptions profiled{.profile = "x"};
 
     auto status_of = [](auto&& call) -> PubSubStatus {
         try {
@@ -606,27 +589,65 @@ TEST(SeamVocabulary, NonEmptyOptionsAreRefusedOrHonouredByStatus) {
         return PubSubStatus::kOk;
     };
 
-    const PubSubStatus declare_status = status_of([&] {
-        provider.CreateTopicWithOptions(topic, MakeConformanceSchema(SchemaId::kA), profiled);
+    const PubSubStatus declare_profile_status = status_of([&] {
+        provider.CreateTopic(topic,
+                             {.schema = MakeConformanceSchema(SchemaId::kA), .profile = "x"});
     });
-    EXPECT_TRUE(declare_status == PubSubStatus::kNotSupported ||
-                declare_status == PubSubStatus::kInvalidArgument)
-        << "CreateTopicWithOptions({.profile=\"x\"}) answered "
-        << internal::PubSubStatusName(declare_status)
+    EXPECT_TRUE(declare_profile_status == PubSubStatus::kNotSupported ||
+                declare_profile_status == PubSubStatus::kInvalidArgument)
+        << "CreateTopic({.profile=\"x\"}) answered "
+        << internal::PubSubStatusName(declare_profile_status)
+        << " — every provider must answer kNotSupported or kInvalidArgument, never anything else "
+           "and never silently";
+
+    const PubSubStatus declare_bound_status = status_of([&] {
+        provider.CreateTopic(
+            topic, {.schema = MakeConformanceSchema(SchemaId::kA), .max_payload_bytes = 1024});
+    });
+    EXPECT_TRUE(declare_bound_status == PubSubStatus::kNotSupported ||
+                declare_bound_status == PubSubStatus::kInvalidArgument)
+        << "CreateTopic({.max_payload_bytes=1024}) answered "
+        << internal::PubSubStatusName(declare_bound_status)
         << " — every provider must answer kNotSupported or kInvalidArgument, never anything else "
            "and never silently";
 
     const PubSubStatus subscribe_status = status_of([&] {
-        static_cast<void>(provider.SubscribeWithOptions(
-            topic, [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
-            profiled));
+        static_cast<void>(provider.Subscribe(
+            topic,
+            {.callback = [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
+             .profile = "x"}));
     });
     EXPECT_TRUE(subscribe_status == PubSubStatus::kNotSupported ||
                 subscribe_status == PubSubStatus::kInvalidArgument)
-        << "SubscribeWithOptions({.profile=\"x\"}) answered "
-        << internal::PubSubStatusName(subscribe_status)
+        << "Subscribe({.profile=\"x\"}) answered " << internal::PubSubStatusName(subscribe_status)
         << " — every provider must answer kNotSupported or kInvalidArgument, never anything else "
            "and never silently";
+
+    // `check`'s own shape: kOk (honoured) or kNotSupported, never anything else and never
+    // silently — the mirror of `profile`'s two-branch shape above, over a topic actually declared
+    // so an honoured check has an announced schema to run against.
+    provider.CreateTopic(topic, {MakeConformanceSchema(SchemaId::kA)});
+    int check_calls = 0;
+    const PubSubStatus subscribe_checked_status = status_of([&] {
+        static_cast<void>(provider.Subscribe(
+            topic,
+            {.callback = [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
+             .check =
+                 [&](const SharedSchema&) {
+                     ++check_calls;
+                     return true;
+                 }}));
+    });
+    EXPECT_TRUE(subscribe_checked_status == PubSubStatus::kOk ||
+                subscribe_checked_status == PubSubStatus::kNotSupported)
+        << "Subscribe({.check=...}) on a declared topic answered "
+        << internal::PubSubStatusName(subscribe_checked_status)
+        << " — every provider must answer kOk (honouring it) or kNotSupported, never anything else "
+           "and never silently";
+    if (subscribe_checked_status == PubSubStatus::kOk) {
+        EXPECT_EQ(check_calls, 1) << "an honoured check ran " << check_calls
+                                  << " times, not exactly once";
+    }
 }
 
 // ── §3.2 — the attachment set has a PUBLISHED FORM ──────────────────

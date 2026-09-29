@@ -66,7 +66,7 @@ class PeerSubject : public ProviderSubject {
     }
 
     SubscriptionResult Subscribe(const Topic& topic, SubscribeCallback callback) override {
-        return provider_->Subscribe(topic, std::move(callback));
+        return provider_->Subscribe(topic, {std::move(callback)});
     }
 
     void Unsubscribe(const Topic& topic) override { provider_->Unsubscribe(topic); }
@@ -80,14 +80,12 @@ class PeerSubject : public ProviderSubject {
     /// LOCAL-ONLY, as subject.hpp says: there is no peer-pipe form, so — unlike `DeclareTopic`
     /// above — this reaches `provider_`, the subscriber-side instance in THIS process, never the
     /// peer child. The publisher-side instance is not needed for it.
-    void DeclareTopicWithOptions(const Topic& topic, OwnedSchema schema,
-                                 const TopicOptions& options) override {
-        provider_->CreateTopicWithOptions(topic, std::move(schema), options);
+    void DeclareTopicWith(const Topic& topic, TopicDeclaration declaration) override {
+        provider_->CreateTopic(topic, std::move(declaration));
     }
 
-    SubscriptionResult SubscribeWithOptions(const Topic& topic, SubscribeCallback callback,
-                                            const TopicOptions& options) override {
-        return provider_->SubscribeWithOptions(topic, std::move(callback), options);
+    SubscriptionResult SubscribeWith(const Topic& topic, SubscriptionRequest request) override {
+        return provider_->Subscribe(topic, std::move(request));
     }
 
     /// The writer-side half of the readiness fence lives in the peer (peer.hpp

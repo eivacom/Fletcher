@@ -44,9 +44,10 @@ class Publisher {
     /// a field already stored, but never change one — and a non-empty field against an EMPTY
     /// stored one is a conflict too, because the endpoint already exists without it. A conflicting
     /// field throws `PubSubError(kInvalidArgument)` before forwarding. Always reaches the provider
-    /// through `PubSubProvider::CreateTopicWithOptions` — its own default delegates to
-    /// `CreateTopic` when `options` is empty, so a provider that never heard of options still sees
-    /// its ordinary call.
+    /// as a `TopicDeclaration` — `provider->CreateTopic(segments, {std::move(schema),
+    /// options.profile, options.max_payload_bytes})` — so a provider with no notion of a profile
+    /// or a bound sees its own `kNotSupported` refusal for a non-empty one, and an option-less
+    /// call site sees a `TopicDeclaration` with both fields empty.
     void CreateTopic(const std::vector<std::string>& segments, OwnedSchema schema,
                      const TopicOptions& options = {});
 

@@ -45,21 +45,71 @@ struct SubscriptionResult {
     SchemaArrival schema;
 };
 
-/// Per-topic options a caller MAY pass to `CreateTopicWithOptions` / `SubscribeWithOptions`. A
-/// default-constructed value means "the provider's defaults" and is what the two-argument forms
-/// use. Both fields are provider-agnostic: `profile` is opaque text the provider resolves the
-/// way it resolves `ProviderConfig::document` (for Fast DDS, a `<data_writer>` / `<data_reader>`
-/// profile name in the loaded document; a name the document does not define is
+/// Per-topic options a caller MAY pass to `Publisher::CreateTopic` / `Subscriber::Subscribe`
+/// (publisher.hpp, subscriber.hpp). A default-constructed value means "the provider's defaults"
+/// and is what the two-argument forms use. This is the CALLER tier's own struct: `Publisher` and
+/// `Subscriber` each translate it into the seam's own `TopicDeclaration` / `SubscriptionRequest`
+/// (below) on every call, so a `PubSubProvider` implementation never sees a `TopicOptions`
+/// directly. Both fields are provider-agnostic: `profile` is opaque text the provider resolves
+/// the way it resolves `ProviderConfig::document` (for Fast DDS, a `<data_writer>` /
+/// `<data_reader>` profile name in the loaded document; a name the document does not define is
 /// `kInvalidArgument`), and `max_payload_bytes` is the same number `ProviderConfig` carries,
 /// here for one topic's PUBLISHER only — 0 means the provider's own. Subscribers never carry a
-/// bound (they follow what the publisher announces), so a non-zero one on a subscription is
-/// `kInvalidArgument`. A provider with no notion of one of these refuses a non-empty value
-/// `kNotSupported`; an empty `TopicOptions` is never refused.
+/// bound (they follow what the publisher announces), so `Subscriber::Subscribe` refuses a
+/// non-zero one itself, `kInvalidArgument`, before any state is touched — the seam's own
+/// `SubscriptionRequest` carries no such field at all. A provider with no notion of one of these
+/// refuses a non-empty value `kNotSupported`; an empty `TopicOptions` is never refused.
 struct TopicOptions {
     std::string profile;
     uint32_t max_payload_bytes = 0;
     [[nodiscard]] bool empty() const noexcept { return profile.empty() && max_payload_bytes == 0; }
     friend bool operator==(const TopicOptions&, const TopicOptions&) = default;
+};
+
+namespace internal {
+// The two callback-shaped types `SubscriptionRequest` (below) and `PubSubProvider`'s own member
+// aliases of the same names both need to name, declared once here because `PubSubProvider`
+// cannot be forward-referenced for a nested type before its own definition. Not public surface: a
+// caller spells `PubSubProvider::SubscribeCallback` / `PubSubProvider::SchemaCheck`, never these.
+using SubscribeCallback = std::function<void(
+    const uint8_t* data, size_t len, const SharedSchema& schema, const Attachments& attachments)>;
+using SchemaCheck = std::function<bool(const SharedSchema& announced)>;
+}  // namespace internal
+
+/// What a publisher declares to `PubSubProvider::CreateTopic`. Append-only (spec §12.1): a new
+/// optional field is appended, never inserted, renamed or removed. **The general rule:** an empty
+/// field is never refused; a provider that cannot honour a non-empty field refuses it
+/// `kNotSupported`.
+struct TopicDeclaration {
+    /// The topic's Arrow schema; ownership transfers to the provider. May be empty only on a
+    /// schema-less instance — see the provider's own doc for which providers are schema-carrying
+    /// (in-process: the `schema_carriage` document key).
+    OwnedSchema schema;
+    /// Opaque text the provider resolves the way it resolves `ProviderConfig::document`. A
+    /// provider with no notion of a profile refuses a non-empty one `kNotSupported`; empty means
+    /// the provider's default.
+    std::string profile;
+    /// This topic's PUBLISHER bound — the same number `ProviderConfig` carries typed, here for
+    /// one topic. `0` means the provider's own. A provider with no notion of a per-topic bound
+    /// refuses a non-zero one `kNotSupported`; one that has a notion of a bound refuses an
+    /// invalid value `kInvalidArgument`.
+    uint32_t max_payload_bytes = 0;
+};
+
+/// What a subscriber asks `PubSubProvider::Subscribe` for. Append-only, the same general rule as
+/// `TopicDeclaration` — which covers `check` too: a provider that does not honour it refuses a
+/// non-empty one `kNotSupported`, exactly like `profile`. A provider that DOES honour `check`
+/// follows the binding contract on `Subscribe`, below.
+struct SubscriptionRequest {
+    /// Delivers raw encoded row bytes, the topic's schema, and any sidecar attachments — see
+    /// `PubSubProvider::SubscribeCallback`'s own doc, on the class below, for the full delivery
+    /// contract. Required: an empty one is `kInvalidArgument`.
+    internal::SubscribeCallback callback;
+    /// As `TopicDeclaration::profile`, on the subscription side.
+    std::string profile;
+    /// Decides, once, whether the data side of this subscription opens — see `Subscribe`'s own
+    /// doc, below, for the full contract. Empty means accept whatever the topic announces.
+    internal::SchemaCheck check;
 };
 
 /// Abstract transport provider for pub/sub.
@@ -114,26 +164,40 @@ struct TopicOptions {
 /// provider_registry.hpp). All three providers are configured this way: the
 /// in-process loopback, Fast DDS by its own native XML QoS profiles document,
 /// and XRCE by a `key=value` document. No eProsima type and no XRCE type is
-/// nameable from here, or from any provider's installed header. There IS one
-/// per-call options struct — `TopicOptions`, below — and it is protocol-agnostic: a profile
-/// name the provider interprets the way it interprets the document, and the
-/// same payload bound the typed core carries, for one topic's publisher. No
-/// protocol QoS vocabulary crosses the seam through it.
+/// nameable from here, or from any provider's installed header. There ARE two
+/// per-call fields that cross this seam — `profile` on `TopicDeclaration` and
+/// `SubscriptionRequest`, below — and they are protocol-agnostic: a name the
+/// provider interprets the way it interprets the document. No protocol QoS
+/// vocabulary crosses the seam through them. `TopicOptions`, above, is the
+/// caller tier's own struct, never seen at this interface.
 class PubSubProvider {
    public:
     virtual ~PubSubProvider() = default;
 
-    /// Declares a topic and its schema; called on the publisher side. The
-    /// schema describes the Arrow structure of rows on this topic and its
-    /// ownership is transferred to the provider. Subscribers do not call this —
-    /// they learn the schema out-of-band (see Subscribe). Re-declaring a topic
-    /// with an identical schema is idempotent (so several publishers may share
-    /// one topic); a provider **must** reject a re-declaration with a
-    /// conflicting schema, by throwing (spec §7 clause 3 — "may" became "must"
-    /// with the 2026-09-01 ruling, so a provider that silently overwrote the
-    /// declared schema is now non-conforming).
+    /// Declares a topic and its schema; called on the publisher side. `declaration.schema`
+    /// describes the Arrow structure of rows on this topic and its ownership is transferred to
+    /// the provider. Subscribers do not call this — they learn the schema out-of-band (see
+    /// Subscribe). Re-declaring a topic with an identical schema is idempotent (so several
+    /// publishers may share one topic); a provider **must** reject a re-declaration with a
+    /// conflicting schema, by throwing (spec §7 clause 3).
+    ///
+    /// **Refusal order, binding on every conforming implementation:** the re-entrancy door
+    /// (`internal::RefuseIfInsideDeliveryOn`, before any lock) -> segments
+    /// (`internal::RequireSegments`, `kInvalidArgument`) -> the provider's own checks, in this
+    /// order:
+    ///  - a schema-carrying instance given an empty `declaration.schema` — `kInvalidArgument`;
+    ///  - a non-zero `declaration.max_payload_bytes` — a provider with a notion of a bound
+    ///    validates it and refuses an invalid one `kInvalidArgument`; a provider with no such
+    ///    notion refuses any non-zero value `kNotSupported`;
+    ///  - a non-empty `declaration.profile` — a provider that resolves profiles refuses an
+    ///    unknown name `kInvalidArgument`, quoting it; a provider with no notion of profiles
+    ///    refuses any non-empty value `kNotSupported`;
+    ///  - re-declaration of a topic already declared: identical is idempotent; a conflicting
+    ///    schema is `kSchemaConflict` (§7 clause 3); a different non-empty `profile` or a
+    ///    different non-zero `max_payload_bytes` than what is stored is `kInvalidArgument` — an
+    ///    EMPTY field on the re-declaration is "omitted", never a conflict with a stored value.
     virtual void CreateTopic(const std::vector<std::string>& topic_segments,
-                             OwnedSchema schema) = 0;
+                             TopicDeclaration declaration) = 0;
 
     /// Callback that encodes a row directly into a WriteBuffer.
     using RowEncoder = std::function<void(WriteBuffer&)>;
@@ -186,20 +250,18 @@ class PubSubProvider {
     ///    `DeliveryChannel` (delivery_channel.hpp), whose `Deliver` is `noexcept`
     ///    — so a provider cannot opt out and an unwind across a transport's C
     ///    frames is a type property rather than a comment.
-    ///  - **Re-entrancy: EVERY seam method is REFUSED** (§6 clause 6). The four
-    ///    data-path methods `CreateTopic`, `Publish`, `Subscribe` and
-    ///    `Unsubscribe`, the two schema-only ones below, and the two
-    ///    options-taking ones (`CreateTopicWithOptions`,
-    ///    `SubscribeWithOptions`), issued from inside a delivery on this same
-    ///    instance and this same thread, each throw `PubSubError(kReentrantCall)`
-    ///    before taking any lock. Copy what you need and act after the callback
-    ///    returns.
+    ///  - **Re-entrancy: EVERY seam method is REFUSED** (§6 clause 6). All six —
+    ///    `CreateTopic`, `Publish`, `Subscribe`, `Unsubscribe`, `SubscribeSchema` and
+    ///    `UnsubscribeSchema` — issued from inside a delivery on this same instance and this same
+    ///    thread, each throw `PubSubError(kReentrantCall)` before taking any lock. Copy what you
+    ///    need and act after the callback returns.
     ///    Re-permitting this once a loaned-sample receive path exists is a
     ///    registered obligation on PDA-ABI (AG1-DEBT-19); it is not
     ///    pre-authorised, and needs a fresh owner ruling.
-    using SubscribeCallback =
-        std::function<void(const uint8_t* data, size_t len, const SharedSchema& schema,
-                           const Attachments& attachments)>;
+    using SubscribeCallback = internal::SubscribeCallback;
+
+    /// Decides, once, whether the data side of a subscription opens.
+    using SchemaCheck = internal::SchemaCheck;
 
     /// Subscribe to a named topic. **Never blocks**: a subscriber may subscribe
     /// before any publisher exists, and the returned SubscriptionResult carries
@@ -217,8 +279,34 @@ class PubSubProvider {
     /// `data` may point into a buffer the transport owns rather than a copy of one — that is a
     /// provider-local optimisation, not part of this contract. Either way the pointer is only
     /// valid for the duration of the call and was never owned by the callback.
+    ///
+    /// **Refusal order, binding on every conforming implementation:** the door
+    /// (`internal::RefuseIfInsideDeliveryOn`) -> segments (`internal::RequireSegments`) -> an
+    /// empty `request.callback` — `kInvalidArgument` ("a subscription needs a callback") -> a
+    /// non-empty `request.profile`, refused exactly as `TopicDeclaration::profile` is on
+    /// `CreateTopic` -> the check semantics:
+    ///  - `request.check` empty: an ordinary subscription — the provider opens the data side and
+    ///    this call behaves exactly as it would with no check at all.
+    ///  - `request.check` non-empty: `check` is called once, with the announced schema, the first
+    ///    time it is known for this subscription, before the data side opens. `true`: identical
+    ///    to an empty `check` from there. `false`, schema already known inside the call: throw
+    ///    `PubSubError(kSchemaConflict)`, nothing opened, nothing registered. `false`, announced
+    ///    later: the arrival answers `kSchemaConflict` (`SchemaResolver::Fail`), the callback
+    ///    never runs, the subscription stays registered until `Unsubscribe` — the one door out,
+    ///    as for a schema that never arrives. The message names the topic. What "the data side
+    ///    opens" means is per transport, stated in each provider's own doc: Fast DDS and the
+    ///    in-process provider never create or feed the data endpoint before the check answers;
+    ///    XRCE creates its data reader at `Subscribe` and buffers pre-schema rows, so there a
+    ///    rejection clears the channel and drops the buffer — nothing is ever delivered, and the
+    ///    reader stays until `Unsubscribe`. Never called with a null schema: a schema-less
+    ///    transport (arrival kOk + null) has nothing to check and delivers. Runs on a provider
+    ///    thread under a provider lock; must not call into any provider — the provider frames the
+    ///    call with `internal::DeliveryScope`, so every seam door refuses `kReentrantCall` from
+    ///    inside it — and must not block. A throw is absorbed and counts as `false`. A
+    ///    `SubscribeSchema` watch sharing the arrival sees the conflict too.
+    ///
     [[nodiscard]] virtual SubscriptionResult Subscribe(
-        const std::vector<std::string>& topic_segments, SubscribeCallback callback) = 0;
+        const std::vector<std::string>& topic_segments, SubscriptionRequest request) = 0;
 
     /// Remove a previously registered subscription. **Once this returns, no
     /// further callback runs for that topic** (§7 clause 6): a provider that
@@ -304,41 +392,6 @@ class PubSubProvider {
     virtual void UnsubscribeSchema(const std::vector<std::string>& topic_segments) {
         internal::RefuseIfInsideDeliveryOn(this, "UnsubscribeSchema");
         internal::RequireSegments(topic_segments);
-    }
-
-    /// `CreateTopic` with per-topic options. Optional, like the schema-only pair above: this
-    /// default delegates to `CreateTopic` when `options` is empty and refuses `kNotSupported`
-    /// otherwise, so a provider that knows no profiles or per-topic bounds stays conforming.
-    /// Idempotent per topic the way `CreateTopic` is; a re-declaration carrying different
-    /// non-empty options for a topic already declared is `kInvalidArgument`.
-    /// **Refused from inside a delivery, as every seam method is** (§6 clause 6); segments are
-    /// validated before the support check, so a caller learns about a bad name first.
-    virtual void CreateTopicWithOptions(const std::vector<std::string>& topic_segments,
-                                        OwnedSchema schema, const TopicOptions& options) {
-        internal::RefuseIfInsideDeliveryOn(this, "CreateTopicWithOptions");
-        internal::RequireSegments(topic_segments);
-        if (options.empty()) return CreateTopic(topic_segments, std::move(schema));
-        throw PubSubError(PubSubStatus::kNotSupported,
-                          "PubSubProvider: this transport takes no per-topic options");
-    }
-
-    /// `Subscribe` with per-topic options (`profile` and `max_payload_bytes` — see
-    /// `TopicOptions`). A subscription carries no payload bound of its own (it follows what the
-    /// publisher announces), so a non-zero `max_payload_bytes` is refused `kInvalidArgument`
-    /// before the support decision below ever runs. Otherwise the same default behaviour as
-    /// `CreateTopicWithOptions`: empty delegates, a non-empty `profile` is `kNotSupported`.
-    [[nodiscard]] virtual SubscriptionResult SubscribeWithOptions(
-        const std::vector<std::string>& topic_segments, SubscribeCallback callback,
-        const TopicOptions& options) {
-        internal::RefuseIfInsideDeliveryOn(this, "SubscribeWithOptions");
-        internal::RequireSegments(topic_segments);
-        if (options.max_payload_bytes != 0)
-            throw PubSubError(PubSubStatus::kInvalidArgument,
-                              "PubSubProvider: a subscription carries no payload bound; it "
-                              "follows what the publisher announces");
-        if (options.empty()) return Subscribe(topic_segments, std::move(callback));
-        throw PubSubError(PubSubStatus::kNotSupported,
-                          "PubSubProvider: this transport takes no per-topic options");
     }
 };
 

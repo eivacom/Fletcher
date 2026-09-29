@@ -71,7 +71,7 @@ class ProbeProvider : public PubSubProvider {
     }
     ~ProbeProvider() override { --journal_->live_probes; }
 
-    void CreateTopic(const std::vector<std::string>&, OwnedSchema) override {}
+    void CreateTopic(const std::vector<std::string>&, TopicDeclaration) override {}
 
     void Publish(const std::vector<std::string>&, const RowEncoder& encoder,
                  const Attachments&) override {
@@ -81,7 +81,7 @@ class ProbeProvider : public PubSubProvider {
     }
 
     [[nodiscard]] SubscriptionResult Subscribe(const std::vector<std::string>&,
-                                               SubscribeCallback) override {
+                                               SubscriptionRequest) override {
         return SubscriptionResult{SchemaArrival::Ready(nullptr)};
     }
 
@@ -513,10 +513,10 @@ TEST(Registry, InProcessResolvesAsABuiltIn) {
     bool delivered = false;
     SubscriptionResult result = provider->Subscribe(
         {"registry", "probe"},
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+        {[&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             received.assign(data, data + len);
             delivered = true;
-        });
+        }});
 
     // as_declared with nothing ever declared answers immediately with a null
     // schema (kOk + null is the schema-less transport's answer, §7 clause 1) —
@@ -559,16 +559,16 @@ TEST(Registry, InProcessCarriageComesFromTheDocument) {
                         "publish to an undeclared topic on a carrying instance"),
               PubSubStatus::kTopicNotDeclared);
 
-    provider->CreateTopic({"registry", "carried"}, MakeSchema());
+    provider->CreateTopic({"registry", "carried"}, {MakeSchema()});
 
     SharedSchema received_schema;
     bool delivered = false;
     SubscriptionResult result = provider->Subscribe(
         {"registry", "carried"},
-        [&](const uint8_t*, size_t, const SharedSchema& schema, const Attachments&) {
+        {[&](const uint8_t*, size_t, const SharedSchema& schema, const Attachments&) {
             received_schema = schema;
             delivered = true;
-        });
+        }});
     SharedSchema arrived;
     ASSERT_EQ(result.schema.Wait(std::chrono::milliseconds(0), &arrived), PubSubStatus::kOk);
     ASSERT_NE(arrived, nullptr) << "a carrying instance answered kOk with a null schema";

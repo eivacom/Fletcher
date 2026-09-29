@@ -102,58 +102,90 @@ attachments: the vocabulary is `Blob`/`Attachments` and its ownership model
 
 ## §2 — The interface
 
-The seam is eight methods: four pure, and four optional with conforming defaults.
+The seam is six methods: four pure, and two optional with conforming defaults.
 
 ```cpp
-virtual void CreateTopic(const std::vector<std::string>& topic_segments, OwnedSchema schema) = 0;
+struct TopicDeclaration {
+    OwnedSchema schema;
+    std::string profile;
+    uint32_t max_payload_bytes = 0;
+};
+
+struct SubscriptionRequest {
+    SubscribeCallback callback;
+    std::string profile;
+    SchemaCheck check;
+};
+
+virtual void CreateTopic(const std::vector<std::string>& topic_segments,
+                         TopicDeclaration declaration) = 0;
 virtual void Publish(const std::vector<std::string>& topic_segments, const RowEncoder& encoder,
                      const Attachments& attachments = {}) = 0;
 [[nodiscard]] virtual SubscriptionResult Subscribe(
-    const std::vector<std::string>& topic_segments, SubscribeCallback callback) = 0;
+    const std::vector<std::string>& topic_segments, SubscriptionRequest request) = 0;
 virtual void Unsubscribe(const std::vector<std::string>& topic_segments) = 0;
 
 [[nodiscard]] virtual SchemaArrival SubscribeSchema(
     const std::vector<std::string>& topic_segments);
 virtual void UnsubscribeSchema(const std::vector<std::string>& topic_segments);
-
-virtual void CreateTopicWithOptions(const std::vector<std::string>& topic_segments,
-                                    OwnedSchema schema, const TopicOptions& options);
-[[nodiscard]] virtual SubscriptionResult SubscribeWithOptions(
-    const std::vector<std::string>& topic_segments, SubscribeCallback callback,
-    const TopicOptions& options);
-
-struct TopicOptions {
-    std::string profile;
-    uint32_t max_payload_bytes = 0;
-    [[nodiscard]] bool empty() const noexcept;
-    friend bool operator==(const TopicOptions&, const TopicOptions&) = default;
-};
 ```
 
-Four of the eight are not pure: each default body runs the re-entrancy door and segment
-validation first, and then `SubscribeSchema` throws `PubSubError(kNotSupported)`,
-`UnsubscribeSchema` returns, and the two `*WithOptions` methods delegate to the pure form when
-`options` is empty and otherwise throw `kNotSupported` (a non-zero `max_payload_bytes` on a
-subscription is `kInvalidArgument` before that check even runs). None of the four is among
-§7.1's four data-path methods — nothing in the conformance suite requires them, and a provider
-is not measured on them — but §5.1's translation rule and §6 clause 6's re-entrancy refusal bind
-them exactly like every other seam method, and a C form is owed to PDA-ABI for each — §3.5's
-segment list in, §3.4's arrival handle out for the schema-only pair.
+Two of the six are not pure: each default body runs the re-entrancy door and segment
+validation first, and then `SubscribeSchema` throws `PubSubError(kNotSupported)` and
+`UnsubscribeSchema` returns. Neither is among §7.1's four data-path methods — nothing in the
+conformance suite requires them, and a provider is not measured on them — but §5.1's translation
+rule and §6 clause 6's re-entrancy refusal bind them exactly like every other seam method, and a
+C form is owed to PDA-ABI for each — §3.5's segment list in, §3.4's arrival handle out.
 
 The schema-only watch is idempotent per topic, a later `Subscribe` reuses what it opened, and it
 is released **only** by `UnsubscribeSchema`: a data `Unsubscribe` leaves a pending watch in
 place, because the two were asked for separately.
 
-The semantics of `TopicOptions`: `profile` is opaque text the provider resolves the way it
-resolves `document` (§4.1) — for Fast DDS, a `<data_writer>` / `<data_reader>` profile name in
-the loaded document, and a name the document does not define is `kInvalidArgument`.
-`max_payload_bytes` is the typed core's number (§4.1), here for one topic's PUBLISHER only; `0`
-means the provider's own. Subscribers never carry a bound — they follow what the publisher
-announces on the `__schema` attachment (§4.1, §7 clause 1) — so a non-zero bound on a
-subscription is `kInvalidArgument`. An empty `TopicOptions` is never refused and means the
-provider's defaults. A provider with no notion of one of these fields refuses a non-empty value
-`kNotSupported`. A re-declaration or re-subscription of a topic already declared or subscribed,
-carrying different non-empty options, is `kInvalidArgument`.
+**The two request structs.** `TopicDeclaration` and `SubscriptionRequest` are append-only: a new
+optional field is appended, never inserted, renamed or removed, and joins the `append-only` class
+of §12.1 below. **The general rule:** an empty field is never refused; a provider that cannot
+honour a non-empty field — `profile`, `max_payload_bytes`, or `check` — refuses it
+`kNotSupported`. (`check`'s own contract, for a provider that DOES honour it, follows below.) A
+re-declaration of a topic already declared, or a re-subscription of one already subscribed,
+carrying a different non-empty `profile` than what is stored, is `kInvalidArgument`; for
+`CreateTopic`, the same holds for a different non-zero `max_payload_bytes` — `SubscriptionRequest`
+carries no such field, so a subscription cannot conflict on it. An empty field on either kind of
+re-declaration is "omitted", never a conflict with a stored value. `profile` is opaque text the
+provider resolves the way it resolves `document` (§4.1) — for Fast DDS, a `<data_writer>` /
+`<data_reader>` profile name in the loaded document, and a name the document does not define is
+`kInvalidArgument`. `TopicDeclaration::schema` transfers ownership to the provider, the way
+`CreateTopic`'s own schema argument always has. `TopicDeclaration::max_payload_bytes` is the typed
+core's number (§4.1), here for one topic's PUBLISHER only; `0` means the provider's own.
+`SubscriptionRequest` carries no payload bound at all — a subscription always follows what the
+publisher announces on the `__schema` attachment (§4.1, §7 clause 1) — and
+`SubscriptionRequest::callback` is required: an empty one is `kInvalidArgument`. Each crosses in C
+as a struct whose first member is `uint32_t struct_size`; fields are appended only.
+
+`SubscriptionRequest::check` gates `Subscribe` on the announced schema. `check` is called once,
+with the announced schema, the first time it is known for this subscription, before the data side
+opens: an empty `check` behaves exactly like an ordinary subscription; `true` behaves exactly like
+an empty `check` from there; `false` with the schema already known inside the call throws
+`PubSubError(kSchemaConflict)`, with nothing opened and nothing registered; `false` with the
+schema announced later resolves the arrival `kSchemaConflict` (`SchemaResolver::Fail`), the
+callback never runs, and the subscription stays registered until `Unsubscribe` — the one door out,
+exactly as for a schema that never arrives — with the message naming the topic. What "the data
+side opens" means is per transport, stated in each provider's own doc: Fast DDS and the
+in-process provider never create or feed the data endpoint before the check answers; XRCE creates
+its data reader at `Subscribe` and buffers pre-schema rows, so there a rejection clears the
+channel and drops the buffer — nothing is ever delivered, and the reader stays until
+`Unsubscribe`. `check` is never called with a null schema: a schema-less transport (arrival kOk +
+null) has nothing to check and delivers. It runs on a provider thread under a provider lock, must
+not call into any provider — the provider frames the call with `internal::DeliveryScope`, so every
+seam door refuses `kReentrantCall` from inside it — and must not block; a throw is absorbed and
+counts as `false`. A `SubscribeSchema` watch sharing the arrival sees the conflict too. The C form
+is a host predicate `int (*)(const ArrowSchema*, void* ctx)` with a context pointer.
+
+**`TopicOptions`** — `struct TopicOptions { std::string profile; uint32_t max_payload_bytes = 0;
+bool empty() const noexcept; }` — is the CALLER tier's own struct (`Publisher::CreateTopic`,
+`Subscriber::Subscribe`), never seen at this interface: those two classes translate it into the
+seam's own `TopicDeclaration` / `SubscriptionRequest` on every call. `Subscriber` refuses a
+non-zero `max_payload_bytes` itself, `kInvalidArgument`, before any state is touched, since the
+seam's own `SubscriptionRequest` has no such field to carry it in.
 
 **`Publish` is inverted, and stays inverted.** The provider supplies the buffer
 and Fletcher encodes into it. That inversion is the entire zero-copy encode path
@@ -599,8 +631,8 @@ Configuration at the seam is a small typed core plus an opaque blob:
   providers already have exactly `{max_payload_bytes, domain_id}`, so the core is
   derived from evidence rather than invented. It is **exactly those two fields**
   and it is append-only; a later field never changes `Create`. Per-topic options
-  do not widen it — they travel on the two options-taking methods §2 lists and
-  carry no protocol vocabulary of their own. Widening it because one protocol
+  do not widen it — they travel on `TopicDeclaration` / `SubscriptionRequest`
+  (§2) and carry no protocol vocabulary of their own. Widening it because one protocol
   wants a setting typed is a stop-and-ask (owner ruling 2026-09-02: "Fletcher
   keeps exactly payload size and domain"). `0` in
   `max_payload_bytes` means *unset* — the provider's own default applies. For the
@@ -773,7 +805,7 @@ without drifting, which is the drift this round exists to stop.
   non-failure number.
 - **Every seam entry point translates.** Each provider wraps every seam method it
   implements — the four data-path ones and, where it has them, the two
-  schema-only ones and the two options-taking ones (§2's addenda) — so
+  schema-only ones (§2's addenda) — so
   the only exception that leaves is a `PubSubError`; anything else — including
   `std::bad_alloc` or a transport SDK's own type — becomes `kInternal` carrying
   the original `what()`. A taxonomy that lets an untyped exception through is not
@@ -892,9 +924,8 @@ depend on these being written down:
    method** (owner ruling 2026-09-05, *"refuse everywhere; hand the capability to
    PDA-ABI"*).
 
-   **The rule:** `CreateTopic`, `Publish`, `Subscribe` and `Unsubscribe`, the
-   two schema-only methods `SubscribeSchema` and `UnsubscribeSchema`, and the two
-   options-taking methods `CreateTopicWithOptions` and `SubscribeWithOptions` —
+   **The rule:** `CreateTopic`, `Publish`, `Subscribe` and `Unsubscribe`, and the
+   two schema-only methods `SubscribeSchema` and `UnsubscribeSchema` —
    every seam method `PubSubProvider` declares — throw `PubSubError(kReentrantCall)`,
    **before taking any lock**, when issued from inside a delivery callback on the
    *same provider instance* and the *same thread*. There is no per-protocol
@@ -1259,8 +1290,8 @@ version negotiation, no driver vtable, no host-callback struct, no static
 registration table for *drivers* (a registry of *built-ins*, §4, is in scope).
 
 Also out: the wire format (byte-identical is a hard invariant), the codec, generated code, the
-gateway's WebSocket protocol, a protocol bridge, and any change to §2's method set beyond the four
-optional methods it already lists (adding, removing or reordering any of the eight is still a
+gateway's WebSocket protocol, a protocol bridge, and any change to §2's method set beyond the two
+optional methods it already lists (adding, removing or reordering any of the six is still a
 stop-and-ask).
 
 Deliberately deferred with a named home: **zero-copy receive** is enabled here
@@ -1291,7 +1322,8 @@ alone.** §1 governs: *"A later round finding the seam insufficient is a **stop-
 against *this* spec — not a local workaround, and not a change landed inside an ABI round."*
 
 **`append-only`** — the `PubSubStatus` values (§5.1); `ProviderConfig`'s typed core fields
-(§4.1); registered provider names (§4). The class constrains only the **shape** of a change:
+(§4.1); registered provider names (§4); `TopicDeclaration`'s and `SubscriptionRequest`'s fields
+(§2). The class constrains only the **shape** of a change:
 an append, with nothing renumbered, reordered, reused or removed. *Who may act:* **making an
 append is itself a stop-and-ask, and the owner allocates the number or the field** — so two
 parallel rounds cannot both take `PubSubStatus = 10`, and no allocation protocol or reserved
@@ -1307,8 +1339,8 @@ bounded to *facts*:** a statement of what the tree or the round *is or did* may 
 match the tree, and that is ordinary maintenance. It is **not** a licence over the
 *prohibitions* those sections carry — §11's "everything ABI is out of scope" list (no
 `extern "C"`, no C header, no `dlopen`, no version negotiation, no driver vtable, no
-host-callback struct) and its "any change to §2's method set beyond the four optional methods it
-already lists (adding, removing or reordering any of the eight is still a stop-and-ask)" restate §2,
+host-callback struct) and its "any change to §2's method set beyond the two optional methods it
+already lists (adding, removing or reordering any of the six is still a stop-and-ask)" restate §2,
 §4 and this round's scope, and they are **`frozen`**: relaxing one is a stop-and-ask, never
 maintenance. Correcting a stale fact beside them is not.
 

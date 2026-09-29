@@ -38,8 +38,9 @@ a `profile` name the provider interprets and a publisher-side `max_payload_bytes
 default-constructed value meaning "the provider's defaults". `PublisherArrow::CreateTopic` and both
 `SubscriberArrow::Subscribe` overloads (per-row and batched) take `options` as a defaulted trailing
 argument (`= {}`) that forwards straight to the underlying `Publisher` / `Subscriber` method of the
-same name, which is what reaches the provider's `CreateTopicWithOptions` / `SubscribeWithOptions` —
-always, on both tiers (see [pubsub/README.md](../pubsub/README.md)):
+same name, which is what fills `TopicDeclaration::profile`/`max_payload_bytes` and
+`SubscriptionRequest::profile` on the provider's `CreateTopic` / `Subscribe` — always, on both
+tiers (see [pubsub/README.md](../pubsub/README.md)):
 
 ```cpp
 fletcher::TopicOptions options{.profile = "reliable_large"};

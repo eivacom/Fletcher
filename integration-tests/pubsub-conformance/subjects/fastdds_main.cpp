@@ -124,13 +124,11 @@ class FastDDSSubject : public ProviderSubject {
         return inner_->SubscribeSchema(topic);
     }
     void UnsubscribeSchema(const Topic& topic) override { inner_->UnsubscribeSchema(topic); }
-    void DeclareTopicWithOptions(const Topic& topic, OwnedSchema schema,
-                                 const TopicOptions& options) override {
-        inner_->DeclareTopicWithOptions(topic, std::move(schema), options);
+    void DeclareTopicWith(const Topic& topic, TopicDeclaration declaration) override {
+        inner_->DeclareTopicWith(topic, std::move(declaration));
     }
-    SubscriptionResult SubscribeWithOptions(const Topic& topic, SubscribeCallback callback,
-                                            const TopicOptions& options) override {
-        return inner_->SubscribeWithOptions(topic, std::move(callback), options);
+    SubscriptionResult SubscribeWith(const Topic& topic, SubscriptionRequest request) override {
+        return inner_->SubscribeWith(topic, std::move(request));
     }
 
     // Reader half here, writer half where the writer lives (no-op for the
@@ -213,15 +211,15 @@ TEST(Registry, FastDdsResolvesAsABuiltIn) {
     ASSERT_NE(provider, nullptr) << "\"fastdds\" did not resolve to a provider";
 
     const std::vector<std::string> topic{"registry", "fastdds-probe"};
-    provider->CreateTopic(topic, MakeConformanceSchema(SchemaId::kA));
+    provider->CreateTopic(topic, {MakeConformanceSchema(SchemaId::kA)});
 
     std::vector<uint8_t> received;
     std::atomic<bool> delivered{false};
     SubscriptionResult result = provider->Subscribe(
-        topic, [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+        topic, {[&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             received.assign(data, data + len);
             delivered.store(true);
-        });
+        }});
 
     // Fast DDS carries the schema on its own channel, so the wait is a real
     // wait rather than the loopback's immediate answer.
@@ -301,7 +299,7 @@ TEST(TopicNames, AmbiguousSegmentsAreRefused) {
         const std::string& why = entry.second;
 
         EXPECT_TRUE(refused([&] {
-            provider->CreateTopic(topic, MakeConformanceSchema(SchemaId::kA));
+            provider->CreateTopic(topic, {MakeConformanceSchema(SchemaId::kA)});
         })) << "Fast DDS CreateTopic accepted "
             << why;
         EXPECT_TRUE(refused([&] {
@@ -310,7 +308,7 @@ TEST(TopicNames, AmbiguousSegmentsAreRefused) {
             << why;
         EXPECT_TRUE(refused([&] {
             static_cast<void>(provider->Subscribe(
-                topic, [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}));
+                topic, {[](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}}));
         })) << "Fast DDS Subscribe accepted "
             << why;
         EXPECT_TRUE(refused([&] { provider->Unsubscribe(topic); }))
@@ -321,7 +319,7 @@ TEST(TopicNames, AmbiguousSegmentsAreRefused) {
     // underscore still declares. Without this a provider that refused every
     // topic would be green above.
     EXPECT_NO_THROW(
-        provider->CreateTopic({"_vessel.bow", "depth-raw"}, MakeConformanceSchema(SchemaId::kA)));
+        provider->CreateTopic({"_vessel.bow", "depth-raw"}, {MakeConformanceSchema(SchemaId::kA)}));
 }
 
 // ── Two instances, one registry, one process (spec §4, third clause) ──
@@ -529,16 +527,16 @@ class Instance {
         provider_ = registry.Create(ProviderSelector::Parse("fastdds"), config);
         if (provider_ == nullptr) throw std::runtime_error("\"fastdds\" did not resolve");
 
-        provider_->CreateTopic(shared_topic_, MakeConformanceSchema(shape));
-        provider_->CreateTopic(private_topic_, MakeConformanceSchema(shape));
+        provider_->CreateTopic(shared_topic_, {MakeConformanceSchema(shape)});
+        provider_->CreateTopic(private_topic_, {MakeConformanceSchema(shape)});
         shared_result_ = provider_->Subscribe(
             shared_topic_,
-            [this](const uint8_t* data, size_t len, const SharedSchema& schema,
-                   const Attachments&) { shared_journal_.Record(data, len, schema); });
+            {[this](const uint8_t* data, size_t len, const SharedSchema& schema,
+                    const Attachments&) { shared_journal_.Record(data, len, schema); }});
         private_result_ = provider_->Subscribe(
             private_topic_,
-            [this](const uint8_t* data, size_t len, const SharedSchema& schema,
-                   const Attachments&) { private_journal_.Record(data, len, schema); });
+            {[this](const uint8_t* data, size_t len, const SharedSchema& schema,
+                    const Attachments&) { private_journal_.Record(data, len, schema); }});
     }
 
     Instance(const Instance&) = delete;

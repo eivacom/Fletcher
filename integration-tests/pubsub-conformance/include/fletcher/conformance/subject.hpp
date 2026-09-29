@@ -149,19 +149,18 @@ class ProviderSubject {
 
     virtual void UnsubscribeSchema(const Topic& topic) = 0;
 
-    /// Options-carrying declare/subscribe. LOCAL-ONLY on every provider, for the same reason
-    /// `SubscribeSchema`/`UnsubscribeSchema` are: the class doc above already says the
+    /// Declaration- and request-carrying declare/subscribe. LOCAL-ONLY on every provider, for the
+    /// same reason `SubscribeSchema`/`UnsubscribeSchema` are: the class doc above already says the
     /// subscriber side is always this process and this instance, for every subject — these verbs
     /// are local-only; there is no peer-pipe form. Each subject forwards straight to its own
-    /// provider's `CreateTopicWithOptions` / `SubscribeWithOptions`, exactly as it does for the
-    /// schema-only pair. `schema` is taken directly rather than as a `SchemaId`, unlike
-    /// `DeclareTopic`, because there is no peer wire form to build one for.
-    virtual void DeclareTopicWithOptions(const Topic& topic, OwnedSchema schema,
-                                         const TopicOptions& options) = 0;
+    /// provider's `CreateTopic` / `Subscribe`, exactly as it does for the schema-only pair.
+    /// `declaration.schema` is taken directly rather than as a `SchemaId`, unlike `DeclareTopic`,
+    /// because there is no peer wire form to build one for. `SubscribeWith`'s `request.check`, when
+    /// non-empty, gates whether the data side opens exactly as `provider.hpp`'s `Subscribe` says.
+    virtual void DeclareTopicWith(const Topic& topic, TopicDeclaration declaration) = 0;
 
-    [[nodiscard]] virtual SubscriptionResult SubscribeWithOptions(const Topic& topic,
-                                                                  SubscribeCallback callback,
-                                                                  const TopicOptions& options) = 0;
+    [[nodiscard]] virtual SubscriptionResult SubscribeWith(const Topic& topic,
+                                                           SubscriptionRequest request) = 0;
 
     /// Optional readiness hook. A clause calls this after `Subscribe` (and
     /// after whichever of `Subscribe` / `DeclareTopic` runs second, since a
