@@ -471,7 +471,7 @@ sequenceDiagram
     CsPub->>Int: fl_publisher_publish_row(pub, topic, rows, i, atts)
     Int->>ABI: P/Invoke (blittable, no marshalling)
     ABI->>ABI: check - topic declared on THIS publisher, rows' wire layout == topic's
-    Note over ABI: D-BIND-60, 65, 67 - FL_TOPIC_NOT_DECLARED or FL_INVALID_ARGUMENT<br/>before anything is encoded. The layout is the codec's field plan:<br/>names, metadata and nullability do not count.
+    Note over ABI: D-BIND-60, D-BIND-65, D-BIND-67 - FL_TOPIC_NOT_DECLARED or FL_INVALID_ARGUMENT<br/>before anything is encoded. The layout is the codec's field plan:<br/>names, metadata and nullability do not count.
     ABI->>Cpp: Publish(segments, RowEncoder, attachments)
     Cpp->>Drv: Publish(…)
     Drv->>ABI: expose write-buffer window {data, capacity, pos}
@@ -527,7 +527,7 @@ sequenceDiagram
         Note over CsSub: flush at MaxRows GOOD rows, at the Timeout, or on Unsubscribe.<br/>A window splits at C++'s 2^31-2 byte ceiling (D-BIND-63).
         CsSub->>ABI: fl_decode_rows_framed(window, ends) - ONE call (D-BIND-68)
         ABI-->>CsSub: the good rows + a valid flag per row
-        CsSub->>App: handler(RecordBatch, attachments, BatchStatus)
+        CsSub->>App: handler(RecordBatch, attachments, BatchStatus) - one shape, D-BIND-59
         Note over CsSub,App: as in C++, handler calls may overlap and batches may<br/>complete out of order (D-BIND-64). Every row arrives<br/>or is counted in RowsDropped (D-BIND-66).
     end
 ```

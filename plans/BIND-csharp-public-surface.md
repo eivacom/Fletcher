@@ -45,7 +45,7 @@ that mirror them are constrained rather than chosen.
 | `PubSubStatus` (int32, 0…10, append-only) | `enum FletcherStatus : int` | Numbers copied from `core/README.md`'s published table, not re-derived. A C# test compares the enum to that table, mirroring `Taxonomy.PublishedNumbersMatchTheEnum` |
 | `PubSubError : std::runtime_error` — `status()`, `what()` | `FletcherException : Exception` — `Status`, `Origin` (`enum FletcherOrigin { None, Seam, Codec, Callback }`), `Message`; `FletcherFormatException : FletcherException` when `Origin` is the codec and `Status` is `InvalidArgument` (D-BIND-15, narrowed to that pair by D-BIND-54; no member changes). **No `Offset` member (D-BIND-55):** no ABI field carries one, and the reader's message, which crosses verbatim, already names the byte | Crosses as a caller-owned `fl_error {status, origin, message, message_len}`, message as bytes + length with no zero byte (the seam escapes it), never a global slot (§5.1 rule 1). A managed exception that caused the failure is rethrown **as itself**, not wrapped (development plan §3.5, D-BIND-19) |
 | `Blob {owner, data, size}` | delivery: `ReadOnlySpan<byte>` inside the callback · retained: **DEFERRED (D-BIND-55)** — a handler copies what it keeps | The ABI lets a handler keep a blob past the call (`fl_blob_retain`), and `BlobHandle : SafeHandle` over it is the planned shape: `Length`, `CopyTo`, `Retain`, `Dispose`. **Trigger:** a consumer whose attachments are large enough that copying them out of the callback costs. Until then "copy what you keep" is the rule, and BIND-5's `SubscriberArrow` copies attachments anyway. There is no view-only `Blob` |
-| `Attachments` — `size()`, `KeyAt(i)`, `ValueAt(i)`, `Find(k)`, `Set(k,v)`, `Clear()` | read: `readonly ref struct AttachmentsView` — `Count`, `KeyAt(int)`, `ValueAt(int)`, `TryFind` · write: `sealed class AttachmentsBuilder : IDisposable` — `Set(ReadOnlySpan<byte> key, ReadOnlySpan<byte> value)`, `Set(string key, ReadOnlySpan<byte> value)` (UTF-8), `Clear`, `Count`. The builder **copies** what it is given and caches the sealed set, and `Dispose` frees that native set (D-BIND-44) — so the value is a span, not the caller's memory | **Positional enumeration only.** No sort, no `IDictionary`, no LINQ ordering. Keys are bytes in `memcmp` order, which is not C#'s ordinal UTF-16 order (§3.2 A2). A key with a zero byte is refused |
+| `Attachments` — `size()`, `KeyAt(i)`, `ValueAt(i)`, `Find(k)`, `Set(k,v)`, `Clear()` | read: `readonly ref struct AttachmentsView` — `Count`, `KeyAt(int)`, `ValueAt(int)`, `TryFind` · write: `sealed class AttachmentsBuilder : IDisposable` — `Set(ReadOnlySpan<byte> key, ReadOnlySpan<byte> value)`, `Set(string key, ReadOnlySpan<byte> value)` (UTF-8), `Clear`, `Count`, and read back with `KeyAt(int)`, `ValueAt(int)`, `TryFind` (D-BIND-59: `SubscriberArrow` hands a handler its rows' attachments as builders). `Set` refuses an EMPTY key as well as a zero byte; a delivered set may carry an empty key, since C++ allows one, and crosses into the builders `SubscriberArrow` hands out unrefused (D-BIND-66). The builder **copies** what it is given and caches the sealed set, and `Dispose` frees that native set (D-BIND-44) — so the value is a span, not the caller's memory | **Positional enumeration only.** No sort, no `IDictionary`, no LINQ ordering. Keys are bytes in `memcmp` order, which is not C#'s ordinal UTF-16 order (§3.2 A2). A key with a zero byte is refused |
 | `SharedSchema = shared_ptr<const ArrowSchema>` | `sealed class SchemaHandle : IDisposable` — `IsNull`, `Retain()`, `ToArrowSchema()` | `ToArrowSchema()` deep-copies natively before importing, because `CArrowSchemaImporter` consumes. Releasing the handle is **not** the C Data Interface `release`. **Not a `SafeHandle` (D-BIND-55):** `fl_schema` is two pointers, an owner and a borrowed schema, and the handle a delivery lends a handler must never release. An OWNED handle (from `Retain` or a wait) is finalised if nobody disposes it; a borrowed one never is |
 | `OwnedSchema`, `MakeSharedSchema` | not exposed | Construction-side types. C# supplies schemas as `Apache.Arrow.Schema` and the shim owns the conversion |
 | `SchemaArrival::Wait(timeout, out)` and its five outcomes; `Message()` | `sealed class SchemaArrival : IDisposable` — `Wait(TimeSpan)` and `WaitAsync(TimeSpan, CancellationToken)` → `readonly struct SchemaWaitResult { FletcherStatus Status · SchemaHandle? Schema · bool HasSchema · bool IsSchemaless }`. **No `Message` member (D-BIND-55):** a failed wait throws a `FletcherException` carrying the message (D-BIND-19 rule 4) | `Ok` + null is a **schema-less transport**, not a failure, and must not release the handle. `Pending` and `SubscriptionEnded` are outcomes, never exceptions. `Timeout.Infinite` (−1) maps to `INT64_MAX`; any other negative throws in managed code (D-BIND-20). **`IsSchemaless` is not `!HasSchema`** — that is also true for `Pending` and `SubscriptionEnded`. **`WaitAsync` is the helper D-BIND-22 allows, built ABOVE `Wait`** (D-BIND-55): short `Wait` slices on the thread pool, the token checked between them, the same outcomes, cancellation as `OperationCanceledException` that cancels nothing native. It occupies one pool thread while it waits |
@@ -264,6 +264,9 @@ classDiagram
     class AttachmentsBuilder {
         +Set(ReadOnlySpan~byte~ key, ReadOnlySpan~byte~ value) void
         +Set(string key, ReadOnlySpan~byte~ value) void
+        +KeyAt(int index) ReadOnlySpan~byte~
+        +ValueAt(int index) ReadOnlySpan~byte~
+        +TryFind(ReadOnlySpan~byte~ key, out ReadOnlySpan~byte~ value) bool
         +Clear() void
         +int Count
         +Dispose() void
@@ -366,16 +369,24 @@ classDiagram
         +SubscribeSchema(TopicPath topic) SchemaArrival
         +UnsubscribeSchema(TopicPath topic) void
         +ulong AbsorbedCallbackFailures
+        +event HandlerFaulted
         +Dispose() void
     }
     class BatchOptions {
         +long MaxRows
         +TimeSpan Timeout
+        +TimeSpan MaxTimeout$
     }
     class BatchStatus {
         <<readonly struct>>
         +BatchReason Reason
         +long RowsDropped
+    }
+    class BatchReason {
+        <<enumeration>>
+        RowLimit
+        Timeout
+        Closing
     }
     class RowHandler {
         <<delegate>>
@@ -412,6 +423,8 @@ classDiagram
     SubscriberArrow ..> RecordBatchHandler : invokes
     SubscriberArrow ..> BatchOptions : tuned by
     RecordBatchHandler ..> BatchStatus : reports
+    BatchStatus --> BatchReason
+    SubscriberArrow ..> HandlerFaultedEventArgs : raises
     note for RowHandler "Span parameters make an async lambda fail to compile. All three arguments are borrowed for the call."
     note for RowWriter "Returns BYTES written, never a character count. Reaches WriteBuffer AppendInPlace."
     note for PubSubProviderHandle "Opaque. A C# application cannot implement a provider. A non-C++ transport is a driver, and drivers are C++ by ruling."

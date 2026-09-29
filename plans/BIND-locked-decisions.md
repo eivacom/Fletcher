@@ -2076,6 +2076,13 @@ accessors do, for capstone parity (Q18).
   counts: a list of bit-packed booleans can reach 2^31 elements in 256 MiB. That window fails to
   decode and is dropped whole and reported, not silently.
 
+  **Corrected 2026-09-29 (BIND-5 review M-D2).** "A column's bytes are a subset of the rows'" is
+  FALSE for null slots. The wire writes nothing for a null, so a null `FixedSizeList<float, 65536>`
+  or a null fixed-width field decodes to far more than its raw bytes, and the raw ceiling does not
+  bound decoded buffers there. Such a window fails to decode and, since D-BIND-66, is counted as
+  dropped rows in a zero-row batch. It is never lost uncounted, but it is not split as C++ would
+  split it. That limit stands beside the element-count one above.
+
   **Declined:** a public `BatchOptions.MaxBytes` (a knob with no C++ counterpart, and a surface
   change); documenting the limit only (rows lost as handler faults, and C++ behaving differently for
   the same topic).
