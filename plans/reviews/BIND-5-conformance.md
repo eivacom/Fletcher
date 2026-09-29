@@ -92,7 +92,12 @@ fail under the mutation they guard against.
 
 **CI-confirmed:** `ci.pr` run 36563607601 at `a43c384`, 50/50 on its first attempt: c-abi **93/93** (Windows with `/EHs`, and Linux) and copy-probe **13/13** on both platforms; managed **326/326** and the copy oracle **5/5** on all four legs; transport **34/34** on both platforms, the `xrce` cases included; binding-abi **11/11** and pubsub-conformance **146/146** on both. **BIND-5 closes.**
 
-**Local evidence at `812d8c2`:** c-abi 93/93, managed 326/326 and the copy oracle 5/5 on net8 and
-net10, copy-probe 13/13. The transport suite is 25 of 33, as before; the 8 `xrce` cases need an
-Agent this machine does not have. **None of this is on CI yet.** Ten commits are unpushed, and this
-is the first CI run for ABI 0.7, `/EHs` and the probe-shim lanes' changes.
+**Local evidence before that run, at `812d8c2`:** c-abi 93/93, managed 326/326 and the copy oracle
+5/5 on net8 and net10, copy-probe 13/13. The transport suite was 25 of 33; the 8 `xrce` cases need
+an Agent that machine does not have. The CI run above was the first for ABI 0.7, `/EHs` and the
+probe-shim lanes' changes.
+
+**After close, 2026-09-29.** BIND-3's handover to this item, the oracle's scope note on the
+UTF-16↔UTF-8 transcode (D-BIND-1b), was not among the 11 bullets graded here and had not been
+written. It is now, in the header of `CopyOracleTests.cs` and in pubsub-conformance's README.
+Documentation only; the grade stands.

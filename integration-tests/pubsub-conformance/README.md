@@ -361,6 +361,16 @@ returned when `Take` returns and a buffered pre-schema backlog can outlive it.
   one whole-row copy, and the seam cannot stop it — `StagingProducerIsCaught` is
   that client, measured, at exactly 1, and it is the live negative control for
   the binding leg as much as for the stand-in one.
+- **The C# leg does not count the string transcode (D-BIND-1b).** .NET holds
+  strings as UTF-16 and the wire carries UTF-8. The conversion happens in
+  `Apache.Arrow`, not at the binding boundary: once when a `StringArray` is
+  built from .NET strings, and once when a handler reads a value back as a
+  string. An Arrow buffer is already UTF-8, so the publish path the oracle
+  scores never sees UTF-16, and the C# leg's row is one binary field in any case
+  (D-BIND-61's bound). So `encode_copies == 0` from C# means no copy from the
+  RecordBatch's buffers onward. It says nothing about the cost of getting a .NET
+  string into those buffers, which is real and grows with the text. Every wire
+  length is a count of UTF-8 bytes. `FletcherCodec`'s XML docs say the same.
 - **A producer is trusted to report what it wrote.** `AppendInPlace` commits the
   count the writer returns, checked against the room it was lent and not against
   what it actually touched, so a writer that reports more than it wrote publishes
@@ -517,11 +527,12 @@ in the same binary, compiled by the same compiler.
 
 Green therefore proves that **this tree's** attachment sets and refusals are
 reproducible from what this tree publishes about them, by a consumer given
-nothing else. It proves **nothing about a real C#/Rust binding** — none exists to
-measure — and nothing about a driver built by another compiler. Both claims are
-scoped that way deliberately, the same way `CopyAccounting`'s are: no real client
-exists yet, so any wider claim would rest on a stand-in standing for something
-unbuilt.
+nothing else. It proves **nothing about a real C#/Rust binding** and nothing
+about a driver built by another compiler. Both claims were scoped that way
+deliberately when no real client existed, so any wider claim would have rested on
+a stand-in standing for something unbuilt. The C# binding exists now, but
+neither entry has been run against it. `CopyAccounting`'s claim was widened
+because BIND-5b measured C#'s real publish path; these two have no such leg.
 
 What the stand-in *does* buy is that the published form is **complete enough to
 be sufficient**. It is handed `size()`, `KeyAt()` and `ValueAt()` and nothing

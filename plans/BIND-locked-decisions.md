@@ -1898,7 +1898,8 @@ accessors do, for capstone parity (Q18).
      `attachment_copies == 0`. **Deferred, with a trigger:** a zero-copy managed publish of
      attachments - an owned-by-callback blob over pinned managed memory (`fl_blob_wrap`), which would
      reopen D-BIND-42 and D-BIND-44 at ABI 0.7 - when a consumer's attachments are large enough that
-     the copy costs. The pattern `BlobHandle` follows (D-BIND-55).
+     the copy costs. *(Note 2026-09-29: ABI 0.7 went to D-BIND-68's framed decode, so this would
+     take the next ABI minor. The ruling is unchanged.)* The pattern `BlobHandle` follows (D-BIND-55).
 
   **Declined:** a managed mirror of D-BIND-34 (a native library lending a window to `fl_encode_row`
   would measure the codec path BIND-2 already measured and miss both managed failure modes);

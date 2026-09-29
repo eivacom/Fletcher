@@ -1118,7 +1118,10 @@ rows go to and from `RecordBatch`es with typed errors and no wire bytes in my co
   characters or UTF-16 code units, and the transcode happens in `Apache.Arrow` on
   the way into an array rather than at this boundary, so the copy accounting does
   not count it. **The oracle's scope note is BIND-5's**, where the oracle first
-  runs with the C# producer.
+  runs with the C# producer. **SCOPE-NOTE HALF MET 2026-09-29, after BIND-5's
+  close**: stated in the header of `dotnet/tests/Fletcher.CopyOracle.Tests/CopyOracleTests.cs`
+  and in pubsub-conformance's README, "What green does NOT prove". BIND-5's
+  close-out had missed it. **The bullet is now met in full.**
 - ~~**Bucket 1 green** as binding conformance tests — the FILE SET named in Part 4's
   matrix, not a count.~~ **REPLACED 2026-09-21 (D-BIND-39).** The FILE-SET wording
   fixed the wrong problem: bucket 1 is `arrow-bridge`'s **Arrow-native** suite, so
@@ -1310,8 +1313,9 @@ codec step.
     shared with `integration-tests/pubsub-conformance`.
   * **Attachments:** the DELIVERY view - a handler's `AttachmentsView` is the transport's own
     bytes, by address, `attachment_copies == 0`. Publishing attachments from C# copies
-    (D-BIND-44, accepted); a zero-copy managed publish (`fl_blob_wrap` over pinned memory,
-    ABI 0.7) is deferred until a consumer's attachments are large enough to cost a copy.
+    (D-BIND-44, accepted); a zero-copy managed publish (`fl_blob_wrap` over pinned memory, at
+    the next ABI minor; ABI 0.7 went to D-BIND-68) is deferred until a consumer's attachments are
+    large enough to cost a copy.
   * `SubscriberArrow` copies borrowed rows by design, so no zero-copy claim covers it.
   * **How the fused publish is scored (D-BIND-61):** by the SOURCE of the window's payload bytes,
     seen through `WriteBuffer::Append` on an always-full probe window; `encode_copies == 0` iff the
@@ -1350,6 +1354,10 @@ codec step.
     window whose row boundaries are known, skipping and reporting each bad or misframed row, in one
     native call. Only good rows count toward `MaxRows`. Three cases were added; managed is
     now **316/316**, and two mutations are each caught.
+  * **After close, 2026-09-29: the oracle's scope note.** BIND-3 handed BIND-5 the statement
+    that the UTF-16↔UTF-8 transcode (D-BIND-1b) happens in `Apache.Arrow`, outside what the
+    oracle scores. The close-out missed it. It is now in the header of `CopyOracleTests.cs` and
+    in pubsub-conformance's README. Documentation only; no result changes.
 
 ### BIND-6 — C# row emitter
 

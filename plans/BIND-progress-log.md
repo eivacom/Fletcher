@@ -525,3 +525,13 @@ header why not.
 - N-D1, N-D2, N-D5, N-D6;
 - M-D3 to M-D5;
 - the NITs.
+
+**After close, 2026-09-29: a handover the close-out missed.** BIND-3 handed BIND-5 one sentence:
+the copy oracle's scope note must say that the UTF-16↔UTF-8 transcode (D-BIND-1b) happens in
+`Apache.Arrow`, before the scored path, so zero copies says nothing about the cost of converting a
+.NET string. The round's definition of done asks for it too. Only `FletcherCodec`'s XML docs said
+it. It is now in the header of `CopyOracleTests.cs` and in pubsub-conformance's README, "What green
+does NOT prove". The same sweep fixed two stale lines: that README still said no C# binding exists,
+and D-BIND-58's deferred `fl_blob_wrap` still named ABI 0.7, which D-BIND-68 took. Documentation only:
+no code, test or result changed, and BIND-5 stays closed. PR #129 and ADO 18787 and 16353 were
+updated for BIND-5 the same day.

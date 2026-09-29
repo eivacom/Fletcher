@@ -28,6 +28,15 @@
 // One non-null binary field, so the payload is the one run of bytes with a
 // provenance to trace: scalars are read by value and appended from a stack
 // temporary, so an address says nothing about them (D-BIND-61's bound).
+//
+// ── What is NOT counted: the string transcode (D-BIND-1b) ───────────────────
+// .NET holds strings as UTF-16; the wire carries UTF-8. The conversion happens
+// in `Apache.Arrow`, not at this boundary: once when a `StringArray` is built
+// from .NET strings, and once when a handler reads a value back as a string.
+// An Arrow buffer is already UTF-8, so the path scored here never sees UTF-16.
+// Zero therefore means no copy from the RecordBatch's buffers onward. It says
+// nothing about the cost of getting a .NET string into those buffers, which is
+// real and grows with the text. The same statement is on `FletcherCodec`.
 using System;
 using System.Buffers;
 using System.Runtime.InteropServices;
