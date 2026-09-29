@@ -494,3 +494,14 @@ subscription whose owner is not this subscriber, in both tiers.
     - transport: 25 of 33, unchanged; the 8 `xrce` cases need an Agent this machine does not have.
   - **Mutations:** serving undeclared topics, always matching plans, and a cache that ignores which
     topic it verified are each caught.
+- **Q5 — the diagrams, done as ruled.** `plans/BIND-architecture-diagrams.md`:
+  - **Section 2:** marks `SubscriberArrow` `<<built>>`, draws the ABI at 0.7 with the framed decode
+    and the publish check, and gains one floating note for the probe shim and copy-probe as
+    test-only artifacts.
+  - **Section 6:** the fused publish gains its declaration and wire-layout check. A stale note that
+    placed a UTF-16 transcode in the shim, where the oracle measured zero copies, is corrected.
+  - **Section 7:** gains `SubscriberArrow`'s batch-first path as an `opt` block, with its flush
+    rules, the framed decode, and the overlapping handler calls.
+  - **Also updated:** the support table and the known-gaps sweep line. Section 8 is unchanged.
+  - **Validated by parsing:** mermaid + jsdom parse and render all 9 blocks. The negative control (a
+    dangling edge, a `;`) fails as it must, and no CR bytes.

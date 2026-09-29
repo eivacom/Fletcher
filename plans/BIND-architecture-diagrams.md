@@ -42,7 +42,7 @@ the shim since BIND-4, but no generated classes until BIND-6.
 | **C++** | ✅ generated row classes + `Codec` | ✅ `Publisher` / `Subscriber`, all providers | ✅ views + accessors | complete |
 | **TypeScript** | ✅ managed codec in `@eiva/fletcher-gateway-client` | ⚠️ via gateway WebSocket only, and **hand-wired** — no generated `Publisher`/`Subscriber` (that is BIND-T) | ❌ | partial |
 | **Rust** | ❌ *(planned — BIND-Rust)* | ❌ *(planned — BIND-Rust)* | ✅ `.fletcher.rs` RecordBatch accessor | read side today |
-| **C#** | ✅ `FletcherCodec` over the shim *(BIND-3c, 2026-09-21)* | ✅ `Publisher` / `Subscriber` over the shim, all three built-in providers by selector *(BIND-4, 2026-09-25)* — hand-wired until BIND-6 generates classes, `SubscriberArrow` at BIND-5 | ❌ *(BIND-7)* | in progress (BIND) |
+| **C#** | ✅ `FletcherCodec` over the shim *(BIND-3c, 2026-09-21)* | ✅ `Publisher` / `Subscriber` over the shim, all three built-in providers by selector *(BIND-4, 2026-09-25)* — hand-wired until BIND-6 generates classes; `SubscriberArrow`, batch-first *(BIND-5)* | ❌ *(BIND-7)* | in progress (BIND) |
 
 **Which codec a language reaches, and why the type sets look different
 (D-BIND-39, 2026-09-21).** One wire format, **two drivers** of it:
@@ -272,8 +272,9 @@ classDiagram
 
     class binding_abi_h {
         <<built>>
-        46 entry points at ABI 0.6
-        codec: open, bind, encode_row, decode_rows
+        47 entry points at ABI 0.7
+        codec: open, bind, encode_row, decode_rows, decode_rows_framed
+        fused publish checks declaration and wire layout
         registry, publisher, subscriber, schema arrival
         path selectors answer kNotSupported until PDA-ABI
     }
@@ -313,9 +314,10 @@ classDiagram
     }
     note for Fletcher_PubSub_cs "D-BIND-24: C# never implements a provider. There is no managed provider interface, no Register and no SetPathResolver - a transport is chosen by selector string."
     class Fletcher_SubscriberArrow_cs {
-        <<planned>>
+        <<built>>
         Eiva.Fletcher - SubscriberArrow, batch-first
         BIND-5. PublisherArrow folds into Publisher
+        one framed decode per window, handler calls may overlap
     }
     class Fletcher_Generated_cs {
         <<planned>>
@@ -336,6 +338,8 @@ classDiagram
     Fletcher_SubscriberArrow_cs --> Fletcher_PubSub_cs
     Fletcher_SubscriberArrow_cs --> Fletcher_Codec_cs
     Fletcher_Generated_cs --> Fletcher_Codec_cs
+
+    note "TEST-ONLY, never shipped (D-BIND-62): fletcher-c-abi-probe is the same entry points plus two fl_test_* exports and the copy oracle's probe provider, built only under c-abi's with_probe_shim option from the test package fletcher-copy-probe. It lets the copy oracle score C#'s real publish (D-BIND-58, D-BIND-61)."
 ```
 
 The three C# packages are D-BIND-14′'s: `Eiva.Fletcher.Interop`,
@@ -435,11 +439,13 @@ sequenceDiagram
     Note over TS,Cli: today the app passes Topic + Schema by hand.<br/>BIND-T generates Publisher/Subscriber classes<br/>that bind both in.
 ```
 
-## 6. Sequence — C# publish (planned; its lower half built)
+## 6. Sequence — C# publish (built below the generated classes)
 
-**Built at BIND-4:** everything from `fl_codec_open` down, driven today by
-`Publisher.Publish(topic, rows, i)` over a `BoundRows` — the generated
-`SensorReading` and `Publisher(T)` at the top are BIND-6's. And the provider
+**Built at BIND-4 and BIND-5:** everything from `fl_codec_open` down, driven
+today by `Publisher.Publish(topic, rows, i)` over a `BoundRows` — the generated
+`SensorReading` and `Publisher(T)` at the top are BIND-6's. BIND-5's copy oracle
+measured this path at **zero copies** into the window and to the subscriber
+(D-BIND-61). And the provider
 is today a registered built-in (`inprocess`, `fastdds`, `xrce`), not a
 `DriverProvider`: that arrives with PDA-ABI.
 
@@ -464,20 +470,22 @@ sequenceDiagram
     Note over Int: the array is BORROWED and never consumed,<br/>so one export serves N publishes
     CsPub->>Int: fl_publisher_publish_row(pub, topic, rows, i, atts)
     Int->>ABI: P/Invoke (blittable, no marshalling)
+    ABI->>ABI: check - topic declared on THIS publisher, rows' wire layout == topic's
+    Note over ABI: D-BIND-60, 65, 67 - FL_TOPIC_NOT_DECLARED or FL_INVALID_ARGUMENT<br/>before anything is encoded. The layout is the codec's field plan:<br/>names, metadata and nullability do not count.
     ABI->>Cpp: Publish(segments, RowEncoder, attachments)
     Cpp->>Drv: Publish(…)
     Drv->>ABI: expose write-buffer window {data, capacity, pos}
     ABI->>ABI: nanoarrow codec writes positional bytes INTO that window
-    Note over ABI: ONE boundary crossing per window refill,<br/>not one per field. Strings transcode UTF-16→UTF-8<br/>(the one place a copy is unavoidable).
+    Note over ABI: ONE boundary crossing per window refill,<br/>not one per field. The payload is appended straight<br/>from the Arrow buffer the export shares - no intermediate.<br/>A string's UTF-16 to UTF-8 transcode happened earlier, in ToArrow.
     Drv->>Net: send
 ```
 
-## 7. Sequence — C# subscribe (planned; its lower half built)
+## 7. Sequence — C# subscribe (built below the generated classes)
 
-**Built at BIND-4:** the subscribe, the arrival wait, the delivery thunk and
-`fl_decode_rows`, driven today by a `RowHandler` over the raw row — the
-generated `Subscriber(T)` and `FromArrow` are BIND-6's. The provider caveat of
-diagram 6 applies.
+**Built at BIND-4 and BIND-5:** the subscribe, the arrival wait, the delivery
+thunk and the decode, driven today by a `RowHandler` over the raw row, or by
+`SubscriberArrow` in batches (the `opt` block) — the generated `Subscriber(T)`
+and `FromArrow` are BIND-6's. The provider caveat of diagram 6 applies.
 
 ```mermaid
 sequenceDiagram
@@ -513,6 +521,15 @@ sequenceDiagram
     CsSub->>Gen: FromArrow(batch, row) → typed row
     CsSub->>App: cb(SensorReading, attachments)
     Note over App: no thread affinity: the delivering thread<br/>may differ between samples
+
+    opt SubscriberArrow - batch-first (BIND-5, D-BIND-25)
+        CsSub->>CsSub: OnRow copies the row and its attachments into the window
+        Note over CsSub: flush at MaxRows GOOD rows, at the Timeout, or on Unsubscribe.<br/>A window splits at C++'s 2^31-2 byte ceiling (D-BIND-63).
+        CsSub->>ABI: fl_decode_rows_framed(window, ends) - ONE call (D-BIND-68)
+        ABI-->>CsSub: the good rows + a valid flag per row
+        CsSub->>App: handler(RecordBatch, attachments, BatchStatus)
+        Note over CsSub,App: as in C++, handler calls may overlap and batches may<br/>complete out of order (D-BIND-64). Every row arrives<br/>or is counted in RowsDropped (D-BIND-66).
+    end
 ```
 
 ---
@@ -561,14 +578,15 @@ isolates native assets to `Interop` alone and CI asserts `GatewayClient` has no
 
 ## Known gaps in these diagrams
 
-*Swept 2026-09-18 against the tree, and again 2026-09-25 at BIND-4's close. Three
+*Swept 2026-09-18 against the tree, again 2026-09-25 at BIND-4's close, and
+2026-09-29 for BIND-5 (review Q5). Three
 of the first five have closed since these diagrams were drawn on 2026-08-31; they
 are marked rather than deleted, because a gap that closed is worth distinguishing
 from a gap nobody re-checked.*
 
 1. ~~**The binding ABI's function set is not designed yet.**~~ ✅ **CLOSED
    2026-09-17.** BIND-1 landed `c-abi/include/fletcher/abi/binding.h` — 912 lines then (46 entry points at
-   ABI 0.6 after BIND-4's follow-ups, D-BIND-57),
+   ABI 0.6 after BIND-4's follow-ups, D-BIND-57, and 47 at ABI 0.7 since D-BIND-68),
    pure C99, reviewed as a *specification* over two cycles
    (`plans/reviews/BIND-1-design-review.md`), with every declaration derived from
    the seam spec and its § named. The value-transfer hop that was provisional here
