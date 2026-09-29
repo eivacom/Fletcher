@@ -147,8 +147,14 @@ public sealed class BatchOptions
     /// <summary>Flush at this many rows. Values below 1 mean 1.</summary>
     public long MaxRows { get; init; } = 8000;
 
-    /// <summary>...or when this long has passed since the previous flush. <see cref="Timeout.InfiniteTimeSpan"/> for never.</summary>
+    /// <summary>
+    /// ...or when this long has passed since the previous flush. <see cref="Timeout.InfiniteTimeSpan"/>
+    /// for never; otherwise zero up to <see cref="MaxTimeout"/>.
+    /// </summary>
     public TimeSpan Timeout { get; init; } = TimeSpan.FromMinutes(1);
+
+    /// <summary>The longest finite <see cref="Timeout"/>: the most a timer can wait, about 49.7 days.</summary>
+    public static TimeSpan MaxTimeout { get; } = TimeSpan.FromMilliseconds(uint.MaxValue - 1);
 }
 
 /// <summary>A subscriber that delivers RecordBatches (D-BIND-25).</summary>
@@ -215,11 +221,17 @@ public sealed class SubscriberArrow : IDisposable
         ArgumentNullException.ThrowIfNull(handler);
 
         options ??= new BatchOptions();
-        if (options.Timeout < TimeSpan.Zero && options.Timeout != Timeout.InfiniteTimeSpan)
+        // Refused at the door rather than failing later: past the timer's maximum,
+        // Timer.Change threw inside the delivery, and TimeSpan.MaxValue overflowed the
+        // deadline into "now" - a window meant never to time out flushed at once
+        // (BIND-5 review B8).
+        if (options.Timeout != Timeout.InfiniteTimeSpan &&
+            (options.Timeout < TimeSpan.Zero || options.Timeout > BatchOptions.MaxTimeout))
         {
             throw new ArgumentOutOfRangeException(
                 nameof(options), options.Timeout,
-                "a negative Timeout is refused: use Timeout.InfiniteTimeSpan for a window with no deadline");
+                "a Timeout must be between zero and BatchOptions.MaxTimeout (about 49.7 days, the most a timer can " +
+                "wait): use Timeout.InfiniteTimeSpan for a window with no deadline");
         }
 
         int maxRows = (int)Math.Clamp(options.MaxRows, 1, int.MaxValue);
@@ -249,6 +261,15 @@ public sealed class SubscriberArrow : IDisposable
     public void Unsubscribe(Subscription subscription)
     {
         ArgumentNullException.ThrowIfNull(subscription);
+
+        // Before the batcher is looked up: ids are per-subscriber counters, so another
+        // subscriber's subscription #1 would otherwise stop THIS one's #1 (review B9).
+        if (!subscription.BelongsTo(_subscriber))
+        {
+            throw new ArgumentException(
+                "the subscription was issued by a different subscriber; cancel it on the one that issued it, " +
+                "or dispose it", nameof(subscription));
+        }
 
         Batcher? batcher;
         lock (_gate)

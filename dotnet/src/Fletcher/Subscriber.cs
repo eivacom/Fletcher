@@ -110,7 +110,9 @@ public delegate void RowHandler(ReadOnlySpan<byte> row, SchemaHandle schema, Att
 /// A handle rather than a <c>ulong</c>, because an id is meaningful only to the
 /// subscriber that issued it: handing a raw number to a different subscriber
 /// silently addresses THAT instance's subscription with the same number, or does
-/// nothing at all. A typed handle makes that mistake unrepresentable.
+/// nothing at all. A typed handle knows its subscriber, so handing it to another
+/// one is REFUSED with an <see cref="ArgumentException"/> (BIND-5 review B9 found
+/// it was not: the handle carried its owner and nothing checked it).
 /// </remarks>
 public sealed class Subscription : IDisposable
 {
@@ -130,6 +132,9 @@ public sealed class Subscription : IDisposable
     internal bool Retired { get; private set; }
 
     internal void MarkRetired() => Retired = true;
+
+    /// <summary>Whether <paramref name="subscriber"/> issued this subscription.</summary>
+    internal bool BelongsTo(Subscriber subscriber) => ReferenceEquals(_owner, subscriber);
 
     /// <summary>Who cancels this subscription, when it is not its Subscriber directly.</summary>
     /// <remarks>
@@ -539,6 +544,16 @@ public sealed unsafe class Subscriber : IDisposable
     public void Unsubscribe(Subscription subscription)
     {
         ArgumentNullException.ThrowIfNull(subscription);
+
+        // First, even before the disposed no-op: this is a caller's mistake, not
+        // teardown - a subscription's own Dispose always cancels on its owner, so a
+        // finaliser never reaches this (review B9).
+        if (!subscription.BelongsTo(this))
+        {
+            throw new ArgumentException(
+                "the subscription was issued by a different Subscriber; cancel it on the one that issued it, " +
+                "or dispose it", nameof(subscription));
+        }
 
         if (_disposed)
         {

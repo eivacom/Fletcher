@@ -105,6 +105,38 @@ public class SubscriberTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// A subscription handed to a subscriber that did not issue it is REFUSED, and the
+    /// issuing subscriber's subscription with the same id keeps delivering. Ids are
+    /// per-subscriber counters from 1, so the two collide by default (BIND-5 review B9).
+    /// </summary>
+    [Fact]
+    public void ASubscriptionFromAnotherSubscriberIsRefused()
+    {
+        RecordBatch batch = CodecFixtures.Scalar();
+        using var codec = new FletcherCodec(batch.Schema);
+        using BoundRows rows = codec.Bind(batch);
+        TopicPath mine = TopicPath.Of("bind", "owner", "mine");
+        TopicPath theirs = TopicPath.Of("bind", "owner", "theirs");
+        _publisher.CreateTopic(mine, batch.Schema);
+        _publisher.CreateTopic(theirs, batch.Schema);
+
+        using var other = new Subscriber(_provider);
+        int delivered = 0;
+        SubscribeResult own = _subscriber.Subscribe(mine, (_, _, _) => delivered++);
+        SubscribeResult foreign = other.Subscribe(theirs, (_, _, _) => { });
+        own.Schema.Dispose();
+        foreign.Schema.Dispose();
+        Assert.Equal(own.Subscription.Id, foreign.Subscription.Id);
+
+        Assert.Throws<ArgumentException>(() => _subscriber.Unsubscribe(foreign.Subscription));
+
+        _publisher.Publish(mine, rows, 0);
+        Assert.Equal(1, delivered);
+        Assert.True(own.Subscription.IsLive);
+        Assert.True(foreign.Subscription.IsLive);
+    }
+
     [Fact]
     public void TheArrivalCarriesTheDeclaredSchemaAndItImportsAsArrow()
     {

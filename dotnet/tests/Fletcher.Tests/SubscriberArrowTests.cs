@@ -726,6 +726,67 @@ public sealed class SubscriberArrowTests : IDisposable
         Assert.Empty(only.Attachments);
     }
 
+    // ── Arguments a caller can get wrong (review B8, B9) ────────────────────
+
+    /// <summary>The review's B9 reproduction on this tier: refused, and the owner's #1 keeps delivering.</summary>
+    [Fact]
+    public void ASubscriptionFromAnotherSubscriberArrowIsRefused()
+    {
+        TopicPath mine = Declared("ownermine");
+        TopicPath theirs = Declared("ownertheirs");
+        using var other = new SubscriberArrow(_provider);
+        SubscribeResult own = _subscriber.Subscribe(mine, _sink.Handler);
+        SubscribeResult foreign = other.Subscribe(theirs, (batch, _, _) => batch?.Dispose());
+        own.Schema.Dispose();
+        foreign.Schema.Dispose();
+        Assert.Equal(own.Subscription.Id, foreign.Subscription.Id);
+
+        Assert.Throws<ArgumentException>(() => _subscriber.Unsubscribe(foreign.Subscription));
+
+        Publish(mine, 1, "still");
+        Assert.Single(_sink.Snapshot());
+        Assert.True(own.Subscription.IsLive);
+    }
+
+    /// <summary>
+    /// A finite Timeout runs from zero to the timer's maximum; past it is refused,
+    /// where TimeSpan.MaxValue used to overflow the deadline into "now" and flush a
+    /// window meant never to time out at once (review B8).
+    /// </summary>
+    [Fact]
+    public void ATimeoutPastTheTimersMaximumIsRefused()
+    {
+        TopicPath topic = Declared("timeoutbounds");
+        foreach (TimeSpan refused in new[] { TimeSpan.MaxValue, BatchOptions.MaxTimeout + TimeSpan.FromMilliseconds(1), TimeSpan.FromTicks(-1) })
+        {
+            Assert.Throws<ArgumentOutOfRangeException>(
+                () => _subscriber.SubscribeBatched(topic, _sink.Handler, Options(10, refused)));
+        }
+
+        foreach (TimeSpan accepted in new[] { TimeSpan.Zero, BatchOptions.MaxTimeout, Timeout.InfiniteTimeSpan })
+        {
+            SubscribeResult result = _subscriber.SubscribeBatched(topic, _sink.Handler, Options(10, accepted));
+            result.Schema.Dispose();
+            result.Subscription.Dispose();
+        }
+    }
+
+    /// <summary>At the timer's maximum a window does NOT flush early: it waits, and closes on Unsubscribe.</summary>
+    [Fact]
+    public void AWindowAtTheMaximumTimeoutWaits()
+    {
+        TopicPath topic = Declared("maxtimeout");
+        SubscribeResult result = _subscriber.SubscribeBatched(topic, _sink.Handler, Options(100, BatchOptions.MaxTimeout));
+        result.Schema.Dispose();
+
+        Publish(topic, 1, "a");
+        Thread.Sleep(200);
+        Assert.Empty(_sink.Snapshot());
+
+        result.Subscription.Dispose();
+        Assert.Equal(BatchReason.Closing, Assert.Single(_sink.Snapshot()).Status.Reason);
+    }
+
     // ── Every row arrives or is counted (D-BIND-66) ─────────────────────────
 
     /// <summary>

@@ -453,3 +453,21 @@ subscription whose owner is not this subscriber, in both tiers.
   - **Mutations:** removing the native boundary check fails the split case in both suites, and
     never putting rows back fails the MaxRows case.
   - **The ABI** is 0.7 (47 entry points), and the handshake and READMEs are moved with it.
+- **B8 — fixed.**
+  - **The bounds.** A finite `Timeout` must lie between zero and the new `BatchOptions.MaxTimeout`
+    (the timer's maximum, about 49.7 days); anything else is refused at `SubscribeBatched`, as a
+    negative one already was. `TimeSpan.MaxValue` can no longer overflow the deadline into "now",
+    and `Timer.Change` can no longer throw inside a delivery.
+  - **Tests:** the bounds, accepted and refused; and a window at the maximum that waits and closes
+    on `Unsubscribe`.
+  - **Mutation:** dropping the upper bound fails the bounds test.
+- **B9 — fixed, at both tiers.**
+  - **The check.** `Subscription` now answers `BelongsTo(subscriber)`. `Subscriber.Unsubscribe` and
+    `SubscriberArrow.Unsubscribe` refuse a subscription another subscriber issued, with an
+    `ArgumentException`, before touching anything. The Arrow tier checks before looking up a batcher,
+    so a foreign #1 cannot stop this subscriber's #1.
+  - **The doc.** `Subscription`'s remark no longer claims the mistake is "unrepresentable".
+  - **Tests:** one per tier, each asserting the refusal and that the owner's same-id subscription
+    keeps delivering.
+  - **Mutation:** removing either check fails its test.
+- **Managed 326/326 on net8 and net10, and the copy oracle 5/5.**
