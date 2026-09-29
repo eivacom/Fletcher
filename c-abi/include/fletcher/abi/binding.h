@@ -1023,12 +1023,18 @@ FL_ABI_EXPORT void fl_rows_unbind(fl_rows* rows);
  * window: no intermediate bytes exist, and the copy oracle counts zero encode
  * copies. `atts` is BORROWED and may be NULL.
  *
- * ROWS MUST BE BOUND UNDER THE TOPIC'S SCHEMA (D-BIND-60). On a topic THIS
- * publisher declared, rows whose codec was opened over a provably different
- * schema are refused with FL_INVALID_ARGUMENT before anything is encoded - by the
- * comparison the seam uses for a conflicting re-declaration. Without it a
- * mismatch of equal width reached a subscriber and decoded, silently, into the
- * wrong fields. A topic declared elsewhere is the seam's to answer for. */
+ * THE TOPIC MUST BE DECLARED ON THIS PUBLISHER, AND THE ROWS MUST ENCODE ITS WIRE
+ * LAYOUT (D-BIND-60, D-BIND-65, D-BIND-67). Checked before anything is encoded:
+ *   - a topic THIS publisher did not declare with fl_publisher_create_topic is
+ *     FL_TOPIC_NOT_DECLARED, as C++ `PublisherArrow` refuses a topic it holds no
+ *     codec for - another publisher's declaration does not count;
+ *   - rows whose codec's WIRE LAYOUT differs from the topic schema's are
+ *     FL_INVALID_ARGUMENT. The layout is the type tree the wire is built from:
+ *     names, metadata and nullability do not count, and a dictionary is compared
+ *     as its value type.
+ * Without the check a mismatch of equal width reached a subscriber and decoded,
+ * silently, into the wrong fields. The raw paths (fl_publisher_publish_raw) are
+ * not checked: their bytes are the caller's. */
 FL_ABI_EXPORT fl_status fl_publisher_publish_row(fl_publisher* publisher, fl_topic topic,
                                                  const fl_rows* rows, int64_t i,
                                                  const fl_attachments* atts, fl_error* err);
@@ -1037,7 +1043,8 @@ FL_ABI_EXPORT fl_status fl_publisher_publish_row(fl_publisher* publisher, fl_top
  *
  * `atts_per_row` is NULL for none, or an array of `count` pointers, each of
  * which may itself be NULL. All BORROWED. The schema rule of
- * fl_publisher_publish_row applies, checked once for the whole range. */
+ * fl_publisher_publish_row applies - declaration and wire layout - checked once for
+ * the whole range. */
 FL_ABI_EXPORT fl_status fl_publisher_publish_rows(fl_publisher* publisher, fl_topic topic,
                                                   const fl_rows* rows, int64_t first, int64_t count,
                                                   const fl_attachments* const* atts_per_row,

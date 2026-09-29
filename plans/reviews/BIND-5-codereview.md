@@ -471,3 +471,26 @@ subscription whose owner is not this subscriber, in both tiers.
     keeps delivering.
   - **Mutation:** removing either check fails its test.
 - **Managed 326/326 on net8 and net10, and the copy oracle 5/5.**
+- **D-BIND-65 and D-BIND-67 — in the shim (Q1, Q4; this also settles N-D3 and N-D4).**
+  - **The recorded plan.** `fl_publisher_create_topic` records each topic's field plan, the type
+    tree the wire is built from, by opening a codec over the declared schema. A schema the codec
+    cannot plan is recorded as declared with no plan.
+  - **The check.** The fused publishes refuse `FL_TOPIC_NOT_DECLARED` for a topic THIS publisher did
+    not declare. Otherwise they compare the rows' plan with the topic's. Names, metadata and
+    nullability no longer refuse, and a dictionary is compared as its value type instead of being
+    skipped.
+  - **The verdict cache.** The rows hold a strong reference to the last plan they matched, so a
+    repeat publish compares one pointer, and a freed plan cannot come back at the same address as a
+    false match.
+  - **What is gone.** The per-row IPC byte comparison, and `DeclaredSchema` from the shim.
+  - **`binding.h`** states both rules on both functions.
+  - **Tests:**
+    - c-abi: 3 new (names and nullability served, a dictionary checked by value type, another
+      publisher's declaration refused), and 2 updated. `TheFusedPublishRunsOverTheWholeChain` had
+      asserted that an undeclared topic is served, which is exactly what D-BIND-67 changes.
+      c-abi 93/93.
+    - managed: one message assertion updated, 326/326. No managed test had published bound rows
+      without declaring.
+    - transport: 25 of 33, unchanged; the 8 `xrce` cases need an Agent this machine does not have.
+  - **Mutations:** serving undeclared topics, always matching plans, and a cache that ignores which
+    topic it verified are each caught.

@@ -569,15 +569,16 @@ TEST(BindingEntryPoints, TheFusedPublishRunsOverTheWholeChain) {
         << "a codec failure inside the fusion was reported as the seam's";
     fl_error_dispose(&err);
 
-    // An undeclared topic is NOT refused here, and that is the provider's
-    // contract rather than an omission: `inprocess` defaults to
-    // `schema_carriage=as_declared`, where there is no schema for a sample to be
-    // missing. The refusal lives in the `carried` mode, which the next row
-    // reaches through the config document.
+    // A topic this publisher did not declare is REFUSED for bound rows (D-BIND-67),
+    // before anything reaches the provider, as C++ `PublisherArrow` refuses a topic
+    // it holds no codec for. This used to be served over `inprocess`, whose default
+    // schema carriage has no schema to find missing.
     const fl_str other[] = {Str("never"), Str("declared")};
     const fl_topic undeclared = {other, 2};
-    EXPECT_EQ(fl_publisher_publish_row(publisher, undeclared, abi.rows(), 0, nullptr, &err), FL_OK)
+    EXPECT_EQ(fl_publisher_publish_row(publisher, undeclared, abi.rows(), 0, nullptr, &err),
+              FL_TOPIC_NOT_DECLARED)
         << MessageOf(err);
+    fl_error_dispose(&err);
 
     fl_publisher_destroy(publisher);
     fl_provider_destroy(provider);
@@ -2025,13 +2026,107 @@ TEST(Publisher, RowsBoundUnderAnotherSchemaAreRefusedOnBothPublishes) {
 
     EXPECT_EQ(fl_publisher_publish_row(fx.publisher(), topic, abi.rows(), 0, nullptr, &err),
               FL_INVALID_ARGUMENT);
-    EXPECT_NE(MessageOf(err).find("declared with"), std::string::npos) << MessageOf(err);
+    EXPECT_NE(MessageOf(err).find("wire layout"), std::string::npos) << MessageOf(err);
     fl_error_dispose(&err);
 
     EXPECT_EQ(fl_publisher_publish_rows(fx.publisher(), topic, abi.rows(), 0, 3, nullptr, &err),
               FL_INVALID_ARGUMENT)
         << MessageOf(err);
     fl_error_dispose(&err);
+}
+
+namespace {
+
+/// Declare `topic` with `schema` on `publisher`.
+fl_status Declare(fl_publisher* publisher, const fl_topic& topic,
+                  const std::shared_ptr<arrow::Schema>& schema, fl_error* err) {
+    ArrowSchema exported = {};
+    EXPECT_TRUE(arrow::ExportSchema(*schema, &exported).ok());
+    const fl_status status = fl_publisher_create_topic(publisher, topic, &exported, err);
+    exported.release(&exported);
+    return status;
+}
+
+}  // namespace
+
+/// D-BIND-65: the check is WIRE LAYOUT. Other names, nullability and metadata encode
+/// the same bytes, so rows bound under the fixture's schema are served - where the
+/// IPC-byte comparison refused them.
+TEST(Publisher, RowsWhoseWireLayoutMatchesAreServedDespiteNamesAndNullability) {
+    SubscriberFixture fx;
+    AbiFixture abi;
+    fl_error err = {};
+    const fl_str segments[] = {Str("bind"), Str("layout")};
+    const fl_topic topic = {segments, 2};
+    auto renamed = arrow::schema(
+        {arrow::field("x", arrow::int32(), false), arrow::field("name", arrow::utf8(), false)},
+        arrow::key_value_metadata({"note"}, {"a reader's own"}));
+    ASSERT_EQ(Declare(fx.publisher(), topic, renamed, &err), FL_OK) << MessageOf(err);
+
+    EXPECT_EQ(fl_publisher_publish_row(fx.publisher(), topic, abi.rows(), 0, nullptr, &err), FL_OK)
+        << MessageOf(err);
+}
+
+/// D-BIND-65: a dictionary topic is CHECKED, by its value type - the IPC comparison
+/// could not encode a dictionary and skipped every such topic (review N-D3). A utf8
+/// dictionary matches rows with a plain utf8 column; an int64 one does not.
+TEST(Publisher, ADictionaryTopicIsCheckedByItsValueType) {
+    SubscriberFixture fx;
+    AbiFixture abi;
+    fl_error err = {};
+    const fl_str same[] = {Str("bind"), Str("dict"), Str("utf8")};
+    const fl_str other[] = {Str("bind"), Str("dict"), Str("int64")};
+    const fl_topic same_topic = {same, 3};
+    const fl_topic other_topic = {other, 3};
+    ASSERT_EQ(Declare(fx.publisher(), same_topic,
+                      arrow::schema({arrow::field("id", arrow::int32()),
+                                     arrow::field("label", arrow::dictionary(arrow::int32(),
+                                                                             arrow::utf8()))}),
+                      &err),
+              FL_OK)
+        << MessageOf(err);
+    ASSERT_EQ(Declare(fx.publisher(), other_topic,
+                      arrow::schema({arrow::field("id", arrow::int32()),
+                                     arrow::field("label", arrow::dictionary(arrow::int32(),
+                                                                             arrow::int64()))}),
+                      &err),
+              FL_OK)
+        << MessageOf(err);
+
+    EXPECT_EQ(fl_publisher_publish_row(fx.publisher(), same_topic, abi.rows(), 0, nullptr, &err),
+              FL_OK)
+        << MessageOf(err);
+    EXPECT_EQ(fl_publisher_publish_row(fx.publisher(), other_topic, abi.rows(), 0, nullptr, &err),
+              FL_INVALID_ARGUMENT);
+    fl_error_dispose(&err);
+}
+
+/// D-BIND-67: bound rows need THIS publisher's declaration, as C++ `PublisherArrow`
+/// requires its own codec. Another publisher's declaration of the same topic does not
+/// count, on either publish.
+TEST(Publisher, ATopicDeclaredByAnotherPublisherIsRefused) {
+    SubscriberFixture fx;
+    AbiFixture abi;
+    fl_error err = {};
+    const fl_str segments[] = {Str("bind"), Str("theirs")};
+    const fl_topic topic = {segments, 2};
+    ASSERT_EQ(Declare(fx.publisher(), topic, abi.batch().schema(), &err), FL_OK) << MessageOf(err);
+
+    fl_publisher* second = nullptr;
+    ASSERT_EQ(fl_publisher_create(fx.provider(), &second, &err), FL_OK) << MessageOf(err);
+    EXPECT_EQ(fl_publisher_publish_row(second, topic, abi.rows(), 0, nullptr, &err),
+              FL_TOPIC_NOT_DECLARED);
+    EXPECT_NE(MessageOf(err).find("not declared on this publisher"), std::string::npos)
+        << MessageOf(err);
+    fl_error_dispose(&err);
+    EXPECT_EQ(fl_publisher_publish_rows(second, topic, abi.rows(), 0, 3, nullptr, &err),
+              FL_TOPIC_NOT_DECLARED);
+    fl_error_dispose(&err);
+    fl_publisher_destroy(second);
+
+    // The declaring publisher is served, so the refusal is about WHICH publisher.
+    EXPECT_EQ(fl_publisher_publish_row(fx.publisher(), topic, abi.rows(), 0, nullptr, &err), FL_OK)
+        << MessageOf(err);
 }
 
 TEST(Publisher, RowsBoundUnderTheDeclaredSchemaAreServed) {

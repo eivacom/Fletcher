@@ -154,7 +154,7 @@ public sealed class SubscriberArrowTests : IDisposable
 
         FletcherException refused = Assert.Throws<FletcherException>(() => _publisher.Publish(topic, rows, 0));
         Assert.Equal(FletcherStatus.InvalidArgument, refused.Status);
-        Assert.Contains("declared with", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("wire layout", refused.Message, StringComparison.Ordinal);
         Assert.Empty(_sink.Snapshot());
     }
 

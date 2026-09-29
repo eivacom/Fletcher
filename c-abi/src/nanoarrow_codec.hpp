@@ -61,6 +61,12 @@ struct FieldPlan {
     /// lives in the schema instead of on the wire.
     int64_t fixed_size = 0;
     std::vector<FieldPlan> children;
+
+    /// Two plans are equal exactly when they encode and decode the same bytes: a
+    /// dictionary field's plan IS its value type's (D-BIND-39), and names, metadata
+    /// and nullability are not in a plan at all. That is the comparison D-BIND-65
+    /// rules for the publish check.
+    bool operator==(const FieldPlan&) const = default;
 };
 
 /// One `ArrowArray` bound to a codec: validated once, borrowed throughout.
@@ -180,6 +186,10 @@ class NanoarrowCodec {
     OwnedSchema decoded_schema_;
     /// The row struct itself: `root_.children` is one plan per field.
     FieldPlan root_;
+
+   public:
+    /// The wire layout this codec encodes and decodes (D-BIND-65).
+    const FieldPlan& Plan() const { return root_; }
 };
 
 }  // namespace fletcher::abi

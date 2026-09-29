@@ -41,7 +41,6 @@
 #include <cstring>
 #include <fletcher/core/status.hpp>
 #include <fletcher/core/write_buffer.hpp>
-#include <fletcher/pubsub/internal/schema_conflict.hpp>
 #include <fletcher/pubsub/internal/segments.hpp>
 #include <fletcher/pubsub/owned_schema.hpp>
 #include <fletcher/pubsub/provider_registry.hpp>
@@ -180,30 +179,46 @@ const bool kSingleCopyChecked = (fletcher::abi::CheckSingleCopy(), true);
 
 namespace {
 
-/// D-BIND-60: rows bound under one schema must not be published on a topic declared
-/// with another. The seam's Publisher sees only the bytes the encoder writes, so a
-/// mismatch of equal width would reach a subscriber and decode, silently, into the
-/// wrong fields. C++ `PublisherArrow` cannot make the mistake because it owns ONE
-/// codec per topic; a binding's rows carry their own, so the shim checks here, with
-/// the seam's own comparison. A topic this publisher did not declare is left to the
-/// seam, which answers for it as before.
+/// D-BIND-60, D-BIND-65, D-BIND-67: bound rows are published only on a topic THIS
+/// publisher declared, and only if they encode the same wire layout as the topic's
+/// schema.
+///
+/// The seam's Publisher sees only the bytes the encoder writes, so rows bound under
+/// another schema would reach a subscriber and decode, silently, into the wrong
+/// fields. C++ `PublisherArrow` cannot make that mistake - it owns ONE codec per
+/// topic and refuses a topic it did not declare - and a binding's rows carry their
+/// own codec, so the shim checks both here. The comparison is the codecs' field
+/// plans: names, metadata and nullability do not refuse, and a dictionary is checked
+/// by its value type rather than skipped.
 void RequireRowsMatchTopic(fl_publisher& publisher, const std::vector<std::string>& segments,
                            const fl_rows& rows, const char* entry) {
-    if (!rows.declared) return;
     const std::string key = fletcher::internal::JoinSegments(segments);
-    bool conflicts = false;
+    std::shared_ptr<const fletcher::abi::FieldPlan> plan;
+    bool declared = false;
     {
         std::lock_guard lock(publisher.declared_mu);
         const auto found = publisher.declared.find(key);
-        conflicts =
-            found != publisher.declared.end() && rows.declared->ConflictsWith(found->second);
+        if (found != publisher.declared.end()) {
+            declared = true;
+            plan = found->second;
+        }
     }
-    if (conflicts) {
+    // Thrown after the lock is released, as every refusal here is (BIND-5 review B1).
+    if (!declared) {
+        throw PubSubError(PubSubStatus::kTopicNotDeclared,
+                          std::string(entry) + ": '" + key +
+                              "' was not declared on this publisher; declare it with "
+                              "fl_publisher_create_topic before publishing bound rows to it");
+    }
+    if (plan != nullptr && rows.matched.load() == plan) return;
+    if (plan == nullptr || !(*plan == rows.codec->Plan())) {
         throw PubSubError(
             PubSubStatus::kInvalidArgument,
-            std::string(entry) + ": the rows were bound under a different schema from the one '" +
-                key + "' was declared with; bind them with a codec opened over the topic's schema");
+            std::string(entry) +
+                ": the rows were bound under a schema whose wire layout differs from '" + key +
+                "''s; bind them with a codec opened over the topic's schema");
     }
+    rows.matched.store(plan);
 }
 
 }  // namespace
@@ -512,7 +527,7 @@ fl_status fl_rows_bind(const fl_codec* codec, const struct ArrowArray* array, fl
         // Every buffer of every child is validated HERE, once per batch, by
         // `ArrowArrayViewSetArray` inside BoundRows. The per-row publish path
         // below therefore validates nothing and allocates nothing.
-        *out = new fl_rows(codec->codec, codec->declared, *array);
+        *out = new fl_rows(codec->codec, *array);
     });
 }
 
@@ -636,11 +651,20 @@ fl_status fl_publisher_create_topic_with_options(fl_publisher* publisher, fl_top
                                           ToTopicOptions(options));
 
         // Recorded only once the seam accepted the declaration, so a refused one
-        // leaves nothing behind. The first declaration's schema is the topic's: a
-        // re-declaration the seam accepted is identical to it by the same bytes.
+        // leaves nothing behind. The first declaration's plan is the topic's: a
+        // re-declaration the seam accepted is identical to it. A schema the codec
+        // cannot plan is recorded too, as null - the topic IS declared, and no bound
+        // rows can match it (D-BIND-65, D-BIND-67).
+        std::shared_ptr<const fletcher::abi::FieldPlan> plan;
+        try {
+            plan = std::make_shared<const fletcher::abi::FieldPlan>(
+                fletcher::abi::NanoarrowCodec(*schema).Plan());
+        } catch (const PubSubError&) {
+            plan = nullptr;
+        }
         std::lock_guard lock(publisher->declared_mu);
         publisher->declared.try_emplace(fletcher::internal::JoinSegments(segments),
-                                        fletcher::internal::DeclaredSchema::Encode(schema));
+                                        std::move(plan));
     });
 }
 
