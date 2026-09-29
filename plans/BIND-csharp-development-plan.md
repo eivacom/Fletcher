@@ -731,6 +731,13 @@ MSBuild `Exec`.
 `BIND-locked-decisions.md`; accessor depth cap decided (match 2/3 recommended,
 see §6 G-4); C# joins `accessor-capstone` against the shared fixture and oracle.
 
+**One generated shape, two C# runtimes (D-BIND-72, 2026-09-29).** Per `.proto`,
+one file: a row type per message, one schema bound to it, the topics. The C# model
+layer compiles against `Apache.Arrow` only. BIND-6 emits it and the native pair;
+BIND-8 emits the gateway pair and derives its wire descriptor from the same Arrow
+schema, so C# has no `TypedSchema<T>`. The gap was found reading ADO 18789: nothing
+had generated the gateway client's input.
+
 **BIND-T, BIND-8, BIND-9, BIND-10** — as in the 2026-08-31 plan, with BIND-9
 carrying the LGPL notice text and the packaging statement (§6 P-1), and BIND-10
 adding **TD-009** (TD-008 is now taken by the seam).

@@ -2359,3 +2359,57 @@ accessors do, for capstone parity (Q18).
   a Grpc.Tools-style `<FletcherProto Include>` item (more than any other language gets, and more
   to maintain); a `.targets` inside `Eiva.Fletcher` that downloads the plugin at build time (a
   runtime package carrying build logic, and builds that need GitHub).
+
+- **D-BIND-72 - every language's generated output has one shape: per `.proto`, one file holding a
+  row type per message, ONE schema bound to it, and the topics; every runtime consumes that same
+  row type and schema. C#'s gateway client therefore takes the generated `Player` and
+  `Player.Schema`, and gets no descriptor of its own.** *LOCKED BY THE MAINTAINER 2026-09-29,* in
+  one question, after reading ADO 18789.
+
+  **WHY.** 18789 asks for C# versions of **all** the plugin's outputs. The tracker mapped it to
+  BIND-6 (row) and BIND-7 (view and accessor). But for TypeScript the plugin also emits a
+  `TypedSchema<T>` per message and a topic constant per service method, which the gateway client
+  consumes. BIND-8's `Eiva.Fletcher.GatewayClient` takes a `TypedSchema<T>` in
+  `SubscribeAsync<T>`/`PublishAsync<T>` (public surface §5.4), and **no item generated one for
+  C#**: a gateway user would have written descriptors by hand. Oliver Monberg-Jensen's design
+  comment on 18789 (2026-09-21) proposed emitting only such a descriptor, bound to protoc's own
+  `--csharp_out` class. The maintainer asked for an answer C++, C#, TypeScript and Rust can all
+  follow. Reading the backends showed the shape already exists:
+
+  | | Row type | Its schema | Topics | Typed pub/sub pair |
+  |---|---|---|---|---|
+  | C++ | `class Player` | `PlayerSchema()` (Arrow) | `TopicSegments()`, `TopicKey()` | native |
+  | TypeScript | `interface Player` | `PlayerSchema: TypedSchema<Player>` | `Svc_MethodTopic` | gateway (BIND-T) |
+  | Rust | none yet (accessor only) | none | none | none |
+  | C# | `sealed class Player` | `Player.Schema` (Arrow) | `Topic`, `TopicKey` | native (BIND-6), **gateway: none** |
+
+  C# is the first language with TWO runtimes, which is why the gap appeared there first.
+
+  **THE RULING.**
+  1. **The shape is the rule for every language:** per `.proto`, one generated file with a row type
+     per message, one schema bound to it, and a topic per service method. Every runtime consumes
+     that row type and schema, and **no runtime gets a model type or schema of its own.** Typed
+     pub/sub pairs are emitted per runtime.
+  2. **C#'s gateway client consumes the same `Player` and `Player.Schema` as the native path.** It
+     derives the wire descriptor it needs from the Arrow schema, whose fields already carry their
+     `field_number` metadata. D-BIND-1's managed-codec exception stands; its input becomes the
+     Arrow schema rather than a TypeScript-style descriptor. Public surface §5.4's `TypedSchema<T>`
+     is superseded by this ruling and is redrawn by BIND-8.
+  3. **The model layer depends on `Apache.Arrow` only.** The row type, its schema, `ToArrow`,
+     `FromArrow` and the topics must compile without `Eiva.Fletcher`, so a gateway- or WASM-only
+     application never pulls in native assets (D-BIND-13). The native pair references
+     `Eiva.Fletcher`, the gateway pair `Eiva.Fletcher.GatewayClient`, and each is generated only
+     when asked for.
+  4. **Who emits what.** BIND-6: the model layer and the native pair. BIND-8: the gateway pair,
+     as BIND-T does for TypeScript. 18789 is met by BIND-6, BIND-7 and BIND-8 together.
+  5. **Rust follows the same shape** when it gains a row type (round RIR).
+
+  **Left to BIND-6 and BIND-8:** the opt-token spelling that selects the pairs; how the model layer
+  spells a topic without `Eiva.Fletcher`'s `TopicPath` (the native pair keeps `TopicPath`);
+  whether the gateway client takes a `RecordBatch` from the typed pair (which calls
+  `Player.ToArrow`) or constrains `T` itself; and the names of the gateway pair's types.
+
+  **Declined:** a second, TypeScript-style `TypedSchema<Player>` beside the Arrow schema (two schema
+  descriptions per message to keep in step); binding to protoc's `--csharp_out` class, as proposed
+  on 18789 (C++, TypeScript and Rust own their row type, it needs `Google.Protobuf`, and it
+  reverses D-BIND-69's reasoning).

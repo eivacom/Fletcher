@@ -135,7 +135,7 @@ Flight's consumers are .NET processes hosting this binding only (Q11).
 | 18786 | C# versions of **all tests** as CI tests | [Part 4](#part-4--test-strategy); two exclusion classes ruled (Q10) |
 | 18787 | bindings **against C ABI** so C# tests go green | BIND-1 … BIND-4 |
 | 18788 | publish as NuGet, integrated into CI/CD | BIND-9 |
-| 18789 | plugin generates C# for **all** its outputs | BIND-6 (row), BIND-7 (Arrow view + accessor) |
+| 18789 | plugin generates C# for **all** its outputs | BIND-6 (row type, schema, topics, native pair), BIND-7 (Arrow view + accessor), BIND-8 (gateway pair). **BIND-8's part was missing until D-BIND-72 (2026-09-29)** |
 | *(2026-08-31)* | **subscribe via TypeScript** | **BIND-T** — generated TS `Publisher`/`Subscriber` over the gateway |
 
 ### Constraints inherited from GIR (merged, `8ef1d0e`)
@@ -491,6 +491,11 @@ Hard rules, straight from GIR and the rulings:
   purpose**; PascalCase properties with protoc's `_` suffix when a name collides
   with its class. Namespace and nesting follow Fletcher; identifiers follow protoc,
   because Fletcher had no precedent.
+- **One shape for every language (D-BIND-72, ruled 2026-09-29).** Per `.proto`, one
+  file with a row type per message, one schema bound to it, and the topics; every
+  runtime consumes them, and none gets its own model type or schema. In C# the model
+  layer compiles against `Apache.Arrow` only; the native pair (BIND-6) and the gateway
+  pair (BIND-8) are generated on request, each referencing its own runtime package.
 
 ### BIND-T — TypeScript `Publisher` / `Subscriber`
 
@@ -1405,6 +1410,10 @@ codec step.
   → `DarkBlue`), each with its proto number. Test cases for the edge cases protoc's
   rule answers (a remainder starting with a digit, members colliding after stripping,
   no prefix, `allow_alias`), and a round trip showing the wire bytes match C++'s.
+- **The model layer per D-BIND-72:** the row type, `Schema`, `ToArrow`, `FromArrow`
+  and the topics compile against `Apache.Arrow` alone. A test project that references
+  neither `Eiva.Fletcher` nor `Eiva.Fletcher.Interop` builds the generated model, and
+  the native pair is emitted only when requested.
 - **Build integration per D-BIND-71:** `integration-tests/protoc-dotnet` runs protoc
   from an MSBuild `Exec` before compile, with the plugin from
   `$(FletcherProtocPlugin)`, set from `FLETCHER_PROTOC_PLUGIN`. That is the recipe a
@@ -1495,9 +1504,17 @@ client, **so that** I need no native assets at all.
 - Text-frame control protocol + binary-frame data protocol per wire-format spec
   §"WebSocket Protocol"; sub-IDs parsed from **strings** (the JS-precision
   workaround is a wire contract, not a JS detail).
-- `FletcherClient` with `TypedSchema<T>`-driven `SubscribeAsync<T>` /
+- `FletcherClient` with ~~`TypedSchema<T>`-driven~~ `SubscribeAsync<T>` /
   `PublishAsync<T>`, using real generics where TS uses a phantom type;
   `CancellationToken` on every async path; no `async void`; no sync-over-async.
+  **Amended 2026-09-29 (D-BIND-72):** the client consumes the GENERATED row type and
+  its Arrow `Schema`, the same ones the native path uses, and derives its wire
+  descriptor from that schema's `field_number` metadata. There is no C# `TypedSchema<T>`.
+- **The generated gateway pair (D-BIND-72):** per service method, a typed
+  publisher/subscriber over `FletcherClient`, emitted by the C# backend as BIND-T does
+  for TypeScript. It references `Eiva.Fletcher.GatewayClient` only, so a WASM
+  consumer builds without native assets. Test cases in `protoc/tests`, and an
+  end-to-end round trip against a live gateway.
 - **This is the one managed-codec exception** (D-BIND-1): it speaks the WebSocket
   protocol, not the binding ABI, and therefore ports the positional codec into
   managed C#. `Envelope` and its (de)serialisation live here and nowhere else (Q15).

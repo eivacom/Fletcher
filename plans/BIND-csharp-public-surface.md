@@ -160,6 +160,12 @@ This is the same shape as C++ (`fletcher-protoc::plugin`) and TypeScript
 | `<Svc>_<Method>Publisher` — `TopicSegments()`, `TopicKey()`, `Schema()`, `Publish(row)`, `Publish(row, attachments)` | same names — `static TopicPath Topic`, `static string TopicKey`, `static Schema Schema`, `Publish(<Msg>)` (one-row batch, bind, publish row 0), `Publish(<Msg>, AttachmentsBuilder)`, `Publish(IEnumerable<<Msg>>)` (binds once, publishes N: the fast path, development plan B-2) |
 | `<Svc>_<Method>Subscriber` — `Subscribe(cb)`, `SubscribeInPlace(cb)`, `Unsubscribe(id)` | `Subscribe(Action<<Msg>, AttachmentsView>)` → `Subscription`. **No `SubscribeInPlace`**: it exists in C++ to avoid a per-sample allocation, and the C# equivalent is batch delivery. See Q16 |
 
+**One shape (D-BIND-72, 2026-09-29).** The row type, `Schema`, `ToArrow`,
+`FromArrow` and the topics form the model layer and compile against `Apache.Arrow`
+only. The native `<Svc>_<Method>` pair above references `Eiva.Fletcher`; a gateway
+pair (BIND-8) references `Eiva.Fletcher.GatewayClient`. Both consume the same row
+type and schema.
+
 ### 2.8 The gateway client (managed, no native assets)
 
 Mirrors `gateway-client-ts`'s `FletcherClient` one-for-one, with real generics
@@ -528,6 +534,11 @@ classDiagram
 ```
 
 ### 5.4 The gateway client, which shares no code with the above
+
+**SUPERSEDED IN PART 2026-09-29 (D-BIND-72).** The client shares no CODE with the
+native tier, but it consumes the same GENERATED row type and Arrow `Schema`. The
+`TypedSchema<T>` and `SchemaDescriptor` drawn below are the pre-ruling design; BIND-8
+redraws this diagram when it settles the client's typed surface.
 
 ```mermaid
 classDiagram

@@ -198,7 +198,7 @@ flowchart LR
     CPPB --> GCPP["<b>.fletcher.pb.h</b> row class + pub/sub<br/><b>.fletcher.arrow.pb.h</b> view + ToArrowRow<br/><b>.fletcher.accessor.pb.h</b> RecordBatch accessor"]
     TSB --> GTS["<b>.fletcher.ts</b> interface + TypedSchema<br/>+ topic constants<br/><i>Publisher / Subscriber: BIND-T</i>"]
     CPPB --> GRS["<b>.fletcher.rs</b> RecordBatch accessor only<br/><i>still on FieldKind until round RIR</i>"]
-    CSB --> GCS["<b>.fletcher.cs</b> row class<br/><b>.fletcher.arrow.cs</b> view<br/><b>.fletcher.accessor.cs</b> accessor"]
+    CSB --> GCS["<b>.fletcher.cs</b> row class + Schema + topics<br/>native pair BIND-6, gateway pair BIND-8<br/><b>.fletcher.arrow.cs</b> view<br/><b>.fletcher.accessor.cs</b> accessor"]
 
     PLUGIN --> IPC["<b>.ipc</b> Arrow IPC schema<br/><i>language-neutral</i>"]
 
@@ -208,6 +208,11 @@ flowchart LR
 
 Opt tokens: `--fletcher_opt=` `ts` · `ipc` · `accessor` · `rust` (shipped), plus
 `csharp` · `csharp_accessor` (planned).
+
+**One shape per language (D-BIND-72):** each generated file holds a row type per
+message, one schema bound to it, and the topics, and every runtime consumes those.
+C# is the first language with two runtimes, native and gateway, and both take the
+same generated `Player` and `Player.Schema`.
 
 ---
 
