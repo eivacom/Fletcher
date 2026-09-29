@@ -1413,7 +1413,9 @@ codec step.
 - **The model layer per D-BIND-72:** the row type, `Schema`, `ToArrow`, `FromArrow`
   and the topics compile against `Apache.Arrow` alone. A test project that references
   neither `Eiva.Fletcher` nor `Eiva.Fletcher.Interop` builds the generated model, and
-  the native pair is emitted only when requested.
+  the native pair is emitted only when requested. Topic segments follow C++'s form,
+  `{"eiva.nav", "Svc", "Method"}` for a dotted package (D-BIND-72 point 6), with a test
+  that a C# and a C++ publisher of one method register the same topic.
 - **Build integration per D-BIND-71:** `integration-tests/protoc-dotnet` runs protoc
   from an MSBuild `Exec` before compile, with the plugin from
   `$(FletcherProtocPlugin)`, set from `FLETCHER_PROTOC_PLUGIN`. That is the recipe a

@@ -2381,20 +2381,33 @@ accessors do, for capstone parity (Q18).
   `--csharp_out` class. The maintainer asked for an answer C++, C#, TypeScript and Rust can all
   follow. Reading the backends showed the shape already exists:
 
-  | | Row type | Its schema | Topics | Typed pub/sub pair |
+  | | Row type | Its schema | Topics, per service method | Typed pub/sub pair |
   |---|---|---|---|---|
-  | C++ | `class Player` | `PlayerSchema()` (Arrow) | `TopicSegments()`, `TopicKey()` | native |
-  | TypeScript | `interface Player` | `PlayerSchema: TypedSchema<Player>` | `Svc_MethodTopic` | gateway (BIND-T) |
+  | C++ | `class Player` | `PlayerSchema()` (Arrow) | `TopicSegments()`, `TopicKey()`, **members of the pair** | native |
+  | TypeScript | `interface Player` | `PlayerSchema: TypedSchema<Player>` | `Svc_MethodTopic`, a standalone constant | gateway (BIND-T) |
   | Rust | none yet (accessor only) | none | none | none |
   | C# | `sealed class Player` | `Player.Schema` (Arrow) | `Topic`, `TopicKey` | native (BIND-6), **gateway: none** |
 
   C# is the first language with TWO runtimes, which is why the gap appeared there first.
 
+  **The shape is shared; the mechanism is not.** C++'s generated class IS the codec for its
+  message: `EncodeTo`, `DecodeInto` and the byte constructors run `positional_io` directly. C#'s
+  generated class writes no wire bytes: `ToArrow` hands a `RecordBatch` to the one C++ codec behind
+  the C ABI (D-BIND-1), and the gateway client's managed codec is D-BIND-1's single exception.
+  TypeScript's `TypedSchema<T>` drives the gateway client's codec in the same way.
+
+  *Corrected 2026-09-29, the day it was ruled and before any BIND-6 code, after the maintainer asked
+  for the C++ output to be compared with this entry: the table now says where each language keeps
+  its topics (C++ has no standalone topic; it lives on the pair); the paragraph above was added; the
+  "declined" reason said C++, TypeScript AND Rust own a row type, and Rust has none yet. Points 1 to
+  5 are unchanged. **Point 6 is new, accepted by the maintainer the same day.***
+
   **THE RULING.**
   1. **The shape is the rule for every language:** per `.proto`, one generated file with a row type
      per message, one schema bound to it, and a topic per service method. Every runtime consumes
      that row type and schema, and **no runtime gets a model type or schema of its own.** Typed
-     pub/sub pairs are emitted per runtime.
+     pub/sub pairs are emitted per runtime. Where the topic lives follows the language: on the pair
+     in C++, as a constant in TypeScript, and in C#'s model layer, because both C# pairs need it.
   2. **C#'s gateway client consumes the same `Player` and `Player.Schema` as the native path.** It
      derives the wire descriptor it needs from the Arrow schema, whose fields already carry their
      `field_number` metadata. D-BIND-1's managed-codec exception stands; its input becomes the
@@ -2408,6 +2421,11 @@ accessors do, for capstone parity (Q18).
   4. **Who emits what.** BIND-6: the model layer and the native pair. BIND-8: the gateway pair,
      as BIND-T does for TypeScript. 18789 is met by BIND-6, BIND-7 and BIND-8 together.
   5. **Rust follows the same shape** when it gains a row type (round RIR).
+  6. **C#'s topic segments follow C++'s**, since both publish on the same native bus: for
+     `package eiva.nav;` they are `{"eiva.nav", "Svc", "Method"}`, and the gateway pair's string is
+     `eiva.nav/Svc/Method`. TypeScript today emits `'eiva/nav/Svc/Method'`, which the gateway splits
+     into four segments (read from the code, not yet reproduced). Which form is canonical is being
+     settled separately, and C# follows that answer.
 
   **Left to BIND-6 and BIND-8:** the opt-token spelling that selects the pairs; how the model layer
   spells a topic without `Eiva.Fletcher`'s `TopicPath` (the native pair keeps `TopicPath`);
@@ -2416,5 +2434,5 @@ accessors do, for capstone parity (Q18).
 
   **Declined:** a second, TypeScript-style `TypedSchema<Player>` beside the Arrow schema (two schema
   descriptions per message to keep in step); binding to protoc's `--csharp_out` class, as proposed
-  on 18789 (C++, TypeScript and Rust own their row type, it needs `Google.Protobuf`, and it
+  on 18789 (C++ and TypeScript own their row type, it needs `Google.Protobuf`, and it
   reverses D-BIND-69's reasoning).
