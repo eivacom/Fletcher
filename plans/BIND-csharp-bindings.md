@@ -1334,7 +1334,18 @@ codec step.
     36447834274, 50/50 on its first attempt: managed **316/316** and the oracle **5/5** on all four legs).
   * **Found by the C++/C# sequence review during 5b's CI, and fixed (D-BIND-63):** the 5a batcher
     had no byte ceiling. Its window now splits where C++'s does (`Array.MaxLength`, just under C++'s
-    2^31-2), and a row alone past the ceiling is a counted drop. Three cases were added; managed is
+    2^31-2), and a row alone past the ceiling is a counted drop.
+  * **Handler calls are not serialised (D-BIND-64, from the BIND-5 review's Q2):** as in C++,
+    handlers may run concurrently and batches may complete out of order, and `Stop` waits for an
+    in-flight timer flush. This replaces 5a's lock across the handler, which deadlocked.
+  * **The D-BIND-60 check compares wire layout (D-BIND-65, from the review's Q1):** the codecs'
+    field plans, so names, metadata and nullability do not refuse, and dictionary schemas are checked
+    rather than skipped. The verdict is cached per (rows, topic).
+  * **No row is lost uncounted (D-BIND-66, from the review's Q3):** the intake and the flush contain
+    their own failures and count them in `RowsDropped`, as C++'s `AddRow` does.
+  * **Bound rows need this publisher's declaration (D-BIND-67, from the review's Q4):** the fused
+    publishes refuse `TopicNotDeclared` otherwise, as C++ `PublisherArrow` does; the raw paths stay
+    unchecked. Three cases were added; managed is
     now **316/316**, and two mutations are each caught.
 
 ### BIND-6 — C# row emitter

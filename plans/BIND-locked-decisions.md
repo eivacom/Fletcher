@@ -2061,3 +2061,112 @@ accessors do, for capstone parity (Q18).
   **Declined:** a public `BatchOptions.MaxBytes` (a knob with no C++ counterpart, and a surface
   change); documenting the limit only (rows lost as handler faults, and C++ behaving differently for
   the same topic).
+
+- **D-BIND-64 - `SubscriberArrow` does not serialise its handler calls, matching C++; `Stop` waits
+  for an in-flight timer flush, so no handler call runs after `Unsubscribe` or `Dispose` returns.**
+  *LOCKED BY THE MAINTAINER 2026-09-29,* in two questions, answering the BIND-5 review's Q2 (code
+  review B2).
+
+  **THE DEFECT.** 5a held a lock, `_deliver`, across every handler call, to promise that a handler
+  is never called twice at once - a guarantee C++'s `SubscriberArrow` never gave. It deadlocks. A
+  timer-thread handler holds the lock; a delivery fills the window and waits for the lock while
+  still inside its native delivery; the handler then cancels, and the native cancel waits for that
+  delivery to drain. Reproduced.
+
+  **THE RULING.** Match C++: no lock is held while the handler runs.
+  1. A `Timeout` flush (timer thread), a `RowLimit` flush (delivery thread) and a `Closing` flush
+     (the cancelling thread) may run the handler concurrently, and batches may complete out of
+     order. Each window is still cut in order, under the state lock. This is documented in the
+     header and the surface note, and handlers must be thread-safe.
+  2. `Stop` waits for an in-flight timer flush to finish, unless it is running on that flush, as
+     C++'s `Stop` joins its timer thread unless called from it. So no handler call runs after
+     `Unsubscribe` or `Dispose` returns.
+  3. **A limit shared with C++, recorded rather than fixed:** a delivery-thread handler that cancels
+     while a timer-thread handler also cancels can still deadlock. `Stop` waits for the timer
+     handler, and that handler's native cancel waits for the delivery.
+
+  **Consequences.** The D-BIND-59 note's "a handler is never called twice at once" is withdrawn, as
+  is the recorded divergence "one step stronger than C++". The B2 reproduction becomes a regression
+  test, and a new test shows a timer flush and a row-limit flush overlapping.
+
+  **Declined:** keeping the serialisation and deferring the native cancel until the handler returns
+  (a C# guarantee C++ does not have, and more machinery); refusing a cancel from inside a timer or
+  closing flush (breaks `UnsubscribeFromInsideATimeoutFlushIsSafe`, which C++ requires to work);
+  dropping the lock without the wait (a timer handler could run after `Unsubscribe` returned, which
+  C++ does not allow).
+
+- **D-BIND-65 - the D-BIND-60 publish check compares WIRE LAYOUT, not IPC bytes.** *LOCKED BY THE
+  MAINTAINER 2026-09-29,* in one question, answering the BIND-5 review's Q1.
+
+  **WHY IT CHANGED.** D-BIND-60 compared the two schemas' IPC bytes with the seam's
+  `DeclaredSchema::ConflictsWith`. That was stricter than needed: field names, metadata and
+  nullability were refused although the wire bytes are identical. It was also weaker than it
+  looked: a schema carrying a dictionary is not IPC-encodable, so `ConflictsWith` answered "not
+  provably different" and the check was silently skipped for every such topic (review N-D3).
+
+  **THE RULING.** Refuse exactly the rows that would encode differently from the topic's own codec:
+  compare the codecs' field plans (`FieldPlan {type, fixed_size, children}`), the type tree the wire
+  format is built from.
+  - Names, metadata and nullability no longer cause refusals.
+  - Dictionaries are checked by their plan instead of being skipped.
+  - This is the closest to C++ `PublisherArrow`, which fails only when a value's type does not fit
+    its codec.
+  - The shim builds the declared schema's plan once, at `CreateTopic`, and caches the verdict per
+    (rows, topic), which also takes the per-row cost off the hot path (review N-D4).
+
+  `binding.h` documents the rule on both publish functions. This is not an ABI change: the same
+  refusal and the same status, for a narrower and exact set of rows.
+
+  **Declined:** keeping the strict byte comparison and documenting it (stricter than C++); changing
+  only the documentation (leaves every dictionary topic unchecked).
+
+- **D-BIND-66 - every row `SubscriberArrow` receives either arrives in a batch or is counted in
+  `RowsDropped`; its intake never lets an exception reach the inner `Subscriber`.** *LOCKED BY THE
+  MAINTAINER 2026-09-29,* in one question, answering the BIND-5 review's Q3 (code review B5, B6).
+
+  **THE DEFECT.** `OnRow` runs as the inner `Subscriber`'s handler, so an exception out of it was
+  absorbed there. The row was then lost without appearing in `RowsDropped` or in `SubscriberArrow`'s
+  own fault counter or event. Two concrete causes:
+  - an empty attachment key, which C++ accepts and C#'s `AttachmentsBuilder` refuses;
+  - a schema Apache.Arrow's importer refuses with an exception `Resolve` did not catch.
+
+  **THE RULING.** Match C++'s `AddRow`, which catches everything and counts the row as dropped.
+  1. `OnRow` contains every exception itself and counts the row as dropped in the next batch's
+     `RowsDropped`.
+  2. The same holds for a flush's own work outside the caller's handler: the window copy, the decode,
+     the import. A window lost there is counted, never lost uncounted, and never escapes onto the
+     timer thread (review B5).
+  3. `HandlerFaulted` and `AbsorbedCallbackFailures` stay reserved for the caller's own handler.
+  4. The specific causes are fixed as well:
+     - empty keys cross, as in C++, because the intake copies attachments without the builder's
+       public-API refusal;
+     - `Resolve` treats any import failure as an undecodable schema.
+
+  **Declined:** surfacing the losses as handler faults (a fault in code the caller did not write,
+  with `RowsDropped` still undercounting); reporting through both channels (one lost row reported
+  twice, with two meanings).
+
+- **D-BIND-67 - the bound-rows publishes refuse a topic THIS publisher did not declare,
+  `FL_TOPIC_NOT_DECLARED`, as C++ `PublisherArrow` does.** *LOCKED BY THE MAINTAINER 2026-09-29,* in
+  one question, answering the BIND-5 review's Q4.
+
+  **THE GAP.** D-BIND-60 checked the rows only against a declaration made by the same `fl_publisher`,
+  and left every other case to the seam. The seam's `Publisher` does not require a declaration, and
+  providers differ: Fast DDS refuses an undeclared topic, while `inprocess` accepts one by default.
+  So rows published through a second publisher, or to a topic nobody declared, went unchecked.
+  C++ is stricter: `PublisherArrow::Publish(ArrowRow)` throws "no codec for topic" unless that
+  `PublisherArrow` declared it.
+
+  **THE RULING.** Match C++.
+  - `fl_publisher_publish_row` and `fl_publisher_publish_rows` refuse `FL_TOPIC_NOT_DECLARED` unless
+    this publisher declared the topic, so every codec-encoded row is checked against a known schema
+    (D-BIND-65's wire layout).
+  - The raw paths stay unchecked, as C++'s `PublishDirect` is: `fl_publisher_publish_raw`, and the
+    managed `PublishRaw` and `RowWriter` forms.
+  - `binding.h` states the rule on both functions. The status already exists, so this is not an ABI
+    change, but it IS a behaviour change: C# code that publishes `BoundRows` through a `Publisher`
+    that never called `CreateTopic` now fails. The existing suites are checked for that when this
+    lands.
+
+  **Declined:** leaving it to the seam (provider-dependent, looser than C++); keeping declarations
+  per provider (looser than C++, with state shared across publishers).

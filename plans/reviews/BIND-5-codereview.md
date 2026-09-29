@@ -239,28 +239,34 @@ subscription whose owner is not this subscriber, in both tiers.
 
 ## For a ruling, not a finding
 
-- **Q1 — the D-BIND-60 check compares strict IPC bytes.** *Native reviewer.*
+- **Q1 — the D-BIND-60 check compares strict IPC bytes.** *Native reviewer.* **RULED 2026-09-29,
+  D-BIND-65:** compare wire layout (the codecs' field plans), cached per (rows, topic).
   - Metadata or a nullability difference between the codec's schema and the topic's is now
     `FL_INVALID_ARGUMENT`. That is stricter than "decodes into the wrong fields", and consistent
     with "the seam's comparison".
   - The comparison is also silently skipped when either schema carries a dictionary, because
     `DeclaredSchema` is not encodable then (D3).
   - Is that the intended contract? The whole of it should be stated on both publish functions.
-- **Q2 — how to fix B2.**
+- **Q2 — how to fix B2.** **RULED 2026-09-29, D-BIND-64:** drop the serialisation to match C++,
+  and have `Stop` wait for an in-flight timer flush.
   - Drop `_deliver` around the handler, as C++ does: this removes the deadlock and gives up "never
     called twice at once".
   - Or keep the serialisation and defer the native cancel of a cancel made from inside a flush
     until the handler returns.
 - **Q3 — should `SubscriberArrow` wire the inner subscriber's `HandlerFaulted` into its own event
-  and counter?** That would make every B6-class loss visible even after its specific causes are
+  and counter?** **RULED 2026-09-29, D-BIND-66:** no; the intake and the flush contain their own
+  failures and count them as dropped rows, as C++'s `AddRow` does. That would make every B6-class loss visible even after its specific causes are
   fixed.
-- **Q4 — D-BIND-60's reach.**
+- **Q4 — D-BIND-60's reach.** **RULED 2026-09-29, D-BIND-67:** refuse a topic this publisher did
+  not declare, `FL_TOPIC_NOT_DECLARED`, on the bound-rows paths, as C++ does.
   - Rows published through a second `fl_publisher`, when another instance declared the topic, are
     not checked.
   - Neither are rows published to a topic nobody declared.
   - This is by ruling ("left to the seam"). Is it acceptable for C#'s one-publisher-per-topic
     patterns?
-- **Q5 — the architecture diagrams.** *Tests reviewer.*
+- **Q5 — the architecture diagrams.** *Tests reviewer.* **RULED 2026-09-29:** update them. Section 2 marks `SubscriberArrow` `<<built>>` and gains one
+  note for the probe shim and copy-probe as test-only artifacts; sections 6 and 7 are redrawn with the
+  publish checks and `SubscriberArrow`'s path; section 8 is unchanged.
   - `BIND-architecture-diagrams.md:315` still draws the C# `SubscriberArrow` as `<<planned>>`.
   - D-BIND-62's second shim artifact and test package, and D-BIND-60's check, are not drawn.
   - Do they count as "a shape, name, count or direction" under the four-places rule?
