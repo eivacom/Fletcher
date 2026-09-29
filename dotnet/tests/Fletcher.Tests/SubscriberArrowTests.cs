@@ -654,6 +654,114 @@ public sealed class SubscriberArrowTests : IDisposable
         Assert.False(self.IsLive);
     }
 
+    // ── Handler calls are not serialised (D-BIND-64) ────────────────────────
+    //
+    // No C++ mirror: these pin what the BIND-5 review found and D-BIND-64 ruled.
+    // The first is the review's B2 reproduction, kept as a regression test.
+
+    /// <summary>A timer-thread handler that cancels while a delivery fills the window does not deadlock.</summary>
+    [Fact]
+    public void ATimerHandlerThatCancelsDuringADeliveryDoesNotDeadlock()
+    {
+        TopicPath topic = Declared("timercancelrace");
+        using var inHandler = new ManualResetEventSlim(false);
+        using var done = new ManualResetEventSlim(false);
+        Subscription? self = null;
+        int timeouts = 0;
+        SubscribeResult result = _subscriber.SubscribeBatched(topic, (batch, _, status) =>
+        {
+            batch?.Dispose();
+            if (status.Reason == BatchReason.Timeout && Interlocked.Increment(ref timeouts) == 1)
+            {
+                inHandler.Set();
+                Thread.Sleep(300);  // long enough for the delivery below to fill the window
+                _subscriber.Unsubscribe(self!);
+                done.Set();
+            }
+        }, Options(2, TimeSpan.FromMilliseconds(20)));
+        self = result.Subscription;
+        result.Schema.Dispose();
+
+        Publish(topic, 1, "a");
+        Assert.True(inHandler.Wait(TimeSpan.FromSeconds(5)), "the timeout flush never ran");
+        // A thread of its own, not the pool: the timer's callbacks already run there.
+        var delivery = new Thread(() =>
+        {
+            Publish(topic, 2, "b");
+            Publish(topic, 3, "c");
+        })
+        { IsBackground = true };
+        delivery.Start();
+
+        Assert.True(done.Wait(TimeSpan.FromSeconds(10)), "the cancel from the timer thread deadlocked");
+        Assert.True(delivery.Join(TimeSpan.FromSeconds(10)), "the delivery never returned");
+    }
+
+    /// <summary>A Timeout flush and a RowLimit flush may run the handler at once, as in C++.</summary>
+    [Fact]
+    public void ATimeoutFlushAndARowLimitFlushMayOverlap()
+    {
+        TopicPath topic = Declared("overlap");
+        using var inTimer = new ManualResetEventSlim(false);
+        using var rowLimitRan = new ManualResetEventSlim(false);
+        bool overlapped = false;
+        _subscriber.SubscribeBatched(topic, (batch, _, status) =>
+        {
+            batch?.Dispose();
+            if (status.Reason == BatchReason.Timeout && !inTimer.IsSet)
+            {
+                inTimer.Set();
+                overlapped = rowLimitRan.Wait(TimeSpan.FromSeconds(5));
+            }
+            else if (status.Reason == BatchReason.RowLimit)
+            {
+                rowLimitRan.Set();
+            }
+        }, Options(2, TimeSpan.FromMilliseconds(20))).Schema.Dispose();
+
+        Publish(topic, 1, "a");
+        Assert.True(inTimer.Wait(TimeSpan.FromSeconds(5)), "the timeout flush never ran");
+        // A thread of its own, not the pool: the timer's callbacks already run there.
+        var delivery = new Thread(() =>
+        {
+            Publish(topic, 2, "b");
+            Publish(topic, 3, "c");
+        })
+        { IsBackground = true };
+        delivery.Start();
+
+        Assert.True(delivery.Join(TimeSpan.FromSeconds(10)), "the row-limit flush waited for the timer handler");
+        SpinWait.SpinUntil(() => Volatile.Read(ref overlapped), TimeSpan.FromSeconds(5));
+        Assert.True(Volatile.Read(ref overlapped), "the row-limit handler did not run while the timer handler was running");
+    }
+
+    /// <summary>Unsubscribe returns only once a timer-thread handler still running elsewhere has finished.</summary>
+    [Fact]
+    public void UnsubscribeWaitsForATimerHandlerStillRunning()
+    {
+        TopicPath topic = Declared("waitstimer");
+        using var inHandler = new ManualResetEventSlim(false);
+        int finished = 0;
+        SubscribeResult result = _subscriber.SubscribeBatched(topic, (batch, _, status) =>
+        {
+            batch?.Dispose();
+            if (status.Reason == BatchReason.Timeout)
+            {
+                inHandler.Set();
+                Thread.Sleep(300);
+                Volatile.Write(ref finished, 1);
+            }
+        }, Options(100, TimeSpan.FromMilliseconds(20)));
+        result.Schema.Dispose();
+
+        Publish(topic, 1, "a");
+        Assert.True(inHandler.Wait(TimeSpan.FromSeconds(5)), "the timeout flush never ran");
+
+        _subscriber.Unsubscribe(result.Subscription);
+
+        Assert.Equal(1, Volatile.Read(ref finished));
+    }
+
     /// <summary>Mirrors SubscriberArrowBatchTest.BatchesAreValidArrow.</summary>
     /// <remarks>
     /// Weaker: Apache.Arrow for .NET has no ValidateFull, so the batch's shape is

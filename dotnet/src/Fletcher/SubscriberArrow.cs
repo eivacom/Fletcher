@@ -46,13 +46,25 @@
 // ones are decoded together again. The common case is one native call per
 // batch; the failure case costs a second pass and keeps attachments aligned.
 //
-// ── Threads, and what a handler may assume ──────────────────────────────────
+// ── Threads, and what a handler may assume (D-BIND-64) ─────────────────────
 // A RowLimit flush runs on the transport's delivery thread (inside the
 // delivery, so the seam's re-entrancy rules bind the handler there), a Timeout
-// flush on a timer thread, a Closing flush on the thread that unsubscribes. A
-// handler is never called twice at once for one subscription - flushes are
-// serialised - which is one step stronger than the C++ tier, whose flushes can
-// overlap across its delivery and timer threads.
+// flush on a timer thread, a Closing flush on the thread that unsubscribes.
+// Handler calls are NOT serialised, exactly as in C++: those three may run the
+// handler at once, and batches may complete out of order. Each window is still
+// cut in order, under the state lock, so no row is in two batches and none is
+// skipped; a handler must be thread-safe. (5a held a lock across the handler to
+// promise one call at a time. It deadlocked: a timer-thread handler that
+// cancelled waited, in the native drain, for a delivery that was itself waiting
+// for that lock.)
+//
+// What IS promised: no handler call runs after Unsubscribe or Dispose returns.
+// A delivery-thread flush is covered by the native cancel, which drains the
+// delivery it runs in; a timer flush on another thread is waited for by Stop,
+// as C++'s Stop joins its timer thread - unless Stop runs ON that flush, as a
+// handler that cancels itself does. A limit shared with C++: a delivery-thread
+// handler that cancels while a timer-thread handler also cancels can still
+// deadlock, each cancel waiting for the other's flush.
 //
 // THE HANDLER OWNS WHAT IT IS HANDED. The batch is the codec's, handed over as
 // FletcherCodec.DecodeBatch hands it - the caller disposes it - and each
@@ -216,9 +228,11 @@ public sealed class SubscriberArrow : IDisposable
     /// <summary>Flush the subscription's pending window as <see cref="BatchReason.Closing"/>, then cancel it.</summary>
     /// <remarks>
     /// That order is C++'s: the handler sees the last partial window before the
-    /// data subscription goes, and rows that land in between are ignored. Called
-    /// from inside the subscription's own handler it is served, and the closing
-    /// flush then has nothing left to deliver.
+    /// data subscription goes, and rows that land in between are ignored. When it
+    /// returns, no handler call for the subscription is still running (D-BIND-64).
+    /// Called from inside the subscription's own handler it is served: the closing
+    /// flush delivers whatever the window holds by then, which can call the handler
+    /// again, nested, as C++ does.
     /// </remarks>
     public void Unsubscribe(Subscription subscription)
     {
@@ -327,9 +341,14 @@ public sealed class SubscriberArrow : IDisposable
         private long _lastFlush = Stopwatch.GetTimestamp();
         private bool _stopped;
 
-        // Held while a flush decodes and calls the handler: one call at a time.
-        // Re-entrant, so a handler that unsubscribes serves its own closing flush.
-        private readonly object _deliver = new();
+        // Flushes past their cut and not yet returned. The codec is disposed by
+        // whichever of Stop and the last of these comes last, so a flush on another
+        // thread never decodes with a disposed codec - and nobody waits for one.
+        private int _activeFlushes;
+
+        // The managed thread running a Timeout flush, or 0. Stop waits for it to
+        // finish unless Stop is running on it (D-BIND-64).
+        private int _timerFlushThread;
 
         internal Batcher(SubscriberArrow owner, RecordBatchHandler handler, int maxRows, TimeSpan timeout, long byteCeiling)
         {
@@ -463,9 +482,22 @@ public sealed class SubscriberArrow : IDisposable
                     _timer?.Change(DueIn(now), System.Threading.Timeout.InfiniteTimeSpan);
                     return;
                 }
+
+                _timerFlushThread = Environment.CurrentManagedThreadId;
             }
 
-            Flush(BatchReason.Timeout);
+            try
+            {
+                Flush(BatchReason.Timeout);
+            }
+            finally
+            {
+                lock (_gate)
+                {
+                    _timerFlushThread = 0;
+                    Monitor.PulseAll(_gate);
+                }
+            }
         }
 
         /// <summary>Stop taking rows and deliver the pending window as Closing. Idempotent.</summary>
@@ -481,8 +513,8 @@ public sealed class SubscriberArrow : IDisposable
                 _stopped = true;
             }
 
-            // Waits for a flush in flight on another thread; served at once on the
-            // handler's own thread, where the monitor is already held.
+            // The window as it stands goes out as Closing. A flush already running on
+            // another thread keeps what it cut; nothing waits for it here.
             Flush(BatchReason.Closing);
 
             lock (_gate)
@@ -490,8 +522,26 @@ public sealed class SubscriberArrow : IDisposable
                 _timer?.Dispose();
                 _timer = null;
 
-                // Every batch already handed out was imported on its own, so the codec
-                // can go now: nothing delivered holds on to it.
+                // A Timeout flush on another thread may still be in its handler: C++'s
+                // Stop joins its timer thread for the same reason. Not when this IS
+                // that flush - a handler cancelling itself would wait for itself.
+                int self = Environment.CurrentManagedThreadId;
+                while (_timerFlushThread != 0 && _timerFlushThread != self)
+                {
+                    Monitor.Wait(_gate);
+                }
+
+                DisposeCodecIfIdle();
+            }
+        }
+
+        /// <summary>Under the gate: the codec goes once stopped and no flush still holds it.</summary>
+        private void DisposeCodecIfIdle()
+        {
+            // Every batch already handed out was imported on its own, so nothing
+            // delivered holds on to the codec - only a flush still decoding does.
+            if (_stopped && _activeFlushes == 0)
+            {
                 _codec?.Dispose();
                 _codec = null;
             }
@@ -499,63 +549,81 @@ public sealed class SubscriberArrow : IDisposable
 
         private void Flush(BatchReason reason)
         {
-            lock (_deliver)
-            {
-                byte[] rows;
-                int[] ends;
-                List<AttachmentsBuilder> attachments;
-                long dropped;
-                FletcherCodec? codec;
+            byte[] rows;
+            int[] ends;
+            List<AttachmentsBuilder> attachments;
+            long dropped;
+            FletcherCodec? codec;
 
+            // The cut, under the gate: this is what keeps windows in order and whole
+            // while their handlers run concurrently (D-BIND-64).
+            lock (_gate)
+            {
+                _hasDeadline = false;
+                _lastFlush = Stopwatch.GetTimestamp();
+
+                if (_ends.Count == 0 && _dropped == 0)
+                {
+                    return;
+                }
+
+                rows = _rows.WrittenSpan.ToArray();
+                ends = [.. _ends];
+                attachments = _attachments;
+                dropped = _dropped;
+                codec = _codec;
+
+                _rows = new ArrayBufferWriter<byte>();
+                _ends = [];
+                _attachments = [];
+                _dropped = 0;
+                _activeFlushes++;
+            }
+
+            try
+            {
+                Deliver(reason, codec, rows, ends, attachments, dropped);
+            }
+            finally
+            {
                 lock (_gate)
                 {
-                    _hasDeadline = false;
-                    _lastFlush = Stopwatch.GetTimestamp();
-
-                    if (_ends.Count == 0 && _dropped == 0)
-                    {
-                        return;
-                    }
-
-                    rows = _rows.WrittenSpan.ToArray();
-                    ends = [.. _ends];
-                    attachments = _attachments;
-                    dropped = _dropped;
-                    codec = _codec;
-
-                    _rows = new ArrayBufferWriter<byte>();
-                    _ends = [];
-                    _attachments = [];
-                    _dropped = 0;
+                    _activeFlushes--;
+                    DisposeCodecIfIdle();
                 }
+            }
+        }
 
-                RecordBatch? batch = null;
-                List<AttachmentsBuilder> kept = attachments;
-                if (codec is not null)
-                {
-                    try
-                    {
-                        batch = Decode(codec, rows, ends, attachments, ref dropped, out kept);
-                    }
-                    catch (Exception e) when (e is FletcherException or ArgumentException)
-                    {
-                        // The good rows would not decode together either: the window
-                        // has no batch row left to align an attachment with, so it is
-                        // dropped whole - C++'s rule for a failed Finish().
-                        dropped += kept.Count;
-                        kept = [];
-                        batch = null;
-                    }
-                }
-
+        /// <summary>Decode one cut window and hand it to the handler, with no lock held.</summary>
+        private void Deliver(
+            BatchReason reason, FletcherCodec? codec, byte[] rows, int[] ends, List<AttachmentsBuilder> attachments, long dropped)
+        {
+            RecordBatch? batch = null;
+            List<AttachmentsBuilder> kept = attachments;
+            if (codec is not null)
+            {
                 try
                 {
-                    _handler(batch, kept, new BatchStatus(reason, dropped));
+                    batch = Decode(codec, rows, ends, attachments, ref dropped, out kept);
                 }
-                catch (Exception e)
+                catch (Exception e) when (e is FletcherException or ArgumentException)
                 {
-                    _owner.ReportAbsorbed(e, SubscriptionId);
+                    // The good rows would not decode together either: the window
+                    // has no batch row left to align an attachment with, so it is
+                    // dropped whole - C++'s rule for a failed Finish().
+                    dropped += kept.Count;
+                    kept = [];
+                    batch = null;
                 }
+            }
+
+            try
+            {
+                _handler(batch, kept, new BatchStatus(reason, dropped));
+            }
+            catch (Exception e)
+            {
+                _owner.ReportAbsorbed(e, SubscriptionId);
             }
         }
 

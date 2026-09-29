@@ -406,3 +406,16 @@ subscription whose owner is not this subscriber, in both tiers.
   under `/EHs`, passes: a C-linkage helper that throws is now harmless, not merely forbidden.
   Measured: `<ExceptionHandling>SyncCThrow` in the generated project, no D9025 warnings, c-abi
   86/86, managed 316/316 and the oracle 5/5 against the rebuilt shim.
+- **B2 — fixed, as D-BIND-64 ruled.**
+  - **The lock is gone.** `_deliver`, held across the handler, is removed. Windows are still cut in
+    order under the state lock, and handlers may run concurrently, as in C++.
+  - **`Stop` waits** for a timer flush running on another thread, unless it runs on that flush.
+  - **The codec** is disposed by whichever of `Stop` and the last in-flight flush comes last. So a
+    flush on another thread never decodes with a disposed codec, and nobody waits for one.
+  - **Three tests:**
+    - the review's reproduction, kept as a regression test;
+    - a timer flush and a row-limit flush overlapping;
+    - `Unsubscribe` waiting for a timer handler still running elsewhere.
+  - **Results.** Managed 319/319. Putting the serialisation back hangs the run: the deadlock
+    returns. Removing the wait fails `UnsubscribeWaitsForATimerHandlerStillRunning`. The deferred
+    codec disposal has no deterministic test and rests on reading.
