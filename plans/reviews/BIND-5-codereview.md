@@ -401,3 +401,8 @@ subscription whose owner is not this subscriber, in both tiers.
   rebuilding the lock-held throw twice: inside the block it reproduced "resource deadlock would
   occur", and moved above it the same code passed. c-abi 86/86. D-BIND-65 and D-BIND-67 rewrite
   this helper next; it stays above the block.
+  **And, by the maintainer's decision the same day, c-abi builds with `/EHs` on MSVC** (in
+  `c-abi/CMakeLists.txt`, directory-wide, replacing CMake's `/EHsc`). The original defect, rebuilt
+  under `/EHs`, passes: a C-linkage helper that throws is now harmless, not merely forbidden.
+  Measured: `<ExceptionHandling>SyncCThrow` in the generated project, no D9025 warnings, c-abi
+  86/86, managed 316/316 and the oracle 5/5 against the rebuilt shim.

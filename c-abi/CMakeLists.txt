@@ -4,6 +4,20 @@
 cmake_minimum_required(VERSION 3.15)
 project(fletcher-c-abi LANGUAGES C CXX)
 
+# /EHs, not CMake's default /EHsc, on MSVC (BIND-5 review B1). /EHc tells the compiler that a
+# function with C language linkage never throws, and this component is a C ABI written in C++:
+# every entry point is `extern "C"`, and a C++ helper declared inside that block takes C linkage
+# too. Under /EHsc such a helper's throw skipped its destructors - the lock D-BIND-60 found held
+# - or failed fast. binding.cpp keeps its helpers outside the block as well; this makes the
+# mistake harmless rather than merely documented. Directory-wide, so the shim, the probe shim,
+# the object library and the tests are built alike.
+if(MSVC)
+    string(REPLACE "/EHsc" "/EHs" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+    if(NOT CMAKE_CXX_FLAGS MATCHES "/EHs")
+        string(APPEND CMAKE_CXX_FLAGS " /EHs")
+    endif()
+endif()
+
 find_package(fletcher-pubsub CONFIG REQUIRED)
 find_package(fletcher-fastdds-pubsub-provider CONFIG REQUIRED)
 find_package(fletcher-xrcedds-pubsub-provider CONFIG REQUIRED)

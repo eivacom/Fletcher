@@ -209,10 +209,11 @@ void RequireRowsMatchTopic(fl_publisher& publisher, const std::vector<std::strin
 }  // namespace
 
 // Nothing but `fl_*` definitions below this line, up to its matching close. A
-// C++ helper declared inside `extern "C"` takes C language linkage, and MSVC's
-// `/EHsc` assumes such a function never throws: the unwind actions around it may
-// be dropped, so a throw from it skips destructors or fails fast (BIND-5 review
-// B1). Helpers go in the unnamed namespace above.
+// C++ helper declared inside `extern "C"` takes C language linkage, and under
+// MSVC's default `/EHsc` such a function is assumed never to throw: its throw
+// skipped destructors or failed fast (BIND-5 review B1). This component now builds
+// with `/EHs`, which removes that assumption; helpers still go in the unnamed
+// namespace above, so the rule does not rest on a compiler flag alone.
 extern "C" {
 
 /* ══ The single-copy marker ════════════════════════════════════════════════ */

@@ -1979,6 +1979,8 @@ accessors do, for capstone parity (Q18).
     `fl_*` definitions inside it. The shipped version released the lock before throwing, but still
     threw from C-linkage code, so every refused publish on Windows was undefined until this fix.
     This was not a Contain/Capture defect.
+  - **And c-abi now builds with `/EHs` on MSVC**, by the maintainer's decision the same day. That
+    removes the assumption itself: the original defect, rebuilt under `/EHs`, passes.
 
 - **D-BIND-61 - the probe scores C#'s FUSED publish by the SOURCE of the window's payload bytes,
   seen through `WriteBuffer::Append`; the negative controls are a staging publish and a copied
