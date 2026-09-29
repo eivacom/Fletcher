@@ -1015,18 +1015,23 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
          "{}\n\n";
 
     // Subscribe — delivers decoded message + Attachments to the caller.
-    // Returns the schema received from the publisher via the provider.
+    // Gated on the topic's announced schema matching <Cls>'s.
     o << "    /// Begins receiving rows on this topic. The raw wire-format bytes\n"
       << "    /// are decoded into a typed message before being delivered to the\n"
       << "    /// callback, so subscribers never handle raw buffers directly.\n"
-      << "    /// Returns the subscription ID (used for Unsubscribe).\n"
+      << "    ///\n"
+      << "    /// Refused with `PubSubError(kSchemaConflict)` when the topic already announces a "
+         "schema\n"
+      << "    /// that is not " << msg_class << "'s; when that is only known after this returns,\n"
+      << "    /// `result.schema` answers `kSchemaConflict` and no row is delivered.\n"
+      << "    /// `result.subscription_id` is what `Unsubscribe` takes.\n"
       << "    /// `options` is optional: a default-constructed value means the provider's "
          "defaults.\n";
-    o << "    uint64_t Subscribe(\n"
+    o << "    fletcher::Subscriber::SubscribeResult Subscribe(\n"
       << "        std::function<void(" << msg_class << ", const fletcher::Attachments&)> cb,\n"
       << "        const fletcher::TopicOptions& options = {})\n"
       << "    {\n"
-      << "        auto result = subscriber_->Subscribe(TopicSegments(),\n"
+      << "        return subscriber_->Subscribe(TopicSegments(), " << msg_class << "Schema(),\n"
       << "            [cb = std::move(cb)](uint64_t /*subscription_id*/,\n"
       << "                                 const uint8_t* data, size_t len,\n"
       << "                                 const fletcher::SharedSchema& /*schema*/,\n"
@@ -1034,7 +1039,6 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
       << "                cb(" << msg_class << "(data, len), att);\n"
       << "            },\n"
       << "            options);\n"
-      << "        return result.subscription_id;\n"
       << "    }\n\n";
 
     // SubscribeInPlace - the same delivery, decoded into one row the subscription keeps.
@@ -1047,14 +1051,19 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
       << "    /// is safe because a provider delivers at most one callback at a time per\n"
       << "    /// subscription, which is part of PubSubProvider's delivery contract.\n"
       << "    ///\n"
+      << "    /// Refused with `PubSubError(kSchemaConflict)` when the topic already announces a "
+         "schema\n"
+      << "    /// that is not " << msg_class << "'s; when that is only known after this returns,\n"
+      << "    /// `result.schema` answers `kSchemaConflict` and no row is delivered.\n"
+      << "    /// `result.subscription_id` is what `Unsubscribe` takes.\n"
       << "    /// `options` is optional: a default-constructed value means the provider's "
          "defaults.\n";
-    o << "    uint64_t SubscribeInPlace(\n"
+    o << "    fletcher::Subscriber::SubscribeResult SubscribeInPlace(\n"
       << "        std::function<void(const " << msg_class
       << "&, const fletcher::Attachments&)> cb,\n"
       << "        const fletcher::TopicOptions& options = {})\n"
       << "    {\n"
-      << "        auto result = subscriber_->Subscribe(TopicSegments(),\n"
+      << "        return subscriber_->Subscribe(TopicSegments(), " << msg_class << "Schema(),\n"
       << "            [cb = std::move(cb), row = " << msg_class << "()](\n"
       << "                uint64_t /*subscription_id*/,\n"
       << "                const uint8_t* data, size_t len,\n"
@@ -1064,7 +1073,6 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
       << "                cb(row, att);\n"
       << "            },\n"
       << "            options);\n"
-      << "        return result.subscription_id;\n"
       << "    }\n\n";
 
     // Unsubscribe

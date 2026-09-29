@@ -201,14 +201,14 @@ TEST(FastDDSPubSubProviderTest, ConstructDestruct) {
 TEST(FastDDSPubSubProviderTest, DestructAfterQuiescentUseDocumentsContract) {
     EXPECT_NO_THROW({
         FastDDSPubSubProvider provider(ProviderConfig{});
-        provider.CreateTopic({"quiescent", "teardown"}, MakeSchema());
+        provider.CreateTopic({"quiescent", "teardown"}, {MakeSchema()});
 
         std::atomic<int32_t> received{-1};
         static_cast<void>(
             provider.Subscribe({"quiescent", "teardown"},
-                               [&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
+                               {[&](const uint8_t* data, size_t len, SharedSchema, Attachments) {
                                    if (len >= 5) received.store(DecodeRow(data));
-                               }));
+                               }}));
         provider.Publish({"quiescent", "teardown"}, MakeEncoder(1));
 
         // Reach a quiescent point before teardown: Unsubscribe deletes the
@@ -221,7 +221,7 @@ TEST(FastDDSPubSubProviderTest, DestructAfterQuiescentUseDocumentsContract) {
 
 TEST(FastDDSPubSubProviderTest, CreateTopicSucceeds) {
     FastDDSPubSubProvider p(ProviderConfig{});
-    EXPECT_NO_THROW(p.CreateTopic({"create", "ok"}, MakeSchema()));
+    EXPECT_NO_THROW(p.CreateTopic({"create", "ok"}, {MakeSchema()}));
 }
 
 TEST(FastDDSPubSubProviderTest, CreateTopicIsIdempotent) {
@@ -230,21 +230,21 @@ TEST(FastDDSPubSubProviderTest, CreateTopicIsIdempotent) {
     // attach to a topic a subscriber created first (subscriber-first) and
     // makes repeated declarations harmless.
     FastDDSPubSubProvider p(ProviderConfig{});
-    p.CreateTopic({"create", "dup"}, MakeSchema());
-    EXPECT_NO_THROW(p.CreateTopic({"create", "dup"}, MakeSchema()));
+    p.CreateTopic({"create", "dup"}, {MakeSchema()});
+    EXPECT_NO_THROW(p.CreateTopic({"create", "dup"}, {MakeSchema()}));
 }
 
 TEST(FastDDSPubSubProviderTest, CreateTopicRejectsConflictingSchema) {
     // Idempotent re-declaration is fine, but declaring an existing topic with a
     // *different* schema is a genuine conflict and must not be silently dropped.
     FastDDSPubSubProvider p(ProviderConfig{});
-    p.CreateTopic({"create", "conflict"}, MakeSchema());
-    EXPECT_THROW(p.CreateTopic({"create", "conflict"}, MakeOtherSchema()), std::runtime_error);
+    p.CreateTopic({"create", "conflict"}, {MakeSchema()});
+    EXPECT_THROW(p.CreateTopic({"create", "conflict"}, {MakeOtherSchema()}), std::runtime_error);
 }
 
 TEST(FastDDSPubSubProviderTest, PublishWithoutSubscriberDoesNotThrow) {
     FastDDSPubSubProvider p(ProviderConfig{});
-    p.CreateTopic({"pub", "nosub"}, MakeSchema());
+    p.CreateTopic({"pub", "nosub"}, {MakeSchema()});
     EXPECT_NO_THROW(p.Publish({"pub", "nosub"}, MakeEncoder(1)));
 }
 
@@ -255,7 +255,7 @@ TEST(FastDDSPubSubProviderTest, PublishWithoutSubscriberDoesNotThrow) {
 // — so the signal is the serialize diagnostic, not the write() return.
 TEST(FastDDSPubSubProviderTest, PublishThrowsWhenEncoderFails) {
     FastDDSPubSubProvider p(ProviderConfig{});
-    p.CreateTopic({"pub", "encfail"}, MakeSchema());
+    p.CreateTopic({"pub", "encfail"}, {MakeSchema()});
     PubSubProvider::RowEncoder bad = [](WriteBuffer&) { throw std::runtime_error("encoder boom"); };
     try {
         p.Publish({"pub", "encfail"}, bad);
@@ -271,15 +271,15 @@ TEST(FastDDSPubSubProviderTest, RoundTripPublishSubscribe) {
     FastDDSPubSubProvider pub_provider(ProviderConfig{}, &pub_listener);
     FastDDSPubSubProvider sub_provider(ProviderConfig{});
 
-    pub_provider.CreateTopic({"roundtrip", "x"}, MakeSchema());
+    pub_provider.CreateTopic({"roundtrip", "x"}, {MakeSchema()});
 
     std::atomic<int32_t> received{-1};
     SubscriptionResult result = sub_provider.Subscribe(
         {"roundtrip", "x"},
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+        {[&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             if (len >= 5) received.store(DecodeRow(data));
             NotifyWaiters();
-        });
+        }});
 
     SharedSchema sch = AwaitSchema(result, std::chrono::seconds(5));
     ASSERT_TRUE(sch);
@@ -494,15 +494,15 @@ TEST(FastDDSPubSubProviderTest, DynamicMemoryReaderRoundTripsThroughCopies) {
     FastDDSPubSubProvider pub_provider(BoundedConfig(dynamic_reader), &pub_listener);
     FastDDSPubSubProvider sub_provider(sub_config);
 
-    pub_provider.CreateTopic({"dynamic", "reader"}, MakeSchema());
+    pub_provider.CreateTopic({"dynamic", "reader"}, {MakeSchema()});
 
     std::atomic<int32_t> received{-1};
     SubscriptionResult result = sub_provider.Subscribe(
         {"dynamic", "reader"},
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+        {[&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             if (len >= 5) received.store(DecodeRow(data));
             NotifyWaiters();
-        });
+        }});
     ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
 
     ASSERT_TRUE(pub_listener.AwaitMatch())
@@ -537,15 +537,15 @@ TEST(FastDDSPubSubProviderTest, DataSharingRoundTrip) {
     FastDDSPubSubProvider pub_provider(BoundedConfig(), &pub_listener);
     FastDDSPubSubProvider sub_provider(BoundedConfig());
 
-    pub_provider.CreateTopic({"datasharing", "x"}, MakeSchema());
+    pub_provider.CreateTopic({"datasharing", "x"}, {MakeSchema()});
 
     std::atomic<int32_t> received{-1};
     SubscriptionResult result = sub_provider.Subscribe(
         {"datasharing", "x"},
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+        {[&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             if (len >= 5) received.store(DecodeRow(data));
             NotifyWaiters();
-        });
+        }});
     ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
 
     ASSERT_TRUE(pub_listener.AwaitMatch())
@@ -561,7 +561,7 @@ TEST(FastDDSPubSubProviderTest, DataSharingRoundTrip) {
 // dropped either way.
 TEST(FastDDSPubSubProviderTest, DataSharingOversizedRowDoesNotThrow) {
     FastDDSPubSubProvider pub_provider(BoundedConfig());
-    pub_provider.CreateTopic({"datasharing", "oversized"}, MakeSchema());
+    pub_provider.CreateTopic({"datasharing", "oversized"}, {MakeSchema()});
 
     auto oversized = [bound = pub_provider.PayloadBytes()](WriteBuffer& buf) {
         std::vector<uint8_t> blob(bound + 16, 0x5A);
@@ -589,15 +589,15 @@ TEST(FastDDSPubSubProviderTest, BoundedTypeIsAcceptedForForcedDataSharing) {
     FastDDSPubSubProvider pub_provider(BoundedConfig(sharing), &pub_listener);
     FastDDSPubSubProvider sub_provider(BoundedConfig(sharing));
 
-    pub_provider.CreateTopic({"bounded", "datasharing"}, MakeSchema());
+    pub_provider.CreateTopic({"bounded", "datasharing"}, {MakeSchema()});
 
     std::atomic<int32_t> received{-1};
     SubscriptionResult result = sub_provider.Subscribe(
         {"bounded", "datasharing"},
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+        {[&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             if (len >= 5) received.store(DecodeRow(data));
             NotifyWaiters();
-        });
+        }});
     ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
 
     ASSERT_TRUE(pub_listener.AwaitMatch())
@@ -624,7 +624,7 @@ TEST(FastDDSPubSubProviderTest, AFragmentingRowCrossesIntact) {
     DataWriterMatchListener pub_listener;
     FastDDSPubSubProvider pub_provider(BoundedConfig(), &pub_listener);
     FastDDSPubSubProvider sub_provider(BoundedConfig());
-    pub_provider.CreateTopic({"fragmenting", "x"}, MakeSchema());
+    pub_provider.CreateTopic({"fragmenting", "x"}, {MakeSchema()});
 
     const size_t row_size = static_cast<size_t>(pub_provider.PayloadBytes()) - 8 - 16;
     std::vector<uint8_t> expected(row_size);
@@ -635,14 +635,14 @@ TEST(FastDDSPubSubProviderTest, AFragmentingRowCrossesIntact) {
     bool received = false;
     SubscriptionResult result = sub_provider.Subscribe(
         {"fragmenting", "x"},
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+        {[&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             {
                 std::lock_guard<std::mutex> lock(mtx);
                 received_row.assign(data, data + len);
                 received = true;
             }
             NotifyWaiters();
-        });
+        }});
     ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
 
     ASSERT_TRUE(pub_listener.AwaitMatch())
@@ -668,17 +668,17 @@ TEST(FastDDSPubSubProviderTest, CopyingThrowingCallbackDoesNotEscape) {
     FastDDSPubSubProvider pub_provider(BoundedConfig(), &pub_listener);
     FastDDSPubSubProvider sub_provider(BoundedConfig());
 
-    pub_provider.CreateTopic({"datasharing", "throwing"}, MakeSchema());
+    pub_provider.CreateTopic({"datasharing", "throwing"}, {MakeSchema()});
 
     std::atomic<int> deliveries{0};
     std::atomic<int32_t> received{-1};
     SubscriptionResult result = sub_provider.Subscribe(
         {"datasharing", "throwing"},
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+        {[&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             if (deliveries.fetch_add(1) < 5) throw std::runtime_error("callback failure");
             if (len >= 5) received.store(DecodeRow(data));
             NotifyWaiters();
-        });
+        }});
     ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
 
     ASSERT_TRUE(pub_listener.AwaitMatch())
@@ -699,21 +699,21 @@ TEST(FastDDSPubSubProviderTest, CopyingThrowingCallbackDoesNotEscape) {
 // cannot hide behind spare slots.
 TEST(FastDDSPubSubProviderTest, ALoanableSampleWriterWritesThroughARealWriter) {
     FastDDSPubSubProvider pub_provider(ProviderConfig{});
-    pub_provider.CreateTopic({"loanablewriter", "direct"}, MakeSchema());
+    pub_provider.CreateTopic({"loanablewriter", "direct"}, {MakeSchema()});
     FastDDSPubSubProvider sub_provider(ProviderConfig{});
 
     std::atomic<int32_t> received{-1};
     std::vector<uint8_t> blob_seen;
     SubscriptionResult result = sub_provider.Subscribe(
         {"loanablewriter", "direct"},
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments& att) {
+        {[&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments& att) {
             const Blob* sidecar = att.Find("sidecar");
             if (sidecar != nullptr) {
                 blob_seen.assign(sidecar->data(), sidecar->data() + sidecar->size());
             }
             if (len >= 5) received.store(DecodeRow(data));
             NotifyWaiters();
-        });
+        }});
     ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
 
     // A hand-built writer on the same topic, NOT the provider's own -- Publish never loans any
@@ -785,7 +785,7 @@ TEST(FastDDSPubSubProviderTest, ALoanableSampleWriterWritesThroughARealWriter) {
 TEST(FastDDSPubSubProviderTest, ALoanedDataReaderListenerDrainsARealReaderDirectly) {
     DataWriterMatchListener pub_listener;
     FastDDSPubSubProvider pub_provider(ProviderConfig{}, &pub_listener);
-    pub_provider.CreateTopic({"loaned", "direct"}, MakeSchema());
+    pub_provider.CreateTopic({"loaned", "direct"}, {MakeSchema()});
 
     DomainParticipant* participant =
         DomainParticipantFactory::get_instance()->create_participant(0, PARTICIPANT_QOS_DEFAULT);
@@ -876,12 +876,12 @@ TEST(FastDDSPubSubProviderTest, SubscribeBeforePublishDeliversWithSchema) {
     // Subscribe with no publisher yet — must return immediately (no block, no throw).
     SubscriptionResult result = sub_provider.Subscribe(
         {"subfirst", "x"},
-        [&](const uint8_t* data, size_t len, const SharedSchema& schema, const Attachments&) {
+        {[&](const uint8_t* data, size_t len, const SharedSchema& schema, const Attachments&) {
             std::lock_guard<std::mutex> lk(mu);
             rx_schema = schema;
             if (len >= 5) received.store(DecodeRow(data));
             cv.notify_all();
-        });
+        }});
 
     // No publisher has announced the schema yet, so the arrival is PENDING —
     // which is a distinct answer from "this transport carries no schemas" and
@@ -891,7 +891,7 @@ TEST(FastDDSPubSubProviderTest, SubscribeBeforePublishDeliversWithSchema) {
     EXPECT_EQ(polled, nullptr) << "*out is untouched unless the answer is kOk";
 
     // A publisher appears and publishes.
-    pub_provider.CreateTopic({"subfirst", "x"}, MakeSchema());
+    pub_provider.CreateTopic({"subfirst", "x"}, {MakeSchema()});
     ASSERT_TRUE(pub_listener.AwaitMatch())
         << "the data writer never matched the subscriber's data reader";
     pub_provider.Publish({"subfirst", "x"}, MakeEncoder(99));
@@ -946,14 +946,14 @@ TEST(FastDDSPubSubProviderTest, SubscribeFirstBurstDeliveredInOrder) {
 
     (void)sub_provider.Subscribe(
         {"ordering", "burst"},
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+        {[&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             if (len < 5) return;
             std::lock_guard<std::mutex> lk(mu);
             received.push_back(DecodeRow(data));
             cv.notify_all();
-        });
+        }});
 
-    pub_provider.CreateTopic({"ordering", "burst"}, MakeSchema());
+    pub_provider.CreateTopic({"ordering", "burst"}, {MakeSchema()});
 
     ASSERT_TRUE(pub_listener.AwaitMatch(std::chrono::seconds(15)))
         << "the data writer never matched the subscriber's data reader";
@@ -1050,10 +1050,10 @@ TEST(FastDDSPubSubProviderTest, ADataReaderIsNotCreatedBeforeTheSchemaArrives) {
     std::atomic<int32_t> received{-1};
     SubscriptionResult result = sub_provider.Subscribe(
         {"notenabled", "x"},
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+        {[&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             if (len >= 5) received.store(DecodeRow(data));
             NotifyWaiters();
-        });
+        }});
 
     ASSERT_TRUE(observer.AwaitReader("notenabled/x/__schema", std::chrono::seconds(5)))
         << "the schema reader, which is enabled immediately, was never discovered";
@@ -1065,7 +1065,7 @@ TEST(FastDDSPubSubProviderTest, ADataReaderIsNotCreatedBeforeTheSchemaArrives) {
     // "notenabled/x" data reader discovery would already be visible too.
     (void)sub_provider.Subscribe(
         {"notenabled", "fence"},
-        [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
+        {[](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}});
     ASSERT_TRUE(observer.AwaitReader("notenabled/fence/__schema", std::chrono::seconds(5)))
         << "the fence subscription's own schema reader was never discovered";
     EXPECT_FALSE(observer.Sees("notenabled/x"))
@@ -1074,7 +1074,7 @@ TEST(FastDDSPubSubProviderTest, ADataReaderIsNotCreatedBeforeTheSchemaArrives) {
 
     DataWriterMatchListener pub_listener;
     FastDDSPubSubProvider pub_provider(ProviderConfig{}, &pub_listener);
-    pub_provider.CreateTopic({"notenabled", "x"}, MakeSchema());
+    pub_provider.CreateTopic({"notenabled", "x"}, {MakeSchema()});
 
     ASSERT_TRUE(observer.AwaitReader("notenabled/x", std::chrono::seconds(5)))
         << "the data reader never appeared once its schema was known";
@@ -1100,15 +1100,15 @@ TEST(FastDDSPubSubProviderTest, CreateTopicThenSubscribeOnOneProviderDeliversWit
     ReaderDiscoveryObserver observer(0);
 
     FastDDSPubSubProvider provider(ProviderConfig{});
-    provider.CreateTopic({"selfschema", "x"}, MakeSchema());
+    provider.CreateTopic({"selfschema", "x"}, {MakeSchema()});
 
     std::atomic<int32_t> received{-1};
     SubscriptionResult result = provider.Subscribe(
         {"selfschema", "x"},
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+        {[&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             if (len >= 5) received.store(DecodeRow(data));
             NotifyWaiters();
-        });
+        }});
 
     ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
     ASSERT_TRUE(observer.AwaitReader("selfschema/x", std::chrono::seconds(5)))
@@ -1165,15 +1165,15 @@ TEST(FastDDSPubSubProviderTest,
     std::thread::id data_thread_id;
     bool got_data = false;
 
-    pub_provider.CreateTopic({"schemathread", "x"}, MakeSchema());
+    pub_provider.CreateTopic({"schemathread", "x"}, {MakeSchema()});
     SubscriptionResult result = sub_provider.Subscribe(
         {"schemathread", "x"},
-        [&](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {
+        {[&](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {
             std::lock_guard<std::mutex> lk(data_m);
             data_thread_id = std::this_thread::get_id();
             got_data = true;
             data_cv.notify_all();
-        });
+        }});
     ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
 
     std::unique_lock<std::mutex> lk(listener.m);
@@ -1215,15 +1215,15 @@ TEST(FastDDSPubSubProviderTest, ResubscribeAfterUnsubscribeKeepsDelivering) {
     DataWriterMatchListener pub_listener;
     FastDDSPubSubProvider pub_provider(ProviderConfig{}, &pub_listener);
     FastDDSPubSubProvider sub_provider(ProviderConfig{});
-    pub_provider.CreateTopic({"resub", "x"}, MakeSchema());
+    pub_provider.CreateTopic({"resub", "x"}, {MakeSchema()});
 
     std::atomic<int32_t> first{-1};
     const SubscriptionResult fence = sub_provider.Subscribe(
         {"resub", "x"},
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+        {[&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             if (len >= 5) first.store(DecodeRow(data));
             NotifyWaiters();
-        });
+        }});
     static_cast<void>(fence);  // unused on purpose: this is the discovery fence, not a schema wait
 
     ASSERT_TRUE(pub_listener.AwaitMatch())
@@ -1239,10 +1239,10 @@ TEST(FastDDSPubSubProviderTest, ResubscribeAfterUnsubscribeKeepsDelivering) {
     std::atomic<int32_t> second{-1};
     SubscriptionResult again = sub_provider.Subscribe(
         {"resub", "x"},
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+        {[&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             if (len >= 5) second.store(DecodeRow(data));
             NotifyWaiters();
-        });
+        }});
     ASSERT_TRUE(AwaitSchema(again, std::chrono::seconds(5)));
 
     ASSERT_TRUE(pub_listener.AwaitMatchAfter(matches_before_publish))
@@ -1257,15 +1257,15 @@ TEST(FastDDSPubSubProviderTest, UnsubscribeUnknownTopicIsHarmless) {
     DataWriterMatchListener pub_listener;
     FastDDSPubSubProvider pub_provider(ProviderConfig{}, &pub_listener);
     FastDDSPubSubProvider sub_provider(ProviderConfig{});
-    pub_provider.CreateTopic({"unsub", "live"}, MakeSchema());
+    pub_provider.CreateTopic({"unsub", "live"}, {MakeSchema()});
 
     std::atomic<int32_t> received{-1};
     const SubscriptionResult fence = sub_provider.Subscribe(
         {"unsub", "live"},
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+        {[&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             if (len >= 5) received.store(DecodeRow(data));
             NotifyWaiters();
-        });
+        }});
     static_cast<void>(fence);  // unused on purpose: this is the discovery fence, not a schema wait
 
     EXPECT_NO_THROW(sub_provider.Unsubscribe({"unsub", "never"}));
@@ -1283,7 +1283,7 @@ TEST(FastDDSPubSubProviderTest, UnsubscribeBeforeTheSchemaArrivesEndsTheArrival)
 
     SubscriptionResult result =
         sub.Subscribe({"pendingbound", "x"},
-                      [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
+                      {[](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}});
 
     SharedSchema s;
     EXPECT_EQ(result.schema.Wait(std::chrono::milliseconds(0), &s), PubSubStatus::kPending);
@@ -1349,9 +1349,9 @@ TEST(FastDDSPubSubProviderTest, StatusListenerReportsMatchingBothWays) {
     FastDDSPubSubProvider pub_provider(ProviderConfig{}, &listener);
     FastDDSPubSubProvider sub_provider(ProviderConfig{}, &listener);
 
-    pub_provider.CreateTopic({"status", "x"}, MakeSchema());
+    pub_provider.CreateTopic({"status", "x"}, {MakeSchema()});
     SubscriptionResult result = sub_provider.Subscribe(
-        {"status", "x"}, [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
+        {"status", "x"}, {[](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}});
     ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
 
     pub_provider.Publish({"status", "x"}, MakeEncoder(1));
@@ -1414,11 +1414,11 @@ TEST(FastDDSPubSubProviderTest, ASubscriberFollowsThePublishersPayloadBound) {
     std::atomic<int32_t> received{-1};
     SubscriptionResult result = sub_provider.Subscribe(
         {"bound", "x"},
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+        {[&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             if (len >= 5) received.store(DecodeRow(data));
             NotifyWaiters();
-        });
-    pub_provider.CreateTopic({"bound", "x"}, MakeSchema());
+        }});
+    pub_provider.CreateTopic({"bound", "x"}, {MakeSchema()});
 
     {
         std::unique_lock<std::mutex> lk(listener.m);
@@ -1458,19 +1458,19 @@ TEST(FastDDSPubSubProviderTest, OneSubscriberFollowsTwoPublishersOnDifferentBoun
     std::atomic<int32_t> received_b{-1};
     SubscriptionResult result_a = sub.Subscribe(
         {"bounds", "a"},
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+        {[&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             if (len >= 5) received_a.store(DecodeRow(data));
             NotifyWaiters();
-        });
+        }});
     SubscriptionResult result_b = sub.Subscribe(
         {"bounds", "b"},
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+        {[&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             if (len >= 5) received_b.store(DecodeRow(data));
             NotifyWaiters();
-        });
+        }});
 
-    pub_a.CreateTopic({"bounds", "a"}, MakeSchema());
-    pub_b.CreateTopic({"bounds", "b"}, MakeSchema());
+    pub_a.CreateTopic({"bounds", "a"}, {MakeSchema()});
+    pub_b.CreateTopic({"bounds", "b"}, {MakeSchema()});
 
     ASSERT_TRUE(AwaitSchema(result_a, std::chrono::seconds(5)));
     ASSERT_TRUE(AwaitSchema(result_b, std::chrono::seconds(5)));
@@ -1495,17 +1495,17 @@ TEST(FastDDSPubSubProviderTest, CreateTopicOnATopicSubscribedAtAnotherBoundIsRef
 
     SubscriptionResult result =
         sub.Subscribe({"crossbound", "x"},
-                      [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
+                      {[](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}});
 
     ProviderConfig pub_config;
     pub_config.max_payload_bytes = kPayloadBytes<8192>;
     FastDDSPubSubProvider pub(pub_config);
-    pub.CreateTopic({"crossbound", "x"}, MakeSchema());
+    pub.CreateTopic({"crossbound", "x"}, {MakeSchema()});
 
     ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
 
     try {
-        sub.CreateTopic({"crossbound", "x"}, MakeSchema());
+        sub.CreateTopic({"crossbound", "x"}, {MakeSchema()});
         ADD_FAILURE() << "publishing at a bound other than the topic's subscribed reader's was "
                          "accepted";
     } catch (const PubSubError& e) {
@@ -1524,12 +1524,12 @@ TEST(FastDDSPubSubProviderTest, CreateTopicAfterUnsubscribeFromAnotherBoundIsAcc
 
     SubscriptionResult result =
         sub.Subscribe({"crossbound", "after"},
-                      [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
+                      {[](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}});
 
     ProviderConfig pub_config;
     pub_config.max_payload_bytes = kPayloadBytes<8192>;
     FastDDSPubSubProvider pub(pub_config);
-    pub.CreateTopic({"crossbound", "after"}, MakeSchema());
+    pub.CreateTopic({"crossbound", "after"}, {MakeSchema()});
 
     ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
 
@@ -1538,7 +1538,7 @@ TEST(FastDDSPubSubProviderTest, CreateTopicAfterUnsubscribeFromAnotherBoundIsAcc
     // The topic the ended subscription left at the publisher's bound is replaced by one of this
     // instance's own; Unsubscribe deleted the old reader before returning, so nothing references
     // it.
-    EXPECT_NO_THROW(sub.CreateTopic({"crossbound", "after"}, MakeSchema()));
+    EXPECT_NO_THROW(sub.CreateTopic({"crossbound", "after"}, {MakeSchema()}));
     EXPECT_NO_THROW(sub.Publish({"crossbound", "after"}, MakeEncoder(1)));
 }
 
@@ -1687,10 +1687,10 @@ TEST(FastDDSStatusListenerTest, OnIncompatibleQosFiresForAReliableReaderAgainstA
     FastDDSPubSubProvider pub_provider(BoundedConfig(best_effort_writer));
     FastDDSPubSubProvider sub_provider(BoundedConfig(best_effort_writer), &listener);
 
-    pub_provider.CreateTopic({"incompatible", "x"}, MakeSchema());
+    pub_provider.CreateTopic({"incompatible", "x"}, {MakeSchema()});
     SubscriptionResult result = sub_provider.Subscribe(
         {"incompatible", "x"},
-        [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
+        {[](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}});
     ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
 
     pub_provider.Publish({"incompatible", "x"}, MakeEncoder(1));
@@ -1735,10 +1735,10 @@ TEST(FastDDSStatusListenerTest, OnReaderDiscoveredMirrorsOnWriterDiscovered) {
     sub_config.max_payload_bytes = kPayloadBytes<8192>;
     FastDDSPubSubProvider sub_provider(sub_config);
 
-    pub_provider.CreateTopic({"readerbound", "x"}, MakeSchema());
+    pub_provider.CreateTopic({"readerbound", "x"}, {MakeSchema()});
     SubscriptionResult result = sub_provider.Subscribe(
         {"readerbound", "x"},
-        [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
+        {[](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}});
     pub_provider.Publish({"readerbound", "x"}, MakeEncoder(1));
 
     {
@@ -1806,10 +1806,10 @@ TEST(FastDDSStatusListenerTest, OnMatchedFiresForASchemaReadersOwnCondition) {
     FastDDSPubSubProvider pub_provider(ProviderConfig{});
     FastDDSPubSubProvider sub_provider(ProviderConfig{}, &listener);
 
-    pub_provider.CreateTopic({"schemamatch", "x"}, MakeSchema());
+    pub_provider.CreateTopic({"schemamatch", "x"}, {MakeSchema()});
     SubscriptionResult result = sub_provider.Subscribe(
         {"schemamatch", "x"},
-        [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
+        {[](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}});
     ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
 
     std::unique_lock<std::mutex> lk(listener.m);
@@ -1860,7 +1860,7 @@ TEST(FastDDSPubSubProviderTest, SchemaWatchResolvesWithoutADataReader) {
     FastDDSPubSubProvider pub(ProviderConfig{}, &pub_listener);
     FastDDSPubSubProvider sub(ProviderConfig{});
 
-    pub.CreateTopic({"schemaonly", "x"}, MakeSchema());
+    pub.CreateTopic({"schemaonly", "x"}, {MakeSchema()});
     pub.Publish({"schemaonly", "x"}, MakeEncoder(1));  // creates the data writer
 
     SchemaArrival watch = sub.SubscribeSchema({"schemaonly", "x"});
@@ -1875,8 +1875,8 @@ TEST(FastDDSPubSubProviderTest, SchemaWatchResolvesWithoutADataReader) {
     // above already resolved) -- so seeing it proves the earlier negative already held.
     SubscriptionResult fence_result =
         sub.Subscribe({"schemaonly", "fence"},
-                      [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
-    pub.CreateTopic({"schemaonly", "fence"}, MakeSchema());
+                      {[](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}});
+    pub.CreateTopic({"schemaonly", "fence"}, {MakeSchema()});
     pub.Publish({"schemaonly", "fence"}, MakeEncoder(1));
     ASSERT_TRUE(AwaitSchema(fence_result, std::chrono::seconds(5)));
     ASSERT_TRUE(WaitUntil(
@@ -1904,7 +1904,7 @@ TEST(FastDDSPubSubProviderTest, SchemaWatchResolvesWithoutADataReader) {
 TEST(FastDDSPubSubProviderTest, SubscribeAfterSchemaWatchReusesTheSchema) {
     FastDDSPubSubProvider pub(ProviderConfig{});
     FastDDSPubSubProvider sub(ProviderConfig{});
-    pub.CreateTopic({"watchthen", "sub"}, MakeSchema());
+    pub.CreateTopic({"watchthen", "sub"}, {MakeSchema()});
 
     SchemaArrival watch = sub.SubscribeSchema({"watchthen", "sub"});
     SharedSchema s = AwaitWatch(watch, std::chrono::seconds(5));
@@ -1920,13 +1920,13 @@ TEST(FastDDSPubSubProviderTest, SubscribeAfterSchemaWatchReusesTheSchema) {
     SharedSchema rx_schema;
     SubscriptionResult result = sub.Subscribe(
         {"watchthen", "sub"},
-        [&](const uint8_t* data, size_t len, const SharedSchema& schema, const Attachments&) {
+        {[&](const uint8_t* data, size_t len, const SharedSchema& schema, const Attachments&) {
             std::lock_guard<std::mutex> lk(mu);
             ++deliveries;
             rx_schema = schema;
             if (len >= 5) received.store(DecodeRow(data));
             cv.notify_all();
-        });
+        }});
     // Same channel, same schema object — no second fetch, and the arrival is already resolved
     // when Subscribe returns rather than pending.
     EXPECT_EQ(AwaitSchema(result, std::chrono::milliseconds(0)).get(), s.get());
@@ -1955,7 +1955,7 @@ TEST(FastDDSPubSubProviderTest, SchemaWatchBeforeAnyPublisherResolvesWhenOneAppe
     EXPECT_EQ(polled, nullptr) << "*out is untouched unless the answer is kOk";
 
     FastDDSPubSubProvider pub(ProviderConfig{});
-    pub.CreateTopic({"watchfirst", "x"}, MakeSchema());
+    pub.CreateTopic({"watchfirst", "x"}, {MakeSchema()});
 
     SharedSchema schema = AwaitWatch(watch, std::chrono::seconds(5));
     ASSERT_TRUE(schema);
@@ -1989,12 +1989,12 @@ TEST(FastDDSPubSubProviderTest, UnsubscribeSchemaLeavesALiveDataSubscriptionAlon
     SharedSchema rx_schema;
     SubscriptionResult result = sub.Subscribe(
         {"keep", "data"},
-        [&](const uint8_t* data, size_t len, const SharedSchema& schema, const Attachments&) {
+        {[&](const uint8_t* data, size_t len, const SharedSchema& schema, const Attachments&) {
             std::lock_guard<std::mutex> lk(mu);
             rx_schema = schema;
             if (len >= 5) received.store(DecodeRow(data));
             cv.notify_all();
-        });
+        }});
 
     // A watch on the same topic shares the data subscription's channel. Releasing it must not
     // take that channel down: the data side is live and its arrival stays pending.
@@ -2006,7 +2006,7 @@ TEST(FastDDSPubSubProviderTest, UnsubscribeSchemaLeavesALiveDataSubscriptionAlon
 
     DataWriterMatchListener pub_listener;
     FastDDSPubSubProvider pub(ProviderConfig{}, &pub_listener);
-    pub.CreateTopic({"keep", "data"}, MakeSchema());
+    pub.CreateTopic({"keep", "data"}, {MakeSchema()});
     ASSERT_TRUE(pub_listener.AwaitMatch())
         << "the data writer never matched the subscriber's data reader";
     pub.Publish({"keep", "data"}, MakeEncoder(5));
@@ -2038,14 +2038,14 @@ TEST(FastDDSPubSubProviderTest, UnsubscribeKeepsAPendingSchemaWatch) {
 
     static_cast<void>(
         sub.Subscribe({"keepwatch", "pending"},
-                      [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}));
+                      {[](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}}));
     sub.Unsubscribe({"keepwatch", "pending"});
 
     // Not ended by that Unsubscribe: the publisher appears only now.
     ASSERT_EQ(watch.Wait(std::chrono::milliseconds(0), &polled), PubSubStatus::kPending);
 
     FastDDSPubSubProvider pub(ProviderConfig{});
-    pub.CreateTopic({"keepwatch", "pending"}, MakeSchema());
+    pub.CreateTopic({"keepwatch", "pending"}, {MakeSchema()});
 
     SharedSchema schema = AwaitWatch(watch, std::chrono::seconds(5));
     ASSERT_TRUE(schema);
@@ -2057,7 +2057,7 @@ TEST(FastDDSPubSubProviderTest, UnsubscribeKeepsAPendingSchemaWatch) {
 TEST(FastDDSPubSubProviderTest, UnsubscribeKeepsAResolvedSchemaWatch) {
     FastDDSPubSubProvider pub(ProviderConfig{});
     FastDDSPubSubProvider sub(ProviderConfig{});
-    pub.CreateTopic({"keepwatch", "resolved"}, MakeSchema());
+    pub.CreateTopic({"keepwatch", "resolved"}, {MakeSchema()});
 
     SchemaArrival watch = sub.SubscribeSchema({"keepwatch", "resolved"});
     SharedSchema schema = AwaitWatch(watch, std::chrono::seconds(5));
@@ -2065,7 +2065,7 @@ TEST(FastDDSPubSubProviderTest, UnsubscribeKeepsAResolvedSchemaWatch) {
 
     static_cast<void>(
         sub.Subscribe({"keepwatch", "resolved"},
-                      [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}));
+                      {[](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}}));
     sub.Unsubscribe({"keepwatch", "resolved"});
 
     // The channel stayed with the watch, so the schema is still there — the same object, with no
@@ -2092,7 +2092,7 @@ TEST(FastDDSPubSubProviderTest, UnsubscribeKeepsAResolvedSchemaWatch) {
 // resolve the same way.
 TEST(FastDDSPubSubProviderTest, SubscribeSchemaOnASelfPublishedTopicReleasesCleanly) {
     FastDDSPubSubProvider provider(ProviderConfig{});
-    provider.CreateTopic({"selfwatch", "x"}, MakeSchema());
+    provider.CreateTopic({"selfwatch", "x"}, {MakeSchema()});
 
     SchemaArrival first = provider.SubscribeSchema({"selfwatch", "x"});
     SharedSchema schema;
@@ -2142,7 +2142,7 @@ TEST(FastDDSPubSubProviderTest, SubscribeRacingUnsubscribeKeepsTheWatch) {
     SchemaArrival watch = sub.SubscribeSchema(t);
 
     for (int i = 0; i < 20; ++i) {
-        static_cast<void>(sub.Subscribe(t, noop));
+        static_cast<void>(sub.Subscribe(t, {noop}));
 
         // -1: no exception; otherwise the PubSubStatus thread B's own attempt saw.
         std::atomic<int32_t> b_status{-1};
@@ -2150,14 +2150,14 @@ TEST(FastDDSPubSubProviderTest, SubscribeRacingUnsubscribeKeepsTheWatch) {
         std::thread a([&] { sub.Unsubscribe(t); });
         std::thread b([&] {
             try {
-                static_cast<void>(sub.Subscribe(t, noop));
+                static_cast<void>(sub.Subscribe(t, {noop}));
             } catch (const PubSubError& e) {
                 // Lost the race: A had not cleared `ts.reader` yet. Wait for A to finish — the
                 // retry is then guaranteed to find the topic unsubscribed — and try once more.
                 b_status.store(static_cast<int32_t>(e.status()));
                 a.join();
                 a_joined_by_b = true;
-                static_cast<void>(sub.Subscribe(t, noop));
+                static_cast<void>(sub.Subscribe(t, {noop}));
             }
         });
         b.join();
@@ -2176,7 +2176,7 @@ TEST(FastDDSPubSubProviderTest, SubscribeRacingUnsubscribeKeepsTheWatch) {
         << "twenty racing Subscribe/Unsubscribe cycles must not have ended the watch";
 
     FastDDSPubSubProvider pub(ProviderConfig{});
-    pub.CreateTopic(t, MakeSchema());
+    pub.CreateTopic(t, {MakeSchema()});
 
     SharedSchema schema;
     EXPECT_EQ(watch.Wait(std::chrono::seconds(5), &schema), PubSubStatus::kOk);
@@ -2193,7 +2193,7 @@ TEST(FastDDSPubSubProviderTest, SchemaWatchIsRefusedFromInsideADelivery) {
     DataWriterMatchListener pub_listener;
     FastDDSPubSubProvider pub(ProviderConfig{}, &pub_listener);
     FastDDSPubSubProvider sub(ProviderConfig{});
-    pub.CreateTopic({"reentrant", "watch"}, MakeSchema());
+    pub.CreateTopic({"reentrant", "watch"}, {MakeSchema()});
 
     std::mutex mu;
     std::condition_variable cv;
@@ -2202,7 +2202,7 @@ TEST(FastDDSPubSubProviderTest, SchemaWatchIsRefusedFromInsideADelivery) {
 
     SubscriptionResult result =
         sub.Subscribe({"reentrant", "watch"},
-                      [&](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {
+                      {[&](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {
                           try {
                               static_cast<void>(sub.SubscribeSchema({"reentrant", "watch"}));
                           } catch (const PubSubError& e) {
@@ -2215,7 +2215,7 @@ TEST(FastDDSPubSubProviderTest, SchemaWatchIsRefusedFromInsideADelivery) {
                           }
                           std::lock_guard<std::mutex> lk(mu);
                           cv.notify_all();
-                      });
+                      }});
     ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
 
     ASSERT_TRUE(pub_listener.AwaitMatch())
@@ -2421,7 +2421,7 @@ TEST(FastDDSPubSubProviderTest, ConflictingCrossProviderSchemaIsLoggedNotSwallow
     FastDDSPubSubProvider a(ProviderConfig{});
     FastDDSPubSubProvider c(ProviderConfig{});
     const std::vector<std::string> t = {"schemaconflict", "x"};
-    a.CreateTopic(t, MakeSchema());
+    a.CreateTopic(t, {MakeSchema()});
 
     SchemaArrival watch = c.SubscribeSchema(t);
     SharedSchema schema = AwaitWatch(watch, std::chrono::seconds(5));
@@ -2431,7 +2431,7 @@ TEST(FastDDSPubSubProviderTest, ConflictingCrossProviderSchemaIsLoggedNotSwallow
     // possible (a fan-in from A and B racing each other), and only serialising B after C's
     // resolution makes B's announcement unambiguously the LATER, conflicting one.
     FastDDSPubSubProvider b(ProviderConfig{});
-    b.CreateTopic(t, MakeOtherSchema());
+    b.CreateTopic(t, {MakeOtherSchema()});
 
     // Not a poll: the "different schema" entry is queued by a background DDS thread once it
     // processes B's conflicting announcement, and Log's own QueueLog (Log.cpp) drains the queue as
@@ -2454,13 +2454,349 @@ TEST(FastDDSPubSubProviderTest, ConflictingCrossProviderSchemaIsLoggedNotSwallow
 }
 
 // ---------------------------------------------------------------------------
-// Tests — TopicOptions (CreateTopicWithOptions / SubscribeWithOptions)
+// Tests — Subscribe gated on the announced schema (SubscriptionRequest::check).
+//
+// Every check below counts its own calls. Topic names are unique per test — the suite shares
+// domain 0 across processes that may overlap in time.
+// ---------------------------------------------------------------------------
+
+// The schema is already known (a SubscribeSchema watch resolved it first), so the check runs
+// synchronously, inside Subscribe itself: a rejection throws rather than returning a
+// pending arrival, and nothing about the subscription is registered. The watch keeps the schema
+// channel open, so a plain Subscribe right after finds the schema still known.
+TEST(FastDDSPubSubProviderTest, CheckedSubscribeRefusesAKnownSchemaSynchronously) {
+    DataWriterMatchListener pub_listener;
+    FastDDSPubSubProvider pub(ProviderConfig{}, &pub_listener);
+    FastDDSPubSubProvider sub(ProviderConfig{});
+    const std::vector<std::string> t = {"checked", "known"};
+
+    pub.CreateTopic(t, {MakeSchema()});
+    SchemaArrival watch = sub.SubscribeSchema(t);
+    ASSERT_TRUE(AwaitWatch(watch, std::chrono::seconds(5)));
+
+    std::atomic<int32_t> check_calls{0};
+    try {
+        static_cast<void>(sub.Subscribe(
+            t, {.callback = [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
+                .check =
+                    [&](const SharedSchema&) {
+                        ++check_calls;
+                        return false;
+                    }}));
+        ADD_FAILURE() << "a check rejecting an already-known schema was accepted";
+    } catch (const PubSubError& e) {
+        EXPECT_EQ(e.status(), PubSubStatus::kSchemaConflict) << e.what();
+        EXPECT_NE(std::string(e.what()).find("checked/known"), std::string::npos) << e.what();
+    }
+    EXPECT_EQ(check_calls.load(), 1);
+
+    std::atomic<int32_t> received{-1};
+    SubscriptionResult result = sub.Subscribe(
+        t, {[&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+            if (len >= 5) received.store(DecodeRow(data));
+            NotifyWaiters();
+        }});
+    ASSERT_TRUE(AwaitSchema(result, std::chrono::milliseconds(0)));
+    ASSERT_TRUE(pub_listener.AwaitMatch());
+    pub.Publish(t, MakeEncoder(11));
+    EXPECT_EQ(AwaitRow(received), 11);
+
+    sub.Unsubscribe(t);
+    sub.UnsubscribeSchema(t);
+}
+
+// The publisher branch of EnsureSchemaChannel resolves the schema synchronously with no reader
+// involved at all -- a provider checking its own published topic still runs the check
+// synchronously, the same as the cross-provider case above.
+TEST(FastDDSPubSubProviderTest, SameInstancePublisherCheckRefuses) {
+    DataWriterMatchListener p_listener;
+    FastDDSPubSubProvider p(ProviderConfig{}, &p_listener);
+    const std::vector<std::string> t = {"checked", "sameinstance"};
+    p.CreateTopic(t, {MakeSchema()});
+
+    std::atomic<int32_t> reject_calls{0};
+    try {
+        static_cast<void>(p.Subscribe(
+            t, {.callback = [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
+                .check =
+                    [&](const SharedSchema&) {
+                        ++reject_calls;
+                        return false;
+                    }}));
+        ADD_FAILURE() << "a check rejecting the publisher's own schema was accepted";
+    } catch (const PubSubError& e) {
+        EXPECT_EQ(e.status(), PubSubStatus::kSchemaConflict) << e.what();
+    }
+    EXPECT_EQ(reject_calls.load(), 1);
+
+    std::atomic<int32_t> check_calls{0};
+    std::atomic<int32_t> received{-1};
+    SubscriptionResult result = p.Subscribe(
+        t, {.callback =
+                [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+                    if (len >= 5) received.store(DecodeRow(data));
+                    NotifyWaiters();
+                },
+            .check =
+                [&](const SharedSchema&) {
+                    ++check_calls;
+                    return true;
+                }});
+    ASSERT_TRUE(AwaitSchema(result, std::chrono::milliseconds(0)));
+    ASSERT_TRUE(p_listener.AwaitMatch());
+    p.Publish(t, MakeEncoder(3));
+    p.Publish(t, MakeEncoder(4));
+    EXPECT_NE(AwaitRow(received), -1);
+    EXPECT_EQ(check_calls.load(), 1);
+
+    p.Unsubscribe(t);
+}
+
+// The schema is not known yet when the checked Subscribe runs, so the check runs later, on the
+// schema thread, the first time HandleSchema decodes it: the data reader is never created, the
+// returned arrival fails with kSchemaConflict instead of a synchronous throw, and the callback
+// never runs. The discovery fence mirrors SchemaWatchResolvesWithoutADataReader: a real
+// reader/writer pair on a fresh topic, created strictly after the rejection, proves the negative
+// (no data-writer match for the rejected topic) was not simply "discovery hadn't run yet".
+TEST(FastDDSPubSubProviderTest, CheckedSubscribeRejectsALaterArrival) {
+    struct WriterMatchListener : FastDDSStatusListener {
+        std::mutex m;
+        std::vector<std::string> data_writer_matches;
+
+        void OnMatched(Endpoint endpoint, int32_t, int32_t change) noexcept override {
+            if (change <= 0 || !endpoint.is_writer || endpoint.is_schema_channel) return;
+            {
+                std::lock_guard<std::mutex> lk(m);
+                data_writer_matches.emplace_back(endpoint.topic);
+            }
+            NotifyWaiters();
+        }
+    };
+
+    WriterMatchListener pub_listener;
+    FastDDSPubSubProvider pub(ProviderConfig{}, &pub_listener);
+    FastDDSPubSubProvider sub(ProviderConfig{});
+    const std::vector<std::string> t = {"checked", "later"};
+
+    std::atomic<int32_t> check_calls{0};
+    std::atomic<int32_t> callback_calls{0};
+    SubscriptionResult result =
+        sub.Subscribe(t, {.callback = [&](const uint8_t*, size_t, const SharedSchema&,
+                                          const Attachments&) { ++callback_calls; },
+                          .check =
+                              [&](const SharedSchema&) {
+                                  ++check_calls;
+                                  return false;
+                              }});
+    SharedSchema polled;
+    EXPECT_EQ(result.schema.Wait(std::chrono::milliseconds(0), &polled), PubSubStatus::kPending);
+
+    pub.CreateTopic(t, {MakeSchema()});
+    pub.Publish(t, MakeEncoder(1));
+
+    EXPECT_EQ(result.schema.Wait(std::chrono::seconds(5), &polled), PubSubStatus::kSchemaConflict);
+    EXPECT_NE(std::string(result.schema.Message()).find("checked/later"), std::string::npos)
+        << result.schema.Message();
+    EXPECT_EQ(check_calls.load(), 1);
+
+    const std::vector<std::string> fence = {"checked", "later-fence"};
+    SubscriptionResult fence_result = sub.Subscribe(
+        fence, {[](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}});
+    pub.CreateTopic(fence, {MakeSchema()});
+    pub.Publish(fence, MakeEncoder(1));
+    ASSERT_TRUE(AwaitSchema(fence_result, std::chrono::seconds(5)));
+    ASSERT_TRUE(WaitUntil(
+        [&] {
+            std::lock_guard<std::mutex> lk(pub_listener.m);
+            for (const auto& topic : pub_listener.data_writer_matches) {
+                if (topic == "checked/later-fence") return true;
+            }
+            return false;
+        },
+        std::chrono::seconds(5)))
+        << "the fence data writer never matched";
+
+    {
+        std::lock_guard<std::mutex> lk(pub_listener.m);
+        EXPECT_THAT(pub_listener.data_writer_matches,
+                    testing::Not(testing::Contains("checked/later")))
+            << "a rejected subscription's data reader was created";
+    }
+    EXPECT_EQ(callback_calls.load(), 0);
+    sub.Unsubscribe(fence);
+
+    try {
+        static_cast<void>(sub.Subscribe(
+            t, {[](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}}));
+        ADD_FAILURE() << "subscribing again while the rejected registration was still live was "
+                         "accepted";
+    } catch (const PubSubError& e) {
+        EXPECT_EQ(e.status(), PubSubStatus::kInvalidArgument) << e.what();
+    }
+
+    sub.Unsubscribe(t);
+
+    std::atomic<int32_t> received{-1};
+    SubscriptionResult r2 = sub.Subscribe(
+        t, {[&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+            if (len >= 5) received.store(DecodeRow(data));
+            NotifyWaiters();
+        }});
+    ASSERT_TRUE(AwaitSchema(r2, std::chrono::seconds(5)));
+    ASSERT_TRUE(WaitUntil(
+        [&] {
+            std::lock_guard<std::mutex> lk(pub_listener.m);
+            for (const auto& topic : pub_listener.data_writer_matches) {
+                if (topic == "checked/later") return true;
+            }
+            return false;
+        },
+        std::chrono::seconds(5)))
+        << "the reopened data writer never matched";
+    pub.Publish(t, MakeEncoder(9));
+    EXPECT_EQ(AwaitRow(received), 9);
+
+    sub.Unsubscribe(t);
+}
+
+// A SubscribeSchema watch shares the channel a rejected checked Subscribe opened: it sees the same
+// conflict on its own arrival. Unsubscribing the rejected subscription while the watch keeps the
+// schema side open re-arms the topic's arrival to the known schema, so a later plain Subscribe is
+// never handed a failed one.
+TEST(FastDDSPubSubProviderTest, RejectedThenUnsubscribedUnderAWatchReArmsTheArrival) {
+    DataWriterMatchListener pub_listener;
+    FastDDSPubSubProvider pub(ProviderConfig{}, &pub_listener);
+    FastDDSPubSubProvider sub(ProviderConfig{});
+    const std::vector<std::string> t = {"checked", "rearm"};
+
+    SchemaArrival watch = sub.SubscribeSchema(t);
+
+    std::atomic<int32_t> check_calls{0};
+    SubscriptionResult result = sub.Subscribe(
+        t, {.callback = [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
+            .check =
+                [&](const SharedSchema&) {
+                    ++check_calls;
+                    return false;
+                }});
+
+    pub.CreateTopic(t, {MakeSchema()});
+    pub.Publish(t, MakeEncoder(1));
+
+    SharedSchema polled;
+    EXPECT_EQ(watch.Wait(std::chrono::seconds(5), &polled), PubSubStatus::kSchemaConflict);
+    EXPECT_EQ(result.schema.Wait(std::chrono::milliseconds(0), &polled),
+              PubSubStatus::kSchemaConflict);
+    EXPECT_EQ(check_calls.load(), 1);
+
+    sub.Unsubscribe(t);
+
+    std::atomic<int32_t> received{-1};
+    SubscriptionResult r2 = sub.Subscribe(
+        t, {[&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+            if (len >= 5) received.store(DecodeRow(data));
+            NotifyWaiters();
+        }});
+    SharedSchema schema = AwaitSchema(r2, std::chrono::milliseconds(0));
+    ASSERT_TRUE(schema);
+
+    ASSERT_TRUE(pub_listener.AwaitMatch());
+    pub.Publish(t, MakeEncoder(6));
+    EXPECT_EQ(AwaitRow(received), 6);
+
+    sub.UnsubscribeSchema(t);
+    sub.Unsubscribe(t);
+}
+
+// Pins the SYNCHRONOUS half of the re-entrancy guarantee
+// (ProviderConformance.ACheckCannotEnterTheProvider pins the later-arrival half): the check running
+// inside Subscribe itself, under the provider mutex and the schema thread's lock together, cannot
+// deadlock on a door-after-lock regression -- RefuseIfInsideDeliveryOn runs before any lock in
+// every seam method, so a call the check makes back into this provider is refused at that call's
+// own door.
+TEST(FastDDSPubSubProviderTest, ACheckCannotEnterTheProviderSynchronously) {
+    DataWriterMatchListener pub_listener;
+    FastDDSPubSubProvider pub(ProviderConfig{}, &pub_listener);
+    FastDDSPubSubProvider sub(ProviderConfig{});
+    const std::vector<std::string> t = {"checked", "reentrant-sync"};
+
+    pub.CreateTopic(t, {MakeSchema()});
+    SchemaArrival watch = sub.SubscribeSchema(t);
+    ASSERT_TRUE(AwaitWatch(watch, std::chrono::seconds(5)));
+
+    std::atomic<int32_t> unsubscribe_status{-1};
+    std::atomic<int32_t> subscribe_schema_status{-1};
+    std::atomic<int32_t> received{-1};
+    SubscriptionResult result = sub.Subscribe(
+        t, {.callback =
+                [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+                    if (len >= 5) received.store(DecodeRow(data));
+                    NotifyWaiters();
+                },
+            .check =
+                [&](const SharedSchema&) {
+                    try {
+                        sub.Unsubscribe({"never", "seen"});
+                    } catch (const PubSubError& e) {
+                        unsubscribe_status.store(static_cast<int32_t>(e.status()));
+                    }
+                    try {
+                        static_cast<void>(sub.SubscribeSchema({"never", "seen3"}));
+                    } catch (const PubSubError& e) {
+                        subscribe_schema_status.store(static_cast<int32_t>(e.status()));
+                    }
+                    return true;
+                }});
+
+    ASSERT_TRUE(AwaitSchema(result, std::chrono::milliseconds(0)));
+    EXPECT_EQ(unsubscribe_status.load(), static_cast<int32_t>(PubSubStatus::kReentrantCall));
+    EXPECT_EQ(subscribe_schema_status.load(), static_cast<int32_t>(PubSubStatus::kReentrantCall));
+
+    ASSERT_TRUE(pub_listener.AwaitMatch());
+    pub.Publish(t, MakeEncoder(8));
+    EXPECT_EQ(AwaitRow(received), 8);
+
+    sub.UnsubscribeSchema(t);
+    sub.Unsubscribe(t);
+}
+
+TEST(FastDDSPubSubProviderTest, SubscribeRefusesBadArguments) {
+    FastDDSPubSubProvider p(ProviderConfig{});
+
+    try {
+        static_cast<void>(p.Subscribe({"checked", "badargs-empty"}, {}));
+        ADD_FAILURE() << "an empty callback was accepted";
+    } catch (const PubSubError& e) {
+        EXPECT_EQ(e.status(), PubSubStatus::kInvalidArgument) << e.what();
+    }
+
+    std::atomic<int32_t> check_calls{0};
+    auto accept = [&](const SharedSchema&) {
+        ++check_calls;
+        return true;
+    };
+    try {
+        static_cast<void>(p.Subscribe(
+            {"checked", "badargs-profile"},
+            {.callback = [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
+             .profile = "no_such_profile",
+             .check = accept}));
+        ADD_FAILURE() << "an unknown reader profile name was accepted";
+    } catch (const PubSubError& e) {
+        EXPECT_EQ(e.status(), PubSubStatus::kInvalidArgument) << e.what();
+        EXPECT_NE(std::string(e.what()).find("no_such_profile"), std::string::npos) << e.what();
+    }
+    EXPECT_EQ(check_calls.load(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// Tests — CreateTopic / Subscribe: profile and per-topic payload bound fields
 // ---------------------------------------------------------------------------
 
 // The mirror of ASubscriberFollowsThePublishersPayloadBound above, declared through
-// TopicOptions::max_payload_bytes instead of ProviderConfig::max_payload_bytes: a per-topic bound
-// announces and matches exactly like the provider-wide one, and the provider's own PayloadBytes()
-// is untouched by it.
+// TopicDeclaration::max_payload_bytes instead of ProviderConfig::max_payload_bytes: a per-topic
+// bound announces and matches exactly like the provider-wide one, and the provider's own
+// PayloadBytes() is untouched by it.
 TEST(FastDDSPubSubProviderTest, CreateTopicWithABoundAnnouncesThatBound) {
     struct DiscoveryListener : FastDDSStatusListener {
         std::mutex m;
@@ -2492,13 +2828,13 @@ TEST(FastDDSPubSubProviderTest, CreateTopicWithABoundAnnouncesThatBound) {
     std::atomic<int32_t> received{-1};
     SubscriptionResult result = sub.Subscribe(
         {"options", "bound"},
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+        {[&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             if (len >= 5) received.store(DecodeRow(data));
             NotifyWaiters();
-        });
+        }});
 
-    pub.CreateTopicWithOptions({"options", "bound"}, MakeSchema(),
-                               {.max_payload_bytes = kPayloadBytes<8192>});
+    pub.CreateTopic({"options", "bound"},
+                    {.schema = MakeSchema(), .max_payload_bytes = kPayloadBytes<8192>});
 
     {
         std::unique_lock<std::mutex> lk(sub_listener.m);
@@ -2520,8 +2856,7 @@ TEST(FastDDSPubSubProviderTest, CreateTopicWithABoundAnnouncesThatBound) {
 TEST(FastDDSPubSubProviderTest, CreateTopicWithAnUnusableBoundIsRefused) {
     FastDDSPubSubProvider p(ProviderConfig{});
     try {
-        p.CreateTopicWithOptions({"options", "badbound"}, MakeSchema(),
-                                 {.max_payload_bytes = 4095});
+        p.CreateTopic({"options", "badbound"}, {.schema = MakeSchema(), .max_payload_bytes = 4095});
         ADD_FAILURE() << "an unusable payload bound was accepted";
     } catch (const PubSubError& e) {
         EXPECT_EQ(e.status(), PubSubStatus::kInvalidArgument) << e.what();
@@ -2537,24 +2872,25 @@ TEST(FastDDSPubSubProviderTest, RedeclaringATopicAtAnotherBoundIsRefused) {
     config.max_payload_bytes = kPayloadBytes<8192>;
     FastDDSPubSubProvider p(config);
 
-    p.CreateTopicWithOptions({"options", "redeclare-bound"}, MakeSchema(),
-                             {.max_payload_bytes = kPayloadBytes<8192>});
+    p.CreateTopic({"options", "redeclare-bound"},
+                  {.schema = MakeSchema(), .max_payload_bytes = kPayloadBytes<8192>});
 
     try {
-        p.CreateTopicWithOptions({"options", "redeclare-bound"}, MakeSchema(),
-                                 {.max_payload_bytes = kPayloadBytes<16384>});
+        p.CreateTopic({"options", "redeclare-bound"},
+                      {.schema = MakeSchema(), .max_payload_bytes = kPayloadBytes<16384>});
         ADD_FAILURE() << "a redeclaration at a different bound was accepted";
     } catch (const PubSubError& e) {
         EXPECT_EQ(e.status(), PubSubStatus::kInvalidArgument) << e.what();
     }
 
-    EXPECT_NO_THROW(p.CreateTopicWithOptions({"options", "redeclare-bound"}, MakeSchema(),
-                                             {.max_payload_bytes = kPayloadBytes<8192>}));
-    EXPECT_NO_THROW(p.CreateTopicWithOptions({"options", "redeclare-bound"}, MakeSchema(), {}));
+    EXPECT_NO_THROW(
+        p.CreateTopic({"options", "redeclare-bound"},
+                      {.schema = MakeSchema(), .max_payload_bytes = kPayloadBytes<8192>}));
+    EXPECT_NO_THROW(p.CreateTopic({"options", "redeclare-bound"}, {MakeSchema()}));
 }
 
 // A profile named after neither the topic nor `is_default_profile` -- selected only through
-// `TopicOptions::profile`. The mismatch against a default RELIABLE reader is the same forcing
+// `TopicDeclaration::profile`. The mismatch against a default RELIABLE reader is the same forcing
 // shape as OnIncompatibleQosFiresForAReliableReaderAgainstABestEffortWriter, and the control topic
 // declared with `{}` in the same TEST proves the profile, not the document, is what caused it.
 TEST(FastDDSPubSubProviderTest, CreateTopicWithAProfilePicksThatProfile) {
@@ -2604,11 +2940,10 @@ TEST(FastDDSPubSubProviderTest, CreateTopicWithAProfilePicksThatProfile) {
     FastDDSPubSubProvider pub(config, &pub_listener);
     FastDDSPubSubProvider sub(config, &sub_listener);
 
-    pub.CreateTopicWithOptions({"options", "profile"}, MakeSchema(),
-                               {.profile = "fire_and_forget"});
+    pub.CreateTopic({"options", "profile"}, {.schema = MakeSchema(), .profile = "fire_and_forget"});
     SubscriptionResult mismatched =
         sub.Subscribe({"options", "profile"},
-                      [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
+                      {[](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}});
     ASSERT_TRUE(AwaitSchema(mismatched, std::chrono::seconds(5)));
     pub.Publish({"options", "profile"}, MakeEncoder(1));
 
@@ -2621,14 +2956,14 @@ TEST(FastDDSPubSubProviderTest, CreateTopicWithAProfilePicksThatProfile) {
     }
 
     // Control: a second topic, declared with {}, matches normally through the same pair.
-    pub.CreateTopicWithOptions({"options", "ordinary"}, MakeSchema(), {});
+    pub.CreateTopic({"options", "ordinary"}, {MakeSchema()});
     std::atomic<int32_t> received{-1};
     SubscriptionResult ordinary = sub.Subscribe(
         {"options", "ordinary"},
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+        {[&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             if (len >= 5) received.store(DecodeRow(data));
             NotifyWaiters();
-        });
+        }});
     ASSERT_TRUE(AwaitSchema(ordinary, std::chrono::seconds(5)));
     ASSERT_TRUE(pub_listener.AwaitMatch())
         << "the control topic's data writer never matched its reader";
@@ -2639,8 +2974,26 @@ TEST(FastDDSPubSubProviderTest, CreateTopicWithAProfilePicksThatProfile) {
 TEST(FastDDSPubSubProviderTest, CreateTopicWithAnUnknownProfileIsRefused) {
     FastDDSPubSubProvider p(ProviderConfig{});
     try {
-        p.CreateTopicWithOptions({"options", "unknownprofile"}, MakeSchema(), {.profile = "nope"});
+        p.CreateTopic({"options", "unknownprofile"}, {.schema = MakeSchema(), .profile = "nope"});
         ADD_FAILURE() << "an unknown profile name was accepted";
+    } catch (const PubSubError& e) {
+        EXPECT_EQ(e.status(), PubSubStatus::kInvalidArgument) << e.what();
+        EXPECT_NE(std::string(e.what()).find("nope"), std::string::npos) << e.what();
+    }
+}
+
+// The profile is resolved before the re-declaration check (order: door -> segments -> bound ->
+// profile -> lock -> re-declaration), so an unknown name on a re-declaration is refused with the
+// same message CreateTopicWithAnUnknownProfileIsRefused gets on a fresh declaration, quoting the
+// name -- not the generic "already declared at payload bound ... with profile ..." conflict
+// message the re-declaration check itself would raise.
+TEST(FastDDSPubSubProviderTest, RedeclaringWithAnUnknownProfileIsRefused) {
+    FastDDSPubSubProvider p(ProviderConfig{});
+    p.CreateTopic({"options", "redeclare-unknownprofile"}, {MakeSchema()});
+    try {
+        p.CreateTopic({"options", "redeclare-unknownprofile"},
+                      {.schema = MakeSchema(), .profile = "nope"});
+        ADD_FAILURE() << "a redeclaration with an unknown profile name was accepted";
     } catch (const PubSubError& e) {
         EXPECT_EQ(e.status(), PubSubStatus::kInvalidArgument) << e.what();
         EXPECT_NE(std::string(e.what()).find("nope"), std::string::npos) << e.what();
@@ -2665,26 +3018,26 @@ TEST(FastDDSPubSubProviderTest, RedeclaringWithAnotherProfileIsRefused) {
     config.document = document;
     FastDDSPubSubProvider p(config);
 
-    p.CreateTopicWithOptions({"options", "redeclare-profile"}, MakeSchema(), {.profile = "alpha"});
+    p.CreateTopic({"options", "redeclare-profile"}, {.schema = MakeSchema(), .profile = "alpha"});
 
     try {
-        p.CreateTopicWithOptions({"options", "redeclare-profile"}, MakeSchema(),
-                                 {.profile = "beta"});
+        p.CreateTopic({"options", "redeclare-profile"},
+                      {.schema = MakeSchema(), .profile = "beta"});
         ADD_FAILURE() << "a redeclaration with a different profile was accepted";
     } catch (const PubSubError& e) {
         EXPECT_EQ(e.status(), PubSubStatus::kInvalidArgument) << e.what();
     }
 
-    EXPECT_NO_THROW(p.CreateTopicWithOptions({"options", "redeclare-profile"}, MakeSchema(),
-                                             {.profile = "alpha"}));
-    EXPECT_NO_THROW(p.CreateTopicWithOptions({"options", "redeclare-profile"}, MakeSchema(), {}));
+    EXPECT_NO_THROW(p.CreateTopic({"options", "redeclare-profile"},
+                                  {.schema = MakeSchema(), .profile = "alpha"}));
+    EXPECT_NO_THROW(p.CreateTopic({"options", "redeclare-profile"}, {MakeSchema()}));
 }
 
 // The reader-side mirror of CreateTopicWithAProfilePicksThatProfile: `durable` is a `<data_reader>`
-// profile selected only through `TopicOptions::profile`, and a DURABILITY RxO mismatch against a
-// default VOLATILE writer is what proves it took hold (a durability-only forcing shape, unlike the
-// reliability one above). The control subscription in the same TEST, declared with `{}`, matches
-// normally through the same pair.
+// profile selected only through `SubscriptionRequest::profile`, and a DURABILITY RxO mismatch
+// against a default VOLATILE writer is what proves it took hold (a durability-only forcing shape,
+// unlike the reliability one above). The control subscription in the same TEST, declared with `{}`,
+// matches normally through the same pair.
 TEST(FastDDSPubSubProviderTest, SubscribeWithAProfilePicksThatProfile) {
     const std::string document = R"(<?xml version="1.0" encoding="UTF-8"?>
 <dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
@@ -2727,11 +3080,11 @@ TEST(FastDDSPubSubProviderTest, SubscribeWithAProfilePicksThatProfile) {
     FastDDSPubSubProvider sub(config, &sub_listener);
     FastDDSPubSubProvider pub(config, &pub_listener);
 
-    SubscriptionResult mismatched = sub.SubscribeWithOptions(
+    SubscriptionResult mismatched = sub.Subscribe(
         {"options", "subprofile"},
-        [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
-        {.profile = "durable"});
-    pub.CreateTopic({"options", "subprofile"}, MakeSchema());
+        {.callback = [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
+         .profile = "durable"});
+    pub.CreateTopic({"options", "subprofile"}, {MakeSchema()});
     ASSERT_TRUE(AwaitSchema(mismatched, std::chrono::seconds(5)));
     pub.Publish({"options", "subprofile"}, MakeEncoder(1));
 
@@ -2747,11 +3100,11 @@ TEST(FastDDSPubSubProviderTest, SubscribeWithAProfilePicksThatProfile) {
     std::atomic<int32_t> received{-1};
     SubscriptionResult ordinary = sub.Subscribe(
         {"options", "subprofile-ordinary"},
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+        {[&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             if (len >= 5) received.store(DecodeRow(data));
             NotifyWaiters();
-        });
-    pub.CreateTopic({"options", "subprofile-ordinary"}, MakeSchema());
+        }});
+    pub.CreateTopic({"options", "subprofile-ordinary"}, {MakeSchema()});
     ASSERT_TRUE(AwaitSchema(ordinary, std::chrono::seconds(5)));
     ASSERT_TRUE(pub_listener.AwaitMatch())
         << "the control topic's data writer never matched its default reader";
@@ -2759,26 +3112,13 @@ TEST(FastDDSPubSubProviderTest, SubscribeWithAProfilePicksThatProfile) {
     EXPECT_EQ(AwaitRow(received), 2);
 }
 
-TEST(FastDDSPubSubProviderTest, SubscribeWithABoundIsRefused) {
-    FastDDSPubSubProvider p(ProviderConfig{});
-    try {
-        static_cast<void>(p.SubscribeWithOptions(
-            {"options", "subbound"},
-            [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
-            {.max_payload_bytes = kPayloadBytes<8192>}));
-        ADD_FAILURE() << "a subscription with a payload bound was accepted";
-    } catch (const PubSubError& e) {
-        EXPECT_EQ(e.status(), PubSubStatus::kInvalidArgument) << e.what();
-    }
-}
-
 TEST(FastDDSPubSubProviderTest, SubscribeWithAnUnknownProfileIsRefused) {
     FastDDSPubSubProvider p(ProviderConfig{});
     try {
-        static_cast<void>(p.SubscribeWithOptions(
+        static_cast<void>(p.Subscribe(
             {"options", "subunknown"},
-            [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
-            {.profile = "nope"}));
+            {.callback = [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
+             .profile = "nope"}));
         ADD_FAILURE() << "an unknown reader profile name was accepted";
     } catch (const PubSubError& e) {
         EXPECT_EQ(e.status(), PubSubStatus::kInvalidArgument) << e.what();
@@ -2786,40 +3126,41 @@ TEST(FastDDSPubSubProviderTest, SubscribeWithAnUnknownProfileIsRefused) {
     }
 }
 
-// The door, on the two options-taking methods: refused by name from inside a delivery on this
-// instance, exactly like the four data-path methods and the schema-only pair (see
+// The door, on CreateTopic and Subscribe with a non-empty declaration/request: refused by name
+// from inside a delivery on this instance, exactly like every other seam method (see
 // SchemaWatchIsRefusedFromInsideADelivery above).
-TEST(FastDDSPubSubProviderTest, OptionsMethodsAreRefusedFromInsideADelivery) {
+TEST(FastDDSPubSubProviderTest, CreateTopicAndSubscribeAreRefusedFromInsideADelivery) {
     DataWriterMatchListener pub_listener;
     FastDDSPubSubProvider pub(ProviderConfig{}, &pub_listener);
     FastDDSPubSubProvider sub(ProviderConfig{});
-    pub.CreateTopic({"reentrant", "options"}, MakeSchema());
+    pub.CreateTopic({"reentrant", "options"}, {MakeSchema()});
 
     std::mutex mu;
     std::condition_variable cv;
     std::atomic<int32_t> create_refusal{-1};
     std::atomic<int32_t> subscribe_refusal{-1};
 
-    SubscriptionResult result = sub.Subscribe(
-        {"reentrant", "options"},
-        [&](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {
-            try {
-                sub.CreateTopicWithOptions({"reentrant", "options-create"}, MakeSchema(),
-                                           TopicOptions{});
-            } catch (const PubSubError& e) {
-                create_refusal.store(static_cast<int32_t>(e.status()));
-            }
-            try {
-                static_cast<void>(sub.SubscribeWithOptions(
-                    {"reentrant", "options"},
-                    [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {},
-                    TopicOptions{}));
-            } catch (const PubSubError& e) {
-                subscribe_refusal.store(static_cast<int32_t>(e.status()));
-            }
-            std::lock_guard<std::mutex> lk(mu);
-            cv.notify_all();
-        });
+    SubscriptionResult result =
+        sub.Subscribe({"reentrant", "options"},
+                      {[&](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {
+                          try {
+                              sub.CreateTopic({"reentrant", "options-create"},
+                                              {.schema = MakeSchema(), .profile = "latest"});
+                          } catch (const PubSubError& e) {
+                              create_refusal.store(static_cast<int32_t>(e.status()));
+                          }
+                          try {
+                              static_cast<void>(sub.Subscribe(
+                                  {"reentrant", "options"},
+                                  {.callback = [](const uint8_t*, size_t, const SharedSchema&,
+                                                  const Attachments&) {},
+                                   .profile = "latest"}));
+                          } catch (const PubSubError& e) {
+                              subscribe_refusal.store(static_cast<int32_t>(e.status()));
+                          }
+                          std::lock_guard<std::mutex> lk(mu);
+                          cv.notify_all();
+                      }});
     ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
 
     ASSERT_TRUE(pub_listener.AwaitMatch())
@@ -2846,8 +3187,8 @@ TEST(FastDDSPubSubProviderTest, OptionsMethodsAreRefusedFromInsideADelivery) {
 // retained sample is replaced, not queued alongside.
 TEST(FastDDSPubSubProviderTest, StoreLatestReplaysTheLastValueToALateSubscriber) {
     FastDDSPubSubProvider pub(ProviderConfig{});
-    pub.CreateTopicWithOptions({"options", "storelatest"}, MakeSchema(),
-                               {.profile = "store_latest"});
+    pub.CreateTopic({"options", "storelatest"},
+                    {.schema = MakeSchema(), .profile = "store_latest"});
     pub.Publish({"options", "storelatest"}, MakeEncoder(1));
     pub.Publish({"options", "storelatest"}, MakeEncoder(2));
     pub.Publish({"options", "storelatest"}, MakeEncoder(3));
@@ -2855,16 +3196,17 @@ TEST(FastDDSPubSubProviderTest, StoreLatestReplaysTheLastValueToALateSubscriber)
     std::mutex m;
     std::vector<int32_t> rows;
     FastDDSPubSubProvider sub(ProviderConfig{});
-    SubscriptionResult result = sub.SubscribeWithOptions(
+    SubscriptionResult result = sub.Subscribe(
         {"options", "storelatest"},
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
-            if (len >= 5) {
-                std::lock_guard<std::mutex> lk(m);
-                rows.push_back(DecodeRow(data));
-            }
-            NotifyWaiters();
-        },
-        {.profile = "store_latest"});
+        {.callback =
+             [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+                 if (len >= 5) {
+                     std::lock_guard<std::mutex> lk(m);
+                     rows.push_back(DecodeRow(data));
+                 }
+                 NotifyWaiters();
+             },
+         .profile = "store_latest"});
     ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
 
     ASSERT_TRUE(WaitUntil(
@@ -2908,18 +3250,19 @@ TEST(FastDDSPubSubProviderTest, LosslessDeliversEverySampleInOrder) {
 
     std::mutex m;
     std::vector<int32_t> rows;
-    SubscriptionResult result = sub.SubscribeWithOptions(
+    SubscriptionResult result = sub.Subscribe(
         {"options", "lossless"},
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
-            if (len >= 5) {
-                std::lock_guard<std::mutex> lk(m);
-                rows.push_back(DecodeRow(data));
-            }
-            NotifyWaiters();
-        },
-        {.profile = "lossless"});
+        {.callback =
+             [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+                 if (len >= 5) {
+                     std::lock_guard<std::mutex> lk(m);
+                     rows.push_back(DecodeRow(data));
+                 }
+                 NotifyWaiters();
+             },
+         .profile = "lossless"});
 
-    pub.CreateTopicWithOptions({"options", "lossless"}, MakeSchema(), {.profile = "lossless"});
+    pub.CreateTopic({"options", "lossless"}, {.schema = MakeSchema(), .profile = "lossless"});
     ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
     ASSERT_TRUE(pub_listener.AwaitMatch())
         << "the data writer never matched the subscriber's data reader";
@@ -2955,19 +3298,20 @@ TEST(FastDDSPubSubProviderTest, FireAndForgetDeliversAfterTheMatch) {
 
     std::mutex m;
     std::vector<int32_t> rows;
-    SubscriptionResult result = sub.SubscribeWithOptions(
+    SubscriptionResult result = sub.Subscribe(
         {"options", "fireandforget"},
-        [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
-            if (len >= 5) {
-                std::lock_guard<std::mutex> lk(m);
-                rows.push_back(DecodeRow(data));
-            }
-            NotifyWaiters();
-        },
-        {.profile = "fire_and_forget"});
+        {.callback =
+             [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+                 if (len >= 5) {
+                     std::lock_guard<std::mutex> lk(m);
+                     rows.push_back(DecodeRow(data));
+                 }
+                 NotifyWaiters();
+             },
+         .profile = "fire_and_forget"});
 
-    pub.CreateTopicWithOptions({"options", "fireandforget"}, MakeSchema(),
-                               {.profile = "fire_and_forget"});
+    pub.CreateTopic({"options", "fireandforget"},
+                    {.schema = MakeSchema(), .profile = "fire_and_forget"});
     ASSERT_TRUE(AwaitSchema(result, std::chrono::seconds(5)));
     ASSERT_TRUE(pub_listener.AwaitMatch())
         << "the data writer never matched the subscriber's data reader";

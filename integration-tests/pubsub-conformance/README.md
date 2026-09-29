@@ -74,7 +74,7 @@ re-deriving the rules.
   | `ReentrantCallIsRefusedWithoutAnyThrow` | the refusal alone, with **no exception anywhere on the path** | the door only |
   | `ThrowingCallbackIsAbsorbedWithoutReentering` | the absorption alone, with **no re-entry on the path**, asserted on the absorbed COUNT | the absorption only |
   | `AnotherThreadIsNotRefusedDuringADelivery` | not-too-wide, THREAD axis: a second thread is not re-entrancy | neither |
-  | `EveryProviderMethodIsRefusedFromInsideADelivery` | the METHOD axis: the other three methods, the two schema-only ones and the two options-taking ones refuse too, **by name and without hanging** | the door only |
+  | `EveryProviderMethodIsRefusedFromInsideADelivery` | the METHOD axis: the other three methods, the two schema-only ones, and `DeclareTopicWith`/`SubscribeWith` with every optional field non-empty all refuse too, **by name and without hanging** | the door only |
 
   Neither mechanism can green the other's control, in any landing order. That is
   the condition on which the grouping was allowed, and it is structural rather
@@ -84,6 +84,20 @@ re-deriving the rules.
   **Four of them redden by HANGING** on at least one subject when their mechanism
   is absent, so the per-target ctest `TIMEOUT` is load-bearing here exactly as it
   is for `CallerTier`'s deadlock controls. An uncapped hang is not a red.
+- **Four clauses pin `SubscriptionRequest::check`'s own contract** (provider.hpp): a
+  check runs once, before the data side opens, and gates whether it opens at
+  all.
+
+  | Clause | What it pins |
+  |---|---|
+  | `ACheckedSubscriptionThatRejectsNeverDelivers` | a rejecting check's row never crosses, whichever way the rejection reaches the caller (a synchronous throw or the arrival failing `kSchemaConflict`) — read behind a fence on a fresh topic, never a sleep |
+  | `ACheckedSubscriptionThatAcceptsDeliversLikeSubscribe` | an accepting check is indistinguishable from a plain `Subscribe` from there, and ran exactly once where a schema is carried |
+  | `ACheckCannotEnterTheProvider` | the check runs inside the same delivery frame a callback does, so a seam call from inside it is refused `kReentrantCall` too |
+  | `ARejectedCheckedSubscriptionLeavesTheTopicReusable` | `Unsubscribe` is the one documented way out of a rejected checked subscription, and the topic is fully reusable afterward — a plain `Subscribe` declares and delivers as if nothing had been registered there. Not force on the in-process provider, where a second `Subscribe` replaces a live registration regardless of `Unsubscribe`; real force on Fast DDS, whose rejected checked subscription never opens a data reader at all, and on XRCE, where the reader stays until `Unsubscribe` deletes it and its subscriber and the resubscribe recreates both |
+
+  All four branch on `Carried()` rather than skip: a schema-less transport runs
+  no check at all (provider.hpp: "never called with a null schema"), and the
+  clause asserts that directly instead of being absent.
 - **Rows are 8 opaque bytes** (magic + seq) written straight into the
   provider-supplied `WriteBuffer`. No codec, no Arrow C++, no generated type —
   so the suite cannot see payload layout and no divergence it forces can be a
@@ -136,9 +150,9 @@ surfaced immediately.
   unrelated publisher as `kPayloadTooLarge`. The named-refusal half of the clause
   is a real assertion on all six subjects.
 - **`EveryProviderMethodIsRefusedFromInsideADelivery` asserts the refusal for
-  `Subscribe`, `SubscribeSchema`, `UnsubscribeSchema`, `DeclareTopicWithOptions` and
-  `SubscribeWithOptions` on all six subjects, and for `CreateTopic`/`Publish` only
-  where they are genuinely re-entrant.** `PeerSubject::DeclareTopic` and
+  `Subscribe`, `SubscribeSchema`, `UnsubscribeSchema`, `DeclareTopicWith` and `SubscribeWith` on
+  all six subjects, and for `CreateTopic`/`Publish` only where they are genuinely re-entrant.**
+  `PeerSubject::DeclareTopic` and
   `PublishRow` go over the peer pipe, so on `FastDdsCrossProcess` and
   `XrceCrossProcess` they reach a DIFFERENT provider instance in a different
   process — expressly not re-entrancy (spec §6 clause 6) — and asserting a
@@ -146,9 +160,10 @@ surfaced immediately.
   `SubjectFactory::publishes_into_subject_instance`, which is structural, and on
   a peer subject it asserts the opposite: those two calls must still SUCCEED, so
   a refusal that leaked past its instance is caught. `Subscribe`/`Unsubscribe`
-  and the LOCAL-ONLY schema/options methods reach the subject's own provider
-  directly everywhere; the options pair is passed an empty `TopicOptions{}`, so
-  the door — not the support check — is what every subject is proven to have.
+  and the LOCAL-ONLY schema pair, plus `DeclareTopicWith`/`SubscribeWith`, reach the subject's own
+  provider directly everywhere, so the door is what every subject is proven to have — the latter
+  two are passed a request with every optional field non-empty (`profile`, `max_payload_bytes`,
+  `check`), so what they prove is that the door answers before any of those fields is looked at.
   Same shape of honesty as clause 12's, above.
 - **`AnotherThreadIsNotRefusedDuringADelivery` asserts that the other thread's
   call was ISSUED and not refused, not that it COMPLETED during the delivery.**
@@ -409,7 +424,8 @@ real A and B on every subject.
 ## The `SeamVocabulary` suite — the crossing types themselves
 
 Oracle: [docs/pubsub-interface-spec.md](../../docs/pubsub-interface-spec.md) §3.2,
-§3.3, §3.4, §5.1, §7 clause 1, §2's `TopicOptions` clause. A **third** suite in
+§3.3, §3.4, §5.1, §7 clause 1, §2's `TopicDeclaration`/`SubscriptionRequest` paragraphs. A
+**third** suite in
 this harness, in its own binary (`conformance_seam_vocabulary`), fifteen
 entries, no provider SDK.
 
@@ -425,10 +441,10 @@ provider-parameterised clause can reach:
 | `ErrorRefusesEveryNonFailureStatus` | §5.1: a failure can never carry `kOk`, `kPending` or `kSubscriptionEnded` |
 | `ResolverRefusesNullAndWaitRefusesNegativeTimeout` | §3.4: only `Ready(nullptr)` can produce `kOk`+null; a negative timeout is refused, not silently a poll |
 | `LaterDeclarationNeverReachesALiveSubscription` | §7 clause 1 **per subscription**: a declaration made after a subscription exists never reaches it |
-| `EmptyTopicSegmentListIsRefusedAtEveryEntryPoint` | §3.5 rung 2: an empty topic names no topic, on all four methods — a new rule *and* a behaviour change (`JoinSegments({})` used to yield the legal topic key `""`) |
-| `AmbiguousTopicSegmentsAreRefusedAtEveryEntryPoint` | §3.5 rung 2, the sibling rule (PDA-DEC-A5): the segment **list** is the topic's identity, so a segment carrying a NUL, carrying `/`, empty, or beginning `__` is refused on all four methods. A behaviour change as well as a rule — `{"a/b"}` and `{"a","b"}` used to be **one** topic on every provider, and `{"a","__schema"}` used to land on the schema companion channel of `{"a"}`. §3.5's sixth refusal, the **246-byte joined-length bound**, is asserted in `pubsub_tests` (`Segments.NamesThatWouldTruncateOnTheWireAreRefused`) rather than here: it rides the same door, and keeping it in one place is what lets its two mutations redden that case alone |
-| `EmptyTopicOptionsAreNeverRefused` | §2's `TopicOptions` clause: a default-constructed `TopicOptions` is never refused and behaves exactly like the pure form it delegates to — declare, subscribe and one row delivered, over `InProcessPubSubProvider`, which overrides neither method |
-| `NonEmptyOptionsAreRefusedOrHonouredByStatus` | The same clause's other half: `{.profile = "x"}` answers `kNotSupported` or `kInvalidArgument`, never anything else and never silently. This binary's one provider takes the `kNotSupported` branch; Fast DDS's `kInvalidArgument` branch, over a real document, is that provider's own suite's job |
+| `EmptyTopicSegmentListIsRefusedAtEveryEntryPoint` | §3.5 rung 2: an empty topic names no topic, on all six methods — a rule on every entry point |
+| `AmbiguousTopicSegmentsAreRefusedAtEveryEntryPoint` | §3.5 rung 2, the sibling rule: the segment **list** is the topic's identity, so a segment carrying a NUL, carrying `/`, empty, or beginning `__` is refused on all six methods. `{"a/b"}` and `{"a","b"}` would otherwise be **one** topic, and `{"a","__schema"}` would land on the schema companion channel of `{"a"}`. §3.5's sixth refusal, the **246-byte joined-length bound**, is asserted in `pubsub_tests` (`Segments.NamesThatWouldTruncateOnTheWireAreRefused`) rather than here: it rides the same door, and keeping it in one place is what lets its two mutations redden that case alone |
+| `EmptyRequestFieldsAreNeverRefused` | §2's `TopicDeclaration`/`SubscriptionRequest` rule: empty fields (`profile`, `max_payload_bytes`, `check`) are never refused — `CreateTopic({schema})` and `Subscribe({callback})` declare, subscribe and deliver one row over `InProcessPubSubProvider` |
+| `NonEmptyOptionsAreRefusedOrHonouredByStatus` | The same clause's other half: `CreateTopic({.profile = "x"})` and `Subscribe({.profile = "x"})` each answer `kNotSupported` or `kInvalidArgument`, never anything else and never silently — this binary's one provider takes the `kNotSupported` branch; Fast DDS's `kInvalidArgument` branch, over a real document, is that provider's own suite's job. `CreateTopic({.max_payload_bytes = 1024})` is pinned the same way, over the one field that still carries a payload bound across this seam — `SubscriptionRequest` carries none of its own, so there is no subscription-bound row; the caller tier (`Subscriber::Subscribe`) refuses a non-zero one itself, in `pubsub`'s own suite. `Subscribe({.check = ...})` on a topic actually declared is pinned the same two-branch way: `kOk` (honoured, and the check ran exactly once) or `kNotSupported`, never anything else |
 | `AnAttachmentSetIsReconstructibleFromItsPublishedFormAlone` | §3.2 clauses A1-A2 (PDA-DEC-AG2): a stand-in boundary shown **only** `size()`/`KeyAt()`/`ValueAt()` flattens an attachment set to bytes and rebuilds it through `Set` alone; the rebuilt set publishes the identical form, the same entries added in four different orders publish the identical form, and the sequence is in ascending unsigned-byte order of the key — over bytes, not a collation, so a key that is a prefix of another sorts first and a byte above 0x7f sorts after every ASCII key |
 | `AnAlteredAttachmentSetPublishesADifferentForm` *(live negative control)* | Four mutations — one key byte, one value byte, two values swapped between their keys, one entry dropped — each must publish a **different** form. Without it a `PublishedForm` returning a constant would green every line above |
 | `AnAttachmentKeyThatWouldTruncateIsRefused` | §3.2 clause A3 (PDA-DEC-AG2), **two legs with different mechanisms**: `Set` refuses a NUL-bearing key with `kInvalidArgument`, and a hand-built envelope body carrying one is refused by `DeserializeEnvelope` with `std::invalid_argument` — the wire-fault type — and **never** `PubSubError`, the caller-fault type. The second leg reddens on the exception TYPE if a later change routes decode through `Set`. Both legs carry their bound: a clean key of any length, including empty, still works |

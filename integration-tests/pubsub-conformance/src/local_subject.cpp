@@ -62,7 +62,7 @@ class LocalSubject : public ProviderSubject {
         // Past this point every failure IS the provider refusing: there is no
         // pipe, no child and no deadline between here and CreateTopic.
         try {
-            provider_->CreateTopic(topic, std::move(built));
+            provider_->CreateTopic(topic, {std::move(built)});
             return Reply::Ok();
         } catch (const std::exception& e) {
             return Reply::Refused(DescribeException(e));
@@ -83,7 +83,7 @@ class LocalSubject : public ProviderSubject {
     }
 
     SubscriptionResult Subscribe(const Topic& topic, SubscribeCallback callback) override {
-        return provider_->Subscribe(topic, std::move(callback));
+        return provider_->Subscribe(topic, {std::move(callback)});
     }
 
     void Unsubscribe(const Topic& topic) override { provider_->Unsubscribe(topic); }
@@ -94,14 +94,12 @@ class LocalSubject : public ProviderSubject {
 
     void UnsubscribeSchema(const Topic& topic) override { provider_->UnsubscribeSchema(topic); }
 
-    void DeclareTopicWithOptions(const Topic& topic, OwnedSchema schema,
-                                 const TopicOptions& options) override {
-        provider_->CreateTopicWithOptions(topic, std::move(schema), options);
+    void DeclareTopicWith(const Topic& topic, TopicDeclaration declaration) override {
+        provider_->CreateTopic(topic, std::move(declaration));
     }
 
-    SubscriptionResult SubscribeWithOptions(const Topic& topic, SubscribeCallback callback,
-                                            const TopicOptions& options) override {
-        return provider_->SubscribeWithOptions(topic, std::move(callback), options);
+    SubscriptionResult SubscribeWith(const Topic& topic, SubscriptionRequest request) override {
+        return provider_->Subscribe(topic, std::move(request));
     }
 
    private:

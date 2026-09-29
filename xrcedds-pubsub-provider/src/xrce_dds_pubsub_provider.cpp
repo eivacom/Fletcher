@@ -38,6 +38,7 @@
 #include <fletcher/core/internal/delivery_frame.hpp>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/delivery_channel.hpp>
+#include <fletcher/pubsub/internal/schema_check.hpp>
 #include <fletcher/pubsub/internal/schema_conflict.hpp>
 #include <fletcher/pubsub/internal/segments.hpp>
 #include <fletcher/pubsub/schema_ipc.hpp>
@@ -47,6 +48,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "internal/xrce_document.hpp"
@@ -90,11 +92,12 @@ struct XrceDDSPubSubProvider::Impl {
         uxrObjectId schema_reader_id{};
 
         // The bound this topic registered and announces on `__schema` -- this topic's own, from
-        // `TopicOptions::max_payload_bytes` or the provider's own bound when declared without one.
-        // Set ONLY by CreateTopic, once, when it creates the participant and topic; still 0 means
-        // Subscribe created them first (Subscribe takes no options, so it never sets this) at
-        // `impl_->max_payload_bytes` -- the reader stays config-driven, and a later CreateTopic on
-        // the same topic can only adopt that bound, never override it (a different one is refused).
+        // `TopicDeclaration::max_payload_bytes` or the provider's own bound when declared without
+        // one. Set ONLY by CreateTopic, once, when it creates the participant and topic; still 0
+        // means Subscribe created them first (Subscribe takes no per-topic bound, so it never sets
+        // this) at `impl_->max_payload_bytes` -- the reader stays config-driven, and a later
+        // CreateTopic on the same topic can only adopt that bound, never override it (a different
+        // one is refused).
         uint32_t max_payload_bytes = 0;
 
         OwnedSchema schema;
@@ -129,6 +132,11 @@ struct XrceDDSPubSubProvider::Impl {
         SchemaArrival schema_arrival;
         std::optional<SchemaResolver> schema_resolver;
         std::vector<Envelope> pending;
+
+        // Held from Subscribe's `request.check` until the schema is known: consumed by Subscribe
+        // itself when it already is (synchronous case), else by OnTopic's schema branch
+        // (asynchronous case). Never set when `request.check` is empty.
+        PubSubProvider::SchemaCheck check;
     };
 
     // What the four document keys decided (internal/xrce_document.hpp). The typed core is not
@@ -321,6 +329,31 @@ void XrceDDSPubSubProvider::Impl::OnTopic(uxrSession* /*session*/, uxrObjectId o
                 ts.shared_schema = MakeSharedSchema(std::move(schema));
                 std::optional<SchemaResolver> token = std::move(ts.schema_resolver);
                 ts.schema_resolver.reset();
+
+                if (ts.check) {
+                    PubSubProvider::SchemaCheck check = std::move(ts.check);
+                    ts.check = nullptr;
+                    if (!check(ts.shared_schema)) {
+                        // Rejected. The reader already exists (created in Subscribe) and the Agent
+                        // keeps streaming to it until Unsubscribe: nothing is ever delivered — the
+                        // buffer goes, the channel goes, and the data branch below returns on a
+                        // topic with no channel before it buffers anything.
+                        //
+                        // Cleared BEFORE the Fail() call: building its message concatenates
+                        // strings, which can throw bad_alloc, and the catch around this whole
+                        // sequence would then return with a live channel and a set shared_schema —
+                        // exactly the delivery this rejection must prevent.
+                        ts.pending.clear();
+                        ts.channel = DeliveryChannel{};
+                        if (token)
+                            std::move(*token).Fail(PubSubStatus::kSchemaConflict,
+                                                   "XRCE: '" + sit->second +
+                                                       "' announces a schema the subscription's "
+                                                       "check rejected");
+                        return;
+                    }
+                }
+
                 // Resolved while holding impl_->mu, unlike the other two providers,
                 // and that is this provider's model rather than an oversight: XRCE
                 // has a single recursive-mutex session pump, OnTopic is already
@@ -732,38 +765,21 @@ void WaitForStatuses(uxrSession* session, const uint16_t* requests, uint8_t* sta
 // -----------------------------------------------------------------------
 
 void XrceDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_segments,
-                                        OwnedSchema schema) {
-    CreateTopicWithOptions(topic_segments, std::move(schema), TopicOptions{});
-}
-
-void XrceDDSPubSubProvider::CreateTopicWithOptions(const std::vector<std::string>& topic_segments,
-                                                   OwnedSchema schema,
-                                                   const TopicOptions& options) {
+                                        TopicDeclaration declaration) {
     // Every seam entry point translates, so the only exception that can leave this
     // provider is a PubSubError carrying a stable number (spec §5.1).
     TranslateSeamFailure([&] {
-        // The door, before any lock (spec §6 clause 6, owner ruling 2026-09-05,
-        // "Re-entry is refused on every protocol"). This call WORKS from inside a
-        // handler here — XRCE is the one protocol of three where it does — and is
-        // refused anyway, so the seam has one answer rather than a per-protocol
-        // one. Re-permitting is PDA-ABI's, with the loaned-sample receive path in
-        // hand and a fresh ruling.
-        internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this),
-                                           "CreateTopicWithOptions");
-
-        // This client's document carries no profiles at all (key=value, four fixed keys), so a
-        // profile name has nothing to resolve against.
-        if (!options.profile.empty()) {
-            throw PubSubError(PubSubStatus::kNotSupported, "XRCE: the document has no profiles");
-        }
-
+        // The door -> segments -> bound -> profile, all before any lock (spec §6 clause 6). A
+        // call from inside a delivery is refused with kReentrantCall, the same answer on every
+        // protocol.
+        internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this), "CreateTopic");
         std::string name = internal::JoinSegments(topic_segments);
 
-        // This topic's own bound: `options.max_payload_bytes` if given, else the provider's own
-        // (0 there means "unset" too, resolved at construction). Validated before any lock, the
-        // same rule the constructor applies to the provider's own bound.
-        const uint32_t bound =
-            options.max_payload_bytes ? options.max_payload_bytes : impl_->max_payload_bytes;
+        // This topic's own bound: `declaration.max_payload_bytes` if given, else the provider's
+        // own (0 there means "unset" too, resolved at construction). Validated before any lock,
+        // the same rule the constructor applies to the provider's own bound.
+        const uint32_t bound = declaration.max_payload_bytes ? declaration.max_payload_bytes
+                                                             : impl_->max_payload_bytes;
         if (!IsPayloadBound(bound)) {
             throw PubSubError(
                 PubSubStatus::kInvalidArgument,
@@ -773,9 +789,16 @@ void XrceDDSPubSubProvider::CreateTopicWithOptions(const std::vector<std::string
                     std::to_string(kMinPayloadBytes) + " and " + std::to_string(kMaxPayloadBytes));
         }
 
+        // This client's document carries no profiles at all (key=value, four fixed keys), so a
+        // profile name has nothing to resolve against.
+        if (!declaration.profile.empty()) {
+            throw PubSubError(PubSubStatus::kNotSupported, "XRCE: the document has no profiles");
+        }
+
         // Encoded before the lock, so the locked section is a byte compare rather
         // than an IPC encode every concurrent CreateTopic queues behind.
-        internal::DeclaredSchema incoming = internal::DeclaredSchema::Encode(schema.get());
+        internal::DeclaredSchema incoming =
+            internal::DeclaredSchema::Encode(declaration.schema.get());
 
         std::lock_guard lock(impl_->mu);
 
@@ -799,11 +822,11 @@ void XrceDDSPubSubProvider::CreateTopicWithOptions(const std::vector<std::string
                     PubSubStatus::kSchemaConflict,
                     "XRCE: topic already declared with a conflicting schema: " + name);
             }
-            // Only a bound the caller actually named conflicts: an empty `TopicOptions` means "the
+            // Only a bound the caller actually named conflicts: an empty `declaration` means "the
             // provider's defaults" and is never refused, so it re-declares a topic declared at any
             // bound.
-            if (options.max_payload_bytes != 0 &&
-                options.max_payload_bytes != ts.max_payload_bytes) {
+            if (declaration.max_payload_bytes != 0 &&
+                declaration.max_payload_bytes != ts.max_payload_bytes) {
                 throw PubSubError(PubSubStatus::kInvalidArgument,
                                   "XRCE: '" + name + "' is already declared at payload bound " +
                                       std::to_string(ts.max_payload_bytes));
@@ -835,7 +858,7 @@ void XrceDDSPubSubProvider::CreateTopicWithOptions(const std::vector<std::string
             WaitForStatus(&impl_->session, req_topic, "topic");
         } else if (ts.max_payload_bytes == 0) {
             // Left behind by a subscriber-first reader (Subscribe creates the participant and
-            // topic the same way, but takes no options): the topic already carries
+            // topic the same way, but takes no per-topic bound): the topic already carries
             // `impl_->type_name`/`impl_->max_payload_bytes`, so that -- not this call's `bound` --
             // is what this topic actually registered and announces. The reader stays
             // config-driven. `max_payload_bytes == 0` is what says Subscribe created them:
@@ -847,8 +870,8 @@ void XrceDDSPubSubProvider::CreateTopicWithOptions(const std::vector<std::string
             // bound and cannot migrate. Checked BEFORE the adoption below, the same "named bound
             // wins or refuses, empty bound always adopts" rule the `ts.is_publisher` branch above
             // applies to an already-declared publisher.
-            if (options.max_payload_bytes != 0 &&
-                options.max_payload_bytes != impl_->max_payload_bytes) {
+            if (declaration.max_payload_bytes != 0 &&
+                declaration.max_payload_bytes != impl_->max_payload_bytes) {
                 throw PubSubError(
                     PubSubStatus::kInvalidArgument,
                     "XRCE: '" + name + "' already exists on this client at payload bound " +
@@ -880,8 +903,8 @@ void XrceDDSPubSubProvider::CreateTopicWithOptions(const std::vector<std::string
 
         // Companion __schema topic: publish schema IPC bytes so subscribers
         // can discover the schema.
-        if (schema) {
-            ts.schema = OwnedSchema::DeepCopy(schema.get());
+        if (declaration.schema) {
+            ts.schema = OwnedSchema::DeepCopy(declaration.schema.get());
 
             uint16_t schema_base = impl_->AllocId();
             ts.schema_publisher_id = uxr_object_id(schema_base, UXR_PUBLISHER_ID);
@@ -925,7 +948,7 @@ void XrceDDSPubSubProvider::CreateTopicWithOptions(const std::vector<std::string
             // prefix the Agent forwards to FastDDS peers now counts that whole envelope, not just
             // the IPC bytes -- see fletcher_sample.hpp for why the two are the same field.
             Envelope schema_env;
-            schema_env.row = SerializeSchemaIpc(schema.get());
+            schema_env.row = SerializeSchemaIpc(declaration.schema.get());
             std::vector<uint8_t> bound_bytes(sizeof(uint32_t));
             std::memcpy(bound_bytes.data(), &ts.max_payload_bytes, sizeof(uint32_t));
             schema_env.attachments.Set(kSchemaPayloadBoundKey, Blob(std::move(bound_bytes)));
@@ -955,12 +978,8 @@ void XrceDDSPubSubProvider::Publish(const std::vector<std::string>& topic_segmen
     // Every seam entry point translates, so the only exception that can leave this
     // provider is a PubSubError carrying a stable number (spec §5.1).
     TranslateSeamFailure([&] {
-        // The door, before any lock (spec §6 clause 6, owner ruling 2026-09-05,
-        // "Re-entry is refused on every protocol"). This call WORKS from inside a
-        // handler here — XRCE is the one protocol of three where it does — and is
-        // refused anyway, so the seam has one answer rather than a per-protocol
-        // one. Re-permitting is PDA-ABI's, with the loaned-sample receive path in
-        // hand and a fresh ruling.
+        // The door, before any lock (spec §6 clause 6): a call from inside a delivery is
+        // refused with kReentrantCall, the same answer on every protocol.
         internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this), "Publish");
 
         std::string name = internal::JoinSegments(topic_segments);
@@ -1014,25 +1033,49 @@ void XrceDDSPubSubProvider::Publish(const std::vector<std::string>& topic_segmen
 }
 
 SubscriptionResult XrceDDSPubSubProvider::Subscribe(const std::vector<std::string>& topic_segments,
-                                                    SubscribeCallback callback) {
+                                                    SubscriptionRequest request) {
     // Every seam entry point translates, so the only exception that can leave this
     // provider is a PubSubError carrying a stable number (spec §5.1).
     return TranslateSeamFailure([&]() -> SubscriptionResult {
-        // The door, before any lock (spec §6 clause 6, owner ruling 2026-09-05,
-        // "Re-entry is refused on every protocol"). This call WORKS from inside a
-        // handler here — XRCE is the one protocol of three where it does — and is
-        // refused anyway, so the seam has one answer rather than a per-protocol
-        // one. Re-permitting is PDA-ABI's, with the loaned-sample receive path in
-        // hand and a fresh ruling.
+        // The door (spec §6 clause 6) -> segments -> empty callback -> profile, all before any
+        // lock. A call from inside a delivery is refused with kReentrantCall, the same answer on
+        // every protocol.
         internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this), "Subscribe");
-
         std::string name = internal::JoinSegments(topic_segments);
+        if (!request.callback)
+            throw PubSubError(PubSubStatus::kInvalidArgument,
+                              "XRCE: a subscription needs a callback");
+        if (!request.profile.empty())
+            throw PubSubError(PubSubStatus::kNotSupported, "XRCE: the document has no profiles");
+
+        // The check runs framed on whichever thread settles the schema (this one when the schema
+        // is already known, the run loop otherwise), so a seam call from inside it is refused
+        // kReentrantCall.
+        if (request.check) {
+            request.check = [token = static_cast<const PubSubProvider*>(this),
+                             c = std::move(request.check)](const SharedSchema& s) {
+                return internal::RunSchemaCheck(token, c, s);
+            };
+        }
+
         std::lock_guard lock(impl_->mu);
 
         auto& ts = impl_->topics[name];
         if (ts.has_reader)
             throw PubSubError(PubSubStatus::kInvalidArgument,
                               "XRCE: already subscribed to: " + name);
+
+        // `request.check`'s gate, run before the arrival pair exists and before any entity is
+        // created: "false, schema already known inside the call" must open nothing and register
+        // nothing. `known` is reused below (schema-known branch) instead of a second DeepCopy when
+        // the check passes or there is none.
+        SharedSchema known;
+        if (ts.schema) known = MakeSharedSchema(OwnedSchema::DeepCopy(ts.schema.get()));
+        if (known && request.check && !request.check(known)) {
+            throw PubSubError(
+                PubSubStatus::kSchemaConflict,
+                "XRCE: '" + name + "' announces a schema the subscription's check rejected");
+        }
 
         // Subscribe is non-blocking and never throws when no publisher exists yet
         // (subscriber-first). The schema is delivered asynchronously: data that
@@ -1042,6 +1085,9 @@ SubscriptionResult XrceDDSPubSubProvider::Subscribe(const std::vector<std::strin
         auto arrival_pair = SchemaArrival::Create();
         ts.schema_arrival = std::move(arrival_pair.first);
         ts.schema_resolver.emplace(std::move(arrival_pair.second));
+        // Not yet known: hold the check until OnTopic's schema branch has an announced schema to
+        // run it against. Already known: the check ran synchronously above and is spent.
+        if (!ts.schema) ts.check = std::move(request.check);
 
         // If no participant yet (subscriber-side), create one + the data topic.
         // Publisher-side topics already did this in CreateTopic.
@@ -1062,9 +1108,10 @@ SubscriptionResult XrceDDSPubSubProvider::Subscribe(const std::vector<std::strin
         }
 
         if (ts.schema) {
-            // Schema already known on this provider (publisher-side / cached):
-            // answer the arrival immediately.
-            ts.shared_schema = MakeSharedSchema(OwnedSchema::DeepCopy(ts.schema.get()));
+            // Schema already known on this provider (publisher-side / cached): answer the arrival
+            // immediately. `known` was already deep-copied above to run the check (if any); reuse
+            // it rather than copying `ts.schema` a second time.
+            ts.shared_schema = known;
             std::optional<SchemaResolver> token = std::move(ts.schema_resolver);
             ts.schema_resolver.reset();
             std::move(*token).Resolve(ts.shared_schema);
@@ -1140,7 +1187,7 @@ SubscriptionResult XrceDDSPubSubProvider::Subscribe(const std::vector<std::strin
             WaitForStatuses(&impl_->session, reqs, statuses, 2, "data subscriber+reader");
         }
 
-        ts.channel = DeliveryChannel(this, std::move(callback));
+        ts.channel = DeliveryChannel(this, std::move(request.callback));
         ts.has_reader = true;
         impl_->reader_to_topic[ts.reader_id.id] = name;
 
@@ -1164,13 +1211,10 @@ void XrceDDSPubSubProvider::Unsubscribe(const std::vector<std::string>& topic_se
     // Every seam entry point translates, so the only exception that can leave this
     // provider is a PubSubError carrying a stable number (spec §5.1).
     TranslateSeamFailure([&] {
-        // The door, before any lock (spec §6 clause 6, owner ruling 2026-09-05).
-        // This provider used to SERVE a re-entrant cancel — its recursive `mu`
-        // let the call straight through, and the in-place reset below then ran
-        // under the very delivery it was cancelling. That is the divergence this
-        // item ends: all three providers now refuse every seam method by name —
-        // the four data-path methods, the two schema-only ones and the two
-        // options-taking ones.
+        // The door, before any lock (spec §6 clause 6): a re-entrant cancel is
+        // refused by name, like every one of the six seam methods. The recursive
+        // `mu` would otherwise let it through and run the in-place reset below
+        // under the very delivery it is cancelling.
         internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this), "Unsubscribe");
 
         std::string name = internal::JoinSegments(topic_segments);
@@ -1188,6 +1232,7 @@ void XrceDDSPubSubProvider::Unsubscribe(const std::vector<std::string>& topic_se
         // "this transport carries no schemas at all". Idempotent: a token already
         // consumed by a resolution is simply absent.
         ts.schema_resolver.reset();
+        ts.check = nullptr;
 
         if (ts.schema_reader_id.type != UXR_INVALID_ID) {
             uxr_buffer_cancel_data(&impl_->session, impl_->reliable_out, ts.schema_reader_id);
@@ -1221,7 +1266,17 @@ void XrceDDSPubSubProvider::Unsubscribe(const std::vector<std::string>& topic_se
             uxr_buffer_cancel_data(&impl_->session, impl_->reliable_out, ts.reader_id);
             uxr_buffer_delete_entity(&impl_->session, impl_->reliable_out, ts.reader_id);
             impl_->reader_to_topic.erase(ts.reader_id.id);
+            // The data subscriber is created only by Subscribe (from a fresh id
+            // base), never shared with the publisher side (which uses ts.publisher_id, a distinct
+            // field) or with the schema subscriber (ts.schema_subscriber_id, already deleted
+            // above). Delete it and invalidate both ids: a later Subscribe on the same topic then
+            // recreates subscriber + reader from a fresh id base (the
+            // ts.subscriber_id.type == UXR_INVALID_ID guard in Subscribe) instead of
+            // requesting data on a reader the Agent no longer has.
+            uxr_buffer_delete_entity(&impl_->session, impl_->reliable_out, ts.subscriber_id);
             ts.has_reader = false;
+            ts.reader_id.type = UXR_INVALID_ID;
+            ts.subscriber_id.type = UXR_INVALID_ID;
             // In-place reset — the map node stays live; OnTopic must not depend on
             // these fields across a user callback (see the copy-to-locals fix above).
             ts.channel = DeliveryChannel{};

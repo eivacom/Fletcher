@@ -100,9 +100,11 @@ using fletcher::ArrowRow;
 class LoopbackProvider : public fletcher::PubSubProvider {
    public:
     void CreateTopic(const std::vector<std::string>& segments,
-                     fletcher::OwnedSchema schema) override {
+                     fletcher::TopicDeclaration declaration) override {
         std::string key = Join(segments);
-        if (schema) schemas_[key] = fletcher::OwnedSchema::DeepCopy(schema.get());
+        if (declaration.schema) {
+            schemas_[key] = fletcher::OwnedSchema::DeepCopy(declaration.schema.get());
+        }
     }
 
     void Publish(const std::vector<std::string>& segments, const RowEncoder& encoder,
@@ -124,9 +126,9 @@ class LoopbackProvider : public fletcher::PubSubProvider {
     }
 
     fletcher::SubscriptionResult Subscribe(const std::vector<std::string>& segments,
-                                           SubscribeCallback callback) override {
+                                           SubscriptionRequest request) override {
         std::string key = Join(segments);
-        callbacks_[key] = std::move(callback);
+        callbacks_[key] = std::move(request.callback);
         fletcher::SharedSchema schema;
         auto it = schemas_.find(key);
         if (it != schemas_.end()) {

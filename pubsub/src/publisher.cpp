@@ -83,8 +83,8 @@ void Publisher::CreateTopic(const std::vector<std::string>& segments, OwnedSchem
     }
 
     try {
-        // Always the options form; the base delegates.
-        impl_->provider->CreateTopicWithOptions(segments, std::move(schema), options);
+        impl_->provider->CreateTopic(segments, TopicDeclaration{std::move(schema), options.profile,
+                                                                options.max_payload_bytes});
     } catch (...) {
         std::lock_guard lock(impl_->mu);
         impl_->topics.erase(key);

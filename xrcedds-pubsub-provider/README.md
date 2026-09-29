@@ -72,7 +72,7 @@ locked decision 8: Fletcher gains no parser and no configuration dependency).
 | Field | Default | Meaning |
 |---|---|---|
 | `domain_id` | `0` | The DDS domain the Agent creates this client's participant on. `uint32_t` at the seam, `uint16_t` on the XRCE wire, so **above 65535 is refused, never narrowed** - a truncated domain id is a wrong answer with no error. |
-| `max_payload_bytes` | `0` = unset -> `65536` | The bound for a topic `CreateTopic` declares WITHOUT `TopicOptions::max_payload_bytes` (see [Per-topic options](#per-topic-options) below), announced on `__schema` — a Fast DDS subscriber follows that announcement and needs no agreement, but this client's own subscriber still needs it equal to its Fast DDS publisher's (see above), because `Subscribe` takes no options, so a topic it is the first to create carries this field's bound. Must satisfy `IsPayloadBound`. Write it as `kPayloadBytes<N>` to be told at compile time instead. |
+| `max_payload_bytes` | `0` = unset -> `65536` | The bound for a topic `CreateTopic` declares with a zero `TopicDeclaration::max_payload_bytes` (see [Per-topic declarations](#per-topic-declarations) below), announced on `__schema` — a Fast DDS subscriber follows that announcement and needs no agreement, but this client's own subscriber still needs it equal to its Fast DDS publisher's (see above), because `Subscribe` takes no per-topic bound, so a topic it is the first to create carries this field's bound. Must satisfy `IsPayloadBound`. Write it as `kPayloadBytes<N>` to be told at compile time instead. |
 | `document` | empty = all defaults | This provider's `key=value` document. |
 
 #### The document: `key=value`, one setting per line
@@ -198,37 +198,38 @@ entry:
 ### PubSubProvider interface
 
 ```cpp
-provider.CreateTopic({"my", "topic"}, schema);
+provider.CreateTopic({"my", "topic"}, {std::move(schema)});
 provider.Publish({"my", "topic"}, encoder);
-auto result = provider.Subscribe({"my", "topic"}, [](const uint8_t* data, size_t len,
-                                                      SharedSchema, Attachments) { ... });
+auto result = provider.Subscribe({"my", "topic"}, {[](const uint8_t* data, size_t len,
+                                                       SharedSchema, Attachments) { ... }});
 provider.Unsubscribe({"my", "topic"});
 ```
 
-### Per-topic options
+### Per-topic declarations
 
-`CreateTopicWithOptions` is the companion method taking `fletcher::TopicOptions`
-(`pubsub/provider.hpp`):
+`CreateTopic` takes a `fletcher::TopicDeclaration` (`pubsub/provider.hpp`) — `{schema, profile,
+max_payload_bytes}` — and `Subscribe` a `fletcher::SubscriptionRequest` — `{callback, profile,
+check}`:
 
 ```cpp
-provider.CreateTopicWithOptions({"nav", "imu"}, schema,
-                                {.max_payload_bytes = fletcher::kPayloadBytes<8192>});
+provider.CreateTopic({"nav", "imu"}, {.schema = std::move(schema),
+                                      .max_payload_bytes = fletcher::kPayloadBytes<8192>});
 ```
 
-`max_payload_bytes` is this topic's own bound, in place of `ProviderConfig::max_payload_bytes` for
-this topic only; zero (the default, same as plain `CreateTopic`) means "follow the provider's own
-bound". A bound `IsPayloadBound` rejects, or a re-declaration at a different non-zero bound, is
-`kInvalidArgument`; an identical re-declaration, or one with empty options, is the same idempotent
-no-op plain `CreateTopic` is. `profile` is always `kNotSupported` — this provider's document is
-`key=value`, four fixed keys, with no notion of a named profile. `Subscribe` has no options-taking
-overload at all: a topic it is the first to create is created at
+`declaration.max_payload_bytes` is this topic's own bound, in place of
+`ProviderConfig::max_payload_bytes` for this topic only; zero (the default, same as an empty
+declaration) means "follow the provider's own bound". A bound `IsPayloadBound` rejects, or a
+re-declaration at a different non-zero bound, is `kInvalidArgument`; an identical re-declaration,
+or one with an empty `max_payload_bytes`, is an idempotent no-op. `declaration.profile` is always `kNotSupported` — this provider's document is
+`key=value`, four fixed keys, with no notion of a named profile. `SubscriptionRequest` carries no
+bound field at all: a topic that `Subscribe` is the first to create is created at
 `ProviderConfig::max_payload_bytes`, because it has to agree with whatever a Fast DDS publisher it
 follows announced (see [How it works](#how-it-works) above) — there is nothing for a
 per-subscription bound to override. A topic a `CreateTopic` on this instance already created at a
 per-topic bound keeps that bound, and a `Subscribe` on it reads that topic. The reverse order is
 refused rather than silently overridden: a topic a `Subscribe` created FIRST keeps that reader's
-own bound (`ProviderConfig::max_payload_bytes`), and a `CreateTopicWithOptions` naming a different
-bound for it is `kInvalidArgument` — the reader cannot migrate once created.
+own bound (`ProviderConfig::max_payload_bytes`), and a `declaration.max_payload_bytes` naming a
+different bound for it is `kInvalidArgument` — the reader cannot migrate once created.
 
 ### Constraints
 
@@ -236,8 +237,8 @@ bound for it is `kInvalidArgument` — the reader cannot migrate once created.
 - `Subscribe` can be called without a prior `CreateTopic` — it polls the `__schema` companion topic for up to 5 seconds.
 - Only one subscription per topic per provider instance. Call `Unsubscribe` before re-subscribing.
 - The subscription callback is invoked from the background run-loop thread. Shared state accessed from the callback must be protected externally.
-- **A callback must not throw, and if one does the exception goes nowhere** (spec §5.3, owner ruling 2026-09-05). It is absorbed at the dispatch site, inside `DeliveryChannel::Deliver`, which is `noexcept`. That matters more here than anywhere else: `OnTopic` runs inside `uxr_run_session_time()`, so an unwind would cross the XRCE client's C frames — undefined behaviour on MSVC and process termination in practice. It is now a property of the dispatch type rather than a rule each site has to remember. The count of absorbed failures is readable through `DeliveryChannel::AbsorbedCount()`.
-- **From inside a delivery, every seam method — the four data-path methods, the two schema-only ones and the two options-taking ones — on this same instance and this same thread is refused** with `PubSubError(kReentrantCall)`, before any lock (spec §6 clause 6). **This is a deliberate behaviour change, and this provider pays for it.** It used to serve every one of them — the recursive `mu` let a re-entrant `Unsubscribe` straight through, so the in-place topic-state reset ran underneath the very delivery being cancelled, and `CreateTopic`/`Publish`/`Subscribe` genuinely worked from a handler. XRCE is the ONE protocol of three where they did: the loopback deadlocked on its own mutex and Fast DDS hung on the RTPS reader mutex. A capability on one transport is not a seam contract, so the owner chose the uniform rule and routed re-permitting to PDA-ABI (ruling 2026-09-05), where the loaned-sample receive path makes deferral affordable. The recursive `mu` is no longer load-bearing for re-entrant service and is kept only because narrowing it is a separate change with its own risk.
+- **A callback must not throw, and if one does the exception goes nowhere** (spec §5.3). It is absorbed at the dispatch site, inside `DeliveryChannel::Deliver`, which is `noexcept`. That matters more here than anywhere else: `OnTopic` runs inside `uxr_run_session_time()`, so an unwind would cross the XRCE client's C frames — undefined behaviour on MSVC and process termination in practice. It is now a property of the dispatch type rather than a rule each site has to remember. The count of absorbed failures is readable through `DeliveryChannel::AbsorbedCount()`.
+- **From inside a delivery, every one of the six seam methods on this same instance and this same thread is refused** with `PubSubError(kReentrantCall)`, before any lock (spec §6 clause 6). The rule is uniform across protocols: this provider's recursive `mu` would let the calls through, but a capability of one transport is not a seam contract. The recursive `mu` is not load-bearing for re-entrant service.
 - `XrceDDSPubSubProvider` is non-copyable and non-movable.
 - `transport=serial` is refused with `PubSubError(kNotSupported)` - not implemented, and said distinctly from a typo.
 

@@ -58,6 +58,8 @@
 #include <fastdds/dds/log/Log.hpp>
 #include <fastdds/dds/publisher/Publisher.hpp>
 #include <fastdds/dds/subscriber/Subscriber.hpp>
+#include <fastdds/rtps/attributes/RTPSParticipantAttributes.hpp>
+#include <fastdds/utils/IPLocator.hpp>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/fastdds_pubsub_provider/fast_dds_pubsub_provider.hpp>
 #include <fletcher/pubsub/schema_ipc.hpp>
@@ -450,7 +452,7 @@ TEST(FastDdsConfig, ProfileDocumentConfiguresQos) {
     config.document = kAnchorOnly;
 
     FastDDSPubSubProvider provider(config);
-    provider.CreateTopic({"forcing", "anchor"}, MakeSchema());
+    provider.CreateTopic({"forcing", "anchor"}, {MakeSchema()});
     // CreateTopic already creates the DataWriter with the resolved QoS; publish anyway so the
     // sample write path is exercised too, same as every other row here.
     provider.Publish({"forcing", "anchor"}, MakeEncoder(1));
@@ -477,7 +479,7 @@ TEST(FastDdsConfig, AFletcherWriterProfileDecidesDurability) {
     config.document = document;
     FastDDSPubSubProvider provider(config);
 
-    provider.CreateTopic({"forcing", "volatile"}, MakeSchema());
+    provider.CreateTopic({"forcing", "volatile"}, {MakeSchema()});
     provider.Publish({"forcing", "volatile"}, MakeEncoder(1));
 
     Announced announced;
@@ -508,7 +510,7 @@ TEST(FastDdsConfig, AFletcherWriterProfileDecidesReliability) {
     config.document = document;
     FastDDSPubSubProvider provider(config);
 
-    provider.CreateTopic({"forcing", "besteffort"}, MakeSchema());
+    provider.CreateTopic({"forcing", "besteffort"}, {MakeSchema()});
     provider.Publish({"forcing", "besteffort"}, MakeEncoder(1));
 
     Announced announced;
@@ -538,8 +540,8 @@ TEST(FastDdsConfig, PerTopicProfileOverridesTheDefault) {
     config.document = document;
     FastDDSPubSubProvider provider(config);
 
-    provider.CreateTopic({"pertopic", "special"}, MakeSchema());
-    provider.CreateTopic({"pertopic", "ordinary"}, MakeSchema());
+    provider.CreateTopic({"pertopic", "special"}, {MakeSchema()});
+    provider.CreateTopic({"pertopic", "ordinary"}, {MakeSchema()});
     provider.Publish({"pertopic", "special"}, MakeEncoder(1));
     provider.Publish({"pertopic", "ordinary"}, MakeEncoder(1));
 
@@ -571,11 +573,11 @@ TEST(FastDdsConfig, ReaderProfileConfiguresTheReader) {
     // (reader-side redesign): declaring the topic locally first resolves that synchronously, on
     // this thread, inside Subscribe below -- which is what makes the reader observable on
     // discovery at all.
-    provider.CreateTopic({"readercfg", "topic"}, MakeSchema());
+    provider.CreateTopic({"readercfg", "topic"}, {MakeSchema()});
 
-    SubscriptionResult result =
-        provider.Subscribe({"readercfg", "topic"},
-                           [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
+    SubscriptionResult result = provider.Subscribe(
+        {"readercfg", "topic"},
+        {[](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}});
     (void)result;
 
     Announced announced;
@@ -603,11 +605,11 @@ TEST(FastDdsConfig, WriterOnlyDocumentLeavesTheReaderOnFastDdsDefault) {
 
     // See ReaderProfileConfiguresTheReader above: a data reader stays disabled -- and off
     // discovery -- until its topic's schema is known, so declare it locally first.
-    provider.CreateTopic({"readersilence", "topic"}, MakeSchema());
+    provider.CreateTopic({"readersilence", "topic"}, {MakeSchema()});
 
-    SubscriptionResult result =
-        provider.Subscribe({"readersilence", "topic"},
-                           [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {});
+    SubscriptionResult result = provider.Subscribe(
+        {"readersilence", "topic"},
+        {[](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}});
     (void)result;
 
     Announced announced;
@@ -649,7 +651,7 @@ TEST(FastDdsConfig, SchemaChannelIgnoresTheDocument) {
     config.document = document;
     FastDDSPubSubProvider provider(config);
 
-    provider.CreateTopic({"schemachannel", "topic"}, MakeSchema());
+    provider.CreateTopic({"schemachannel", "topic"}, {MakeSchema()});
     provider.Publish({"schemachannel", "topic"}, MakeEncoder(1));
 
     Announced data_writer;
@@ -680,8 +682,8 @@ TEST(FastDdsConfig, TwoInstancesShareOneDocument) {
     FastDDSPubSubProvider a(config_a);
     FastDDSPubSubProvider b(config_b);
 
-    a.CreateTopic({"twoinstances", "a"}, MakeSchema());
-    b.CreateTopic({"twoinstances", "b"}, MakeSchema());
+    a.CreateTopic({"twoinstances", "a"}, {MakeSchema()});
+    b.CreateTopic({"twoinstances", "b"}, {MakeSchema()});
     a.Publish({"twoinstances", "a"}, MakeEncoder(1));
     b.Publish({"twoinstances", "b"}, MakeEncoder(1));
 
@@ -1273,6 +1275,39 @@ TEST(FastDdsConfig, AnExplicitZeroDomainIdIsReadAsAbsent) {
     EXPECT_NO_THROW({ FastDDSPubSubProvider provider(config); });
 }
 
+// Pins the XML shape the README's "Discovery server" subsection publishes for a CLIENT participant.
+// Resolution-shaped on purpose: the QoS is read back from the document in-process, so no CLIENT
+// participant is ever created here and nothing tries to reach a server.
+TEST(FastDdsConfig, AClientAnchorResolvesToTheDiscoveryServer) {
+    const std::string document = Document("", R"(
+      <rtps>
+        <builtin>
+          <discovery_config>
+            <discoveryProtocol>CLIENT</discoveryProtocol>
+            <discoveryServersList>
+              <locator>
+                <udpv4>
+                  <address>127.0.0.1</address>
+                  <port>11811</port>
+                </udpv4>
+              </locator>
+            </discoveryServersList>
+          </discovery_config>
+        </builtin>
+      </rtps>)");
+
+    DomainParticipantQos qos;
+    internal::ResolveParticipantQos(document, 0, qos);
+
+    const auto& discovery = qos.wire_protocol().builtin.discovery_config;
+    EXPECT_EQ(discovery.discoveryProtocol, eprosima::fastdds::rtps::DiscoveryProtocol::CLIENT);
+    ASSERT_EQ(discovery.m_DiscoveryServers.size(), 1u);
+    const auto& server = *discovery.m_DiscoveryServers.begin();
+    EXPECT_EQ(server.kind, LOCATOR_KIND_UDPv4);
+    EXPECT_EQ(eprosima::fastdds::rtps::IPLocator::toIPv4string(server), "127.0.0.1");
+    EXPECT_EQ(server.port, 11811u);
+}
+
 // max_payload_bytes: 0 means unset and resolves to 65536 — bit-for-bit what the retired options
 // struct defaulted to. This is the number this provider's own publishers register in the type
 // name; a subscriber follows whatever a publisher announces instead.
@@ -1310,7 +1345,7 @@ TEST(FastDdsConfig, ASchemaLargerThanTheSchemaBoundIsRefused) {
 
     FastDDSPubSubProvider provider(ProviderConfig{});
     try {
-        provider.CreateTopic({"schemabound", "toolarge"}, MakeOversizedSchema());
+        provider.CreateTopic({"schemabound", "toolarge"}, {MakeOversizedSchema()});
         ADD_FAILURE() << "an oversized schema was accepted";
     } catch (const PubSubError& e) {
         EXPECT_EQ(e.status(), PubSubStatus::kTransportFailure) << e.what();
@@ -1329,7 +1364,7 @@ TEST(FastDdsConfig, AFailedSchemaAnnouncementCanBeRetried) {
 
     auto announce = [&provider] {
         try {
-            provider.CreateTopic({"schemabound", "retry"}, MakeOversizedSchema());
+            provider.CreateTopic({"schemabound", "retry"}, {MakeOversizedSchema()});
         } catch (const PubSubError& e) {
             return std::string(e.what());
         }
@@ -1351,9 +1386,9 @@ TEST(FastDdsConfig, AFailedSchemaAnnouncementCanBeRetried) {
 // contract rather than a fix to an existing one.
 TEST(FastDdsConfig, PublishOnASubscribedTopicWithoutCreateTopicIsRefused) {
     FastDDSPubSubProvider provider(ProviderConfig{});
-    static_cast<void>(
-        provider.Subscribe({"subscribedonly", "topic"},
-                           [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}));
+    static_cast<void>(provider.Subscribe(
+        {"subscribedonly", "topic"},
+        {[](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}}));
     try {
         provider.Publish({"subscribedonly", "topic"}, MakeEncoder(1));
         ADD_FAILURE() << "Publish on a topic only Subscribed to, never CreateTopic'd, was accepted";

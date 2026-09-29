@@ -128,19 +128,47 @@ class Subscriber {
     /// and a handler that means to subscribe from inside itself should catch
     /// the refusal or defer the call past the callback's return.
     ///
-    /// `options` is optional; a default-constructed value means the provider's defaults. The
+    /// `options` is optional; a default-constructed value means the provider's defaults. A
+    /// non-zero `options.max_payload_bytes` is refused `kInvalidArgument` by this tier itself,
+    /// before any state is touched: a subscription always follows what the publisher announces,
+    /// and the seam's own `SubscriptionRequest` carries no bound field to forward one in. The
     /// provider-level subscription for a topic is opened once and shared by every local subscriber
     /// (`EnsureProviderSubscription`); `options` apply to that FIRST opening — a later Subscribe on
     /// the same topic, from this Subscriber, joins what is already there and shares its options,
     /// checked field-wise: a later call may repeat or omit a field already stored, never change
     /// one, and a non-empty field against an EMPTY stored one is a conflict too, since the
     /// provider-level subscription already exists without it. A conflicting field throws
-    /// `PubSubError(kInvalidArgument)`. Always reaches the provider through
-    /// `PubSubProvider::SubscribeWithOptions` — its own default delegates to the pure `Subscribe`
-    /// when `options` is empty, so a provider that overrides only the pure form behaves exactly as
-    /// before.
+    /// `PubSubError(kInvalidArgument)`. Always reaches the provider as a `SubscriptionRequest` —
+    /// `provider->Subscribe(segments, {std::move(dispatch), options.profile, check})` — so a
+    /// provider with no notion of a profile sees its own `kNotSupported` refusal for a non-empty
+    /// one, and an option-less, check-less call site sees a request with both empty.
     [[nodiscard]] SubscribeResult Subscribe(const std::vector<std::string>& segments,
                                             SubscribeCallback cb, const TopicOptions& options = {});
+
+    /// `Subscribe`, gated on the topic announcing exactly `expected` — Arrow IPC byte equality, the
+    /// same comparison `CreateTopic` uses to refuse a conflicting re-declaration. An invalid
+    /// `expected` is `kInvalidArgument`, checked before the provider is ever reached; a valid
+    /// `expected` that cannot be IPC-encoded (a dictionary type) is `kInvalidArgument` too.
+    ///
+    /// **First opening**: the byte comparison rides to the provider as
+    /// `SubscriptionRequest::check`, which runs it once before the data side opens
+    /// (`PubSubProvider::Subscribe` documents the outcomes). A synchronous rejection throws
+    /// `kSchemaConflict` and rolls this call's local record back exactly as a rejected check-less
+    /// `Subscribe` does; a later rejection answers the shared arrival `kSchemaConflict`, and
+    /// nothing is ever delivered to anyone on the topic. An announced schema that cannot be
+    /// IPC-encoded is a mismatch, not an exemption. A schema-less transport (arrival `kOk` + null)
+    /// has nothing to check and always delivers. A provider with no notion of a check refuses
+    /// `kNotSupported`, and this call's local record is rolled back.
+    ///
+    /// **Joining**: the comparison runs synchronously, against the bytes stored by whichever call
+    /// opened the topic — never against the announced schema directly, and never deferred to a
+    /// delivery, because the bytes to compare are already in hand whether or not a schema has
+    /// arrived yet. Equal: joins like any other joiner. Different: `kSchemaConflict`. The topic was
+    /// opened with no stored expected schema: `kInvalidArgument` —
+    /// "topic already subscribed without an expected schema".
+    [[nodiscard]] SubscribeResult Subscribe(const std::vector<std::string>& segments,
+                                            OwnedSchema expected, SubscribeCallback cb,
+                                            const TopicOptions& options = {});
 
     /// Remove a subscription by ID. Calls provider->Unsubscribe if this
     /// was the last subscription on the topic.

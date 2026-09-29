@@ -37,6 +37,7 @@
 #include <fletcher/core/internal/delivery_frame.hpp>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/delivery_channel.hpp>
+#include <fletcher/pubsub/internal/schema_check.hpp>
 #include <fletcher/pubsub/internal/segments.hpp>
 #include <fletcher/pubsub/payload_bound.hpp>
 #include <fletcher/pubsub/schema_arrival.hpp>
@@ -93,12 +94,12 @@ struct FastDDSPubSubProvider::Impl {
             // schema a subscription on this same instance starts from.
             std::vector<uint8_t> schema_ipc;
             // The bound this topic's writer registered and announces on `__schema` -- this
-            // topic's own, from `TopicOptions::max_payload_bytes` or the provider's own bound when
-            // that was zero. Set once, when `data_writer` is created, and never changed after: a
-            // re-declaration at a different bound is refused rather than migrating the writer.
+            // topic's own, from `TopicDeclaration::max_payload_bytes` or the provider's own bound
+            // when that was zero. Set once, when `data_writer` is created, and never changed after:
+            // a re-declaration at a different bound is refused rather than migrating the writer.
             uint32_t payload_bytes = 0;
             // The `<data_writer>` profile this topic's writer was resolved from
-            // (`TopicOptions::profile`), empty when none was given. The conflict key for a
+            // (`TopicDeclaration::profile`), empty when none was given. The conflict key for a
             // re-declaration alongside `payload_bytes`, above.
             std::string profile;
         } published;
@@ -122,10 +123,18 @@ struct FastDDSPubSubProvider::Impl {
             DataReader* data_reader = nullptr;
             std::unique_ptr<internal::DataReaderListenerBase> data_listener;
             // The `<data_reader>` profile this subscription was opened with
-            // (`TopicOptions::profile`), empty when none was given. Written under `schema_mu`
-            // alongside `data_listener` (Subscribe) and cleared there too (Unsubscribe);
-            // `OpenDataReader` reads it on the schema thread, under the same lock.
+            // (`SubscriptionRequest::profile`), empty when none was given. Written under
+            // `schema_mu` alongside `data_listener` (Subscribe) and cleared there too
+            // (Unsubscribe); `OpenDataReader` reads it on the schema thread, under the same lock.
             std::string profile;
+            // A checked subscription's check, held only until the schema is known: consumed by
+            // Subscribe when the schema is already known, else by HandleSchema on its first
+            // arrival. Same lock rule as `profile`.
+            PubSubProvider::SchemaCheck check;
+            // Set by HandleSchema when the check rejected the announced schema: no data reader
+            // exists and none will; Unsubscribe clears it and re-arms the arrival when a watch
+            // keeps the side open.
+            bool rejected = false;
         } subscribed;
     };
 
@@ -449,6 +458,28 @@ struct FastDDSPubSubProvider::Impl {
             sub.schema = MakeSharedSchema(std::move(owned));
             sub.payload_bytes = bound;
 
+            if (sub.data_listener && !sub.data_reader && sub.check) {
+                PubSubProvider::SchemaCheck check = std::move(sub.check);
+                sub.check = nullptr;
+                if (!check(sub.schema)) {
+                    // Rejected: the schema stays known, so every later sample takes the
+                    // resend/conflict branch above; the reader is never opened, so the wrong-type
+                    // writer never matches this participant; and the arrival carries the verdict.
+                    // Unsubscribe is the one way out.
+                    sub.rejected = true;
+                    EPROSIMA_LOG_ERROR(FLETCHER_SUBSCRIPTION,
+                                       "'" << name
+                                           << "' announced a schema the subscription's "
+                                              "check rejected; its data reader is not opened");
+                    if (sub.resolver.valid())
+                        std::move(sub.resolver)
+                            .Fail(PubSubStatus::kSchemaConflict,
+                                  "FastDDS: '" + name +
+                                      "' announces a schema the subscription's check rejected");
+                    continue;
+                }
+            }
+
             // Create BEFORE resolving. A waiter woken by the arrival may publish at once, and with
             // VOLATILE data a row sent before this reader exists and is matched is gone; Fast DDS
             // completes intraprocess matching inside create_datareader, so a resolved arrival
@@ -767,13 +798,7 @@ const char* FastDDSPubSubProvider::DefaultProfilesDocument() noexcept {
 // -----------------------------------------------------------------------
 
 void FastDDSPubSubProvider::CreateTopic(const std::vector<std::string>& topic_segments,
-                                        OwnedSchema schema) {
-    CreateTopicWithOptions(topic_segments, std::move(schema), TopicOptions{});
-}
-
-void FastDDSPubSubProvider::CreateTopicWithOptions(const std::vector<std::string>& topic_segments,
-                                                   OwnedSchema schema,
-                                                   const TopicOptions& options) {
+                                        TopicDeclaration declaration) {
     // Every seam entry point translates, so the only exception that can leave this
     // provider is a PubSubError carrying a stable number.
     TranslateSeamFailure([&] {
@@ -785,16 +810,15 @@ void FastDDSPubSubProvider::CreateTopicWithOptions(const std::vector<std::string
         // after `impl_->mu`, the refusal never runs and the call hangs on the
         // mutex exactly as it did with no door at all. That is a measured
         // mistake, not a hypothetical one.
-        internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this),
-                                           "CreateTopicWithOptions");
+        internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this), "CreateTopic");
 
         std::string name = internal::JoinSegments(topic_segments);
 
-        // This topic's own bound: `options.max_payload_bytes` if given, else the provider's own
-        // (0 there means "unset" too, resolved at construction). Validated before any lock, the
-        // same rule the constructor applies to the provider's own bound.
-        const uint32_t bound =
-            options.max_payload_bytes ? options.max_payload_bytes : impl_->max_payload_bytes;
+        // This topic's own bound: `declaration.max_payload_bytes` if given, else the provider's
+        // own (0 there means "unset" too, resolved at construction). Validated before any lock,
+        // the same rule the constructor applies to the provider's own bound.
+        const uint32_t bound = declaration.max_payload_bytes ? declaration.max_payload_bytes
+                                                             : impl_->max_payload_bytes;
         if (!IsPayloadBound(bound)) {
             throw PubSubError(PubSubStatus::kInvalidArgument,
                               "FastDDS: max_payload_bytes " + std::to_string(bound) +
@@ -802,6 +826,14 @@ void FastDDSPubSubProvider::CreateTopicWithOptions(const std::vector<std::string
                                   std::to_string(kMinPayloadBytes) + " and " +
                                   std::to_string(kMaxPayloadBytes));
         }
+
+        // Resolved before any lock, the same reason Subscribe resolves its reader profile early:
+        // an unknown `<data_writer>` profile name is refused synchronously here, quoting it,
+        // rather than surfacing later from under `impl_->mu`. The resolved QoS is reused below on
+        // the fresh-declaration path; a re-declaration pays the same lookup and ignores the
+        // result, which costs nothing this call could otherwise skip under the lock.
+        const DataWriterQos wqos =
+            internal::ResolveDataWriterQos(*impl_->publisher, name, declaration.profile);
 
         std::lock_guard lock(impl_->mu);
 
@@ -827,14 +859,15 @@ void FastDDSPubSubProvider::CreateTopicWithOptions(const std::vector<std::string
                 // and the same (or no) profile, refused for a genuine conflict -- neither field can
                 // migrate the writer once created, a caller that wants another bound or profile
                 // unsubscribes and declares a fresh topic instead. Only a field the caller actually
-                // named conflicts: an empty `TopicOptions` means "the provider's defaults" and is
-                // never refused, so it re-declares a topic declared at any bound. This check must
-                // run BEFORE the topic-type handling below ever looks at `bound`: that logic exists
-                // for the topic this instance does NOT yet publish, and running it here with a
-                // conflicting `bound` would delete the very topic this writer is attached to.
-                if ((options.max_payload_bytes != 0 &&
-                     options.max_payload_bytes != ts.published.payload_bytes) ||
-                    (!options.profile.empty() && options.profile != ts.published.profile)) {
+                // named conflicts: an empty `TopicDeclaration` field means "the provider's
+                // defaults" and is never refused, so it re-declares a topic declared at any bound.
+                // This check must run BEFORE the topic-type handling below ever looks at `bound`:
+                // that logic exists for the topic this instance does NOT yet publish, and running
+                // it here with a conflicting `bound` would delete the very topic this writer is
+                // attached to.
+                if ((declaration.max_payload_bytes != 0 &&
+                     declaration.max_payload_bytes != ts.published.payload_bytes) ||
+                    (!declaration.profile.empty() && declaration.profile != ts.published.profile)) {
                     throw PubSubError(PubSubStatus::kInvalidArgument,
                                       "FastDDS: '" + name +
                                           "' is already declared at payload bound " +
@@ -879,15 +912,14 @@ void FastDDSPubSubProvider::CreateTopicWithOptions(const std::vector<std::string
                 }
 
                 // Created here rather than on first Publish, so the publish path never upgrades
-                // its lock: the profile named after this topic if the registry has one, else the
-                // Publisher's own default QoS (internal/profile_document.hpp) -- or, with
-                // `options.profile` set, that profile by name. The cost is the writer's pool
-                // reserved up front for every declared topic, whether or not it is ever published
-                // to: at the built-in defaults (max_samples 25, 64 KiB payload bound, data_sharing
-                // AUTO) each declared topic reserves roughly 1.7 MB of data-sharing segment plus
-                // its payload pool at CreateTopic, published to or not.
-                const DataWriterQos wqos =
-                    internal::ResolveDataWriterQos(*impl_->publisher, name, options.profile);
+                // its lock: `wqos`, resolved above before any lock, is the profile named after
+                // this topic if the registry has one, else the Publisher's own default QoS
+                // (internal/profile_document.hpp) -- or, with `declaration.profile` set, that
+                // profile by name. The cost is the writer's pool reserved up front for every
+                // declared topic, whether or not it is ever published to: at the built-in
+                // defaults (max_samples 25, 64 KiB payload bound, data_sharing AUTO) each
+                // declared topic reserves roughly 1.7 MB of data-sharing segment plus its payload
+                // pool at CreateTopic, published to or not.
                 ts.published.data_writer = impl_->publisher->create_datawriter(
                     ts.data_topic, wqos, &impl_->data_writer_listener,
                     // Only the statuses DataWriterListener implements (`<<` is how StatusMask
@@ -901,15 +933,15 @@ void FastDDSPubSubProvider::CreateTopicWithOptions(const std::vector<std::string
                     throw PubSubError(PubSubStatus::kTransportFailure,
                                       "FastDDS: failed to create DataWriter for: " + name);
                 ts.published.payload_bytes = bound;
-                ts.published.profile = options.profile;
+                ts.published.profile = declaration.profile;
             }
         }
 
         // Announce the schema on the companion __schema channel so that
         // late-joining subscribers — and a subscriber-first reader already waiting
         // on this provider — receive it via TRANSIENT_LOCAL.
-        if (schema) {
-            std::vector<uint8_t> ipc = SerializeSchemaIpc(schema.get());
+        if (declaration.schema) {
+            std::vector<uint8_t> ipc = SerializeSchemaIpc(declaration.schema.get());
 
             if (ts.published.schema_writer) {
                 // A publisher already announced a schema for this topic. Idempotent
@@ -1031,38 +1063,37 @@ void FastDDSPubSubProvider::Publish(const std::vector<std::string>& topic_segmen
 }
 
 SubscriptionResult FastDDSPubSubProvider::Subscribe(const std::vector<std::string>& topic_segments,
-                                                    SubscribeCallback callback) {
-    return SubscribeWithOptions(topic_segments, std::move(callback), TopicOptions{});
-}
-
-SubscriptionResult FastDDSPubSubProvider::SubscribeWithOptions(
-    const std::vector<std::string>& topic_segments, SubscribeCallback callback,
-    const TopicOptions& options) {
+                                                    SubscriptionRequest request) {
     // Every seam entry point translates, so the only exception that can leave this
     // provider is a PubSubError carrying a stable number.
     return TranslateSeamFailure([&]() -> SubscriptionResult {
         // The door, before any lock: a Fast DDS listener callback
         // runs with the RTPS reader mutex held, and this call HANGS if it is let
         // through — probed, not assumed. Refused by name instead.
-        internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this),
-                                           "SubscribeWithOptions");
-
-        // A subscription follows whatever bound its publisher announces on `__schema`; it never
-        // carries one of its own.
-        if (options.max_payload_bytes != 0) {
-            throw PubSubError(
-                PubSubStatus::kInvalidArgument,
-                "FastDDS: a subscription follows the bound its publisher announces on __schema; "
-                "max_payload_bytes may not be set on Subscribe");
-        }
+        internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this), "Subscribe");
 
         std::string name = internal::JoinSegments(topic_segments);
 
+        // An empty callback has nothing to deliver a sample to.
+        if (!request.callback) {
+            throw PubSubError(PubSubStatus::kInvalidArgument,
+                              "FastDDS: a subscription needs a callback");
+        }
+
         // Resolved (and discarded) here, before any lock, so an unknown profile name is refused
         // synchronously rather than surfacing later when the schema thread opens the reader.
-        if (!options.profile.empty()) {
+        if (!request.profile.empty()) {
             static_cast<void>(
-                internal::ResolveDataReaderQos(*impl_->subscriber, name, options.profile));
+                internal::ResolveDataReaderQos(*impl_->subscriber, name, request.profile));
+        }
+
+        // The framed check runs on whichever thread settles the schema, so a seam call from inside
+        // it is refused kReentrantCall.
+        if (request.check) {
+            request.check = [token = static_cast<const PubSubProvider*>(this),
+                             c = std::move(request.check)](const SharedSchema& s) {
+                return internal::RunSchemaCheck(token, c, s);
+            };
         }
 
         std::unique_lock lock(impl_->mu);
@@ -1083,35 +1114,55 @@ SubscriptionResult FastDDSPubSubProvider::SubscribeWithOptions(
         // unit-tested (data_reader_listener.hpp) but is not selected here -- this is the one line
         // that would flip it, behind CanLoanSamples(rqos).
         auto listener = std::make_unique<internal::CopyingDataReaderListener>(
-            impl_->status_listener, DeliveryChannel(this, std::move(callback)));
+            impl_->status_listener, DeliveryChannel(this, std::move(request.callback)));
 
-        // `subscribed.data_listener` is written, and `subscribed.schema` read, under `schema_mu`
-        // -- the lock HandleSchema holds for its own read of one and write of the other -- so
-        // exactly one of "Subscribe finds the schema already known" and "HandleSchema resolves it
-        // later" ever opens this reader. OpenDataReader runs while still holding the lock, as
-        // HandleSchema's does; the Fast DDS calls it makes do not call back into this provider's
-        // own code.
         bool failed = false;
+        PubSubStatus status = PubSubStatus::kTransportFailure;
         std::string failure;
+        // The check and the install happen under one `schema_mu` hold, the same lock HandleSchema
+        // runs its own check under: HandleSchema either finds the check stored below, or this call
+        // has already run it against `ts.subscribed.schema` -- there is no window between "is the
+        // schema known" and "run the check against it" for the schema thread to land in.
         {
+            // `subscribed.data_listener` is written, and `subscribed.schema` read, under
+            // `schema_mu` -- the lock HandleSchema holds for its own read of one and write of the
+            // other -- so exactly one of "Subscribe finds the schema already known" and
+            // "HandleSchema resolves it later" ever opens this reader. OpenDataReader runs while
+            // still holding the lock, as HandleSchema's does; the Fast DDS calls it makes do not
+            // call back into this provider's own code.
             std::lock_guard schema_lock(impl_->schema_mu);
-            ts.subscribed.data_listener = std::move(listener);
-            ts.subscribed.profile = options.profile;
-            if (ts.subscribed.schema) {
-                // Broad on purpose, as on the schema thread: the announced bound sizes the
-                // reader's pool, so a huge one can fail allocation inside create_datareader. The
-                // reason is carried out rather than swallowed -- it is the only thing that tells
-                // a too-large announced bound from a topic already held at another type.
-                try {
-                    impl_->OpenDataReader(name, ts);
-                } catch (const std::exception& e) {
-                    ts.subscribed.data_listener.reset();
-                    failed = true;
-                    failure = e.what();
-                } catch (...) {
-                    ts.subscribed.data_listener.reset();
-                    failed = true;
-                    failure = "non-std exception";
+            if (ts.subscribed.schema && request.check && !request.check(ts.subscribed.schema)) {
+                failed = true;
+                status = PubSubStatus::kSchemaConflict;
+                failure =
+                    "FastDDS: '" + name + "' announces a schema the subscription's check rejected";
+            } else {
+                ts.subscribed.data_listener = std::move(listener);
+                ts.subscribed.profile = request.profile;
+                // Consumed above when the schema was known; kept for HandleSchema otherwise.
+                ts.subscribed.check =
+                    ts.subscribed.schema ? PubSubProvider::SchemaCheck{} : std::move(request.check);
+                if (ts.subscribed.schema) {
+                    // Broad on purpose, as on the schema thread: the announced bound sizes the
+                    // reader's pool, so a huge one can fail allocation inside create_datareader.
+                    // The reason is carried out rather than swallowed -- it is the only thing
+                    // that tells a too-large announced bound from a topic already held at
+                    // another type.
+                    try {
+                        impl_->OpenDataReader(name, ts);
+                    } catch (const std::exception& e) {
+                        ts.subscribed.data_listener.reset();
+                        ts.subscribed.check = nullptr;
+                        failed = true;
+                        failure = "FastDDS: failed to open the data reader for: " + name + " (" +
+                                  e.what() + ")";
+                    } catch (...) {
+                        ts.subscribed.data_listener.reset();
+                        ts.subscribed.check = nullptr;
+                        failed = true;
+                        failure = "FastDDS: failed to open the data reader for: " + name +
+                                  " (non-std exception)";
+                    }
                 }
             }
         }
@@ -1125,9 +1176,7 @@ SubscriptionResult FastDDSPubSubProvider::SubscribeWithOptions(
                 impl_->schema_wait_set.detach_condition(schema_reader->get_statuscondition());
                 impl_->subscriber->delete_datareader(schema_reader);
             }
-            throw PubSubError(
-                PubSubStatus::kTransportFailure,
-                "FastDDS: failed to open the data reader for: " + name + " (" + failure + ")");
+            throw PubSubError(status, failure);
         }
 
         return {ts.subscribed.arrival};
@@ -1170,6 +1219,16 @@ void FastDDSPubSubProvider::Unsubscribe(const std::vector<std::string>& topic_se
                 ts.subscribed.data_reader = nullptr;
                 listener = std::move(ts.subscribed.data_listener);
                 ts.subscribed.profile.clear();
+                ts.subscribed.check = nullptr;
+                if (ts.subscribed.rejected) {
+                    ts.subscribed.rejected = false;
+                    // A watch may keep the schema side (and its failed arrival) alive after this
+                    // subscription goes; the topic's arrival becomes the known schema again so a
+                    // later Subscribe is answered kOk. CloseSchemaSide replaces everything when no
+                    // watch remains.
+                    if (ts.subscribed.schema)
+                        ts.subscribed.arrival = SchemaArrival::Ready(ts.subscribed.schema);
+                }
             }
             // Schema side goes with the last user of it.
             schema_reader = ts.subscribed.watches == 0 ? impl_->CloseSchemaSide(ts) : nullptr;

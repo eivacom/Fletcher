@@ -116,7 +116,7 @@ inline void ResolveParticipantQos(const std::string& document, uint32_t domain_i
 /// Fast DDS itself seeded from the document's `is_default_profile="true"` `<data_writer>` profile
 /// if it had one, else Fast DDS's own default. `fletcher_writer` is not a special name.
 ///
-/// `profile`, when non-empty, is a `TopicOptions::profile` naming a `<data_writer>` profile
+/// `profile`, when non-empty, is a `TopicDeclaration::profile` naming a `<data_writer>` profile
 /// directly -- `topic_name` plays no part then, and a name the document does not define throws
 /// `PubSubError(kInvalidArgument)` naming it, rather than falling back the way a topic-name miss
 /// does. Empty (the default) is today's lookup: `topic_name`'s own profile if the registry has

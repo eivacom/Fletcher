@@ -129,26 +129,19 @@ class DeliveryScope {
 /// `token`, and do nothing otherwise.
 ///
 /// **The refused set is EVERY seam method, on every provider** — the four
-/// data-path methods `CreateTopic`, `Publish`, `Subscribe`, `Unsubscribe`, the
-/// two schema-only ones, `SubscribeSchema` and `UnsubscribeSchema`, and the two
-/// options-taking ones, `CreateTopicWithOptions` and `SubscribeWithOptions` — on
-/// the same instance and the same thread (owner ruling 2026-09-05, "Re-entry is
-/// refused on every protocol", which SUPERSEDES the earlier ruling that refused
-/// only `Unsubscribe`).
+/// data-path methods `CreateTopic`, `Publish`, `Subscribe`, `Unsubscribe`, and the
+/// two schema-only ones, `SubscribeSchema` and `UnsubscribeSchema` — on the same
+/// instance and the same thread.
 ///
-/// The earlier ruling rested on the claim that the other three "work today on
-/// Fast DDS and XRCE". Probing found that false: a Fast DDS listener callback
-/// runs with the RTPS reader mutex held, and Declare+Publish and Subscribe each
-/// HANG there independently. The capability was real on XRCE alone, one protocol
-/// of three. One uniform rule, enforced loudly, beats two answers to one
-/// question — and re-permitting is a registered obligation on PDA-ABI, where the
-/// loaned-sample receive path makes deferral affordable.
+/// One rule on every protocol, because it cannot be served on all of them: a Fast
+/// DDS listener callback runs with the RTPS reader mutex held, and a `CreateTopic`
+/// followed by `Publish`, or a `Subscribe`, called from it each HANG there. A
+/// loaned-sample receive path would make deferral affordable.
 ///
-/// **The message spells `kReentrantCall` in text** (review debt AG1-DEBT-11).
-/// `~Subscriber` rethrows this status out of a `noexcept` destructor, and the
-/// default terminate handler prints `what()` and NOT the numeric status — so
-/// without the word in the string, ruling 2026-09-05's "a stated, NAMED error
-/// instead of a silent one" would be served by a number nobody sees.
+/// **The message spells `kReentrantCall` in text.** `~Subscriber` rethrows this
+/// status out of a `noexcept` destructor, and the default terminate handler prints
+/// `what()` and NOT the numeric status — so without the word in the string the
+/// error would be named only by a number nobody sees.
 inline void RefuseIfInsideDeliveryOn(const void* token, const char* method) {
     if (!InsideDeliveryOn(token)) return;
     throw PubSubError(PubSubStatus::kReentrantCall,

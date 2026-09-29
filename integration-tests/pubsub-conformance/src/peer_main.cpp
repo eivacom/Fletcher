@@ -114,7 +114,7 @@ int RunPeerMain(int argc, char** argv, const PeerProviderFactory& make_provider,
                                "harness peer: cannot build schema: " + DescribeException(e));
                     continue;
                 }
-                provider->CreateTopic(SplitTopic(joined), std::move(built));
+                provider->CreateTopic(SplitTopic(joined), {std::move(built)});
                 WriteReply(prefix + "ok");
             } else if (verb == "publish") {
                 std::string joined;

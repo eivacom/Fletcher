@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "fletcher/pubsub/delivery_channel.hpp"
+#include "fletcher/pubsub/internal/schema_check.hpp"
 #include "fletcher/pubsub/internal/schema_conflict.hpp"
 #include "fletcher/pubsub/internal/segments.hpp"
 
@@ -157,6 +158,11 @@ struct InProcessPubSubProvider::Impl {
         // while no schema has been declared yet. Destroying it unresolved is
         // kSubscriptionEnded, which is what a teardown before a declaration is.
         std::optional<SchemaResolver> resolver;
+        // A SubscriptionRequest::check, held only in kCarried while nothing is declared yet —
+        // alongside `resolver`, which it answers instead of. Consumed by the declaration that
+        // resolves the arrival: CreateTopic moves it out and runs it before deciding whether the
+        // subscription's arrival is Resolved or Failed.
+        PubSubProvider::SchemaCheck pending_check;
         // Null when nobody announced one; in kAsDeclared the gateway lets the
         // client bring its own.
         SharedSchema schema;
@@ -180,7 +186,7 @@ InProcessPubSubProvider::InProcessPubSubProvider(const ProviderConfig& config)
 InProcessPubSubProvider::~InProcessPubSubProvider() = default;
 
 void InProcessPubSubProvider::CreateTopic(const std::vector<std::string>& topic_segments,
-                                          OwnedSchema schema) {
+                                          TopicDeclaration declaration) {
     // Every seam entry point translates, so the only exception leaving this
     // provider is a PubSubError carrying a stable number (spec §5.1).
     TranslateSeamFailure([&] {
@@ -188,12 +194,26 @@ void InProcessPubSubProvider::CreateTopic(const std::vector<std::string>& topic_
 
         std::string key = internal::JoinSegments(topic_segments);
 
-        if (impl_->carriage == SchemaCarriage::kCarried && !schema) {
+        if (impl_->carriage == SchemaCarriage::kCarried && !declaration.schema) {
             throw PubSubError(PubSubStatus::kInvalidArgument,
                               "InProcessPubSubProvider: a schema-carrying instance cannot declare "
                               "a topic with no schema: " +
                                   key);
         }
+        // This provider has no notion of a per-topic bound or a profile: any non-empty value is
+        // refused rather than silently accepted, before any lock is taken.
+        if (declaration.max_payload_bytes != 0) {
+            throw PubSubError(PubSubStatus::kNotSupported,
+                              "InProcessPubSubProvider: this provider has no notion of a "
+                              "per-topic payload bound: " +
+                                  key);
+        }
+        if (!declaration.profile.empty()) {
+            throw PubSubError(PubSubStatus::kNotSupported,
+                              "InProcessPubSubProvider: this provider knows no profiles: " + key);
+        }
+
+        OwnedSchema schema = std::move(declaration.schema);
 
         // Encode before taking the lock, so the locked section is a byte compare
         // rather than an IPC encode every concurrent CreateTopic queues behind.
@@ -207,6 +227,7 @@ void InProcessPubSubProvider::CreateTopic(const std::vector<std::string>& topic_
         }
 
         std::optional<SchemaResolver> to_resolve;
+        std::optional<SchemaResolver> to_fail;
         {
             std::lock_guard lock(impl_->mu);
             auto& slot = impl_->topics[key];
@@ -238,10 +259,28 @@ void InProcessPubSubProvider::CreateTopic(const std::vector<std::string>& topic_
             // from null to non-null mid-stream (§7 clause 1). A client that wants
             // the newly declared shape resubscribes.
             if (impl_->carriage == SchemaCarriage::kCarried) {
-                slot.subscription_schema = shared;
-                if (slot.resolver.has_value()) {
-                    to_resolve = std::move(slot.resolver);
+                // A Subscribe carrying a check that arrived before this declaration gets its one
+                // answer here, against the schema this declaration just fixed.
+                bool rejected = false;
+                if (slot.pending_check) {
+                    PubSubProvider::SchemaCheck check = std::move(slot.pending_check);
+                    slot.pending_check = nullptr;
+                    rejected = !internal::RunSchemaCheck(static_cast<const PubSubProvider*>(this),
+                                                         check, shared);
+                }
+                if (rejected) {
+                    // The subscription never sees a row: a carrying instance must never call
+                    // back with a null schema, and `subscription_schema` stays null, so the
+                    // channel goes too. Unsubscribe is the way out.
+                    slot.channel = DeliveryChannel{};
+                    to_fail = std::move(slot.resolver);
                     slot.resolver.reset();
+                } else {
+                    slot.subscription_schema = shared;
+                    if (slot.resolver.has_value()) {
+                        to_resolve = std::move(slot.resolver);
+                        slot.resolver.reset();
+                    }
                 }
             }
         }
@@ -251,6 +290,11 @@ void InProcessPubSubProvider::CreateTopic(const std::vector<std::string>& topic_
         if (to_resolve.has_value()) {
             std::move(*to_resolve).Resolve(shared);
         }
+        if (to_fail.has_value()) {
+            std::move(*to_fail).Fail(PubSubStatus::kSchemaConflict,
+                                     "InProcessPubSubProvider: topic '" + key +
+                                         "' announces a schema the subscription's check rejected");
+        }
     });
 }
 
@@ -258,10 +302,9 @@ void InProcessPubSubProvider::CreateTopic(const std::vector<std::string>& topic_
 // clause 1), and that single lock is also §7.6's quiescence — an Unsubscribe on
 // another thread blocks here until the delivery in flight has returned.
 //
-// A callback that re-enters this provider never reaches `mu` at all: all four
-// methods refuse at their door first (owner ruling 2026-09-05, "Re-entry is
-// refused on every protocol"), so `mu` being non-recursive is no longer the
-// thing standing between a handler and a deadlock. The door is.
+// A callback that re-enters this provider never reaches `mu` at all: every seam
+// method refuses at its door first, so `mu` being non-recursive is not what stands
+// between a handler and a deadlock. The door is.
 void InProcessPubSubProvider::Publish(const std::vector<std::string>& topic_segments,
                                       const RowEncoder& encoder, const Attachments& attachments) {
     TranslateSeamFailure([&] {
@@ -297,37 +340,59 @@ void InProcessPubSubProvider::Publish(const std::vector<std::string>& topic_segm
 }
 
 SubscriptionResult InProcessPubSubProvider::Subscribe(
-    const std::vector<std::string>& topic_segments, SubscribeCallback callback) {
+    const std::vector<std::string>& topic_segments, SubscriptionRequest request) {
     return TranslateSeamFailure([&]() -> SubscriptionResult {
-        internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this), "Subscribe");
+        const PubSubProvider* self = static_cast<const PubSubProvider*>(this);
+        internal::RefuseIfInsideDeliveryOn(self, "Subscribe");
 
         std::string key = internal::JoinSegments(topic_segments);
 
+        if (!request.callback)
+            throw PubSubError(PubSubStatus::kInvalidArgument,
+                              "InProcessPubSubProvider: a subscription needs a callback");
+        if (!request.profile.empty())
+            throw PubSubError(PubSubStatus::kNotSupported,
+                              "InProcessPubSubProvider: this provider knows no profiles");
+
+        DeliveryChannel channel(self, std::move(request.callback));
+
         std::lock_guard lock(impl_->mu);
         auto& slot = impl_->topics[key];
-        // Sealed here, once: `this` is the provider-instance identity the delivery
-        // frame carries, which is what every door on this instance recognises a
-        // re-entrant call by, and what makes a throwing callback absorbable.
-        slot.channel = DeliveryChannel(this, std::move(callback));
-        // Dropping any previous subscription's resolver reports kSubscriptionEnded
-        // to whoever still holds that arrival — one callback per topic per
-        // instance (§7 clause 4), so the old subscription really is over.
-        slot.resolver.reset();
+
+        // A non-empty check runs before the slot is touched, so a rejection leaves the slot exactly
+        // as it found it. `RunSchemaCheck` is the null-schema door: it never calls the check for a
+        // null schema.
+        if (request.check && !internal::RunSchemaCheck(self, request.check, slot.schema)) {
+            throw PubSubError(PubSubStatus::kSchemaConflict,
+                              "InProcessPubSubProvider: topic '" + key +
+                                  "' announces a schema the subscription's check rejected");
+        }
 
         if (impl_->carriage == SchemaCarriage::kCarried) {
             if (slot.schema) {
+                slot.channel = std::move(channel);
+                // Dropping any previous subscription's resolver reports kSubscriptionEnded to
+                // whoever still holds that arrival — one callback per topic per instance (§7
+                // clause 4), so the old subscription really is over.
+                slot.resolver.reset();
                 slot.subscription_schema = slot.schema;
                 return SubscriptionResult{SchemaArrival::Ready(slot.schema)};
             }
-            // Nothing declared yet: the arrival stays open until a publisher
-            // declares the topic, or until this subscription ends.
+            // Nothing declared yet: the arrival stays open until a publisher declares the topic,
+            // or until this subscription ends. A check that came with this call has nothing to run
+            // against yet, so it waits beside the resolver for CreateTopic's declaration to run it.
+            slot.channel = std::move(channel);
+            slot.resolver.reset();
             auto [arrival, resolver] = SchemaArrival::Create();
             slot.resolver.emplace(std::move(resolver));
+            slot.pending_check = std::move(request.check);
             return SubscriptionResult{std::move(arrival)};
         }
 
-        // kAsDeclared: latched HERE, once, for this subscription's whole life —
-        // whatever is declared right now, which may legitimately be null.
+        slot.channel = std::move(channel);
+        slot.resolver.reset();
+        // Latched HERE, once, for this subscription's whole life — whatever is declared right now,
+        // which may legitimately be null.
         slot.subscription_schema = slot.schema;
         return SubscriptionResult{SchemaArrival::Ready(slot.subscription_schema)};
     });
@@ -335,9 +400,8 @@ SubscriptionResult InProcessPubSubProvider::Subscribe(
 
 void InProcessPubSubProvider::Unsubscribe(const std::vector<std::string>& topic_segments) {
     TranslateSeamFailure([&] {
-        // The door, before any lock (spec section 6 clause 6, owner ruling
-        // 2026-09-05). Inside its own TranslateSeamFailure, which rethrows a
-        // PubSubError untouched. A cancellation cannot wait for the delivery it is
+        // The door, before any lock (spec section 6 clause 6). Inside its own TranslateSeamFailure,
+        // which rethrows a PubSubError untouched. A cancellation cannot wait for the delivery it is
         // inside of, and `mu` below is held by that very delivery -- so it is
         // refused by name rather than deadlocked.
         internal::RefuseIfInsideDeliveryOn(static_cast<const PubSubProvider*>(this), "Unsubscribe");
@@ -351,6 +415,7 @@ void InProcessPubSubProvider::Unsubscribe(const std::vector<std::string>& topic_
             it->second.subscription_schema = nullptr;
             ended = std::move(it->second.resolver);
             it->second.resolver.reset();
+            it->second.pending_check = nullptr;
         }
         // No separate 7.6 drain is needed: `mu` above IS the drain. Publish holds
         // it across the whole callback, so acquiring it here already waited out

@@ -12,6 +12,10 @@ Generated `<Msg>Subscriber` classes do exactly that behind `SubscribeInPlace(cb)
 
 The generated `<Msg>Publisher` constructor and the `<Msg>Subscriber` `Subscribe` / `SubscribeInPlace` methods each take an optional `fletcher::TopicOptions` after the callback/provider argument — `<Msg>Publisher pub(provider, {.profile = "latest"});`, `sub.Subscribe(cb, {.profile = "latest_reader"})` — omitting it means the provider's defaults, and `profile` / `max_payload_bytes` carry the provider's own semantics (see the FastDDS provider README's [Per-topic options](../fastdds-pubsub-provider/README.md#per-topic-options)).
 
+`Subscribe` and `SubscribeInPlace` return a `fletcher::Subscriber::SubscribeResult`, not a bare subscription id: `result.subscription_id` is what `Unsubscribe` takes, and `result.schema` is a waitable arrival for the topic's schema. Both are gated on the topic's announced schema matching `<Msg>`'s — a topic that already announces a different schema throws `PubSubError(kSchemaConflict)` from the call itself; when that is only known after the call returns, `result.schema` answers `kSchemaConflict` instead and no row is ever delivered to `cb`. The check is Arrow IPC byte equality — metadata and nullability included, not just field names and types — so a publisher that rebuilds the schema itself (e.g. from JSON) must reproduce it exactly, down to every metadata key and nullability flag, or every generated subscriber on that topic is refused.
+
+A provider whose own `Subscribe` does not honour `SubscriptionRequest::check` refuses a non-empty one `kNotSupported` to a generated subscriber's first `Subscribe` call on a topic (there is no other way to gate the schema before the data side opens). Every provider in this tree — in-process, Fast DDS, XRCE — honours it. A schema-less transport — arrival `kOk` with a null schema — has nothing to check and delivers unchecked.
+
 ## Building locally
 
 Requires [Conan 2](https://docs.conan.io/2/) and CMake 3.15+.

@@ -30,7 +30,7 @@ summary; the normative wording is the doc comment on each enumerator in `status.
 |---|---|---|
 | `kOk` | 0 | Success. Present because both C boundaries need a success value in the same enum; `PubSubError` refuses it, so a boundary cannot report a failed call as a success. |
 | `kInvalidArgument` | 1 | The caller passed something the seam refuses to interpret: an empty topic-segment list, a blob with bytes and no owner, a negative timeout. |
-| `kSchemaConflict` | 2 | A topic was re-declared with a provably different schema (spec §7 clause 3). |
+| `kSchemaConflict` | 2 | A topic was re-declared with a provably different schema (spec §7 clause 3), or a checked subscription refused the schema its topic announces. |
 | `kTopicNotDeclared` | 3 | The topic has not been declared on this instance. |
 | `kPayloadTooLarge` | 4 | The encoded sample does not fit the transport's payload bound. A `std::overflow_error` escaping a seam entry point maps here, normatively (spec §5.1). |
 | `kTransportFailure` | 5 | The transport refused or failed: an endpoint that would not be created, a write that did not go out, a session that is gone. |
@@ -38,7 +38,7 @@ summary; the normative wording is the doc comment on each enumerator in `status.
 | `kInternal` | 7 | The total catch-all. Anything with no better home arrives here carrying the original message — a taxonomy that lets an untyped exception through is not one. |
 | `kPending` | 8 | A wait **outcome**, never thrown: the answer is not available yet, within the timeout that was asked for. |
 | `kSubscriptionEnded` | 9 | A wait **outcome**, never thrown: the answer will never arrive, because the subscription that would have produced it is gone. |
-| `kReentrantCall` | 10 | The caller re-entered the seam from inside a delivery callback, on the same provider instance and the same thread, through a door that cannot serve it there. Every seam method — the four data-path methods, the two schema-only ones, and the two options-taking ones — refuses, on every provider (spec §6 clause 6). Distinct from `kNotSupported`, which says the provider cannot do this at all. |
+| `kReentrantCall` | 10 | The caller re-entered the seam from inside a delivery callback, on the same provider instance and the same thread, through a door that cannot serve it there. Every one of the six seam methods — the four data-path methods and the two schema-only ones — refuses, on every provider (spec §6 clause 6). Distinct from `kNotSupported`, which says the provider cannot do this at all. |
 
 **The message beside the number.** A refusal carries a human-readable message, and spec §5.1
 makes it part of the error's value: it is retrievable from the error instance (never a global or

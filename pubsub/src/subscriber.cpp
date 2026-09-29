@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "fletcher/pubsub/internal/schema_conflict.hpp"
 #include "fletcher/pubsub/internal/segments.hpp"
 
 namespace fletcher {
@@ -154,6 +155,11 @@ struct Subscriber::Impl {
         // leaves whatever the last subscription carried: the next Subscribe overwrites it as it
         // opens the next one.
         TopicOptions options;
+        // The Arrow IPC bytes of the expected schema the opening call carried, written beside
+        // `options` under the same rule. Empty when the opening call carried no expected schema
+        // (a plain Subscribe) rather than one that IPC-encoded to zero
+        // bytes — no schema IPC-encodes to zero bytes, so the two cannot collide.
+        std::vector<uint8_t> expected_ipc;
     };
 
     std::shared_ptr<PubSubProvider> provider;
@@ -278,22 +284,46 @@ struct Subscriber::Impl {
 
     // Called with mu held. Releases the lock while calling into the
     // provider to avoid deadlock if the provider calls back synchronously.
+    //
+    // `check` and `expected_ipc` come from Subscriber::Subscribe's OwnedSchema overload; both are
+    // empty for the plain one. `check` is the byte-equality comparison built from `expected_ipc`
+    // and is carried to the provider on an OPENING call. `expected_ipc` is compared against a live
+    // subscription's own stored bytes below, independently of whether a schema has arrived.
     SchemaArrival EnsureProviderSubscription(const std::string& key, TopicState& ts,
                                              std::unique_lock<std::mutex>& lock,
-                                             const TopicOptions& options) {
+                                             const TopicOptions& options,
+                                             const PubSubProvider::SchemaCheck& check,
+                                             const std::vector<uint8_t>& expected_ipc) {
         // A live provider subscription's options belong to whoever opened it. Checked
         // field-wise: a later caller may repeat or omit a field already stored, never change one
         // — and a non-empty field against an EMPTY stored one is a conflict too, because the
         // provider-level subscription already exists without it.
         auto require_options_match = [&](const TopicState& t) {
+            // `max_payload_bytes` never reaches here: `Impl::Subscribe` refuses a non-zero one
+            // unconditionally before this runs, so only `profile` can conflict.
             const bool profile_conflict =
                 !options.profile.empty() && options.profile != t.options.profile;
-            const bool bound_conflict = options.max_payload_bytes != 0 &&
-                                        options.max_payload_bytes != t.options.max_payload_bytes;
-            if (profile_conflict || bound_conflict) {
+            if (profile_conflict) {
                 throw PubSubError(
                     PubSubStatus::kInvalidArgument,
                     "Subscriber: topic already subscribed with different options: " + key);
+            }
+            // The OwnedSchema joiner rule — only a caller naming an expected schema is held to
+            // it, so a plain joiner (`expected_ipc` empty) skips this entirely and is served,
+            // unchecked, per subscriber.hpp.
+            if (!expected_ipc.empty()) {
+                if (t.expected_ipc.empty()) {
+                    throw PubSubError(PubSubStatus::kInvalidArgument,
+                                      "Subscriber: topic already subscribed without an expected "
+                                      "schema: " +
+                                          key);
+                }
+                if (t.expected_ipc != expected_ipc) {
+                    throw PubSubError(PubSubStatus::kSchemaConflict,
+                                      "Subscriber: topic already subscribed with a different "
+                                      "expected schema: " +
+                                          key);
+                }
             }
         };
 
@@ -442,9 +472,10 @@ struct Subscriber::Impl {
                 }
             };
 
-        // Always the options form; the base delegates.
-        SubscriptionResult result =
-            provider->SubscribeWithOptions(segments, std::move(dispatch), options);
+        // `check` is empty for the plain overload and non-empty for the OwnedSchema one; either way
+        // it rides the same `SubscriptionRequest` field to the provider.
+        SubscriptionResult result = provider->Subscribe(
+            segments, SubscriptionRequest{std::move(dispatch), options.profile, check});
 
         lock.lock();
 
@@ -461,7 +492,87 @@ struct Subscriber::Impl {
         // The options this provider-level subscription was opened with, for a later joiner's
         // conflict check.
         current.options = options;
+        // The expected schema this opening call carried, for a later OwnedSchema joiner's
+        // conflict check — empty when this call carried none.
+        current.expected_ipc = expected_ipc;
         return current.schema_arrival;
+    }
+
+    // The one body behind both public Subscribe overloads (subscriber.hpp). `check` and
+    // `expected_ipc` are empty for the plain overload; the OwnedSchema overload passes its
+    // byte-equality comparison as `check` and the encoded bytes as `expected_ipc`.
+    Subscriber::SubscribeResult Subscribe(const std::vector<std::string>& segments,
+                                          Subscriber::SubscribeCallback cb,
+                                          const TopicOptions& options,
+                                          PubSubProvider::SchemaCheck check,
+                                          std::vector<uint8_t> expected_ipc) {
+        std::string key = internal::JoinSegments(segments);
+        // A subscription carries no payload bound of its own — it always follows what the
+        // publisher announces — so a non-zero one is refused here, before any state is touched.
+        // The seam's own `SubscriptionRequest` has no such field to carry it in, so the check is
+        // this tier's own.
+        if (options.max_payload_bytes != 0) {
+            throw PubSubError(PubSubStatus::kInvalidArgument,
+                              "Subscriber: a subscription carries no payload bound; it follows "
+                              "what the publisher announces");
+        }
+        std::unique_lock lock(mu);
+
+        auto [it, inserted] = topics.try_emplace(key);
+        if (inserted) {
+            it->second.segments = segments;
+        }
+
+        uint64_t id = next_id.fetch_add(1);
+        subscription_topic[id] = key;
+
+        auto gate = std::make_shared<Gate>();
+        RewriteEntries(it->second,
+                       [&](std::vector<Entry>& v) { v.push_back({id, std::move(cb), gate}); });
+
+        SchemaArrival schema;
+        try {
+            schema =
+                EnsureProviderSubscription(key, it->second, lock, options, check, expected_ipc);
+        } catch (...) {
+            // Provider subscription failed — roll back the local subscription record so callers can
+            // retry without leaving dangling state behind. EnsureProviderSubscription drops the
+            // lock before calling the provider and only retakes it on success, so the lock may or
+            // may not be held here; retake it if not, and re-find the topic rather than reusing
+            // `it`.
+            if (!lock.owns_lock()) lock.lock();
+            subscription_topic.erase(id);
+            std::shared_ptr<Gate> removed;
+            auto topic_it = topics.find(key);
+            if (topic_it != topics.end()) {
+                RewriteEntries(topic_it->second, [&](std::vector<Entry>& v) {
+                    for (const Entry& e : v) {
+                        if (e.id == id) {
+                            removed = e.gate;
+                            break;
+                        }
+                    }
+                    v.erase(std::remove_if(v.begin(), v.end(),
+                                           [id](const Entry& e) { return e.id == id; }),
+                            v.end());
+                });
+            }
+            // Retire the rolled-back entry too, outside `mu` and before rethrowing: a
+            // provider that delivered once and then failed must not reach a callback
+            // whose Subscribe never returned. Published in `retirements` like any
+            // other retirement, so a concurrent cancel of this id waits for the same
+            // drain rather than finding neither map.
+            if (removed) retirements->Publish(id, removed);
+            lock.unlock();
+            if (removed && !RetireAndDrain(id, removed, /*owns_retirement=*/true)) {
+                retirements->Release(id);
+            }
+            throw;
+        }
+
+        lock.unlock();
+
+        return {id, std::move(schema)};
     }
 };
 
@@ -584,58 +695,32 @@ Subscriber::~Subscriber() {
 Subscriber::SubscribeResult Subscriber::Subscribe(const std::vector<std::string>& segments,
                                                   SubscribeCallback cb,
                                                   const TopicOptions& options) {
-    std::string key = internal::JoinSegments(segments);
-    std::unique_lock lock(impl_->mu);
+    return impl_->Subscribe(segments, std::move(cb), options, PubSubProvider::SchemaCheck{}, {});
+}
 
-    auto [it, inserted] = impl_->topics.try_emplace(key);
-    if (inserted) {
-        it->second.segments = segments;
+Subscriber::SubscribeResult Subscriber::Subscribe(const std::vector<std::string>& segments,
+                                                  OwnedSchema expected, SubscribeCallback cb,
+                                                  const TopicOptions& options) {
+    if (!expected) {
+        throw PubSubError(PubSubStatus::kInvalidArgument,
+                          "Subscriber: Subscribe needs a valid expected schema");
     }
-
-    uint64_t id = impl_->next_id.fetch_add(1);
-    impl_->subscription_topic[id] = key;
-    Impl::RewriteEntries(it->second, [&](std::vector<Impl::Entry>& v) {
-        v.push_back({id, std::move(cb), std::make_shared<Gate>()});
-    });
-
-    SchemaArrival schema;
-    try {
-        schema = impl_->EnsureProviderSubscription(key, it->second, lock, options);
-    } catch (...) {
-        // Provider subscription failed — roll back the local subscription record so callers can
-        // retry without leaving dangling state behind. EnsureProviderSubscription drops the lock
-        // before calling the provider and only retakes it on success, so the lock may or may not be
-        // held here; retake it if not, and re-find the topic rather than reusing `it`.
-        if (!lock.owns_lock()) lock.lock();
-        impl_->subscription_topic.erase(id);
-        std::shared_ptr<Gate> gate;
-        auto topic_it = impl_->topics.find(key);
-        if (topic_it != impl_->topics.end()) {
-            Impl::RewriteEntries(topic_it->second, [&](std::vector<Impl::Entry>& v) {
-                for (const Impl::Entry& e : v) {
-                    if (e.id == id) {
-                        gate = e.gate;
-                        break;
-                    }
-                }
-                v.erase(std::remove_if(v.begin(), v.end(),
-                                       [id](const Impl::Entry& e) { return e.id == id; }),
-                        v.end());
-            });
-        }
-        // Retire the rolled-back entry too, outside `mu` and before rethrowing: a
-        // provider that delivered once and then failed must not reach a callback
-        // whose Subscribe never returned. Published in `retirements` like any
-        // other retirement, so a concurrent cancel of this id waits for the same
-        // drain rather than finding neither map.
-        if (gate) impl_->retirements->Publish(id, gate);
-        lock.unlock();
-        if (gate && !impl_->RetireAndDrain(id, gate, /*owns_retirement=*/true)) {
-            impl_->retirements->Release(id);
-        }
-        throw;
+    internal::DeclaredSchema declared = internal::DeclaredSchema::Encode(expected.get());
+    if (!declared.encodable) {
+        throw PubSubError(PubSubStatus::kInvalidArgument,
+                          "Subscriber: expected schema cannot be IPC-encoded");
     }
-    return {id, std::move(schema)};
+    std::vector<uint8_t> expected_ipc = declared.schema_ipc;
+    // The check the OPENING path carries to the provider: re-encode the announced schema the same
+    // way and compare bytes. An announced schema that cannot be IPC-encoded is a mismatch, not an
+    // exemption — `got.encodable` short-circuits the comparison to `false` rather than throwing,
+    // since `check` must not throw for a merely-unencodable announced schema.
+    PubSubProvider::SchemaCheck check = [expected_ipc](const SharedSchema& announced) {
+        internal::DeclaredSchema got = internal::DeclaredSchema::Encode(announced.get());
+        return got.encodable && got.schema_ipc == expected_ipc;
+    };
+    return impl_->Subscribe(segments, std::move(cb), options, std::move(check),
+                            std::move(expected_ipc));
 }
 
 void Subscriber::Unsubscribe(uint64_t subscription_id) {

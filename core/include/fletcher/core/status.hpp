@@ -37,7 +37,8 @@ enum class PubSubStatus : int32_t {
     /// The caller passed something the seam refuses to interpret: an empty
     /// topic-segment list, a blob with bytes and no owner, a negative timeout.
     kInvalidArgument = 1,
-    /// A topic was re-declared with a provably different schema (§7 clause 3).
+    /// A topic was re-declared with a provably different schema (§7 clause 3), or a checked
+    /// subscription refused the schema its topic announces.
     kSchemaConflict = 2,
     /// The topic has not been declared on this instance.
     kTopicNotDeclared = 3,
@@ -63,8 +64,8 @@ enum class PubSubStatus : int32_t {
     /// The caller re-entered the seam from inside a delivery callback, on the
     /// same provider instance and the same thread, through a door that cannot
     /// serve it there. EVERY PubSubProvider method refuses, on every provider —
-    /// the four data-path methods, the two schema-only ones and the two
-    /// options-taking ones (spec §6 clause 6). Distinct from kNotSupported,
+    /// every one of the six seam methods: the four data-path methods and the
+    /// two schema-only ones (spec §6 clause 6). Distinct from kNotSupported,
     /// which says the provider cannot do this AT ALL rather than "not from in
     /// there" — two different operator problems (owner ruling 2026-09-03).
     kReentrantCall = 10,

@@ -118,11 +118,11 @@ class Flag {
 // (`fast_dds_pubsub_provider.cpp:570-574`). Only the edge-B control turns it on.
 class ProbeProvider : public PubSubProvider {
    public:
-    void CreateTopic(const std::vector<std::string>&, OwnedSchema) override {}
+    void CreateTopic(const std::vector<std::string>&, TopicDeclaration) override {}
     void Publish(const std::vector<std::string>&, const RowEncoder&, const Attachments&) override {}
 
     [[nodiscard]] SubscriptionResult Subscribe(const std::vector<std::string>& segments,
-                                               SubscribeCallback callback) override {
+                                               SubscriptionRequest request) override {
         // Deliberately OUTSIDE the probe's own lock: a real provider's Subscribe
         // does its work without holding anything of ours, and serialising it here
         // would make the concurrent-first-Subscribe case vacuous.
@@ -138,7 +138,7 @@ class ProbeProvider : public PubSubProvider {
             subscribe_parked.Set();
             cv_.wait(lock, [this] { return in_flight_ == 0; });
         }
-        callbacks_[Join(segments)] = DeliveryChannel(this, std::move(callback));
+        callbacks_[Join(segments)] = DeliveryChannel(this, std::move(request.callback));
         ++subscribe_calls;
         return SubscriptionResult{SchemaArrival::Ready(nullptr)};
     }

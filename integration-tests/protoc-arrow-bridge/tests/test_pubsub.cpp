@@ -16,11 +16,15 @@
 #include <arrow/api.h>
 #include <arrow/c/bridge.h>
 #include <gtest/gtest.h>
+#include <nanoarrow/nanoarrow.h>
 
+#include <chrono>
 #include <fletcher/arrow_bridge/codec.hpp>
 #include <fletcher/core/write_buffer.hpp>
+#include <fletcher/pubsub/internal/schema_check.hpp>
 #include <fletcher/pubsub/owned_schema.hpp>
 #include <fletcher/pubsub/provider.hpp>
+#include <fletcher/pubsub/schema_ipc.hpp>
 #include <map>
 #include <memory>
 #include <vector>
@@ -38,6 +42,17 @@ std::shared_ptr<arrow::Schema> ImportNano(OwnedSchema nano) {
         return nullptr;
     }
     return *result;
+}
+
+// A one-field schema that cannot match Telemetry's four fields — used to prove the generated
+// Subscribe / SubscribeInPlace refuse a topic that already announces something else.
+OwnedSchema MismatchedSchema() {
+    OwnedSchema schema;
+    ArrowSchemaInit(schema.get());
+    ArrowSchemaSetTypeStruct(schema.get(), 1);
+    ArrowSchemaSetName(schema->children[0], "not_telemetry");
+    ArrowSchemaSetType(schema->children[0], NANOARROW_TYPE_INT32);
+    return schema;
 }
 
 // Minimal in-process provider that records calls and delivers published
@@ -59,15 +74,12 @@ class MockPubSubProvider : public PubSubProvider {
     std::vector<PublishedMsg> published;
     std::map<std::vector<std::string>, SubscribeCallback> subscribers;
 
-    void CreateTopic(const std::vector<std::string>& segments, OwnedSchema schema) override {
-        created_topics.push_back({segments, std::move(schema)});
-    }
-
-    // Recorded rather than refused: this mock DOES support per-topic options.
-    void CreateTopicWithOptions(const std::vector<std::string>& segments, OwnedSchema schema,
-                                const TopicOptions& options) override {
-        last_create_options = options;
-        CreateTopic(segments, std::move(schema));
+    // Recorded rather than refused: this mock DOES support a profile and bound.
+    void CreateTopic(const std::vector<std::string>& segments,
+                     TopicDeclaration declaration) override {
+        last_create_options = TopicOptions{.profile = declaration.profile,
+                                           .max_payload_bytes = declaration.max_payload_bytes};
+        created_topics.push_back({segments, std::move(declaration.schema)});
     }
 
     void Publish(const std::vector<std::string>& segments, const RowEncoder& encoder,
@@ -89,23 +101,29 @@ class MockPubSubProvider : public PubSubProvider {
         published.push_back({segments, std::move(buf), attachments});
     }
 
+    // The generated Subscriber wrapper goes through the OwnedSchema overload, which reaches the
+    // provider's `Subscribe` with a non-empty `request.check` on the topic's first opening. This
+    // mock supports it directly rather than refusing kNotSupported, so the generated classes can
+    // be exercised end to end. A request with an empty `check` behaves like an ordinary
+    // subscription (provider.hpp's own rule).
     SubscriptionResult Subscribe(const std::vector<std::string>& segments,
-                                 SubscribeCallback callback) override {
-        subscribers[segments] = std::move(callback);
+                                 SubscriptionRequest request) override {
+        last_subscribe_options = TopicOptions{.profile = request.profile};
+        SharedSchema announced;
         for (const auto& ct : created_topics) {
             if (ct.segments == segments) {
-                return {fletcher::SchemaArrival::Ready(
-                    MakeSharedSchema(OwnedSchema::DeepCopy(ct.schema.get())))};
+                announced = MakeSharedSchema(OwnedSchema::DeepCopy(ct.schema.get()));
+                break;
             }
         }
-        return {fletcher::SchemaArrival::Ready(nullptr)};
-    }
-
-    SubscriptionResult SubscribeWithOptions(const std::vector<std::string>& segments,
-                                            SubscribeCallback callback,
-                                            const TopicOptions& options) override {
-        last_subscribe_options = options;
-        return Subscribe(segments, std::move(callback));
+        if (request.check) {
+            ++subscribe_checked_count;
+            if (!fletcher::internal::RunSchemaCheck(this, request.check, announced)) {
+                throw PubSubError(PubSubStatus::kSchemaConflict, "mock: check rejected the schema");
+            }
+        }
+        subscribers[segments] = std::move(request.callback);
+        return {fletcher::SchemaArrival::Ready(announced)};
     }
 
     void Unsubscribe(const std::vector<std::string>& segments) override {
@@ -114,6 +132,7 @@ class MockPubSubProvider : public PubSubProvider {
 
     TopicOptions last_create_options;
     TopicOptions last_subscribe_options;
+    int subscribe_checked_count = 0;
 };
 
 }  // namespace
@@ -135,8 +154,8 @@ TEST(PubSubProtoTest, PublisherConstructionWithoutOptionsReachesProviderWithEmpt
     auto mock = std::make_shared<MockPubSubProvider>();
     fletcher_gen::integration::pubsub::TelemetryFeed_TelemetryStreamPublisher pub(mock);
 
-    // The wrapper always calls the options form; the option-less constructor still reaches
-    // CreateTopicWithOptions, just with a default-constructed (empty) TopicOptions.
+    // The generated wrapper always passes a TopicOptions; the option-less constructor still
+    // fills TopicDeclaration's profile/bound fields, just from a default-constructed (empty) one.
     EXPECT_TRUE(mock->last_create_options.empty());
 }
 
@@ -210,7 +229,7 @@ TEST(PubSubProtoTest, SubscriberReceivesTypedMessageFromPublishedRows) {
     EXPECT_EQ(received.metric_name(), "cpu");
 }
 
-TEST(PubSubProtoTest, SubscribeWithOptionsReachesProvider) {
+TEST(PubSubProtoTest, SubscribeCarryingAProfileReachesProvider) {
     auto mock = std::make_shared<MockPubSubProvider>();
     fletcher_gen::integration::pubsub::TelemetryFeed_TelemetryStreamPublisher pub(mock);
     fletcher_gen::integration::pubsub::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
@@ -268,7 +287,8 @@ TEST(PubSubProtoTest, UnsubscribeStopsDelivery) {
 
     int count = 0;
     uint64_t sub_id =
-        sub.Subscribe([&](fletcher_gen::integration::pubsub::Telemetry, Attachments) { ++count; });
+        sub.Subscribe([&](fletcher_gen::integration::pubsub::Telemetry, Attachments) { ++count; })
+            .subscription_id;
 
     fletcher_gen::integration::pubsub::Telemetry row;
     row.set_device_id(1).set_value(0.0).set_timestamp(0LL).set_metric_name("x");
@@ -323,4 +343,61 @@ TEST(PubSubProtoTest, PublishWithoutAttachmentsHasEmptyAttachments) {
     ASSERT_EQ(mock->published.size(), 1u);
     EXPECT_TRUE(mock->published[0].attachments.empty());
     EXPECT_FALSE(mock->published[0].encoded.empty());
+}
+
+// ── Generated Subscribe schema check ───────────────────────────────
+
+TEST(PubSubProtoTest, SubscribeGoesThroughTheSchemaCheck) {
+    auto mock = std::make_shared<MockPubSubProvider>();
+    fletcher_gen::integration::pubsub::TelemetryFeed_TelemetryStreamPublisher pub(mock);
+    fletcher_gen::integration::pubsub::TelemetryFeed_TelemetryStreamSubscriber sub(mock);
+
+    fletcher::Subscriber::SubscribeResult result =
+        sub.Subscribe([](fletcher_gen::integration::pubsub::Telemetry, Attachments) {});
+
+    EXPECT_EQ(mock->subscribe_checked_count, 1);
+    EXPECT_NE(result.subscription_id, 0u);
+
+    SharedSchema schema;
+    EXPECT_EQ(result.schema.Wait(std::chrono::milliseconds(0), &schema), PubSubStatus::kOk);
+    EXPECT_TRUE(schema);
+}
+
+TEST(PubSubProtoTest, GeneratedSubscribeRefusesAMismatchedSchema) {
+    auto mock = std::make_shared<MockPubSubProvider>();
+    using Subscriber = fletcher_gen::integration::pubsub::TelemetryFeed_TelemetryStreamSubscriber;
+    mock->CreateTopic(Subscriber::TopicSegments(), {MismatchedSchema()});
+    Subscriber sub(mock);
+
+    try {
+        sub.Subscribe([](fletcher_gen::integration::pubsub::Telemetry, Attachments) {});
+        FAIL() << "expected a PubSubError(kSchemaConflict)";
+    } catch (const PubSubError& e) {
+        EXPECT_EQ(e.status(), PubSubStatus::kSchemaConflict);
+    }
+    // A rejected check leaves nothing behind: no delivery is registered, and
+    // `subscribe_checked_count` — the number of Subscribe calls whose request carried a check —
+    // is exactly one (not once per constructor-vs-call, not zero because of an early return).
+    EXPECT_EQ(mock->subscribers.count(Subscriber::TopicSegments()), 0u);
+    EXPECT_EQ(mock->subscribe_checked_count, 1);
+}
+
+TEST(PubSubProtoTest, GeneratedSubscribeInPlaceRefusesAMismatchedSchema) {
+    auto mock = std::make_shared<MockPubSubProvider>();
+    using Subscriber = fletcher_gen::integration::pubsub::TelemetryFeed_TelemetryStreamSubscriber;
+    mock->CreateTopic(Subscriber::TopicSegments(), {MismatchedSchema()});
+    Subscriber sub(mock);
+
+    try {
+        sub.SubscribeInPlace(
+            [](const fletcher_gen::integration::pubsub::Telemetry&, const Attachments&) {});
+        FAIL() << "expected a PubSubError(kSchemaConflict)";
+    } catch (const PubSubError& e) {
+        EXPECT_EQ(e.status(), PubSubStatus::kSchemaConflict);
+    }
+    // A rejected check leaves nothing behind: no delivery is registered, and
+    // `subscribe_checked_count` — the number of Subscribe calls whose request carried a check —
+    // is exactly one.
+    EXPECT_EQ(mock->subscribers.count(Subscriber::TopicSegments()), 0u);
+    EXPECT_EQ(mock->subscribe_checked_count, 1);
 }

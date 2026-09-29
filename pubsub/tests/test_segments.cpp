@@ -275,7 +275,7 @@ TEST(Segments, RefusalReachesAllFourEntryPoints) {
     for (const RefusedCase& c : RefusedCases()) {
         const Segments& topic = c.segments;
 
-        EXPECT_TRUE(RefusedAsInvalid([&] { provider.CreateTopic(topic, TestSchema()); }))
+        EXPECT_TRUE(RefusedAsInvalid([&] { provider.CreateTopic(topic, {TestSchema()}); }))
             << "CreateTopic accepted a refused shape — " << c.why;
         EXPECT_TRUE(RefusedAsInvalid([&] {
             provider.Publish(topic, [](WriteBuffer& buf) { buf.AppendByte(0x01); });
@@ -283,7 +283,7 @@ TEST(Segments, RefusalReachesAllFourEntryPoints) {
             << c.why;
         EXPECT_TRUE(RefusedAsInvalid([&] {
             static_cast<void>(provider.Subscribe(
-                topic, [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}));
+                topic, {[](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}}));
         })) << "Subscribe accepted a refused shape — "
             << c.why;
         EXPECT_TRUE(RefusedAsInvalid([&] { provider.Unsubscribe(topic); }))
@@ -293,9 +293,9 @@ TEST(Segments, RefusalReachesAllFourEntryPoints) {
     // The positive control: an ordinary topic still passes all four. Without
     // it, a provider that refused EVERYTHING would be green above.
     const Segments ok{"segments", "door"};
-    EXPECT_NO_THROW(provider.CreateTopic(ok, TestSchema()));
+    EXPECT_NO_THROW(provider.CreateTopic(ok, {TestSchema()}));
     EXPECT_NO_THROW(static_cast<void>(provider.Subscribe(
-        ok, [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {})));
+        ok, {[](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}})));
     EXPECT_NO_THROW(provider.Publish(ok, [](WriteBuffer& buf) { buf.AppendByte(0x01); }));
     EXPECT_NO_THROW(provider.Unsubscribe(ok));
 }
@@ -443,14 +443,14 @@ TEST(Segments, NamesThatWouldTruncateOnTheWireAreRefused) {
 
     InProcessPubSubProvider provider;
     const Segments too_long = JoinedLength(247);
-    EXPECT_TRUE(RefusedAsInvalid([&] { provider.CreateTopic(too_long, TestSchema()); }))
+    EXPECT_TRUE(RefusedAsInvalid([&] { provider.CreateTopic(too_long, {TestSchema()}); }))
         << "CreateTopic accepted a name the transport would truncate";
     EXPECT_TRUE(RefusedAsInvalid([&] {
         provider.Publish(too_long, [](WriteBuffer& buf) { buf.AppendByte(0x01); });
     })) << "Publish accepted a name the transport would truncate";
     EXPECT_TRUE(RefusedAsInvalid([&] {
         static_cast<void>(provider.Subscribe(
-            too_long, [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}));
+            too_long, {[](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}}));
     })) << "Subscribe accepted a name the transport would truncate";
     EXPECT_TRUE(RefusedAsInvalid([&] { provider.Unsubscribe(too_long); }))
         << "Unsubscribe accepted a name the transport would truncate";

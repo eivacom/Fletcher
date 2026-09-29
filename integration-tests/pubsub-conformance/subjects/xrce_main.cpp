@@ -943,15 +943,15 @@ TEST(Registry, XrceResolvesAsABuiltIn) {
     ASSERT_NE(provider, nullptr) << "\"xrce\" did not resolve to a provider";
 
     const std::vector<std::string> topic{"registry", "xrce-probe"};
-    provider->CreateTopic(topic, MakeConformanceSchema(SchemaId::kA));
+    provider->CreateTopic(topic, {MakeConformanceSchema(SchemaId::kA)});
 
     std::vector<uint8_t> received;
     std::atomic<bool> delivered{false};
     SubscriptionResult result = provider->Subscribe(
-        topic, [&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
+        topic, {[&](const uint8_t* data, size_t len, const SharedSchema&, const Attachments&) {
             received.assign(data, data + len);
             delivered.store(true);
-        });
+        }});
 
     // XRCE carries the schema on its companion __schema topic, so this is a real wait.
     SharedSchema schema;
@@ -1029,7 +1029,7 @@ TEST(TopicNames, AmbiguousSegmentsAreRefused) {
         const std::string& why = entry.second;
 
         EXPECT_TRUE(refused([&] {
-            provider.CreateTopic(topic, MakeConformanceSchema(SchemaId::kA));
+            provider.CreateTopic(topic, {MakeConformanceSchema(SchemaId::kA)});
         })) << "XRCE CreateTopic accepted "
             << why;
         EXPECT_TRUE(refused([&] {
@@ -1038,7 +1038,7 @@ TEST(TopicNames, AmbiguousSegmentsAreRefused) {
             << why;
         EXPECT_TRUE(refused([&] {
             static_cast<void>(provider.Subscribe(
-                topic, [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}));
+                topic, {[](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {}}));
         })) << "XRCE Subscribe accepted "
             << why;
         EXPECT_TRUE(refused([&] { provider.Unsubscribe(topic); }))
@@ -1048,7 +1048,54 @@ TEST(TopicNames, AmbiguousSegmentsAreRefused) {
     // The bound: an ordinary name with a dot, a hyphen and a single leading
     // underscore still declares.
     EXPECT_NO_THROW(
-        provider.CreateTopic({"_vessel.bow", "depth-raw"}, MakeConformanceSchema(SchemaId::kA)));
+        provider.CreateTopic({"_vessel.bow", "depth-raw"}, {MakeConformanceSchema(SchemaId::kA)}));
+}
+
+// The door precedes the profile check, and a check that rejects a known schema is refused
+// synchronously with nothing registered. Plain `TEST` on the live provider, like the case above.
+TEST(TopicNames, TheDoorPrecedesTheProfileAndACheckedSubscribeRefusesSynchronously) {
+    const ProviderConfig config = XrceConfigFor(NextSessionKey(kTopicNamesSessionBase));
+    XrceDDSPubSubProvider provider(config);
+    const auto callback = [](const uint8_t*, size_t, const SharedSchema&, const Attachments&) {};
+
+    auto status_of = [](auto&& call) {
+        try {
+            call();
+        } catch (const PubSubError& e) {
+            return e.status();
+        }
+        return PubSubStatus::kOk;
+    };
+
+    // CreateTopic refuses the segments before looking at the profile; with valid segments,
+    // Subscribe refuses the profile kNotSupported.
+    EXPECT_EQ(status_of([&] {
+                  provider.CreateTopic(
+                      {}, {.schema = MakeConformanceSchema(SchemaId::kA), .profile = "x"});
+              }),
+              PubSubStatus::kInvalidArgument);
+    EXPECT_EQ(status_of([&] {
+                  static_cast<void>(provider.Subscribe({"vessel", "depth"},
+                                                       {.callback = callback, .profile = "x"}));
+              }),
+              PubSubStatus::kNotSupported);
+
+    // The schema is known, so a rejecting check throws from the call itself, runs once, and
+    // leaves nothing registered.
+    const std::vector<std::string> topic = {"vessel", "checked"};
+    provider.CreateTopic(topic, {MakeConformanceSchema(SchemaId::kA)});
+    int check_calls = 0;
+    EXPECT_EQ(status_of([&] {
+                  static_cast<void>(provider.Subscribe(
+                      topic, {.callback = callback, .check = [&](const SharedSchema&) {
+                                  ++check_calls;
+                                  return false;
+                              }}));
+              }),
+              PubSubStatus::kSchemaConflict);
+    EXPECT_EQ(check_calls, 1);
+    EXPECT_NO_THROW(static_cast<void>(provider.Subscribe(topic, {callback})));
+    EXPECT_NO_THROW(provider.Unsubscribe(topic));
 }
 
 }  // namespace conformance

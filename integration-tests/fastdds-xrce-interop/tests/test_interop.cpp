@@ -1299,8 +1299,9 @@ TEST(FastDdsXrceInteropTest, XrceSubscribeBeforeFastDDSPublish) {
 // ─────────────────────────────────────────────────────────────────────
 // XRCE publishes at a PER-TOPIC bound (`TopicOptions::max_payload_bytes`) → FastDDS subscribes.
 // The mirror of XrcePublishAtAnotherBoundReachesAFastDDSSubscriber above, through
-// `CreateTopicWithOptions` instead of `ProviderConfig::max_payload_bytes`: the XRCE provider
-// itself stays at its own default bound (65536), and only this one topic announces 8192.
+// `TopicDeclaration::max_payload_bytes` (provider.hpp) instead of
+// `ProviderConfig::max_payload_bytes`: the XRCE provider itself stays at its own default bound
+// (65536), and only this one topic announces 8192.
 // ─────────────────────────────────────────────────────────────────────
 TEST(FastDdsXrceInteropTest, XrcePublishAtAPerTopicBoundReachesAFastDDSSubscriber) {
     // Capture state must outlive the providers so a late DDS callback
@@ -1382,10 +1383,10 @@ TEST(FastDdsXrceInteropTest, XrceRefusesAProfile) {
 
 // ─────────────────────────────────────────────────────────────────────
 // A topic a `Subscribe` on this XRCE client created FIRST is registered at this client's own
-// (default) bound, because `Subscribe` takes no options. A later `CreateTopicWithOptions` naming a
-// DIFFERENT per-topic bound for it must be refused, not silently adopted — the reader was already
-// created at its own bound and cannot migrate. The identical call with no options adopts that
-// bound and succeeds.
+// (default) bound, because `SubscriptionRequest` carries no bound of its own (provider.hpp). A
+// later `CreateTopic` naming a DIFFERENT per-topic bound for it must be refused, not silently
+// adopted — the reader was already created at its own bound and cannot migrate. The identical
+// call with no options adopts that bound and succeeds.
 // ─────────────────────────────────────────────────────────────────────
 TEST(FastDdsXrceInteropTest, XrceRefusesAPerTopicBoundOnASubscribeCreatedTopic) {
     auto xrce = std::make_shared<XrceDDSPubSubProvider>(XrceConfigFor(0xF0F00007));
