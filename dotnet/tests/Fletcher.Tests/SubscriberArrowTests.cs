@@ -55,8 +55,9 @@
 //                                                      -> U UnsubscribingFromTheHandlerDuringARowLimitFlushStopsDelivery
 //   SubscriberArrowBatchTest.UnsubscribeFromInsideATimeoutFlushIsSafe
 //                                                      -> U UnsubscribingFromInsideATimeoutFlushIsSafe
-//   SubscriberArrowBatchTest.BatchesAreValidArrow      -> U BatchesAreWellFormed (weaker: Apache.Arrow has no
-//                                                         ValidateFull; lengths and values are checked instead)
+//   SubscriberArrowBatchTest.BatchesAreValidArrow      -> U BatchesAreWellFormed (C++'s four-column schema;
+//                                                         Apache.Arrow has no ValidateFull, so its checks are
+//                                                         done by hand - review T-D2)
 //   SubscriberArrowBatchTest.ReuseAcrossWindows        -> U WindowsFollowOneAnother
 //
 // ── ONE CASE IS EXCLUDED ────────────────────────────────────────────────────
@@ -248,7 +249,10 @@ public sealed class SubscriberArrowTests : IDisposable
     /// <remarks>
     /// `inprocess` knows no options, so a profile REACHING it is refused NotSupported -
     /// and a SubscriberArrow that dropped the options would subscribe without error.
-    /// Both forms, per-row and batched.
+    /// Both forms, per-row and batched. This shows the options ARRIVE; that they arrive
+    /// UNCHANGED - the C++ cases' `last_subscribe_options == options` - is shown over
+    /// Fast DDS, in the transport lane's ASubscriberArrowForwardsItsReaderProfileOnBothForms
+    /// (review T-D3).
     /// </remarks>
     [Fact]
     public void TopicOptionsReachTheProviderThroughBothForms()
@@ -510,38 +514,65 @@ public sealed class SubscriberArrowTests : IDisposable
 
     /// <summary>Mirrors SubscriberArrowBatchTest.CorruptRowIsCountedDroppedAndBatchStaysAligned.</summary>
     /// <remarks>
-    /// The case the second decoding pass exists for: one native call fails on the
-    /// corrupt row, each row is then decoded alone, and the good ones come back
-    /// together with THEIR attachments, not a neighbour's.
+    /// C++'s case exactly (review T-D5): a list column, and a corrupt row made from
+    /// row A's own encoding truncated by 3 bytes, so the fixed 4-byte int32 underruns
+    /// on read - a row that starts well and fails part way, not a one-byte stub. With
+    /// max_rows = 2 the corrupt row never counts toward the limit, and A and B come back
+    /// with THEIR attachments.
     /// </remarks>
     [Fact]
     public void ACorruptRowIsDroppedAndTheBatchStaysAligned()
     {
-        TopicPath topic = Declared("corrupt");
-        SubscribeResult result = _subscriber.SubscribeBatched(topic, _sink.Handler, Options(100_000, Long));
-        result.Schema.Dispose();
+        var schema = new Schema(
+        [
+            new Field("tags", new ListType(StringType.Default), nullable: true),
+            new Field("x", Int32Type.Default, nullable: true),
+        ], metadata: null);
+        TopicPath topic = Topic("corrupt");
+        _publisher.CreateTopic(topic, schema);
+        _subscriber.SubscribeBatched(topic, _sink.Handler, Options(2, Long)).Schema.Dispose();
+
+        using var codec = new FletcherCodec(schema);
+        RecordBatch RowOf(int x, params string[] items)
+        {
+            var tags = new ListArray.Builder(StringType.Default);
+            tags.Append();
+            foreach (string item in items)
+            {
+                ((StringArray.Builder)tags.ValueBuilder).Append(item);
+            }
+
+            return new RecordBatch(schema, [tags.Build(), new Int32Array.Builder().Append(x).Build()], length: 1);
+        }
+
+        using RecordBatch rowA = RowOf(1, "a", "b");
+        using RecordBatch rowB = RowOf(2, "c");
+        using BoundRows boundA = codec.Bind(rowA);
+        using BoundRows boundB = codec.Bind(rowB);
+        var encodedA = new System.Buffers.ArrayBufferWriter<byte>();
+        codec.Encode(boundA, 0, encodedA);
+        byte[] truncated = encodedA.WrittenSpan[..^3].ToArray();
 
         using var a = new AttachmentsBuilder();
-        a.Set("row", "A"u8);
-        using var bad = new AttachmentsBuilder();
-        bad.Set("row", "X"u8);
+        a.Set("blob", [0xAA]);
         using var b = new AttachmentsBuilder();
-        b.Set("row", "B"u8);
+        b.Set("blob", [0xBB]);
 
-        Publish(topic, 1, "first", a);
-        _publisher.PublishRaw(topic, [0x00], bad);
-        Publish(topic, 2, "second", b);
-        result.Subscription.Dispose();
+        _publisher.Publish(topic, boundA, 0, a);
+        _publisher.PublishRaw(topic, truncated);
+        Assert.Empty(_sink.Snapshot());
+        _publisher.Publish(topic, boundB, 0, b);  // reaches max_rows
 
         Delivery only = Assert.Single(_sink.Snapshot());
         Assert.Equal(2, only.Rows);
         Assert.Equal(1, only.Status.RowsDropped);
-        Assert.Equal("first", ((StringArray)only.Batch!.Column(1)).GetString(0));
-        Assert.Equal("second", ((StringArray)only.Batch!.Column(1)).GetString(1));
-        Assert.True(only.Attachments[0].TryFind("row"u8, out ReadOnlySpan<byte> first));
-        Assert.True(only.Attachments[1].TryFind("row"u8, out ReadOnlySpan<byte> second));
-        Assert.Equal("A"u8.ToArray(), first.ToArray());
-        Assert.Equal("B"u8.ToArray(), second.ToArray());
+        Assert.Equal(BatchReason.RowLimit, only.Status.Reason);
+        Assert.Equal(1, ((Int32Array)only.Batch!.Column(1)).GetValue(0));
+        Assert.Equal(2, ((Int32Array)only.Batch!.Column(1)).GetValue(1));
+        Assert.True(only.Attachments[0].TryFind("blob"u8, out ReadOnlySpan<byte> gotA));
+        Assert.True(only.Attachments[1].TryFind("blob"u8, out ReadOnlySpan<byte> gotB));
+        Assert.Equal(new byte[] { 0xAA }, gotA.ToArray());
+        Assert.Equal(new byte[] { 0xBB }, gotB.ToArray());
     }
 
     /// <summary>Mirrors SubscriberArrowBatchTest.FixedSizeListWithNamedItemArrivesNonNull.</summary>
@@ -922,27 +953,66 @@ public sealed class SubscriberArrowTests : IDisposable
 
     /// <summary>Mirrors SubscriberArrowBatchTest.BatchesAreValidArrow.</summary>
     /// <remarks>
-    /// Weaker: Apache.Arrow for .NET has no ValidateFull, so the batch's shape is
-    /// checked by hand - every column the batch's length, every value where it was put.
+    /// C++'s schema - int32, utf8, a dictionary and a list of utf8 - so the decode
+    /// builds a variable-length child and a dictionary-as-value column as well as
+    /// scalars (review T-D2). Weaker in one way, by necessity: Apache.Arrow for .NET
+    /// has no ValidateFull, so the shape it would check is checked by hand - every
+    /// column the batch's length, the list's offsets monotonic and ending at its
+    /// values' length - and every value is read back.
     /// </remarks>
     [Fact]
     public void BatchesAreWellFormed()
     {
-        TopicPath topic = Declared("wellformed");
+        var category = new DictionaryType(Int32Type.Default, StringType.Default, ordered: false);
+        var schema = new Schema(
+        [
+            new Field("x", Int32Type.Default, nullable: true),
+            new Field("name", StringType.Default, nullable: true),
+            new Field("category", category, nullable: true),
+            new Field("tags", new ListType(StringType.Default), nullable: true),
+        ], metadata: null);
+        TopicPath topic = Topic("wellformed");
+        _publisher.CreateTopic(topic, schema);
         _subscriber.SubscribeBatched(topic, _sink.Handler, Options(5, Long)).Schema.Dispose();
 
+        using var codec = new FletcherCodec(schema);
         for (int i = 0; i < 5; i++)
         {
-            Publish(topic, i, "t" + i);
+            var tags = new ListArray.Builder(StringType.Default);
+            tags.Append();
+            ((StringArray.Builder)tags.ValueBuilder).Append("t" + i);
+            using RecordBatch row = new(schema,
+            [
+                new Int32Array.Builder().Append(i).Build(),
+                new StringArray.Builder().Append("n" + i).Build(),
+                new DictionaryArray(category, new Int32Array.Builder().Append(i % 2).Build(),
+                    new StringArray.Builder().Append("red").Append("blue").Build()),
+                tags.Build(),
+            ], length: 1);
+            using BoundRows rows = codec.Bind(row);
+            _publisher.Publish(topic, rows, 0);
         }
 
         RecordBatch batch = Assert.Single(_sink.Snapshot()).Batch!;
         Assert.Equal(5, batch.Length);
         Assert.All(batch.Arrays, column => Assert.Equal(5, column.Length));
+
+        var listed = (ListArray)batch.Column(3);
+        var offsets = listed.ValueOffsets;
+        Assert.Equal(0, offsets[0]);
+        for (int r = 0; r < 5; r++)
+        {
+            Assert.True(offsets[r + 1] >= offsets[r], "the list's offsets are not monotonic");
+        }
+
+        Assert.Equal(listed.Values.Length, offsets[5]);
+
         for (int i = 0; i < 5; i++)
         {
             Assert.Equal(i, ((Int32Array)batch.Column(0)).GetValue(i));
-            Assert.Equal("t" + i, ((StringArray)batch.Column(1)).GetString(i));
+            Assert.Equal("n" + i, ((StringArray)batch.Column(1)).GetString(i));
+            Assert.Equal(i % 2 == 0 ? "red" : "blue", ((StringArray)batch.Column(2)).GetString(i));
+            Assert.Equal("t" + i, ((StringArray)listed.Values).GetString(offsets[i]));
         }
     }
 
@@ -965,6 +1035,21 @@ public sealed class SubscriberArrowTests : IDisposable
         Assert.Equal([2, 2, 1], [seen[0].Rows, seen[1].Rows, seen[2].Rows]);
         Assert.Equal([BatchReason.RowLimit, BatchReason.RowLimit, BatchReason.Closing], [seen[0].Status.Reason, seen[1].Status.Reason, seen[2].Status.Reason]);
         Assert.All(seen, d => Assert.Equal(0, d.Status.RowsDropped));
+
+        // The reuse C++ checks: each window starts where the last one ended - no row
+        // re-delivered, none skipped - so the values run 0..4 across all three
+        // (review T-D1).
+        int expected = 0;
+        foreach (Delivery d in seen)
+        {
+            var x = (Int32Array)d.Batch!.Column(0);
+            for (int r = 0; r < x.Length; r++)
+            {
+                Assert.Equal(expected++, x.GetValue(r));
+            }
+        }
+
+        Assert.Equal(5, expected);
     }
 
     // ── The window ceiling (D-BIND-63) ──────────────────────────────────────

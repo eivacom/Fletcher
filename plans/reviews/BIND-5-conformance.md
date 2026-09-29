@@ -80,6 +80,16 @@ bullet was re-checked against the tree, not against the log.
 **Outcome: 10 of 11 bullets CONFORM; 1 PARTIAL (bullet 4, five test-quality gaps). No bullet is NOT
 MET.** Whether BIND-5 closes with bullet 4 partial, or after T-D1 to T-D5, is the maintainer's call.
 
+**Bullet 4, re-graded after T-D1 to T-D5 (the maintainer chose to fix them first):** ✅ **CONFORMS.**
+Each of the five ports now checks its C++ case's property, and the two transport-lane additions each
+fail under the mutation they guard against.
+- **One stated narrowing, not a gap:** T-D4's "without a data subscription" cannot be observed
+  through the public surface over a real transport, and rests on `SubscribeSchema` being a direct
+  forward.
+- **The exclusion `FinishFailureIsReportedNotFatal` (D-BIND-8) stands.**
+
+**Outcome now: 11 of 11 bullets CONFORM.**
+
 **Local evidence at `812d8c2`:** c-abi 93/93, managed 326/326 and the copy oracle 5/5 on net8 and
 net10, copy-probe 13/13. The transport suite is 25 of 33, as before; the 8 `xrce` cases need an
 Agent this machine does not have. **None of this is on CI yet.** Ten commits are unpushed, and this

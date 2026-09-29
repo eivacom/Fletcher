@@ -505,3 +505,21 @@ subscription whose owner is not this subscriber, in both tiers.
   - **Also updated:** the support table and the known-gaps sweep line. Section 8 is unchanged.
   - **Validated by parsing:** mermaid + jsdom parse and render all 9 blocks. The negative control (a
     dangling edge, a `;`) fails as it must, and no CR bytes.
+- **T-D1 to T-D5 — the five ports weaker than their C++ cases, strengthened** (conformance bullet 4):
+  - **T-D1:** `WindowsFollowOneAnother` now checks the values run 0..4 in order across all three
+    windows, as `ReuseAcrossWindows` does.
+  - **T-D2:** `BatchesAreWellFormed` uses C++'s four-column schema (int32, utf8, a dictionary, a
+    `list<utf8>`). It checks by hand what `ValidateFull` would: every column's length, the list's
+    offsets monotonic and ending at its values' length, and every value.
+  - **T-D3:** `ASubscriberArrowForwardsItsReaderProfileOnBothForms`, over Fast DDS. A defined reader
+    profile delivers on both forms and an undefined one is refused, so a dropped or altered profile
+    fails. The unit-lane case now says it shows only arrival.
+  - **T-D4:** the Fast DDS schema-watch case also shows the RELEASE: a pending watch answers
+    `SubscriptionEnded` after `UnsubscribeSchema`. The "no data subscription" half cannot be
+    observed through the public surface, and the test says so.
+  - **T-D5:** `ACorruptRowIsDroppedAndTheBatchStaysAligned` is now C++'s case exactly: a list
+    column, a row truncated by 3 bytes, and `max_rows = 2`, with a `RowLimit` batch of A and B and
+    their attachments.
+  - **Results.** Managed 326/326 (three strengthened, none added), transport `TopicOptionsOverFastDds`
+    13/13. Dropping `SubscriberArrow`'s topic options fails the T-D3 case, and a no-op
+    `UnsubscribeSchema` fails the T-D4 case.

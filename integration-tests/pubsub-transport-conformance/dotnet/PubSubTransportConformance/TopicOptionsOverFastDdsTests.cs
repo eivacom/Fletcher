@@ -321,5 +321,69 @@ public sealed class TopicOptionsOverFastDdsTests : IDisposable
         }
 
         arrow.UnsubscribeSchema(topic);
+
+        // The RELEASE, which the C++ case counts at the provider (review T-D4). Its
+        // managed observation: a watch on a topic nobody declares stays pending until
+        // it is released, then answers SubscriptionEnded - a no-op UnsubscribeSchema
+        // would leave it pending. What this lane cannot observe is the other half, "no
+        // DATA subscription": nothing on the public surface shows a provider-level
+        // subscription, so that half rests on SubscribeSchema being a direct forward
+        // to Subscriber.SubscribeSchema.
+        TopicPath silent = Unique("arrowwatchreleased");
+        using SchemaArrival pending = arrow.SubscribeSchema(silent);
+        Assert.Equal(FletcherStatus.Pending, pending.Wait(TimeSpan.Zero).Status);
+        arrow.UnsubscribeSchema(silent);
+        Assert.Equal(FletcherStatus.SubscriptionEnded, pending.Wait(TimeSpan.Zero).Status);
+    }
+
+    /// <summary>
+    /// BIND-5 - SubscriberArrowTest.SubscribeForwardsTopicOptions and its batched twin,
+    /// the CONTENT half (review T-D3).
+    /// </summary>
+    /// <remarks>
+    /// The C++ cases read the options back out of a mock; the unit lane can only show
+    /// that options reach `inprocess`, which refuses any. Observed by effect here, as
+    /// the Subscriber mirror is: a reader profile the document defines DELIVERS, which
+    /// it can only do if it reached the provider as given, and one it does not define
+    /// is refused. A SubscriberArrow that dropped the profile, or passed a different
+    /// one, fails one half or the other. Both forms, per-row and batched.
+    /// </remarks>
+    [Fact]
+    public void ASubscriberArrowForwardsItsReaderProfileOnBothForms()
+    {
+        using var arrow = new SubscriberArrow(_provider);
+        var profiled = new TopicOptions { Profile = Reader };
+
+        foreach (bool batched in new[] { false, true })
+        {
+            TopicPath topic = Unique(batched ? "arrowreaderbatched" : "arrowreader");
+            using var seen = new ManualResetEventSlim(false);
+            RecordBatchHandler handler = (batch, _, _) =>
+            {
+                batch?.Dispose();
+                seen.Set();
+            };
+            SubscribeResult result = batched
+                ? arrow.SubscribeBatched(topic, handler, new BatchOptions { MaxRows = 1 }, profiled)
+                : arrow.Subscribe(topic, handler, profiled);
+            _publisher.CreateTopic(topic, OneColumn, new TopicOptions { Profile = Writer });
+
+            using (result.Schema)
+            using (RecordBatch batch = new(OneColumn, [new Int32Array.Builder().Append(1).Build()], length: 1))
+            using (var codec = new FletcherCodec(OneColumn))
+            using (BoundRows rows = codec.Bind(batch))
+            {
+                Assert.True(CrossTransportTests.PublishUntilSeen(() => _publisher.Publish(topic, rows, 0), seen),
+                    $"no row reached a {(batched ? "batched" : "per-row")} SubscriberArrow opened with the document's own reader profile");
+            }
+
+            result.Subscription.Dispose();
+        }
+
+        var undefined = new TopicOptions { Profile = "no_such_profile" };
+        Refused(FletcherStatus.InvalidArgument,
+            () => arrow.Subscribe(Unique("arrownoreader"), (_, _, _) => { }, undefined));
+        Refused(FletcherStatus.InvalidArgument,
+            () => arrow.SubscribeBatched(Unique("arrownoreaderbatched"), (_, _, _) => { }, null, undefined));
     }
 }
