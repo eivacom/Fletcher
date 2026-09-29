@@ -90,6 +90,8 @@ fail under the mutation they guard against.
 
 **Outcome now: 11 of 11 bullets CONFORM.**
 
+**CI-confirmed:** `ci.pr` run 36563607601 at `a43c384`, 50/50 on its first attempt: c-abi **93/93** (Windows with `/EHs`, and Linux) and copy-probe **13/13** on both platforms; managed **326/326** and the copy oracle **5/5** on all four legs; transport **34/34** on both platforms, the `xrce` cases included; binding-abi **11/11** and pubsub-conformance **146/146** on both. **BIND-5 closes.**
+
 **Local evidence at `812d8c2`:** c-abi 93/93, managed 326/326 and the copy oracle 5/5 on net8 and
 net10, copy-probe 13/13. The transport suite is 25 of 33, as before; the 8 `xrce` cases need an
 Agent this machine does not have. **None of this is on CI yet.** Ten commits are unpushed, and this

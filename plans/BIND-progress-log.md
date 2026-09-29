@@ -399,7 +399,7 @@ push did not touch (nothing under the providers, `pubsub`, `core` or the conform
 the lane ran only because `c-abi` did). It passed on the re-run and has passed on every earlier run of
 this branch: recorded as an intermittent XRCE failure, cause not established, not as fixed.
 
-## BIND-5 — `SubscriberArrow` and the copy oracle from C# (in progress, 2026-09-28)
+## BIND-5 — `SubscriberArrow` and the copy oracle from C# (2026-09-28 to 2026-09-29, CLOSED)
 
 **5a - `SubscriberArrow`, committed at `0da07c7`.** Batch-first as C++: flush on `MaxRows`, on a
 deadline armed by the window's first event, or on close; one native decode per window, a
@@ -504,3 +504,24 @@ throws. An experiment with the original lock-held throw settled it: inside the b
 "resource deadlock would occur", and moved out it passed. The earlier standalone repros had missed
 it because their helper had C++ linkage. **The lesson:** "cause not established" was the right
 record, and it held long enough for someone else to find the cause.
+
+**Closed on CI.** `ci.pr` run 36563607601 at `a43c384`, 50/50 on its first attempt: c-abi **93/93** (Windows with `/EHs`, and Linux) and copy-probe **13/13** on both platforms; managed **326/326** and the copy oracle **5/5** on all four legs; transport **34/34** on both platforms, the `xrce` cases included; binding-abi **11/11** and pubsub-conformance **146/146** on both. This was the first CI for ABI 0.7, `/EHs`, and D-BIND-67 in the lanes that
+publish bound rows, and nothing needed a second attempt.
+
+**What BIND-5 took, start to close:**
+- 5a (`SubscriberArrow`) and 5b (the copy oracle from C#);
+- one side-by-side C++/C# sequence review (D-BIND-63);
+- a fresh-context review that found 9 BLOCKERs, all fixed;
+- rulings D-BIND-58 to D-BIND-68, and ABI 0.6 to 0.7.
+
+**The lesson worth carrying into BIND-6** is the one BIND-4 already taught: the port's own tests hid
+three behaviours the C++ original has, because they changed the parameters of the case they mirrored
+(`MaxRows = 100000` and a closing flush, where C++ used `max_rows = 2`). A mirror that changes the
+inputs can no longer fail for the reason its name gives. Port the parameters too, or say in the
+header why not.
+
+**Parked for BIND-9 and BIND-10**, all in `plans/reviews/BIND-5-codereview.md`:
+- T-D6 to T-D10;
+- N-D1, N-D2, N-D5, N-D6;
+- M-D3 to M-D5;
+- the NITs.
