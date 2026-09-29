@@ -748,7 +748,12 @@ bundles the `linux-x64` and `win-x64` plugin binaries and sets
 `@eiva/protoc-gen-fletcher` does for TypeScript. It belongs to the protoc
 component: `cd.protoc.yml` packs it from the binaries it already releases and pushes
 it from D-BIND-28's self-hosted runner. `cd.dotnet.yml` and its three packages are
-unchanged.
+unchanged. From ADO 18789's review (comment 23089), checked against the tree: set the
+executable bit after NuGet extraction on Linux; test the plugin's protobuf 3.21.12
+against the protoc consumers are told to use (editions are not declared, so an
+`edition` file is refused); and build generated code against runtime packages of the
+same `MAJOR.MINOR`, which is the tree's compatibility rule across `protoc-v` and
+`dotnet-v`.
 
 **BIND-9, licence files (added 2026-09-10, after #127).** The native shim statically
 links the same permissively licensed stack the gateway does, plus Fletcher's own

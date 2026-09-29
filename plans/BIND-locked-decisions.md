@@ -2354,6 +2354,11 @@ accessors do, for capstone parity (Q18).
   step in `cd.protoc.yml`, which reaches `nuget.eiva.com` only from D-BIND-28's self-hosted runner.
   **A consequence for D-BIND-28:** that runner now serves two tag-triggered publish jobs, not
   one. The property D-BIND-28 protects, that it never runs pull-request code, holds for both.
+  **Added 2026-09-29, from ADO 18789's review (comment 23089):** BIND-9 also makes the plugin
+  executable after NuGet extraction on Linux; tests the plugin (protobuf 3.21.12, proto3
+  `optional` declared, editions not) against the protoc the consumer is told to use; and relies
+  on the equal-`MAJOR.MINOR` rule to keep generated code (`protoc-v`) and runtime (`dotnet-v`)
+  compatible, with a change to the generated surface bumping MINOR on both.
 
   **Declined:** no locator for the first release (every consumer would fetch the binary by hand);
   a Grpc.Tools-style `<FletcherProto Include>` item (more than any other language gets, and more

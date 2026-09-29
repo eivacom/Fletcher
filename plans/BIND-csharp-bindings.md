@@ -1579,7 +1579,23 @@ same machinery as everything else, **so that** it cannot rot.
   its own on D-BIND-28's self-hosted runner. Settle here: how `Google.Protobuf.Tools` exposes
   protoc, and whether the package also carries `fletcher/options.proto` with an
   include property, as the C++ locator does. A consumer-shaped test builds a project
-  from the packed package alone.
+  from the packed package alone. **Three more, from Oliver Monberg-Jensen's review on
+  ADO 18789 (comment 23089, 2026-09-21), each checked against the tree 2026-09-29:**
+  * **The executable bit.** NuGet extraction is reported not to keep it, so on Linux
+    the `build/*.props` makes the plugin executable before protoc runs. The
+    consumer-shaped test runs on Linux, so it proves this either way.
+  * **Which protoc.** The plugin links protobuf 3.21.12 statically
+    (`protoc/conanfile.py`), and current `Google.Protobuf.Tools` ships a much newer
+    protoc. The plugin protocol is stable across versions, but no CI run has combined
+    the two. The consumer-shaped test runs against the protoc the recommended package
+    ships. The plugin declares `FEATURE_PROTO3_OPTIONAL` only
+    (`protoc/include/generator.hpp`), so a `.proto` using `edition = "2023"` is
+    expected to be refused. The package README states that.
+  * **Generated code and runtime stay in step** by the tree's versioning rule: equal
+    `MAJOR.MINOR` means compatible, and PATCH floats per component. The plugin ships
+    under `protoc-v` and the runtime under `dotnet-v`, so the test also builds the
+    generated code against the runtime packages of the same `MAJOR.MINOR`, and a change
+    to the generated surface bumps MINOR on both.
 - The **LGPL relinking decision** from the maintainer (Q9) is due before the first
   *external* publication (D-BIND-28); the NuGet README states the relinking route
   and the NativeAOT static-linking caveat (N-8) regardless.
