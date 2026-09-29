@@ -429,6 +429,20 @@ development plan §4.
 | `csharp_accessor` | `<stem>.fletcher.accessor.cs` + `<stem>.fletcher.arrow.cs` | `csharp_backend_*` (new) |
 | `ts` *(existing, extended)* | `<stem>.fletcher.ts` — **now incl. `Publisher`/`Subscriber`** | `ts_backend_*` (extended) |
 
+**How consumers run it (D-BIND-71, ruled 2026-09-29).** One plugin binary per
+`protoc-v` release; a thin locator per ecosystem that only exposes its path; the
+consumer writes the protoc call in its own build.
+
+| Language | Locator | Exposes |
+|---|---|---|
+| C++ | Conan package `fletcher-protoc` | CMake target `fletcher-protoc::plugin` |
+| TypeScript | npm `@eiva/protoc-gen-fletcher` | the `protoc-gen-fletcher` bin |
+| C# | NuGet `Eiva.Fletcher.Protoc` (**new, protoc component, BIND-9**) | MSBuild property `$(FletcherProtocPlugin)` |
+| Rust | in-tree `build.rs` today; a build-dependency crate later | `FLETCHER_PROTOC_PLUGIN` |
+
+`Eiva.Fletcher.Protoc` is released by `cd.protoc.yml`, not `cd.dotnet.yml`, so the
+dotnet component keeps its three packages.
+
 ---
 
 ## Part 3 — Generator work, on the IR
@@ -683,7 +697,8 @@ artifacts, pushes them, and creates the GitHub Release with the packages attache
 Two deltas from the Conan shape, both ruled 2026-09-14: the publish target is EIVA's
 **internal feed**, and because that host resolves to a **private address** the
 `publish` job runs on a **self-hosted runner inside the EIVA network** — the only
-self-hosted job in the repository. Build, test and pack stay on GitHub-hosted runners.
+self-hosted job in the repository, apart from `cd.protoc.yml`'s NuGet push of
+`Eiva.Fletcher.Protoc` (D-BIND-71), which is tag-triggered in the same way. Build, test and pack stay on GitHub-hosted runners.
 
 ```yaml
 name: cd.dotnet
@@ -1390,6 +1405,11 @@ codec step.
   → `DarkBlue`), each with its proto number. Test cases for the edge cases protoc's
   rule answers (a remainder starting with a digit, members colliding after stripping,
   no prefix, `allow_alias`), and a round trip showing the wire bytes match C++'s.
+- **Build integration per D-BIND-71:** `integration-tests/protoc-dotnet` runs protoc
+  from an MSBuild `Exec` before compile, with the plugin from
+  `$(FletcherProtocPlugin)`, set from `FLETCHER_PROTOC_PLUGIN`. That is the recipe a
+  consumer uses once `Eiva.Fletcher.Protoc` sets the property (BIND-9), and the
+  project file does not change when it does.
 - Per service method, `<Service>_<Method>Publisher` (`Topic`, `TopicKey`,
   `Schema`, `Publish(T)`, `Publish(T, AttachmentsBuilder)`,
   `Publish(IEnumerable<T>)`) and `<Service>_<Method>Subscriber`
@@ -1532,7 +1552,17 @@ same machinery as everything else, **so that** it cannot rot.
   two-heaps hazard between the shim and other native modules that BIND-2's B1
   found. Dynamic is the status quo and needs no work.
 - The **self-hosted runner** registered, labelled, documented (what it runs, what it
-  must have installed), and used by no other job.
+  must have installed), and used by no other job than the NuGet publish jobs:
+  `cd.dotnet.yml`'s and, since D-BIND-71, `cd.protoc.yml`'s. Both are tag-triggered
+  and never run pull-request code.
+- **`Eiva.Fletcher.Protoc` (D-BIND-71)**, the C# locator for the plugin: the two
+  plugin binaries bundled per RID and a `build/*.props` setting
+  `$(FletcherProtocPlugin)`. Packed and published by `cd.protoc.yml` under
+  `protoc-v`, beside the npm shim; its NuGet push is a tag-triggered publish job of
+  its own on D-BIND-28's self-hosted runner. Settle here: how `Google.Protobuf.Tools` exposes
+  protoc, and whether the package also carries `fletcher/options.proto` with an
+  include property, as the C++ locator does. A consumer-shaped test builds a project
+  from the packed package alone.
 - The **LGPL relinking decision** from the maintainer (Q9) is due before the first
   *external* publication (D-BIND-28); the NuGet README states the relinking route
   and the NativeAOT static-linking caveat (N-8) regardless.

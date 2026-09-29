@@ -555,6 +555,7 @@ flowchart LR
     subgraph dotnet[".NET consumer (built - published at BIND-9)"]
         D1["Eiva.Fletcher<br/>codec + Arrow tier + pub/sub"]
         D2["Eiva.Fletcher.Interop<br/>native assets per RID"]
+        D3["Eiva.Fletcher.Protoc<br/>build time only: the plugin<br/>protoc component, D-BIND-71"]
     end
     subgraph browser["Browser / WASM"]
         B1["@eiva/fletcher-gateway-client"]
@@ -569,8 +570,14 @@ flowchart LR
     GW --> S3
 
     classDef planned stroke-dasharray: 5 5
-    class dotnet,D1,D2,B2 planned
+    class dotnet,D1,D2,D3,B2 planned
 ```
+
+**`Eiva.Fletcher.Protoc` is build-time only** (D-BIND-71): it bundles the plugin
+binary and sets `$(FletcherProtocPlugin)`, as `fletcher-protoc::plugin` does for
+C++ and `@eiva/protoc-gen-fletcher` for TypeScript. It is released by
+`cd.protoc.yml`, not with the three dotnet packages, and nothing links it at run
+time.
 
 **Why `GatewayClient` carries no native assets:** WASM cannot load them. Browser
 and WASM clients must keep the managed WebSocket path, which is why D-BIND-13

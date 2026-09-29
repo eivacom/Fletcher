@@ -719,8 +719,12 @@ ignoring `option csharp_namespace` so our types never share one with protoc's
 protoc's `Outer.Types.Inner`; PascalCase properties with protoc's `_` suffix on a
 clash with the class name. **Enum members, ruled 2026-09-29 (D-BIND-70):** protoc's
 C# rule, prefix stripped then PascalCase (`COLOR_RED` → `Color.Red`, where C++ keeps
-`Color::COLOR_RED`), numbers verbatim. An MSBuild `.targets` is a separate question
-at the same boundary.
+`Color::COLOR_RED`), numbers verbatim. **Build integration, ruled 2026-09-29
+(D-BIND-71):** the shared pattern, one plugin binary and a thin locator per
+ecosystem, with the consumer writing the protoc call. The C# locator,
+`Eiva.Fletcher.Protoc`, is BIND-9's; here `protoc-dotnet` sets
+`$(FletcherProtocPlugin)` from `FLETCHER_PROTOC_PLUGIN` and runs protoc from an
+MSBuild `Exec`.
 
 **BIND-7 — Views + accessors + capstone.** Two emitters under one token; the
 `StructArray.Fields` windowing question settled empirically first and recorded in
@@ -730,6 +734,14 @@ see §6 G-4); C# joins `accessor-capstone` against the shared fixture and oracle
 **BIND-T, BIND-8, BIND-9, BIND-10** — as in the 2026-08-31 plan, with BIND-9
 carrying the LGPL notice text and the packaging statement (§6 P-1), and BIND-10
 adding **TD-009** (TD-008 is now taken by the seam).
+
+**BIND-9, the plugin's C# locator (D-BIND-71, 2026-09-29).** `Eiva.Fletcher.Protoc`
+bundles the `linux-x64` and `win-x64` plugin binaries and sets
+`$(FletcherProtocPlugin)`, as `fletcher-protoc::plugin` does for C++ and
+`@eiva/protoc-gen-fletcher` does for TypeScript. It belongs to the protoc
+component: `cd.protoc.yml` packs it from the binaries it already releases and pushes
+it from D-BIND-28's self-hosted runner. `cd.dotnet.yml` and its three packages are
+unchanged.
 
 **BIND-9, licence files (added 2026-09-10, after #127).** The native shim statically
 links the same permissively licensed stack the gateway does, plus Fletcher's own

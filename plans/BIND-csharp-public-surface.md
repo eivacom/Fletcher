@@ -136,6 +136,20 @@ C# output. `<Msg>` below is the flat Fletcher class name, `Outer_Inner` for a ne
 message, as in C++. Properties are PascalCase, with a `_` suffix when one would
 share its class's name (`Player.Player_`).
 
+**Running the generator (D-BIND-71).** A consumer references
+`Eiva.Fletcher.Protoc` (`PrivateAssets="all"`), which sets
+`$(FletcherProtocPlugin)`, and runs protoc itself before compile:
+
+```xml
+<Target Name="FletcherGen" BeforeTargets="BeforeCompile">
+  <Exec Command="protoc --plugin=protoc-gen-fletcher=&quot;$(FletcherProtocPlugin)&quot; --fletcher_opt=csharp --fletcher_out=$(IntermediateOutputPath)gen -I proto proto/player.proto" />
+  <ItemGroup><Compile Include="$(IntermediateOutputPath)gen/*.fletcher.cs" /></ItemGroup>
+</Target>
+```
+
+This is the same shape as C++ (`fletcher-protoc::plugin`) and TypeScript
+(`@eiva/protoc-gen-fletcher`). How protoc itself is located is BIND-9's to settle.
+
 | Generated C++ | Generated C# |
 |---|---|
 | `class <Msg>` — setters, getters, `EncodeTo`, `Encode`, `DecodeInto`, ctors from bytes | `sealed class <Msg>` — properties, `static Schema Schema { get }`, `static RecordBatch ToArrow(IEnumerable<Msg>)`, `static <Msg> FromArrow(StructArray, int)`. **No `EncodeTo`/`DecodeInto`** — generated C# writes no wire bytes |

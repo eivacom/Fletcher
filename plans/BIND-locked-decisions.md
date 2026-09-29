@@ -343,6 +343,9 @@ commit.
   split to protect. Namespaces inside `Eiva.Fletcher` keep the C++ component names
   (`Eiva.Fletcher.PubSub`, `Eiva.Fletcher.Arrow`, …) so a later split needs no renames.
   Adding a fourth package → STOP-AND-ASK.
+  *(Clarified 2026-09-29 by D-BIND-71, which was that STOP-AND-ASK: the three are the dotnet
+  component's. `Eiva.Fletcher.Protoc` belongs to the protoc component, as the npm shim does, and
+  does not count against them.)*
 
 - **D-BIND-15 — Malformed input throws; it never mis-reads.** Every hardening case
   HARD-1..7 added (truncated buffer, absurd length prefix, over-long list/map
@@ -2275,7 +2278,8 @@ accessors do, for capstone parity (Q18).
   **Declined:** honouring `csharp_namespace` (CS0101 beside protoc's output); following protoc
   throughout, with `Outer.Types.Inner` (one type would be named differently in C# than in every
   other Fletcher language).
-  *(Enum member naming: answered by D-BIND-70 the same day.)*
+  *(Enum member naming: answered by D-BIND-70 the same day. The MSBuild question: answered by
+  D-BIND-71.)*
 
 - **D-BIND-70 - generated C# names enum members by protoc's C# rule: strip the enum-name prefix,
   then PascalCase.** *LOCKED BY THE MAINTAINER 2026-09-29,* in one question, at the BIND-5 →
@@ -2306,3 +2310,52 @@ accessors do, for capstone parity (Q18).
 
   **Declined:** verbatim like C++ (unidiomatic, analyser noise); PascalCase keeping the prefix
   (`ColorRed`, which repeats the type name in every member).
+
+- **D-BIND-71 - C# consumers run the generator the way C++ and TypeScript consumers do: one plugin
+  binary, a thin locator per ecosystem, and the consumer writes the protoc call. The C# locator is
+  `Eiva.Fletcher.Protoc`, a NuGet package of the PROTOC component.** *LOCKED BY THE MAINTAINER
+  2026-09-29,* in two questions, at the BIND-5 → BIND-6 boundary. This is D-BIND-14′'s
+  STOP-AND-ASK for a fourth package, answered.
+
+  **WHY.** The plan had no build story for C#. The first question offered no `.targets`, a fourth
+  package, or a `.targets` that downloads the plugin; the maintainer asked instead for a pattern
+  that matches what C++ and TypeScript already do and what Rust will do. Reading the tree showed
+  one, never written down:
+  - **One binary.** `cd.protoc.yml` releases `fletcher-protoc` once per `protoc-v` tag, as a Conan
+    package and as statically linked `linux-x64` and `win-x64` binaries on GitHub Releases. Every
+    language selects its output with `--fletcher_opt`.
+  - **A thin locator per ecosystem, and nothing more.** C++: the Conan package's
+    `fletcher-protoc::plugin` imported target (`protoc/cmake/fletcher-protoc-target.cmake`), which
+    also sets `FLETCHER_PROTO_INCLUDE_DIR`. TypeScript: `@eiva/protoc-gen-fletcher`, released by the
+    same `cd.protoc.yml`, whose bin downloads the matching binary. Rust, in-tree:
+    `FLETCHER_PROTOC_PLUGIN`, read by `build.rs`. No ecosystem gets a "generate my protos" macro.
+  - **The consumer writes the protoc call** in its own build tool, and takes protoc itself from its
+    own ecosystem (Conan's `protobuf`, `@protobuf-ts/protoc`).
+
+  **THE RULING.**
+  1. **The pattern above is the rule for every language**, now written down.
+  2. **C#'s locator is `Eiva.Fletcher.Protoc`**: it bundles the two plugin binaries (NuGet's norm,
+     so a build needs no network) and sets one MSBuild property, **`$(FletcherProtocPlugin)`**, the
+     counterpart of `fletcher-protoc::plugin`. A consumer references it with `PrivateAssets="all"`
+     and writes an `Exec` of protoc before compile. protoc itself comes from the consumer's side,
+     for example `Google.Protobuf.Tools`.
+  3. **It is the protoc component's package**, versioned by `protoc-v` and released by
+     `cd.protoc.yml` beside the npm shim. The dotnet component keeps its three packages
+     (D-BIND-14′, clarified), and `cd.dotnet.yml` is unchanged.
+  4. **Built in BIND-9**, with the rest of the packaging. BIND-6's `protoc-dotnet` test sets the same
+     property from `FLETCHER_PROTOC_PLUGIN`, so its project file does not change when the package
+     arrives.
+  5. **Rust, when its locator comes, follows the same shape**: a build-dependency crate exposing the
+     binary's path to `build.rs`.
+
+  **Left to BIND-9:** how `Google.Protobuf.Tools` exposes protoc's path (verified, not assumed);
+  whether the package also carries `fletcher/options.proto` and sets an include property, as the
+  C++ locator's `FLETCHER_PROTO_INCLUDE_DIR` does (recommended, for parity); and the NuGet publish
+  step in `cd.protoc.yml`, which reaches `nuget.eiva.com` only from D-BIND-28's self-hosted runner.
+  **A consequence for D-BIND-28:** that runner now serves two tag-triggered publish jobs, not
+  one. The property D-BIND-28 protects, that it never runs pull-request code, holds for both.
+
+  **Declined:** no locator for the first release (every consumer would fetch the binary by hand);
+  a Grpc.Tools-style `<FletcherProto Include>` item (more than any other language gets, and more
+  to maintain); a `.targets` inside `Eiva.Fletcher` that downloads the plugin at build time (a
+  runtime package carrying build logic, and builds that need GitHub).
