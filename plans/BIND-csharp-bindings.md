@@ -1330,7 +1330,8 @@ codec step.
     mutations of the instrument's scoring and fault rules.
     **CI-confirmed at `38d6d78`** (`ci.pr` run 36443379137, 50/50 on its first attempt): copy-probe **13/13** and c-abi **86/86** on both platforms, managed **313/313** and the oracle **5/5** on all four legs, pubsub-conformance **146/146**, transport **33/33** and binding-abi **11/11** on both platforms.
     The Linux probe shim, its version script and the staged `libfletcher-c-abi.so` name all held on their first run.
-    D-BIND-63 followed at `255ad43` and moved managed to 316; its own CI run is the next one.
+    D-BIND-63 followed at `255ad43` and moved managed to 316, CI-confirmed there (`ci.pr` run
+    36447834274, 50/50 on its first attempt: managed **316/316** and the oracle **5/5** on all four legs).
   * **Found by the C++/C# sequence review during 5b's CI, and fixed (D-BIND-63):** the 5a batcher
     had no byte ceiling. Its window now splits where C++'s does (`Array.MaxLength`, just under C++'s
     2^31-2), and a row alone past the ceiling is a counted drop. Three cases were added; managed is

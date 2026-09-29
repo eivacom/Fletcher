@@ -480,7 +480,9 @@ maintainer, and read-only until a finding was ruled on.
 - **Arrow subscribe side.** C# copies rows and attachments where C++ keeps borrowed bytes, as ruled
   (D-BIND-25, D-BIND-58, D-BIND-59).
 - **One real divergence, ruled and fixed the same hour (D-BIND-63):** C++ splits a batch window
-  before it overflows Arrow's 32-bit offsets, and C# had no ceiling at all.
+  before it overflows Arrow's 32-bit offsets, and C# had no ceiling at all. CI-confirmed at `255ad43`
+  (`ci.pr` run 36447834274, 50/50 on its first attempt): managed **316/316** and the oracle **5/5**
+  on all four legs.
 - **Smaller findings, recorded for the fresh-context review:**
   - the copy oracle measures `fl_publisher_publish_row` but not `fl_publisher_publish_rows`;
   - `fl_publisher_publish_rows` does not check `first + count` against the batch before publishing;
