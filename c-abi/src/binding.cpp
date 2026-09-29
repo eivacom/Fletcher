@@ -551,6 +551,20 @@ fl_status fl_decode_rows(const fl_codec* codec, const uint8_t* bytes, size_t len
     });
 }
 
+fl_status fl_decode_rows_framed(const fl_codec* codec, const uint8_t* bytes, size_t len,
+                                const size_t* ends, int64_t count, struct ArrowArray* out,
+                                uint8_t* valid, fl_error* err) {
+    return Contain(err, FL_ORIGIN_CODEC, [&] {
+        if (codec == nullptr) {
+            throw PubSubError(PubSubStatus::kInvalidArgument,
+                              "fl_decode_rows_framed: codec must not be null");
+        }
+        // A pass-through, as fl_decode_rows is: a skipped row is reported in `valid`,
+        // and every refusal that reaches here is the codec's, with its own message.
+        codec->codec->DecodeRowsFramed(bytes, len, ends, count, out, valid);
+    });
+}
+
 /* ══ Provider ══════════════════════════════════════════════════════════════ */
 
 fl_status fl_provider_create(fl_str selector, const fl_provider_config* config, fl_provider** out,

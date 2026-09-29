@@ -280,6 +280,56 @@ public sealed unsafe class FletcherCodec : IDisposable
         }
     }
 
+    /// <summary>
+    /// Decode a FRAMED window: row <c>i</c> is <c>rows[ends[i-1]..ends[i]]</c>, each the
+    /// bytes of one message (D-BIND-68).
+    /// </summary>
+    /// <remarks>
+    /// A row that fails to decode, or does not end exactly at its boundary, is skipped
+    /// and reported as <c>valid[i] == 0</c>; the batch holds the good rows only, in
+    /// order. One native call either way - the case <see cref="DecodeBatch"/> cannot
+    /// see is two messages that are each malformed but valid together. Internal:
+    /// <see cref="SubscriberArrow"/> is its one caller.
+    /// </remarks>
+    internal RecordBatch DecodeBatchFramed(ReadOnlySpan<byte> rows, ReadOnlySpan<int> ends, Span<byte> valid)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (valid.Length < ends.Length)
+        {
+            throw new ArgumentException("valid needs one entry per row", nameof(valid));
+        }
+
+        // size_t on the native side; the window's ends are ints, so widen once here.
+        nuint[] frame = new nuint[ends.Length];
+        for (int i = 0; i < ends.Length; i++)
+        {
+            frame[i] = (nuint)ends[i];
+        }
+
+        CArrowArray* decoded = CArrowArray.Create();
+        try
+        {
+            FlError err = default;
+            int status;
+            fixed (byte* bytes = rows)
+            fixed (nuint* framed = frame)
+            fixed (byte* flags = valid)
+            {
+                status = NativeMethods.fl_decode_rows_framed(
+                    _codec, (nint)bytes, (nuint)rows.Length, (nint)framed, ends.Length, (nint)decoded, (nint)flags, ref err);
+            }
+
+            Errors.ThrowIfFailed(status, ref err);
+
+            // Imported against the DECODED schema, as DecodeBatch is (D-BIND-39).
+            return CArrowArrayImporter.ImportRecordBatch(decoded, DecodedSchema);
+        }
+        finally
+        {
+            CArrowArray.Free(decoded);
+        }
+    }
+
     /// <summary>Close the codec.</summary>
     /// <remarks>
     /// A <see cref="BoundRows"/> still alive does not become invalid: the native

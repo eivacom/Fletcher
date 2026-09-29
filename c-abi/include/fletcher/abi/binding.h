@@ -161,7 +161,7 @@ extern "C" {
  * fl_binding_abi_version() at load time; `Eiva.Fletcher.Interop` does exactly
  * that in its static constructor. */
 #define FL_BINDING_ABI_VERSION_MAJOR 0
-#define FL_BINDING_ABI_VERSION_MINOR 6
+#define FL_BINDING_ABI_VERSION_MINOR 7
 #define FL_BINDING_ABI_VERSION                                   \
     ((uint32_t)(((uint32_t)FL_BINDING_ABI_VERSION_MAJOR << 16) | \
                 (uint32_t)FL_BINDING_ABI_VERSION_MINOR))
@@ -1063,6 +1063,26 @@ FL_ABI_EXPORT fl_status fl_encode_row(const fl_rows* rows, int64_t i, fl_write_w
  * actually wants it. */
 FL_ABI_EXPORT fl_status fl_decode_rows(const fl_codec* codec, const uint8_t* bytes, size_t len,
                                        int64_t count, struct ArrowArray* out, fl_error* err);
+
+/* DECODE a FRAMED window (D-BIND-68, ABI 0.7) - rows whose boundaries the caller
+ * knows, because each arrived as its own message.
+ *
+ * Row `i` occupies `[ends[i-1], ends[i])`, with `ends[-1]` taken as 0; `ends` must
+ * be non-decreasing and end at `len`, or the call is FL_INVALID_ARGUMENT. A row that
+ * fails to decode, or does not end EXACTLY at its boundary, is SKIPPED and reported
+ * as `valid[i] = 0`; every other row is `valid[i] = 1`. `out` receives the good rows
+ * only, in order, and the call returns FL_OK when rows were skipped - a skipped row
+ * is data, not an error. `valid` has room for `count` bytes.
+ *
+ * What `fl_decode_rows` cannot say: it checks that `count` rows fill `len`, so two
+ * messages that are each malformed but valid together decode "successfully" with
+ * rows paired to the wrong messages. Knowing each boundary, this call drops both.
+ * Only the reader's refusals mark a row bad; any other failure fails the call.
+ * Callable from inside a delivery, as `fl_decode_rows` is. */
+FL_ABI_EXPORT fl_status fl_decode_rows_framed(const fl_codec* codec, const uint8_t* bytes,
+                                              size_t len, const size_t* ends, int64_t count,
+                                              struct ArrowArray* out, uint8_t* valid,
+                                              fl_error* err);
 
 #ifdef __cplusplus
 } /* extern "C" */

@@ -2188,3 +2188,39 @@ accessors do, for capstone parity (Q18).
 
   **Declined:** leaving it to the seam (provider-dependent, looser than C++); keeping declarations
   per provider (looser than C++, with state shared across publishers).
+
+- **D-BIND-68 - ABI 0.7 adds `fl_decode_rows_framed`: one native call decodes a window whose row
+  boundaries are known, skipping and reporting each row that fails or does not end at its
+  boundary.** *LOCKED BY THE MAINTAINER 2026-09-29,* in one question, while fixing the BIND-5
+  review's B3 and B4.
+
+  **WHY.** C++'s `BatchDecoder` decodes every row as it arrives, so it knows which rows are bad
+  (only good rows count toward `max_rows`, B3) and where each message ends (a message that does not
+  end on a row boundary is dropped, B4). C# holds raw rows and decodes the window in one native call
+  at flush (D-BIND-25). The only decode, `fl_decode_rows(bytes, len, count)`, checks the total length
+  and nothing per row. B3 could be patched from managed code with the existing fallback; B4 could
+  not, because rows split across two messages still decode as a valid window.
+
+  **THE RULING.**
+  - **The call.** `fl_decode_rows_framed(codec, bytes, len, ends, count, out, valid, err)` decodes
+    `count` rows, where row `i` occupies `[ends[i-1], ends[i])`.
+  - **What counts as bad.** A row that fails to decode, or does not end exactly at its boundary, is
+    skipped with `valid[i] = 0`. It is a bad row only when the failure is the reader's
+    (`std::invalid_argument` or `std::out_of_range`). Anything else fails the whole call.
+  - **What comes back.** `out` holds the good rows only, in order, and the call returns `FL_OK` even
+    when rows were skipped.
+  - **How a bad row is skipped:** by restart, not by a second walker. Rows are decoded in sequence;
+    on a bad row the array is discarded and the rows already known good are decoded again, so the
+    decoder stays the one source of truth. Bad rows are rare, so the restart costs nothing in the
+    common case.
+  - **Compatibility.** ABI 0.7 is append-only: the handshake's exact-minor check moves to 7, and
+    `fl_decode_rows` is unchanged.
+  - **Scope.** The managed side keeps the call internal to `FletcherCodec`; `SubscriberArrow` uses
+    it, so the per-row fallback pass goes away.
+  - **B3 on top of it.** A `RowLimit` flush that finds bad rows puts the good ones back at the front
+    of the window and waits for more instead of delivering short. The drops ride with the batch
+    that is finally delivered, as in C++.
+
+  **Declined:** decoding each row alone with today's call (N native calls and N arrays per window,
+  undoing D-BIND-25); fixing B3 alone and documenting B4 (a publisher of malformed data could
+  misalign rows and attachments silently).

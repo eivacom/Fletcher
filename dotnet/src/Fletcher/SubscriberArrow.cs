@@ -44,11 +44,19 @@
 // arrives as a one-row batch, flushed on the delivery thread as it lands.
 //
 // ── Decoding N rows at a time, and a corrupt one among them ─────────────────
-// The window is decoded with ONE fl_decode_rows call. The format is
-// self-delimiting, so a corrupt row fails the whole call; only then is each row
-// decoded alone to find the bad ones, which are counted dropped, and the good
-// ones are decoded together again. The common case is one native call per
-// batch; the failure case costs a second pass and keeps attachments aligned.
+// The window is decoded with ONE fl_decode_rows_framed call (D-BIND-68), which
+// knows where each message ended: a row that fails to decode, or does not end at
+// its boundary, is skipped and reported, and the good rows come back together.
+// So a corrupt row costs no second pass, and two messages that are each malformed
+// but valid together are dropped rather than decoded into the wrong rows.
+//
+// Only GOOD rows count toward MaxRows, as in C++, whose BatchDecoder counts what
+// it decoded. A RowLimit flush that finds bad rows puts the good ones back at the
+// front of the window and waits for more; its drops ride with the batch that is
+// finally delivered. (It delivers short instead if the window was stopped in the
+// meantime, or if putting them back would pass the byte ceiling.) The rows it put
+// back can then trail rows another flush cut meanwhile - batches were already
+// allowed to complete out of order (D-BIND-64).
 //
 // ── Threads, and what a handler may assume (D-BIND-64) ─────────────────────
 // A RowLimit flush runs on the transport's delivery thread (inside the
@@ -577,6 +585,16 @@ public sealed class SubscriberArrow : IDisposable
 
         private void Flush(BatchReason reason)
         {
+            // A RowLimit flush that put good rows back and found the window full again
+            // flushes again; each pass drops at least one bad row, so this ends.
+            while (FlushOnce(reason))
+            {
+            }
+        }
+
+        /// <summary>Cut the window and deliver it. True when rows were put back and the window is full again.</summary>
+        private bool FlushOnce(BatchReason reason)
+        {
             ArrayBufferWriter<byte> rows;
             int[] ends;
             List<AttachmentsBuilder> attachments;
@@ -592,7 +610,7 @@ public sealed class SubscriberArrow : IDisposable
 
                 if (_ends.Count == 0 && _dropped == 0)
                 {
-                    return;
+                    return false;
                 }
 
                 // Swapped out, not copied: the window's own buffer goes to the decode, so
@@ -613,7 +631,7 @@ public sealed class SubscriberArrow : IDisposable
 
             try
             {
-                Deliver(reason, codec, rows, ends, attachments, dropped);
+                return Deliver(reason, codec, rows, ends, attachments, dropped);
             }
             finally
             {
@@ -625,8 +643,11 @@ public sealed class SubscriberArrow : IDisposable
             }
         }
 
-        /// <summary>Decode one cut window and hand it to the handler, with no lock held.</summary>
-        private void Deliver(
+        /// <summary>
+        /// Decode one cut window and hand it to the handler, with no lock held. True when
+        /// its good rows went back into the window instead, and the window is full again.
+        /// </summary>
+        private bool Deliver(
             BatchReason reason, FletcherCodec? codec, ArrayBufferWriter<byte> rows, int[] ends, List<AttachmentsBuilder> attachments, long dropped)
         {
             RecordBatch? batch = null;
@@ -635,15 +656,48 @@ public sealed class SubscriberArrow : IDisposable
             {
                 try
                 {
-                    batch = Decode(codec, rows.WrittenMemory, ends, attachments, ref dropped, out kept);
+                    byte[] valid = new byte[ends.Length];
+                    batch = codec.DecodeBatchFramed(rows.WrittenSpan, ends, valid);
+                    int bad = 0;
+                    foreach (byte flag in valid)
+                    {
+                        if (flag == 0)
+                        {
+                            bad++;
+                        }
+                    }
+
+                    if (bad > 0)
+                    {
+                        kept = [];
+                        for (int i = 0; i < valid.Length; i++)
+                        {
+                            if (valid[i] != 0)
+                            {
+                                kept.Add(attachments[i]);
+                            }
+                        }
+
+                        dropped += bad;
+
+                        // Only good rows count toward MaxRows, as in C++: a RowLimit
+                        // window that came up short goes back and waits for more.
+                        if (reason == BatchReason.RowLimit &&
+                            TryPutBack(rows.WrittenSpan, ends, valid, kept, dropped, out bool fullAgain))
+                        {
+                            batch.Dispose();
+                            return fullAgain;
+                        }
+                    }
                 }
                 catch (Exception)
                 {
-                    // Whatever failed - the decode, its fallback's allocation, the import -
-                    // the window's rows are lost, and counted as lost (D-BIND-66). Rows the
-                    // fallback already counted are in `dropped`; the rest are `kept`.
+                    // Whatever failed - the decode or the import - the window's rows are
+                    // lost, and counted as lost (D-BIND-66): every row not already
+                    // counted is in `kept`.
                     dropped += kept.Count;
                     kept = [];
+                    batch?.Dispose();
                     batch = EmptyBatch(codec);
                 }
             }
@@ -655,6 +709,78 @@ public sealed class SubscriberArrow : IDisposable
             catch (Exception e)
             {
                 _owner.ReportAbsorbed(e, SubscriptionId);
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Put a RowLimit window's good rows back at the FRONT of the window, with their
+        /// attachments and the drops found, so they wait for more rows as C++'s would
+        /// (review B3). False, delivering them now instead, when the window was stopped
+        /// meanwhile or the rows would take it past the byte ceiling.
+        /// </summary>
+        private bool TryPutBack(
+            ReadOnlySpan<byte> rows, int[] ends, byte[] valid, List<AttachmentsBuilder> kept, long dropped, out bool fullAgain)
+        {
+            fullAgain = false;
+            lock (_gate)
+            {
+                if (_stopped)
+                {
+                    return false;
+                }
+
+                long goodBytes = 0;
+                for (int i = 0, start = 0; i < ends.Length; start = ends[i], i++)
+                {
+                    if (valid[i] != 0)
+                    {
+                        goodBytes += ends[i] - start;
+                    }
+                }
+
+                if (goodBytes + _rows.WrittenCount > _byteCeiling)
+                {
+                    return false;
+                }
+
+                var merged = new ArrayBufferWriter<byte>((int)goodBytes + _rows.WrittenCount + 1);
+                var mergedEnds = new List<int>(kept.Count + _ends.Count);
+                var mergedAttachments = new List<AttachmentsBuilder>(kept.Count + _attachments.Count);
+                int k = 0;
+                for (int i = 0, start = 0; i < ends.Length; start = ends[i], i++)
+                {
+                    if (valid[i] == 0)
+                    {
+                        continue;
+                    }
+
+                    ReadOnlySpan<byte> one = rows.Slice(start, ends[i] - start);
+                    one.CopyTo(merged.GetSpan(one.Length));
+                    merged.Advance(one.Length);
+                    mergedEnds.Add(merged.WrittenCount);
+                    mergedAttachments.Add(kept[k++]);
+                }
+
+                // Then whatever arrived while this window was being decoded, after it.
+                int shift = merged.WrittenCount;
+                _rows.WrittenSpan.CopyTo(merged.GetSpan(_rows.WrittenCount));
+                merged.Advance(_rows.WrittenCount);
+                foreach (int end in _ends)
+                {
+                    mergedEnds.Add(end + shift);
+                }
+
+                mergedAttachments.AddRange(_attachments);
+
+                _rows = merged;
+                _ends = mergedEnds;
+                _attachments = mergedAttachments;
+                _dropped += dropped;
+                ArmDeadline();
+                fullAgain = _ends.Count >= _maxRows;
+                return true;
             }
         }
 
@@ -672,45 +798,6 @@ public sealed class SubscriberArrow : IDisposable
             catch (Exception)
             {
                 return null;
-            }
-        }
-
-        /// <summary>One native call for the window; a second pass only when a row in it is corrupt.</summary>
-        private static RecordBatch Decode(
-            FletcherCodec codec, ReadOnlyMemory<byte> window, int[] ends, List<AttachmentsBuilder> attachments,
-            ref long dropped, out List<AttachmentsBuilder> kept)
-        {
-            ReadOnlySpan<byte> rows = window.Span;
-            try
-            {
-                kept = attachments;
-                return codec.DecodeBatch(rows, ends.Length);
-            }
-            catch (FletcherFormatException)
-            {
-                var good = new ArrayBufferWriter<byte>(rows.Length);
-                kept = new List<AttachmentsBuilder>(ends.Length);
-                int start = 0;
-                for (int i = 0; i < ends.Length; i++)
-                {
-                    ReadOnlySpan<byte> one = rows.Slice(start, ends[i] - start);
-                    start = ends[i];
-                    try
-                    {
-                        codec.DecodeBatch(one, 1).Dispose();
-                    }
-                    catch (FletcherFormatException)
-                    {
-                        dropped++;
-                        continue;
-                    }
-
-                    one.CopyTo(good.GetSpan(one.Length));
-                    good.Advance(one.Length);
-                    kept.Add(attachments[i]);
-                }
-
-                return codec.DecodeBatch(good.WrittenSpan, kept.Count);
             }
         }
     }

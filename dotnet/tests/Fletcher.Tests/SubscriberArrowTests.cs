@@ -654,6 +654,78 @@ public sealed class SubscriberArrowTests : IDisposable
         Assert.False(self.IsLive);
     }
 
+    // ── The framed decode (D-BIND-68) ───────────────────────────────────────
+
+    private static byte[] Encoded(int x, string name)
+    {
+        using RecordBatch batch = Row(x, name);
+        using var codec = new FletcherCodec(TwoColumns);
+        using BoundRows rows = codec.Bind(batch);
+        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+        codec.Encode(rows, 0, buffer);
+        return buffer.WrittenSpan.ToArray();
+    }
+
+    /// <summary>
+    /// A corrupt row does not count toward MaxRows, as in C++'s
+    /// CorruptRowIsCountedDroppedAndBatchStaysAligned (max_rows = 2): the RowLimit
+    /// batch holds two GOOD rows and reports the one dropped (review B3).
+    /// </summary>
+    [Fact]
+    public void ACorruptRowDoesNotCountTowardMaxRows()
+    {
+        TopicPath topic = Declared("corruptlimit");
+        _subscriber.SubscribeBatched(topic, _sink.Handler, Options(2, Long)).Schema.Dispose();
+
+        using var a = new AttachmentsBuilder();
+        a.Set("row", "A"u8);
+        using var bad = new AttachmentsBuilder();
+        bad.Set("row", "X"u8);
+        using var b = new AttachmentsBuilder();
+        b.Set("row", "B"u8);
+
+        _publisher.PublishRaw(topic, Encoded(1, "first"), a);
+        _publisher.PublishRaw(topic, [0x00], bad);
+        Assert.Empty(_sink.Snapshot());  // one good row: the window waits for another
+        _publisher.PublishRaw(topic, Encoded(2, "second"), b);
+
+        Delivery only = Assert.Single(_sink.Snapshot());
+        Assert.Equal(BatchReason.RowLimit, only.Status.Reason);
+        Assert.Equal(2, only.Rows);
+        Assert.Equal(1, only.Status.RowsDropped);
+        Assert.Equal("first", ((StringArray)only.Batch!.Column(1)).GetString(0));
+        Assert.Equal("second", ((StringArray)only.Batch!.Column(1)).GetString(1));
+        Assert.True(only.Attachments[0].TryFind("row"u8, out ReadOnlySpan<byte> first));
+        Assert.True(only.Attachments[1].TryFind("row"u8, out ReadOnlySpan<byte> second));
+        Assert.Equal("A"u8.ToArray(), first.ToArray());
+        Assert.Equal("B"u8.ToArray(), second.ToArray());
+    }
+
+    /// <summary>
+    /// Two valid rows split across two messages at a non-boundary: each message is
+    /// malformed alone and the two are valid together. C++ decodes per message and
+    /// drops both; so does the framed decode, where the whole-window decode paired
+    /// the rows with the wrong messages (review B4).
+    /// </summary>
+    [Fact]
+    public void RowsSplitAcrossMessagesAreDroppedNotMisaligned()
+    {
+        TopicPath topic = Declared("split");
+        SubscribeResult result = _subscriber.SubscribeBatched(topic, _sink.Handler, Options(100, Long));
+        result.Schema.Dispose();
+
+        byte[] joined = [.. Encoded(1, "aaaa"), .. Encoded(2, "bbbb")];
+        int cut = Encoded(1, "aaaa").Length + 3;
+        _publisher.PublishRaw(topic, joined.AsSpan(0, cut));
+        _publisher.PublishRaw(topic, joined.AsSpan(cut));
+        result.Subscription.Dispose();
+
+        Delivery only = Assert.Single(_sink.Snapshot());
+        Assert.Equal(0, only.Rows);
+        Assert.Equal(2, only.Status.RowsDropped);
+        Assert.Empty(only.Attachments);
+    }
+
     // ── Every row arrives or is counted (D-BIND-66) ─────────────────────────
 
     /// <summary>

@@ -436,3 +436,20 @@ subscription whose owner is not this subscriber, in both tiers.
     fails it. Managed 320/320.
   - **Not tested:** the OOM and importer-failure paths. They cannot be triggered deterministically
     without a test hook, and rest on reading.
+- **B3, B4 — fixed, on D-BIND-68's ABI 0.7.**
+  - **The native call.** `fl_decode_rows_framed` decodes a window whose row boundaries are known,
+    in one call. A row the reader refuses, or one that does not end at its boundary, is skipped and
+    reported per row. It skips by restart, so the decoder stays the one judge of a row.
+  - **`SubscriberArrow` uses it,** so the per-row fallback pass is gone.
+  - **B3:** a `RowLimit` window that came up short puts its good rows back at the front and waits
+    for more, as C++ counts only decoded rows. It delivers short instead if stopped meanwhile or if
+    the put-back would pass the byte ceiling.
+  - **B4:** rows split across messages are dropped, not decoded into the wrong rows.
+  - **Tests:**
+    - c-abi: 4 cases (good window, corrupt row, split rows, a frame that does not describe the
+      bytes), 90/90;
+    - managed: `ACorruptRowDoesNotCountTowardMaxRows` (C++'s own `max_rows = 2` case) and
+      `RowsSplitAcrossMessagesAreDroppedNotMisaligned`, 322/322, with the oracle 5/5 at 0.7.
+  - **Mutations:** removing the native boundary check fails the split case in both suites, and
+    never putting rows back fails the MaxRows case.
+  - **The ABI** is 0.7 (47 entry points), and the handshake and READMEs are moved with it.

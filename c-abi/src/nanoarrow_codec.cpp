@@ -836,4 +836,94 @@ void NanoarrowCodec::DecodeRows(const uint8_t* bytes, size_t len, int64_t count,
     ArrowArrayMove(&building, out);
 }
 
+void NanoarrowCodec::DecodeRowsFramed(const uint8_t* bytes, size_t len, const size_t* ends,
+                                      int64_t count, ArrowArray* out, uint8_t* valid) const {
+    if (out == nullptr) {
+        throw std::invalid_argument("NanoarrowCodec::DecodeRowsFramed: out must not be null");
+    }
+    if (count < 0) {
+        throw std::invalid_argument("NanoarrowCodec::DecodeRowsFramed: count must be >= 0, got " +
+                                    std::to_string(count));
+    }
+    if (count > 0 && (ends == nullptr || valid == nullptr)) {
+        throw std::invalid_argument(
+            "NanoarrowCodec::DecodeRowsFramed: ends and valid must not be null for count > 0");
+    }
+    if (bytes == nullptr && len != 0) {
+        throw std::invalid_argument(
+            "NanoarrowCodec::DecodeRowsFramed: bytes is null but len says there are " +
+            std::to_string(len) + " of them");
+    }
+    // The frame is the CALLER's claim about its own bytes, so a frame that does not
+    // describe `len` is a caller defect and refused whole - never read as bad rows.
+    size_t previous = 0;
+    for (int64_t row = 0; row < count; ++row) {
+        if (ends[row] < previous || ends[row] > len) {
+            throw std::invalid_argument("NanoarrowCodec::DecodeRowsFramed: ends[" +
+                                        std::to_string(row) +
+                                        "] is out of order or past len; the frame must be "
+                                        "non-decreasing and within the bytes");
+        }
+        previous = ends[row];
+    }
+    if (previous != len) {
+        throw std::invalid_argument(
+            "NanoarrowCodec::DecodeRowsFramed: the last end must be len, so no byte is outside "
+            "every row");
+    }
+
+    std::vector<uint8_t> ok(static_cast<size_t>(count), 1);
+    const auto fields = static_cast<int>(root_.children.size());
+
+    // By RESTART rather than by a second walker: rows are decoded in order into one
+    // array, and on a bad row that array is discarded and the rows already known good
+    // are decoded again. The decoder stays the only judge of a row, so no validator
+    // can drift from it - and bad rows are rare, so the common case is one pass.
+    for (;;) {
+        ArrowArray building = {};
+        ArrowError error;
+        // The DECODED schema, as in DecodeRows (D-BIND-39).
+        if (ArrowArrayInitFromSchema(&building, decoded_schema_.get(), &error) != NANOARROW_OK) {
+            Refuse(std::string("internal: an array could not be built for the codec's decoded "
+                               "schema: ") +
+                   error.message);
+        }
+        ArrayGuard guard(&building);
+        Must(ArrowArrayStartAppending(&building), "starting the array");
+
+        int64_t bad = -1;
+        for (int64_t row = 0; row < count && bad < 0; ++row) {
+            if (!ok[static_cast<size_t>(row)]) continue;
+            const size_t start = row == 0 ? 0 : ends[row - 1];
+            const size_t span = ends[row] - start;
+            try {
+                PositionalReader reader(bytes + start, span, fields);
+                DecodeStructBody(root_, reader, &building);
+                // The case whole-window decoding cannot see: a row that decodes but
+                // does not end where its message ended - two messages that are each
+                // invalid and valid together (BIND-5 review B4).
+                if (reader.BytesConsumed() != span) bad = row;
+            } catch (const std::invalid_argument&) {
+                bad = row;
+            } catch (const std::out_of_range&) {
+                bad = row;
+            }
+        }
+
+        if (bad >= 0) {
+            // `guard` releases the partly built array on the way round.
+            ok[static_cast<size_t>(bad)] = 0;
+            continue;
+        }
+
+        if (ArrowArrayFinishBuildingDefault(&building, &error) != NANOARROW_OK) {
+            Refuse(std::string("internal: the decoded array failed validation: ") + error.message);
+        }
+        guard.Dismiss();
+        ArrowArrayMove(&building, out);
+        if (count > 0) std::memcpy(valid, ok.data(), ok.size());
+        return;
+    }
+}
+
 }  // namespace fletcher::abi

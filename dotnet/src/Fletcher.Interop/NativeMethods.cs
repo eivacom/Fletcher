@@ -175,6 +175,12 @@ internal static partial class NativeMethods
     internal static partial int fl_decode_rows(
         CodecHandle codec, nint bytes, nuint len, long count, nint output, ref FlError err);
 
+    /// <summary>Decode a FRAMED window: rows whose boundaries are known, bad ones skipped and reported (D-BIND-68, ABI 0.7).</summary>
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int fl_decode_rows_framed(
+        CodecHandle codec, nint bytes, nuint len, nint ends, long count, nint output, nint valid, ref FlError err);
+
     /* Provider and publisher ------------------------------------------------ */
 
     /* == Blobs and attachments: the write end (BIND-4a's entry points) ======== */

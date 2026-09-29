@@ -1345,7 +1345,10 @@ codec step.
     their own failures and count them in `RowsDropped`, as C++'s `AddRow` does.
   * **Bound rows need this publisher's declaration (D-BIND-67, from the review's Q4):** the fused
     publishes refuse `TopicNotDeclared` otherwise, as C++ `PublisherArrow` does; the raw paths stay
-    unchecked. Three cases were added; managed is
+    unchecked.
+  * **Framed decode, ABI 0.7 (D-BIND-68, for review B3 and B4):** `fl_decode_rows_framed` decodes a
+    window whose row boundaries are known, skipping and reporting each bad or misframed row, in one
+    native call. Only good rows count toward `MaxRows`. Three cases were added; managed is
     now **316/316**, and two mutations are each caught.
 
 ### BIND-6 — C# row emitter

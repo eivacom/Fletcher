@@ -696,7 +696,8 @@ are a staging publish and a copied export. **Window ceiling (D-BIND-63):** a win
 flush. **Publish check (D-BIND-65):** D-BIND-60 compares the codecs' field plans, not IPC bytes.
 **Accounting (D-BIND-66):** a row either arrives or is counted dropped; the intake never throws
 into the inner `Subscriber`. **Declaration (D-BIND-67):** the fused publishes need this publisher's `CreateTopic`, as in C++.
-**Placed (D-BIND-62):** the instrument in a test-only
+**Framed decode (D-BIND-68):** ABI 0.7's `fl_decode_rows_framed` gives per-row validity and
+boundaries in one call. **Placed (D-BIND-62):** the instrument in a test-only
 `fletcher-copy-probe` package; the probe shim only under c-abi's `with_probe_shim` option; the C#
 leg is `dotnet/tests/Fletcher.CopyOracle.Tests`. **Surface, ruled 2026-09-28 (D-BIND-59):** one handler shape - per-row
 is a batch of one - and attachments as owned `AttachmentsBuilder` copies. **Found by the port and

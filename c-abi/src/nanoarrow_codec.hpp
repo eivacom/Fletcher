@@ -142,6 +142,15 @@ class NanoarrowCodec {
     /// malformed bytes, and `PubSubError` on a schema the plan cannot build.
     void DecodeRows(const uint8_t* bytes, size_t len, int64_t count, ArrowArray* out) const;
 
+    /// `DecodeRows` for a window whose row boundaries are KNOWN (D-BIND-68): row `i`
+    /// occupies `[ends[i-1], ends[i])`, with `ends[-1]` taken as 0 and `ends[count-1]`
+    /// required to be `len`. A row the reader refuses, or one that does not end
+    /// exactly at its boundary, is skipped and marked `valid[i] = 0`; `out` holds the
+    /// good rows only, in order. Only the READER's refusals mark a row bad - anything
+    /// else still throws and fails the window.
+    void DecodeRowsFramed(const uint8_t* bytes, size_t len, const size_t* ends, int64_t count,
+                          ArrowArray* out, uint8_t* valid) const;
+
     /// The schema a caller BINDS against — what it exports and encodes from.
     [[nodiscard]] const ArrowSchema& schema() const noexcept { return *schema_.get(); }
 

@@ -352,6 +352,134 @@ TEST(BindingEntryPoints, MalformedBytesCarryTheReadersMessageAndTheCodecOrigin) 
     decoded.release(&decoded);
 }
 
+// ---------------------------------------------------------------------------
+// The framed decode (D-BIND-68, ABI 0.7)
+// ---------------------------------------------------------------------------
+
+/// The fixture's rows as separate messages, and the frame that describes them.
+struct Framed {
+    std::vector<uint8_t> bytes;
+    std::vector<size_t> ends;
+
+    void Add(const std::vector<uint8_t>& message) {
+        bytes.insert(bytes.end(), message.begin(), message.end());
+        ends.push_back(bytes.size());
+    }
+};
+
+std::vector<uint8_t> EncodedRow(const AbiFixture& abi, int64_t row) {
+    VectorWindow sink(64);
+    fl_error err = {};
+    EXPECT_EQ(fl_encode_row(abi.rows(), row, &sink.window, &err), FL_OK) << MessageOf(err);
+    return sink.Written();
+}
+
+/// Every row good: the same array `fl_decode_rows` gives, and every row marked valid.
+TEST(BindingEntryPoints, AFramedDecodeOfGoodRowsIsTheWholeWindow) {
+    AbiFixture abi;
+    Framed framed;
+    for (int64_t row = 0; row < 3; ++row) framed.Add(EncodedRow(abi, row));
+
+    ArrowArray decoded = {};
+    std::vector<uint8_t> valid(3, 7);
+    fl_error err = {};
+    ASSERT_EQ(fl_decode_rows_framed(abi.codec(), framed.bytes.data(), framed.bytes.size(),
+                                    framed.ends.data(), 3, &decoded, valid.data(), &err),
+              FL_OK)
+        << MessageOf(err);
+    EXPECT_EQ(decoded.length, 3);
+    EXPECT_EQ(valid, (std::vector<uint8_t>{1, 1, 1}));
+    decoded.release(&decoded);
+}
+
+/// A corrupt message between two good ones is skipped and reported; the good rows
+/// arrive, in order - C++'s BatchDecoder drops the bad row the same way (review B3).
+TEST(BindingEntryPoints, AFramedDecodeSkipsACorruptRowAndKeepsTheOthers) {
+    AbiFixture abi;
+    Framed framed;
+    framed.Add(EncodedRow(abi, 0));
+    framed.Add({0x00});
+    framed.Add(EncodedRow(abi, 2));
+
+    ArrowArray decoded = {};
+    std::vector<uint8_t> valid(3, 7);
+    fl_error err = {};
+    ASSERT_EQ(fl_decode_rows_framed(abi.codec(), framed.bytes.data(), framed.bytes.size(),
+                                    framed.ends.data(), 3, &decoded, valid.data(), &err),
+              FL_OK)
+        << MessageOf(err);
+    EXPECT_EQ(valid, (std::vector<uint8_t>{1, 0, 1}));
+    ASSERT_EQ(decoded.length, 2);
+    // The ids are 1 and 3: row 0 and row 2, with nothing of the corrupt row between.
+    const auto* ids = static_cast<const int32_t*>(decoded.children[0]->buffers[1]);
+    EXPECT_EQ(ids[0], 1);
+    EXPECT_EQ(ids[1], 3);
+    decoded.release(&decoded);
+}
+
+/// The case whole-window decoding cannot see (review B4): two valid rows split
+/// across two messages at a non-boundary. Each message is invalid alone and the
+/// two are valid together, so `fl_decode_rows` accepts them; the frame drops both.
+TEST(BindingEntryPoints, AFramedDecodeDropsRowsSplitAcrossMessages) {
+    AbiFixture abi;
+    const std::vector<uint8_t> a = EncodedRow(abi, 0);
+    const std::vector<uint8_t> b = EncodedRow(abi, 2);
+    std::vector<uint8_t> joined = a;
+    joined.insert(joined.end(), b.begin(), b.end());
+    const size_t cut = a.size() + 3;
+
+    ArrowArray decoded = {};
+    fl_error err = {};
+    // Whole-window: accepted, rows paired to the wrong messages.
+    ASSERT_EQ(fl_decode_rows(abi.codec(), joined.data(), joined.size(), 2, &decoded, &err), FL_OK)
+        << MessageOf(err);
+    decoded.release(&decoded);
+
+    Framed framed;
+    framed.Add(std::vector<uint8_t>(joined.begin(), joined.begin() + static_cast<ptrdiff_t>(cut)));
+    framed.Add(std::vector<uint8_t>(joined.begin() + static_cast<ptrdiff_t>(cut), joined.end()));
+    std::vector<uint8_t> valid(2, 7);
+    ASSERT_EQ(fl_decode_rows_framed(abi.codec(), framed.bytes.data(), framed.bytes.size(),
+                                    framed.ends.data(), 2, &decoded, valid.data(), &err),
+              FL_OK)
+        << MessageOf(err);
+    EXPECT_EQ(valid, (std::vector<uint8_t>{0, 0}));
+    EXPECT_EQ(decoded.length, 0);
+    decoded.release(&decoded);
+}
+
+/// A frame that does not describe the bytes is the CALLER's defect, refused whole -
+/// never read as bad rows.
+TEST(BindingEntryPoints, AFramedDecodeRefusesAFrameThatDoesNotDescribeTheBytes) {
+    AbiFixture abi;
+    Framed framed;
+    framed.Add(EncodedRow(abi, 0));
+    framed.Add(EncodedRow(abi, 1));
+
+    ArrowArray decoded = {};
+    std::vector<uint8_t> valid(2, 7);
+    fl_error err = {};
+    const size_t short_ends[2] = {framed.ends[0], framed.ends[1] - 1};
+    EXPECT_EQ(fl_decode_rows_framed(abi.codec(), framed.bytes.data(), framed.bytes.size(),
+                                    short_ends, 2, &decoded, valid.data(), &err),
+              FL_INVALID_ARGUMENT);
+    EXPECT_EQ(decoded.release, nullptr);
+    fl_error_dispose(&err);
+
+    const size_t backwards[2] = {framed.ends[1], framed.ends[0]};
+    EXPECT_EQ(fl_decode_rows_framed(abi.codec(), framed.bytes.data(), framed.bytes.size(),
+                                    backwards, 2, &decoded, valid.data(), &err),
+              FL_INVALID_ARGUMENT);
+    fl_error_dispose(&err);
+
+    // No rows is not a frame at all: an empty array, and FL_OK.
+    ASSERT_EQ(fl_decode_rows_framed(abi.codec(), nullptr, 0, nullptr, 0, &decoded, nullptr, &err),
+              FL_OK)
+        << MessageOf(err);
+    EXPECT_EQ(decoded.length, 0);
+    decoded.release(&decoded);
+}
+
 /// A malformed topic carries the SEAM's message, for the same reason.
 ///
 /// The shim keeps no second copy of the six topic rules: every publisher path
