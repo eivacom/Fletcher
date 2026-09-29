@@ -491,3 +491,16 @@ maintainer, and read-only until a finding was ruled on.
   - C++'s batch callbacks can overlap across its two threads, where C# serialises them, so a
     row-limit flush on the delivery thread can wait behind a timer-thread handler;
   - C++'s staging copy is not written down on the public-surface note.
+
+**The BIND-5 review, and its rulings.** Three fresh-context reviewers found 9 BLOCKERs, 5 questions,
+23 DEBT and 17 NITs (`plans/reviews/BIND-5-codereview.md`); the conformance pass graded 5 of 11
+bullets as conforming, so BIND-5 does not close. The copy oracle held: no reviewer found a way to
+make it report a false zero-copy. The maintainer ruled the five questions as D-BIND-64 to D-BIND-67
+plus the diagrams.
+
+**B1 fixed, and D-BIND-60's open finding explained.** The helper that threw had C linkage, because
+it was declared inside the `extern "C"` block, and MSVC's `/EHsc` assumes such a function never
+throws. An experiment with the original lock-held throw settled it: inside the block it reproduced
+"resource deadlock would occur", and moved out it passed. The earlier standalone repros had missed
+it because their helper had C++ linkage. **The lesson:** "cause not established" was the right
+record, and it held long enough for someone else to find the cause.

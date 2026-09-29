@@ -178,6 +178,41 @@ const bool kSingleCopyChecked = (fletcher::abi::CheckSingleCopy(), true);
 
 }  // namespace
 
+namespace {
+
+/// D-BIND-60: rows bound under one schema must not be published on a topic declared
+/// with another. The seam's Publisher sees only the bytes the encoder writes, so a
+/// mismatch of equal width would reach a subscriber and decode, silently, into the
+/// wrong fields. C++ `PublisherArrow` cannot make the mistake because it owns ONE
+/// codec per topic; a binding's rows carry their own, so the shim checks here, with
+/// the seam's own comparison. A topic this publisher did not declare is left to the
+/// seam, which answers for it as before.
+void RequireRowsMatchTopic(fl_publisher& publisher, const std::vector<std::string>& segments,
+                           const fl_rows& rows, const char* entry) {
+    if (!rows.declared) return;
+    const std::string key = fletcher::internal::JoinSegments(segments);
+    bool conflicts = false;
+    {
+        std::lock_guard lock(publisher.declared_mu);
+        const auto found = publisher.declared.find(key);
+        conflicts =
+            found != publisher.declared.end() && rows.declared->ConflictsWith(found->second);
+    }
+    if (conflicts) {
+        throw PubSubError(
+            PubSubStatus::kInvalidArgument,
+            std::string(entry) + ": the rows were bound under a different schema from the one '" +
+                key + "' was declared with; bind them with a codec opened over the topic's schema");
+    }
+}
+
+}  // namespace
+
+// Nothing but `fl_*` definitions below this line, up to its matching close. A
+// C++ helper declared inside `extern "C"` takes C language linkage, and MSVC's
+// `/EHsc` assumes such a function never throws: the unwind actions around it may
+// be dropped, so a throw from it skips destructors or fails fast (BIND-5 review
+// B1). Helpers go in the unnamed namespace above.
 extern "C" {
 
 /* ══ The single-copy marker ════════════════════════════════════════════════ */
@@ -634,35 +669,6 @@ fl_status fl_publisher_publish_raw(fl_publisher* publisher, fl_topic topic, fl_w
  * 0` for a foreign-language producer (2d), and it is why no encode entry point
  * in this header returns bytes: a function that hands the row back has already
  * put it somewhere other than the transport. */
-namespace {
-
-/// D-BIND-60: rows bound under one schema must not be published on a topic declared
-/// with another. The seam's Publisher sees only the bytes the encoder writes, so a
-/// mismatch of equal width would reach a subscriber and decode, silently, into the
-/// wrong fields. C++ `PublisherArrow` cannot make the mistake because it owns ONE
-/// codec per topic; a binding's rows carry their own, so the shim checks here, with
-/// the seam's own comparison. A topic this publisher did not declare is left to the
-/// seam, which answers for it as before.
-void RequireRowsMatchTopic(fl_publisher& publisher, const std::vector<std::string>& segments,
-                           const fl_rows& rows, const char* entry) {
-    if (!rows.declared) return;
-    const std::string key = fletcher::internal::JoinSegments(segments);
-    bool conflicts = false;
-    {
-        std::lock_guard lock(publisher.declared_mu);
-        const auto found = publisher.declared.find(key);
-        conflicts =
-            found != publisher.declared.end() && rows.declared->ConflictsWith(found->second);
-    }
-    if (conflicts) {
-        throw PubSubError(
-            PubSubStatus::kInvalidArgument,
-            std::string(entry) + ": the rows were bound under a different schema from the one '" +
-                key + "' was declared with; bind them with a codec opened over the topic's schema");
-    }
-}
-
-}  // namespace
 
 fl_status fl_publisher_publish_row(fl_publisher* publisher, fl_topic topic, const fl_rows* rows,
                                    int64_t i, const fl_attachments* atts, fl_error* err) {

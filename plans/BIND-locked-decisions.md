@@ -1964,6 +1964,22 @@ accessors do, for capstone parity (Q18).
   again, and it could not use the seam's comparison); deferring to a follow-up item (the port cannot
   claim `PublishTypeMismatchThrowsToCaller` without it).
 
+  **The open finding's cause, established 2026-09-29 (BIND-5 review B1).**
+  - **Where the helper was.** It had been declared in an unnamed namespace INSIDE `binding.cpp`'s
+    `extern "C"` block, so it had C language linkage.
+  - **Why that matters.** MSVC's `/EHsc`, the shim's setting, assumes a C-linkage function never
+    throws, and may drop the unwind actions around it.
+  - **Confirmed by experiment.** The first version's lock-held throw was rebuilt twice:
+    - inside the block, it reproduced "resource deadlock would occur";
+    - moved above the block, the same code passed.
+
+    A standalone build in the same shape failed fast under `/EHsc` and unwound correctly under
+    `/EHs`.
+  - **Fixed.** The helper is moved above the block, and the block now carries the rule: nothing but
+    `fl_*` definitions inside it. The shipped version released the lock before throwing, but still
+    threw from C-linkage code, so every refused publish on Windows was undefined until this fix.
+    This was not a Contain/Capture defect.
+
 - **D-BIND-61 - the probe scores C#'s FUSED publish by the SOURCE of the window's payload bytes,
   seen through `WriteBuffer::Append`; the negative controls are a staging publish and a copied
   export.** *LOCKED BY THE MAINTAINER 2026-09-28,* in two questions, at the start of BIND-5b, after

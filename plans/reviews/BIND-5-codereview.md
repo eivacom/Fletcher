@@ -396,4 +396,8 @@ subscription whose owner is not this subscriber, in both tiers.
 
 ## Resolution log
 
-*(empty: nothing has been fixed yet; each fix will be recorded here against its finding)*
+- **B1 — fixed.** `RequireRowsMatchTopic` moved above `extern "C" {`, and the block carries the
+  rule "nothing but `fl_*` definitions". Confirmed as the cause of D-BIND-60's open finding by
+  rebuilding the lock-held throw twice: inside the block it reproduced "resource deadlock would
+  occur", and moved above it the same code passed. c-abi 86/86. D-BIND-65 and D-BIND-67 rewrite
+  this helper next; it stays above the block.
