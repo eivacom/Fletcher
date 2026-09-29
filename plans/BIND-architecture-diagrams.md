@@ -323,6 +323,7 @@ classDiagram
         <<planned>>
         generated .fletcher.cs rows
         BIND-6, writes no wire bytes
+        namespace Fletcher.Gen.PascalPkg - D-BIND-69
     }
     class Fletcher_GatewayClient_cs {
         <<planned>>
@@ -345,7 +346,9 @@ classDiagram
 The three C# packages are D-BIND-14′'s: `Eiva.Fletcher.Interop`,
 `Eiva.Fletcher` (every managed tier above the interop, in ONE namespace today —
 the component-named namespaces D-BIND-14′ allows were not needed) and
-`Eiva.Fletcher.GatewayClient`. Until 2026-09-25 this diagram drew six boxes from
+`Eiva.Fletcher.GatewayClient`. Generated C# is in none of them: it lives in the
+consumer's assembly, in namespace `Fletcher.Gen.<PascalPkg>` (D-BIND-69), with
+nested messages flat as `Outer_Inner`. Until 2026-09-25 this diagram drew six boxes from
 the pre-ruling design, including a managed `IPubSubProvider` that D-BIND-24
 refused.
 

@@ -468,6 +468,12 @@ Hard rules, straight from GIR and the rulings:
   `Publish(IEnumerable<<Msg>>)`, which binds once and publishes N.
 - Multi-file invocation emits no duplicate filename (the RBA-1 failure mode); a
   shared helper, if needed, is emitted **exactly once** from `GenerateAll()`.
+- **Names (D-BIND-69, ruled 2026-09-29).** Namespace `Fletcher.Gen.<PascalPkg>`,
+  ignoring `option csharp_namespace`; nested messages flat as `Outer_Inner`, like
+  every other Fletcher backend and **unlike protoc's `Outer.Types.Inner`, on
+  purpose**; PascalCase properties with protoc's `_` suffix when a name collides
+  with its class. Namespace and nesting follow Fletcher; identifiers follow protoc,
+  because Fletcher had no precedent.
 
 ### BIND-T — TypeScript `Publisher` / `Subscriber`
 
@@ -1371,6 +1377,12 @@ codec step.
   metadata preserved, `static RecordBatch ToArrow(IEnumerable<T>)`,
   `static T FromArrow(StructArray, int)`. **No `WriteTo`/`ReadFrom`**: generated C#
   writes no wire bytes (D-BIND-1).
+- **Names per D-BIND-69:** namespace `Fletcher.Gen.<PascalPkg>` whatever
+  `csharp_namespace` says; nested messages `Outer_Inner`; PascalCase properties with
+  a `_` suffix on a clash with the class name, so a field named after its message or
+  after a C# keyword compiles. Test cases for each, including a `.proto` that sets
+  `csharp_namespace` and one whose type is generated beside protoc's C# output in one
+  project without CS0101.
 - Per service method, `<Service>_<Method>Publisher` (`Topic`, `TopicKey`,
   `Schema`, `Publish(T)`, `Publish(T, AttachmentsBuilder)`,
   `Publish(IEnumerable<T>)`) and `<Service>_<Method>Subscriber`

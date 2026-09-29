@@ -713,6 +713,12 @@ and per service method a typed `<Service>_<Method>Publisher`/`Subscriber` pair
 mirroring the C++ names. **No `WriteTo`/`ReadFrom`** (that was the pre-D-BIND-1
 draft). Temporal mapping decided in the type table (see §6, G-2). NativeAOT
 publish of a consumer with zero trim warnings is the reflection-free proof.
+**Names, ruled 2026-09-29 (D-BIND-69):** namespace `Fletcher.Gen.<PascalPkg>`,
+ignoring `option csharp_namespace` so our types never share one with protoc's
+(CS0101); nested messages flat as `Outer_Inner`, as in C++, TS and Rust, not
+protoc's `Outer.Types.Inner`; PascalCase properties with protoc's `_` suffix on a
+clash with the class name. Enum member naming and an MSBuild `.targets` are separate
+questions at the same boundary.
 
 **BIND-7 — Views + accessors + capstone.** Two emitters under one token; the
 `StructArray.Fields` windowing question settled empirically first and recorded in
@@ -1100,7 +1106,9 @@ blocking or architectural, **S** = inherited from the seam, **N** = .NET interop
 
 - **G-6 — Multi-file and namespace.** Reuse `CollectCrossFileIncludes` read-only
   for namespace qualification; shared helper emitted exactly once from
-  `GenerateAll()` (the RBA-1 failure mode). *BIND-6.*
+  `GenerateAll()` (the RBA-1 failure mode). *BIND-6.* **The namespace itself is
+  ruled (D-BIND-69):** `Fletcher.Gen.<PascalPkg>`, so a cross-file reference
+  qualifies into that tree.
 
 ### Packaging and process
 

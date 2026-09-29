@@ -2232,3 +2232,46 @@ accessors do, for capstone parity (Q18).
   **Declined:** decoding each row alone with today's call (N native calls and N arrays per window,
   undoing D-BIND-25); fixing B3 alone and documenting B4 (a publisher of malformed data could
   misalign rows and attachments silently).
+
+- **D-BIND-69 - generated C# takes its namespace and nesting from Fletcher's backends, and its
+  identifiers from protoc's C# rule.** *LOCKED BY THE MAINTAINER 2026-09-29,* in one question, at
+  the BIND-5 → BIND-6 boundary.
+
+  **WHY.** Fletcher's generated code is self-contained: C++ lives under `fletcher_gen::<pkg>` in
+  `<stem>.fletcher.pb.h`, references nothing of protoc's generated code, and names a nested message
+  `Outer_Inner`, as TypeScript and Rust do. None of the BIND documents said what the C# backend does
+  about three things:
+  - **The namespace.** Honouring `option csharp_namespace` puts our `sealed class Player` in the
+    same namespace as protoc's own `Player`, so a project that runs both generators fails with
+    CS0101.
+  - **Nesting.** protoc's C# nests as `Outer.Types.Inner`; every Fletcher backend flattens.
+  - **Identifiers.** The generator sanitises no identifier anywhere. C++ is saved by its `set_` and
+    trailing `_` decoration, and TypeScript by keywords being legal property names. C# is the first
+    backend where a raw proto name can fail to compile: `message Player { string player = 1; }`
+    gives CS0542, and a field named `class`, `event` or `lock` does not parse. Fletcher has no
+    precedent here, so the rule is borrowed.
+
+  **THE RULING.**
+  1. **Namespace `Fletcher.Gen.<PascalPkg>`**, the C# spelling of `fletcher_gen::<pkg>`.
+     `option csharp_namespace` is **ignored**, so our types never share a namespace with protoc's.
+  2. **Nested messages stay flat as `Outer_Inner`**, the name C++, TypeScript and Rust already use,
+     so a type has one name in every language. This differs from protoc's `Outer.Types.Inner` **on
+     purpose**. Do not "fix" it toward the protobuf convention.
+  3. **Properties are PascalCase, with protoc's `_` suffix when a name collides with its class**
+     (`Player.Player_`). PascalCase also makes a keyword field legal (`class` → `Class`). This is
+     protoc's C# rule, adopted because C# developers already know it.
+
+  **Example.** `package integration; option csharp_namespace = "Eiva.Integration";` with
+  `message Player { string player = 1; int32 class = 2; message Stats {} Stats stats = 3; }` emits
+  `namespace Fletcher.Gen.Integration;`, `sealed class Player_Stats`, and `sealed class Player` with
+  `Player_`, `Class` and `Stats` (of type `Player_Stats`).
+
+  **Left to BIND-6, not ruled here:** how a dotted or snake_case package is PascalCased segment by
+  segment, and what an empty package yields; a property colliding with a GENERATED member
+  (`Schema`, `ToArrow`, `FromArrow`) or with another field after PascalCasing. Each is raised as a
+  question if protoc's rule does not answer it. **Separate questions at the same boundary:** enum
+  member naming, and whether BIND-6 ships an MSBuild `.targets`.
+
+  **Declined:** honouring `csharp_namespace` (CS0101 beside protoc's output); following protoc
+  throughout, with `Outer.Types.Inner` (one type would be named differently in C# than in every
+  other Fletcher language).

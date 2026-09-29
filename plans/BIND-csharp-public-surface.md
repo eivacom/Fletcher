@@ -129,6 +129,13 @@ managed exception is rethrown (D-BIND-19).
 Per `.proto` file, `--fletcher_opt=csharp` emits `<stem>.fletcher.cs` and
 `csharp_accessor` emits `<stem>.fletcher.accessor.cs` + `<stem>.fletcher.arrow.cs`.
 
+**Names (D-BIND-69, 2026-09-29).** Every generated type is in namespace
+`Fletcher.Gen.<PascalPkg>`, the C# spelling of C++'s `fletcher_gen::<pkg>`;
+`option csharp_namespace` is ignored, so the types never collide with protoc's own
+C# output. `<Msg>` below is the flat Fletcher class name, `Outer_Inner` for a nested
+message, as in C++. Properties are PascalCase, with a `_` suffix when one would
+share its class's name (`Player.Player_`).
+
 | Generated C++ | Generated C# |
 |---|---|
 | `class <Msg>` — setters, getters, `EncodeTo`, `Encode`, `DecodeInto`, ctors from bytes | `sealed class <Msg>` — properties, `static Schema Schema { get }`, `static RecordBatch ToArrow(IEnumerable<Msg>)`, `static <Msg> FromArrow(StructArray, int)`. **No `EncodeTo`/`DecodeInto`** — generated C# writes no wire bytes |
