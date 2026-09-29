@@ -20,6 +20,10 @@
 //     is reported rather than silent;
 //   * a schema the codec cannot open drops every row for the subscription's
 //     life, and each report carries a NULL batch;
+//   * every row that arrives either reaches a batch or is counted in
+//     RowsDropped (D-BIND-66): the intake and the flush contain their own
+//     failures, as C++'s AddRow does, and none reaches the inner Subscriber or
+//     the timer thread;
 //   * a window never holds more than it can decode (D-BIND-63): a row that would
 //     take it past the ceiling flushes it first, as RowLimit, and a row that
 //     alone exceeds the ceiling is dropped and counted.
@@ -364,11 +368,10 @@ public sealed class SubscriberArrow : IDisposable
         /// <summary>The Subscriber's handler: copy the borrowed row, and flush at the row limit.</summary>
         internal void OnRow(ReadOnlySpan<byte> row, SchemaHandle schema, AttachmentsView view)
         {
-            var attachments = new AttachmentsBuilder();
-            for (int i = 0; i < view.Count; i++)
-            {
-                attachments.Set(view.KeyAt(i), view.ValueAt(i));
-            }
+            // The intake owns its failures (D-BIND-66): a row it cannot copy is a
+            // counted drop, never an exception into the inner Subscriber, which would
+            // absorb it where no count of this tier sees it.
+            AttachmentsBuilder? attachments = CopyAttachments(view);
 
             bool full;
             while (true)
@@ -387,7 +390,8 @@ public sealed class SubscriberArrow : IDisposable
 
                     // Alone past the ceiling: no window could decode it, so it is
                     // dropped and counted - C++'s "the row alone exceeds the budget".
-                    if (_undecodable || row.Length > _byteCeiling)
+                    // A row whose attachments could not be copied goes the same way.
+                    if (_undecodable || row.Length > _byteCeiling || attachments is null)
                     {
                         _dropped++;
                         ArmDeadline();
@@ -403,11 +407,11 @@ public sealed class SubscriberArrow : IDisposable
                         {
                             row.CopyTo(_rows.GetSpan(row.Length));
                         }
-                        catch (OutOfMemoryException)
+                        catch (Exception)
                         {
                             // The copy is the only allocation that grows with the data;
                             // a failed one is a lost row, reported as one - never an
-                            // absorbed handler fault.
+                            // absorbed handler fault (D-BIND-63 rule 4, D-BIND-66).
                             _dropped++;
                             ArmDeadline();
                             return;
@@ -431,6 +435,26 @@ public sealed class SubscriberArrow : IDisposable
             }
         }
 
+        /// <summary>The delivery's attachments as owned copies, or null if they could not be copied.</summary>
+        private static AttachmentsBuilder? CopyAttachments(AttachmentsView view)
+        {
+            var copy = new AttachmentsBuilder();
+            try
+            {
+                for (int i = 0; i < view.Count; i++)
+                {
+                    copy.AppendDelivered(view.KeyAt(i), view.ValueAt(i));
+                }
+
+                return copy;
+            }
+            catch (Exception)
+            {
+                copy.Dispose();
+                return null;
+            }
+        }
+
         /// <summary>The codec, from the first delivery's schema - so a subscriber that subscribed first still decodes.</summary>
         private void Resolve(SchemaHandle schema)
         {
@@ -438,8 +462,12 @@ public sealed class SubscriberArrow : IDisposable
             {
                 _codec = schema.IsNull ? null : new FletcherCodec(schema.ToArrowSchema());
             }
-            catch (FletcherException)
+            catch (Exception)
             {
+                // Not only the codec's own refusal: Apache.Arrow's importer refuses
+                // with types of its own. Any of them means this schema cannot be
+                // decoded, reported as such, rather than a row lost on every delivery
+                // with nothing counted (BIND-5 review B6).
                 _codec = null;
             }
 
@@ -549,7 +577,7 @@ public sealed class SubscriberArrow : IDisposable
 
         private void Flush(BatchReason reason)
         {
-            byte[] rows;
+            ArrayBufferWriter<byte> rows;
             int[] ends;
             List<AttachmentsBuilder> attachments;
             long dropped;
@@ -567,7 +595,10 @@ public sealed class SubscriberArrow : IDisposable
                     return;
                 }
 
-                rows = _rows.WrittenSpan.ToArray();
+                // Swapped out, not copied: the window's own buffer goes to the decode, so
+                // a flush allocates no second copy of up to ~2 GiB under the gate
+                // (review M-D1), and the cut itself cannot fail on one (review B5).
+                rows = _rows;
                 ends = [.. _ends];
                 attachments = _attachments;
                 dropped = _dropped;
@@ -596,7 +627,7 @@ public sealed class SubscriberArrow : IDisposable
 
         /// <summary>Decode one cut window and hand it to the handler, with no lock held.</summary>
         private void Deliver(
-            BatchReason reason, FletcherCodec? codec, byte[] rows, int[] ends, List<AttachmentsBuilder> attachments, long dropped)
+            BatchReason reason, FletcherCodec? codec, ArrayBufferWriter<byte> rows, int[] ends, List<AttachmentsBuilder> attachments, long dropped)
         {
             RecordBatch? batch = null;
             List<AttachmentsBuilder> kept = attachments;
@@ -604,16 +635,16 @@ public sealed class SubscriberArrow : IDisposable
             {
                 try
                 {
-                    batch = Decode(codec, rows, ends, attachments, ref dropped, out kept);
+                    batch = Decode(codec, rows.WrittenMemory, ends, attachments, ref dropped, out kept);
                 }
-                catch (Exception e) when (e is FletcherException or ArgumentException)
+                catch (Exception)
                 {
-                    // The good rows would not decode together either: the window
-                    // has no batch row left to align an attachment with, so it is
-                    // dropped whole - C++'s rule for a failed Finish().
+                    // Whatever failed - the decode, its fallback's allocation, the import -
+                    // the window's rows are lost, and counted as lost (D-BIND-66). Rows the
+                    // fallback already counted are in `dropped`; the rest are `kept`.
                     dropped += kept.Count;
                     kept = [];
-                    batch = null;
+                    batch = EmptyBatch(codec);
                 }
             }
 
@@ -627,11 +658,29 @@ public sealed class SubscriberArrow : IDisposable
             }
         }
 
+        /// <summary>
+        /// A zero-row batch: what a decodable topic's window of only lost rows
+        /// delivers. NULL stays reserved for a schema that cannot be opened at all
+        /// (review B7); only if even this fails does the handler see NULL.
+        /// </summary>
+        private static RecordBatch? EmptyBatch(FletcherCodec codec)
+        {
+            try
+            {
+                return codec.DecodeBatch(ReadOnlySpan<byte>.Empty, 0);
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
         /// <summary>One native call for the window; a second pass only when a row in it is corrupt.</summary>
         private static RecordBatch Decode(
-            FletcherCodec codec, byte[] rows, int[] ends, List<AttachmentsBuilder> attachments,
+            FletcherCodec codec, ReadOnlyMemory<byte> window, int[] ends, List<AttachmentsBuilder> attachments,
             ref long dropped, out List<AttachmentsBuilder> kept)
         {
+            ReadOnlySpan<byte> rows = window.Span;
             try
             {
                 kept = attachments;
@@ -644,7 +693,7 @@ public sealed class SubscriberArrow : IDisposable
                 int start = 0;
                 for (int i = 0; i < ends.Length; i++)
                 {
-                    ReadOnlySpan<byte> one = rows.AsSpan(start, ends[i] - start);
+                    ReadOnlySpan<byte> one = rows.Slice(start, ends[i] - start);
                     start = ends[i];
                     try
                     {

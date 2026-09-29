@@ -128,6 +128,24 @@ public sealed class AttachmentsBuilder : IDisposable
         Invalidate();
     }
 
+    /// <summary>
+    /// Append an entry exactly as a delivery carried it: SubscriberArrow's intake
+    /// (D-BIND-66).
+    /// </summary>
+    /// <remarks>
+    /// No refusal and no search, because the set is already one the seam accepted:
+    /// its keys are unique, in the seam's key-byte order, and free of zero bytes. An
+    /// EMPTY key is among them - C++ allows one (`Attachments::Set` refuses only a
+    /// zero byte) - and refusing it here, as the public <c>Set</c> does, lost every
+    /// row a C++ publisher sent with one (BIND-5 review B6).
+    /// </remarks>
+    internal void AppendDelivered(ReadOnlySpan<byte> key, ReadOnlySpan<byte> value)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _entries.Add(new KeyValuePair<byte[], byte[]>(key.ToArray(), value.ToArray()));
+        Invalidate();
+    }
+
     /// <summary>Add or replace an entry whose key is UTF-8 text.</summary>
     /// <remarks>
     /// The convenience form, and it names its encoding rather than leaving it to be

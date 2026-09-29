@@ -419,3 +419,20 @@ subscription whose owner is not this subscriber, in both tiers.
   - **Results.** Managed 319/319. Putting the serialisation back hangs the run: the deadlock
     returns. Removing the wait fails `UnsubscribeWaitsForATimerHandlerStillRunning`. The deferred
     codec disposal has no deterministic test and rests on reading.
+- **B5, B6 — fixed, as D-BIND-66 ruled. B7 — fixed with them** (the same catch block).
+  - **The intake contains its own failures.** A row whose attachments cannot be copied, or whose
+    bytes cannot be, is a counted drop; nothing reaches the inner `Subscriber`.
+  - **Attachments cross as delivered,** through an internal `AttachmentsBuilder.AppendDelivered`: no
+    refusal and no search, since the seam already vouched for the set. So an EMPTY key, which C++
+    allows, arrives instead of losing the row.
+  - **`Resolve` treats any import failure as undecodable,** not only the codec's own.
+  - **The flush swaps the window's buffer out** instead of copying it with `ToArray()`. That removes
+    the cut's OOM point and a second copy of up to ~2 GiB under the gate, which is review M-D1,
+    fixed with it.
+  - **Any failure in the decode, its fallback or the import** drops the window as counted rows.
+  - **Such a window arrives as a zero-row batch, not NULL.** NULL stays reserved for a schema that
+    cannot be opened, so the delegate's doc is true again (B7).
+  - **Results.** One test, `ARowWithAnEmptyAttachmentKeyArrives`; putting the refusing `Set` back
+    fails it. Managed 320/320.
+  - **Not tested:** the OOM and importer-failure paths. They cannot be triggered deterministically
+    without a test hook, and rest on reading.

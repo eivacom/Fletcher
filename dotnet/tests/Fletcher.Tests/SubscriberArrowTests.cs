@@ -654,6 +654,31 @@ public sealed class SubscriberArrowTests : IDisposable
         Assert.False(self.IsLive);
     }
 
+    // ── Every row arrives or is counted (D-BIND-66) ─────────────────────────
+
+    /// <summary>
+    /// An EMPTY attachment key, which C++ allows, crosses: the row arrives with it.
+    /// The intake copied through the public Set, which refuses one, and every such
+    /// row was lost uncounted (BIND-5 review B6).
+    /// </summary>
+    [Fact]
+    public void ARowWithAnEmptyAttachmentKeyArrives()
+    {
+        TopicPath topic = Declared("emptykey");
+        _subscriber.Subscribe(topic, _sink.Handler).Schema.Dispose();
+
+        using var sent = new AttachmentsBuilder();
+        sent.AppendDelivered(ReadOnlySpan<byte>.Empty, [7, 8]);
+        Publish(topic, 1, "a", sent);
+
+        Delivery only = Assert.Single(_sink.Snapshot());
+        Assert.Equal(1, only.Rows);
+        Assert.Equal(0, only.Status.RowsDropped);
+        Assert.True(Assert.Single(only.Attachments).TryFind(ReadOnlySpan<byte>.Empty, out ReadOnlySpan<byte> value));
+        Assert.Equal(new byte[] { 7, 8 }, value.ToArray());
+        Assert.Equal(0UL, _subscriber.AbsorbedCallbackFailures);
+    }
+
     // ── Handler calls are not serialised (D-BIND-64) ────────────────────────
     //
     // No C++ mirror: these pin what the BIND-5 review found and D-BIND-64 ruled.
