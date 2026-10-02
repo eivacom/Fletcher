@@ -535,3 +535,38 @@ does NOT prove". The same sweep fixed two stale lines: that README still said no
 and D-BIND-58's deferred `fl_blob_wrap` still named ABI 0.7, which D-BIND-68 took. Documentation only:
 no code, test or result changed, and BIND-5 stays closed. PR #129 and ADO 18787 and 16353 were
 updated for BIND-5 the same day.
+
+## Between BIND-5 and BIND-6 — the generator's design, and a topic-path fix (2026-09-29 to 2026-10-02)
+
+**Four rulings before any BIND-6 code.** The five boundary questions became D-BIND-69 to D-BIND-71,
+and ADO 18789 added D-BIND-72:
+- **D-BIND-69:** C# namespace `Fletcher.Gen.<PascalPkg>`, flat `Outer_Inner`, protoc's identifier rule.
+- **D-BIND-70:** enum members by protoc's rule (`Color.Red`).
+- **D-BIND-71:** consumers run the plugin as C++ and TypeScript consumers do, through a thin locator
+  (`Eiva.Fletcher.Protoc`, BIND-9).
+- **D-BIND-72:** one generated shape for every language; the C# gateway client consumes the same
+  generated class and Arrow schema.
+
+D-BIND-72 came from ADO 18789, whose review comment by Oliver Monberg-Jensen was answered there; his
+three packaging pitfalls became BIND-9 requirements. Checking D-BIND-72 against a real generated C++
+header corrected three loose statements the same day, and added point 6: C#'s topic segments follow
+C++'s.
+
+**Point 6 surfaced a cross-language defect, now fixed on this branch.** For a dotted package the
+C++ and TypeScript backends named different topics: C++ `{"eiva.nav", "Svc", "Method"}`, TypeScript
+`'eiva/nav/Svc/Method'`, which the gateway splits into four segments. Both forms date from the
+plugin's first commit. `protoc/tests/test_topic_path.cpp` runs the real generator in memory and
+requires the TypeScript constant to equal C++'s `TopicKey()` and, split on `/`, C++'s
+`TopicSegments()`. It was red on the dotted case only; the single-segment case was always green. The
+maintainer ruled C++'s form canonical, so `ts_backend_visitor.cpp` drops `DotToSlash`. By the
+maintainer's choice the fix lives in #129, not in its own PR to `main`, as an exception to D-BIND-30
+recorded there.
+
+**Verified** in the Linux devcontainer (`eivaorg/fletcher-devcontainer:main`), on this branch's
+tree: **101/101** plugin tests, test_package **3/3**, `TsVisitor.DescriptorByteIdentical` unchanged,
+clang-format-18 clean. The local machine had lost Conan, Python and CMake to a crash and restore, so
+the container is now the local build route until the Windows toolchain is reinstalled.
+
+**A lesson from the tooling:** `conan create` on sources identical to a package already in the cache
+skips the build, and with it the tests: the first run on this branch reported only test_package's 3.
+Force the component with `--build="fletcher-protoc/*"` when the point is to run its tests.

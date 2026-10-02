@@ -667,6 +667,18 @@ accessors do, for capstone parity (Q18).
   onto `main` at item boundaries. #130 rides in #129 until it merges, then drops out on the next
   rebase (identical patch). The plan's Branch strategy section is corrected in the same commit.
 
+  **Exceptions the maintainer has made to the carve-out**, each knowingly, so `main` keeps the
+  defect until #129 lands:
+  - **2026-09-25, D-BIND-53 as amended:** Fast DDS's silent drop of an oversized row.
+  - **2026-10-02, the TypeScript topic path for a dotted package.** For `package eiva.nav;` the
+    TypeScript backend emitted `'eiva/nav/Svc/Method'`, which the gateway splits into four
+    segments, while C++ registers `{"eiva.nav", "Svc", "Method"}`: two different topics. Reproduced
+    by `TopicPath.DottedPackageAgreesAcrossBackends`. The maintainer ruled C++'s form canonical
+    (the package is one segment, dots kept), so the TypeScript backend changed. By the carve-out's
+    own test this fix would go to `main` on its own (it is wanted without the bindings), but the
+    maintainer put it in #129 because C#'s topics depend on the same rule (D-BIND-72 point 6). **Known cost, accepted:** until #129 lands, TypeScript generated on
+    `main` from a dotted package with a service still cannot reach a C++ publisher.
+
 - **D-BIND-31 — BIND-2c implements the codec surface AND the publisher chain; the subscriber
   half, attachments, blobs and schema arrival stay with BIND-4.** *LOCKED BY THE MAINTAINER
   2026-09-17.* The plan did not say who implements the shim's ~40 entry points, and the two
@@ -2426,6 +2438,9 @@ accessors do, for capstone parity (Q18).
      `eiva.nav/Svc/Method`. TypeScript today emits `'eiva/nav/Svc/Method'`, which the gateway splits
      into four segments (read from the code, not yet reproduced). Which form is canonical is being
      settled separately, and C# follows that answer.
+     **Settled 2026-10-02:** reproduced by `TopicPath.DottedPackageAgreesAcrossBackends`, and the
+     maintainer ruled C++'s form canonical. The TypeScript backend now emits
+     `'eiva.nav/Svc/Method'` (D-BIND-30's exceptions), so this point stands as written.
 
   **Left to BIND-6 and BIND-8:** the opt-token spelling that selects the pairs; how the model layer
   spells a topic without `Eiva.Fletcher`'s `TopicPath` (the native pair keeps `TopicPath`);

@@ -36,17 +36,6 @@ std::string StripProtoSuffix(const std::string& proto_name) {
     return base;
 }
 
-std::string DotToSlash(const std::string& s) {
-    std::string out;
-    for (char c : s) {
-        if (c == '.')
-            out += '/';
-        else
-            out += c;
-    }
-    return out;
-}
-
 // The declared wrapper name to render for a field, or nullptr to use the IR's own
 // struct identity. Recovers today's byte output for SINGULAR flatten-wrapper list
 // fields: `StructListWrapper foo = N;` flattens to List<Struct(Leaf)> in the IR,
@@ -293,9 +282,13 @@ std::string TsVisitor::GenerateFile() {
                 continue;
             }
 
+            // The package is ONE segment, dots kept, as in the C++ TopicSegments() and
+            // TopicKey(): the gateway splits this string on '/', so turning dots into
+            // slashes would name a different topic than a C++ publisher of the same
+            // method (TopicPath.DottedPackageAgreesAcrossBackends).
             const std::string pkg = file_->package();
             std::string topic_path;
-            if (!pkg.empty()) topic_path += DotToSlash(pkg) + "/";
+            if (!pkg.empty()) topic_path += pkg + "/";
             topic_path += svc->name() + "/" + method->name();
 
             o << "export const " << svc->name() << "_" << method->name() << "Topic = '"
