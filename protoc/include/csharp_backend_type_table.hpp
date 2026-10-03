@@ -1,0 +1,70 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+#pragma once
+
+// BIND-6a: the C# backend lookup table. This is the ONLY place a C# type string is
+// allowed to live (GIR locked decision #1). It is keyed by the language-neutral IR
+// logical identity (ir::LogicalType + optional ir::EnumIdentity), as the TypeScript
+// table is, and also holds the C# naming rules.
+//
+// The naming rules are protoc's own, read from its source (compiler/csharp/names.cc,
+// csharp_helpers.cc, csharp_enum.cc) and adopted by D-BIND-69, D-BIND-70 and
+// D-BIND-73, so a generated property or enum member is named exactly as protoc's
+// --csharp_out names it. The namespace is the one deliberate difference: Fletcher
+// owns it (Fletcher.Gen.<Package>) and ignores `option csharp_namespace`, so our
+// types can sit beside protoc's in one project.
+
+#include <google/protobuf/descriptor.h>
+
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include "ir.hpp"
+
+namespace fletcher::csharp_backend {
+
+// The C# text for one scalar logical identity.
+struct CsScalarInfo {
+    std::string type_text;      // e.g. "int", "string", "byte[]", or a generated enum's name
+    bool is_reference = false;  // a reference type: nullable as `T?`, defaulted when not
+};
+
+// Map a scalar logical identity to its C# type, or nullopt for a kind this backend
+// does not map yet (temporal types arrive with BIND-6c, losslessly per D-BIND-26).
+std::optional<CsScalarInfo> CsLookupScalar(const ir::LogicalType& type,
+                                           const std::optional<ir::EnumIdentity>& enum_identity);
+
+// protoc's UnderscoresToCamelCase (names.cc), verbatim in behaviour.
+std::string UnderscoresToCamelCase(std::string_view input, bool cap_next_letter,
+                                   bool preserve_period);
+
+// protoc's ShoutyToPascalCase and TryRemovePrefix (csharp_helpers.cc).
+std::string ShoutyToPascalCase(std::string_view input);
+std::string TryRemovePrefix(std::string_view prefix, std::string_view value);
+
+// "Fletcher.Gen." + the package PascalCased keeping dots; "Fletcher.Gen" for no
+// package. `option csharp_namespace` is ignored (D-BIND-69).
+std::string CsNamespace(const google::protobuf::FileDescriptor* file);
+
+// A message's or enum's C# type name: nested types flattened with '_'
+// (Outer.Inner -> Outer_Inner), as every Fletcher backend does (D-BIND-69).
+std::string CsTypeName(const google::protobuf::Descriptor* msg);
+std::string CsTypeName(const google::protobuf::EnumDescriptor* enm);
+
+// The property for proto field `field_name` of `owner`: protoc's GetPropertyName,
+// with the generated class's own members added to the reserved list (D-BIND-73).
+std::string CsPropertyName(std::string_view field_name, const google::protobuf::Descriptor* owner);
+
+// An enum's members in declaration order, named as protoc's enum generator names
+// them: prefix removed, ShoutyToPascalCase, a leading '_' before a digit, and '_'
+// appended to a name already used. Aliases keep their own entries.
+struct CsEnumMember {
+    std::string name;
+    int32_t number = 0;
+};
+std::vector<CsEnumMember> CsEnumMembers(const google::protobuf::EnumDescriptor* enm);
+
+}  // namespace fletcher::csharp_backend

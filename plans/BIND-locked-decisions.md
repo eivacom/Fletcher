@@ -2451,3 +2451,42 @@ accessors do, for capstone parity (Q18).
   descriptions per message to keep in step); binding to protoc's `--csharp_out` class, as proposed
   on 18789 (C++ and TypeScript own their row type, it needs `Google.Protobuf`, and it
   reverses D-BIND-69's reasoning).
+
+- **D-BIND-73 - protoc's C# naming rules, read from its source, are BIND-6's specification; a
+  property is suffixed `_` on the class name, protoc's reserved members AND the generated class's
+  own members.** *LOCKED BY THE MAINTAINER 2026-10-03,* in one question, at the start of BIND-6.
+
+  **WHY.** D-BIND-69 and D-BIND-70 adopted "protoc's C# rule" and left the cases it might not
+  answer to BIND-6. Reading protoc's source (`compiler/csharp/names.cc`, `csharp_helpers.cc`,
+  `csharp_enum.cc`, on `main`, 2026-10-03) answers all but one, and that one needed a ruling:
+  protoc suffixes a property not only when it equals the class name but also when it equals one of
+  ITS OWN generated members, and our class has different members.
+
+  **THE RULES, as protoc implements them:**
+  - **Property:** `UnderscoresToPascalCase(field name)`: a letter after `_`, a digit or the start
+    is upper-cased, every other character but letters and digits is dropped (`player_id` →
+    `PlayerId`, `field2_x` → `Field2X`); a result that starts with a digit, from a name starting
+    `_`, gets a leading `_`.
+  - **Namespace:** `UnderscoresToCamelCase(package, cap first, keep '.')`, so `eiva.nav_v1` →
+    `Eiva.NavV1`, prefixed `Fletcher.Gen.` (D-BIND-69). An empty package gives `Fletcher.Gen`.
+    This answers D-BIND-69's open item on package PascalCasing.
+  - **Enum member:** `TryRemovePrefix(enum name, value)` (case- and underscore-insensitive; the
+    value is kept whole if the prefix does not match or nothing would remain), then
+    `ShoutyToPascalCase`, then a leading `_` if the result starts with a digit. A name already used
+    in the enum gets `_` appended until it is unique. Aliases (`allow_alias`) are all emitted with
+    their numbers; C# allows duplicate values. protoc's `[OriginalName]` attribute is NOT emitted,
+    since it comes from `Google.Protobuf`. This answers D-BIND-70's open edge cases.
+
+  **THE RULING.** A property is suffixed `_` when its PascalCase name equals:
+  1. the class name (D-BIND-69, protoc's rule);
+  2. one of protoc's reserved member names: `Types`, `Descriptor`, `Equals`, `ToString`,
+     `GetHashCode`, `WriteTo`, `Clone`, `CalculateSize`, `MergeFrom`, `OnConstruction`, `Parser`;
+  3. one of the generated class's own members: `Schema`, `ToArrow`, `FromArrow`, and any member a
+     later slice adds, which joins this list in the same commit.
+
+  Every property is therefore named exactly as protoc's output names it, which helps an
+  application that maps between the two, and no field can collide with a member of ours.
+
+  **Declined:** only the names our class actually has (some properties would differ from
+  protoc's: a field `clone` stays `Clone` here and is `Clone_` there); protoc's list alone (a field
+  named `schema` would not compile).

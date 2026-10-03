@@ -134,7 +134,9 @@ Per `.proto` file, `--fletcher_opt=csharp` emits `<stem>.fletcher.cs` and
 `option csharp_namespace` is ignored, so the types never collide with protoc's own
 C# output. `<Msg>` below is the flat Fletcher class name, `Outer_Inner` for a nested
 message, as in C++. Properties are PascalCase, with a `_` suffix when one would
-share its class's name (`Player.Player_`).
+share its class's name (`Player.Player_`), one of protoc's reserved member names
+(`Clone_`, `ToString_`, …) or one of the class's own members (`Schema_`, `ToArrow_`,
+`FromArrow_`), so every property is named as protoc's own C# names it (D-BIND-73).
 
 **Running the generator (D-BIND-71).** A consumer references
 `Eiva.Fletcher.Protoc` (`PrivateAssets="all"`), which sets
