@@ -1,0 +1,191 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+#include "csharp_backend_type_table.hpp"
+
+#include <functional>
+#include <set>
+#include <string>
+
+namespace fletcher::csharp_backend {
+
+namespace {
+
+bool IsLower(char c) { return 'a' <= c && c <= 'z'; }
+bool IsUpper(char c) { return 'A' <= c && c <= 'Z'; }
+bool IsDigit(char c) { return '0' <= c && c <= '9'; }
+bool IsAlnum(char c) { return IsLower(c) || IsUpper(c) || IsDigit(c); }
+char ToUpper(char c) { return IsLower(c) ? static_cast<char>(c - ('a' - 'A')) : c; }
+char ToLower(char c) { return IsUpper(c) ? static_cast<char>(c + ('a' - 'A')) : c; }
+
+// Members a property must not share a name with (D-BIND-73): protoc's reserved
+// list from GetPropertyName (csharp_helpers.cc), then the generated class's own
+// members. A slice that adds a member to the generated class adds it here.
+const std::set<std::string, std::less<>>& ReservedMemberNames() {
+    static const std::set<std::string, std::less<>> kNames = {
+        // protoc's list, verbatim.
+        "Types", "Descriptor", "Equals", "ToString", "GetHashCode", "WriteTo", "Clone",
+        "CalculateSize", "MergeFrom", "OnConstruction", "Parser",
+        // The generated class's own members.
+        "Schema", "ToArrow", "FromArrow"};
+    return kNames;
+}
+
+}  // namespace
+
+// ---------------------------------------------------------------------------
+// Scalar lookup: language-neutral logical identity -> C# type. These are the ONLY
+// C# type strings in the pipeline (GIR locked decision #1).
+// ---------------------------------------------------------------------------
+
+std::optional<CsScalarInfo> CsLookupScalar(const ir::LogicalType& type,
+                                           const std::optional<ir::EnumIdentity>& enum_identity) {
+    // An enum lowers to INT32 storage and carries its identity; C# emits a real
+    // `enum` for it (D-BIND-8), so the property's type is the generated enum.
+    if (enum_identity.has_value() && enum_identity->descriptor != nullptr)
+        return CsScalarInfo{CsTypeName(enum_identity->descriptor), false};
+
+    using LK = ir::LogicalKind;
+    switch (type.kind) {
+        case LK::BOOL:
+            return CsScalarInfo{"bool", false};
+        case LK::INT32:
+            return CsScalarInfo{"int", false};
+        case LK::INT64:
+            return CsScalarInfo{"long", false};
+        case LK::UINT32:
+            return CsScalarInfo{"uint", false};
+        case LK::UINT64:
+            return CsScalarInfo{"ulong", false};
+        case LK::FLOAT32:
+            return CsScalarInfo{"float", false};
+        case LK::FLOAT64:
+            return CsScalarInfo{"double", false};
+        case LK::UTF8:
+            return CsScalarInfo{"string", true};
+        case LK::BINARY:
+            return CsScalarInfo{"byte[]", true};
+        default:
+            // Temporal types are BIND-6c's (D-BIND-26: lossless); the rest are not
+            // produced by the proto mapping.
+            return std::nullopt;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// protoc's naming rules, ported from compiler/csharp/names.cc and
+// csharp_helpers.cc. Keep them behaviourally identical: D-BIND-73 makes protoc's
+// output the specification, and test_csharp_type_table.cpp pins each rule.
+// ---------------------------------------------------------------------------
+
+std::string UnderscoresToCamelCase(std::string_view input, bool cap_next_letter,
+                                   bool preserve_period) {
+    std::string result;
+    for (size_t i = 0; i < input.size(); i++) {
+        const char c = input[i];
+        if (IsLower(c)) {
+            result += cap_next_letter ? ToUpper(c) : c;
+            cap_next_letter = false;
+        } else if (IsUpper(c)) {
+            result += (i == 0 && !cap_next_letter) ? ToLower(c) : c;
+            cap_next_letter = false;
+        } else if (IsDigit(c)) {
+            result += c;
+            cap_next_letter = true;
+        } else {
+            cap_next_letter = true;
+            if (c == '.' && preserve_period) result += '.';
+        }
+    }
+    if (!input.empty() && input.back() == '#') result += '_';
+    if (!result.empty() && IsDigit(result[0]) && !input.empty() && input[0] == '_')
+        result.insert(0, 1, '_');
+    return result;
+}
+
+std::string ShoutyToPascalCase(std::string_view input) {
+    std::string result;
+    char previous = '_';
+    for (const char current : input) {
+        if (!IsAlnum(current)) {
+            previous = current;
+            continue;
+        }
+        if (!IsAlnum(previous) || IsDigit(previous))
+            result += ToUpper(current);
+        else if (IsLower(previous))
+            result += current;
+        else
+            result += ToLower(current);
+        previous = current;
+    }
+    return result;
+}
+
+std::string TryRemovePrefix(std::string_view prefix, std::string_view value) {
+    std::string prefix_to_match;
+    for (const char c : prefix)
+        if (c != '_') prefix_to_match += ToLower(c);
+
+    size_t prefix_index = 0;
+    size_t value_index = 0;
+    for (; prefix_index < prefix_to_match.size() && value_index < value.size(); value_index++) {
+        if (value[value_index] == '_') continue;
+        if (ToLower(value[value_index]) != prefix_to_match[prefix_index++])
+            return std::string(value);
+    }
+    if (prefix_index < prefix_to_match.size()) return std::string(value);
+    while (value_index < value.size() && value[value_index] == '_') value_index++;
+    if (value_index == value.size()) return std::string(value);
+    return std::string(value.substr(value_index));
+}
+
+// ---------------------------------------------------------------------------
+// Names Fletcher decides (D-BIND-69): the namespace root and flat nested types.
+// ---------------------------------------------------------------------------
+
+std::string CsNamespace(const google::protobuf::FileDescriptor* file) {
+    const std::string package = UnderscoresToCamelCase(file->package(), true, true);
+    return package.empty() ? "Fletcher.Gen" : "Fletcher.Gen." + package;
+}
+
+namespace {
+
+template <typename D>
+std::string FlatName(const D* d) {
+    std::string name = d->name();
+    for (const auto* parent = d->containing_type(); parent != nullptr;
+         parent = parent->containing_type())
+        name = parent->name() + "_" + name;
+    return name;
+}
+
+}  // namespace
+
+std::string CsTypeName(const google::protobuf::Descriptor* msg) { return FlatName(msg); }
+
+std::string CsTypeName(const google::protobuf::EnumDescriptor* enm) { return FlatName(enm); }
+
+std::string CsPropertyName(std::string_view field_name, const google::protobuf::Descriptor* owner) {
+    std::string property = UnderscoresToCamelCase(field_name, true, false);
+    // protoc compares with the message's own (unflattened) name. A flat name such
+    // as Outer_Inner can never collide: PascalCase drops every underscore.
+    if (property == owner->name() || ReservedMemberNames().count(property) != 0) property += '_';
+    return property;
+}
+
+std::vector<CsEnumMember> CsEnumMembers(const google::protobuf::EnumDescriptor* enm) {
+    std::vector<CsEnumMember> members;
+    std::set<std::string> used;
+    for (int i = 0; i < enm->value_count(); ++i) {
+        const auto* value = enm->value(i);
+        std::string name = ShoutyToPascalCase(TryRemovePrefix(enm->name(), value->name()));
+        if (!name.empty() && IsDigit(name[0])) name.insert(0, 1, '_');
+        // protoc's duplicate loop (csharp_enum.cc): append '_' until unused.
+        while (!used.insert(name).second) name += '_';
+        members.push_back({std::move(name), value->number()});
+    }
+    return members;
+}
+
+}  // namespace fletcher::csharp_backend

@@ -23,6 +23,7 @@
 #include "cpp_backend_schema_visitor.hpp"
 #include "cpp_backend_type_table.hpp"
 #include "cpp_backend_view_visitor.hpp"
+#include "csharp_backend_visitor.hpp"
 #include "generator_internal.hpp"
 #include "ir.hpp"
 #include "option_metadata.hpp"
@@ -1665,6 +1666,8 @@ bool ParsePluginParameter(const std::string& parameter, PluginOptions* out, std:
             out->accessor = true;
         else if (token == "rust")
             out->rust = true;
+        else if (token == "csharp")
+            out->csharp = true;
         // Unknown tokens are ignored, unchanged from the pre-existing behaviour
         // the RBA-1 no-drift contract depends on. metadata_from_option= tokens
         // are claimed below and MUST parse.
@@ -1761,6 +1764,15 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
         std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(
             context->Open(ts_out_name));
         if (!WriteToStream(stream.get(), ts_content, error)) return false;
+    }
+
+    // Optionally emit the C# model (BIND-6). Additive, like `ts`: no other output
+    // changes (CsVisitor.CsharpTokenChangesNoExistingOutputAndAddsExactlyOneFile).
+    if (opts.csharp) {
+        const std::string cs_content = csharp_backend::CsVisitor(file).GenerateFile();
+        std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(
+            context->Open(StripProtoSuffix(file->name()) + ".fletcher.cs"));
+        if (!WriteToStream(stream.get(), cs_content, error)) return false;
     }
 
     // Optionally emit one serialized Arrow IPC schema file per message

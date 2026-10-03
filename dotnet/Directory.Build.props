@@ -1,0 +1,52 @@
+<!-- SPDX-License-Identifier: LGPL-3.0-or-later
+     Copyright (C) 2026 The Fletcher Authors
+-->
+<Project>
+
+  <!-- ONE version for all three managed packages, as gateway-client-ts ships one
+       version for its npm package. The MAJOR.MINOR here is the cross-package
+       compatibility promise shared with the Conan components; PATCH floats per
+       component. `cd.dotnet.yml`'s tag check reads these two elements out of this
+       file, so it must stay parseable by a plain sed/xmllint extract with no SDK
+       on the runner. -->
+  <PropertyGroup>
+    <VersionPrefix>0.5.0</VersionPrefix>
+    <VersionSuffix>alpha</VersionSuffix>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- net8.0 stays until a MINOR bump drops it: .NET 8 leaves support in
+         November 2026 and a consumer still on it must be able to reference these
+         packages until it moves (D-BIND-21). -->
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <!-- A binding is a boundary: a warning here is a defect in the boundary. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- A locked-mode restore in CI is only a guard if the lock files exist;
+         this property is what writes them. -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+  <!-- Package metadata, mirroring gateway-client-ts/package.json field for field
+       so the two published clients describe themselves the same way. -->
+  <PropertyGroup>
+    <Authors>The Fletcher Authors</Authors>
+    <Company>EIVA</Company>
+    <PackageLicenseExpression>LGPL-3.0-or-later</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/eivacom/Fletcher</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/eivacom/Fletcher.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+  </PropertyGroup>
+
+</Project>

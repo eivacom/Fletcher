@@ -5,6 +5,14 @@ dist/
 **/build/
 **/generated-ts/
 package-lock.json
+# NuGet writes packages.lock.json on every restore, exactly as npm writes
+# package-lock.json above: prettier would reformat it and the next restore would
+# put it back, so the two tools would fight over every dependency change.
+packages.lock.json
+# .NET intermediate/build output, gitignored but present in a developer's tree
+# (CI checks out clean and never sees it).
+dotnet/**/obj/
+dotnet/**/bin/
 
 # Byte-exact generator output committed as goldens: prettier must not rewrite
 # them or the parity / visitor comparisons break.

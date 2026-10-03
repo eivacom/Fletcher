@@ -1,0 +1,48 @@
+<!-- SPDX-License-Identifier: LGPL-3.0-or-later
+     Copyright (C) 2026 The Fletcher Authors
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- BIND-5b: the copy oracle, scoring C#'s REAL publish (D-BIND-58, D-BIND-61).
+
+       A project of its own because it loads a DIFFERENT native shim: the probe
+       shim, `fletcher-c-abi-probe`, which registers the copy oracle's instrumented
+       provider as `probe`. One shim per process (D-BIND-17), so this assembly
+       never sees the shipped one - which is also why it cannot share
+       Fletcher.Tests' output directory. -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <RootNamespace>Eiva.Fletcher.CopyOracle.Tests</RootNamespace>
+    <!-- Addresses are the whole measurement: the payload's, the delivered row's,
+         the delivered attachment's. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RollForward>LatestMajor</RollForward>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Fletcher/Fletcher.csproj" />
+  </ItemGroup>
+
+  <!-- The PROBE shim, staged beside the test binary UNDER THE SHIPPED SHIM'S NAME,
+       so `Eiva.Fletcher.Interop` loads it exactly as it loads the real one and the
+       publish path under measurement is the one that ships. `ci.dotnet.yml`
+       builds c-abi with `with_probe_shim` and passes the path in:
+       `dotnet test -p:FletcherProbeShim=<path>`.
+
+       Absent, every row here FAILS rather than skips, with the resolver's
+       diagnostic, for the reason Fletcher.Tests gives: "the shim was never built"
+       must not read green. -->
+  <ItemGroup Condition="'$(FletcherProbeShim)' != '' And Exists('$(FletcherProbeShim)')">
+    <None Include="$(FletcherProbeShim)"
+          Link="$([System.IO.Path]::GetFileName('$(FletcherProbeShim)').Replace('-probe', ''))"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="[18.10.0]" />
+    <PackageReference Include="xunit" Version="[2.9.3]" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="[3.1.5]" />
+  </ItemGroup>
+
+</Project>

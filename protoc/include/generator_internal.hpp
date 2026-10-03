@@ -65,6 +65,7 @@ struct PluginOptions {
     bool ipc = false;
     bool accessor = false;
     bool rust = false;
+    bool csharp = false;  // BIND-6: <stem>.fletcher.cs
     std::vector<MetadataRule> metadata_rules;
 };
 
