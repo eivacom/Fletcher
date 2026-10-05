@@ -25,8 +25,8 @@ aware Markdown viewer.
 
 | Marker | Meaning |
 |---|---|
-| `<<shipped>>` | Exists on `main` today (`8ef1d0e`) and is tested in CI |
-| `<<in-flight>>` | Round **PDA**, on `feature/protocol-driver-abi` — **design documents only, no ABI code written yet**, 8 commits ahead of `main`, unmerged |
+| `<<shipped>>` | Exists on `main` today (`f33973c`, checked 2026-10-03) and is tested in CI |
+| `<<in-flight>>` | Round **PDA**, the driver ABI — **specified, not built**: `docs/protocol-driver-abi-spec.md` has been on `main` since #126, and **no driver ABI code exists** anywhere. (Until 2026-10-03 this said "on `feature/protocol-driver-abi`, 8 commits ahead"; that branch is no longer on origin.) |
 | `<<built>>` | Round **BIND**, on `feature/csharp-bindings` (draft #129) — **built and tested in CI, not yet on `main`**. Added 2026-09-25, when BIND-4 closed |
 | `<<planned>>` | Round **BIND** — this plan, **not built yet** |
 | `<<provisional>>` | Planned *and* the design is still an open decision |
@@ -35,14 +35,15 @@ aware Markdown viewer.
 
 This matters for reading the sequence diagrams: only C++ has a complete pub/sub
 path right now — generated classes through to the transport. C# has pub/sub over
-the shim since BIND-4, but no generated classes until BIND-6.
+the shim since BIND-4; its generated classes are being built in BIND-6 (6a, 2026-10-03:
+enums and classes with scalar fields, no `Schema`/`ToArrow`/pub/sub pair yet).
 
 | Language | Encode / decode | Publish / subscribe | Arrow read side | Status |
 |---|---|---|---|---|
 | **C++** | ✅ generated row classes + `Codec` | ✅ `Publisher` / `Subscriber`, all providers | ✅ views + accessors | complete |
 | **TypeScript** | ✅ managed codec in `@eiva/fletcher-gateway-client` | ⚠️ via gateway WebSocket only, and **hand-wired** — no generated `Publisher`/`Subscriber` (that is BIND-T) | ❌ | partial |
 | **Rust** | ❌ *(planned — BIND-Rust)* | ❌ *(planned — BIND-Rust)* | ✅ `.fletcher.rs` RecordBatch accessor | read side today |
-| **C#** | ✅ `FletcherCodec` over the shim *(BIND-3c, 2026-09-21)* | ✅ `Publisher` / `Subscriber` over the shim, all three built-in providers by selector *(BIND-4, 2026-09-25)* — hand-wired until BIND-6 generates classes; `SubscriberArrow`, batch-first *(BIND-5)* | ❌ *(BIND-7)* | in progress (BIND) |
+| **C#** | ✅ `FletcherCodec` over the shim *(BIND-3c, 2026-09-21)* | ✅ `Publisher` / `Subscriber` over the shim, all three built-in providers by selector *(BIND-4, 2026-09-25)* — hand-wired until BIND-6's generated pairs (6d); `SubscriberArrow`, batch-first *(BIND-5)*. Generated classes: enums and scalar fields since BIND-6a | ❌ *(BIND-7)* | in progress (BIND) |
 
 **Which codec a language reaches, and why the type sets look different
 (D-BIND-39, 2026-09-21).** One wire format, **two drivers** of it:
@@ -75,7 +76,7 @@ classDiagram
 
     class PositionalWriter {
         <<shipped>>
-        +BeginRow(fieldCount)
+        +PositionalWriter(buf, num_fields)
         +WriteInt32(v)
         +WriteString(v)
         +BeginStruct(numFields)
@@ -91,6 +92,7 @@ classDiagram
         +Append(data, len)
         +AppendByte(b)
         +AppendZeros(len)
+        +AppendInPlace(min_bytes, writer)
         +Position() size_t
         +PatchU32(offset, value)
         +PatchByte(offset, bits)
@@ -120,7 +122,12 @@ classDiagram
         +Publish(segments, RowEncoder, Attachments)*
         +Subscribe(segments, SubscribeCallback) SubscriptionResult*
         +Unsubscribe(segments)*
+        +SubscribeSchema(segments) SchemaArrival
+        +UnsubscribeSchema(segments)
+        +CreateTopicWithOptions(segments, OwnedSchema, TopicOptions)
+        +SubscribeWithOptions(segments, SubscribeCallback, TopicOptions) SubscriptionResult
     }
+    note for PubSubProvider "The last four arrived with #128 and have default bodies, so a provider that knows no options or schema watch still conforms."
     class Publisher {
         <<shipped>>
         +CreateTopic(segments, OwnedSchema)
@@ -128,8 +135,10 @@ classDiagram
     }
     class Subscriber {
         <<shipped>>
-        +Subscribe(segments, cb) SubscribeResult
+        +Subscribe(segments, cb, TopicOptions) SubscribeResult
         +Unsubscribe(id)
+        +SubscribeSchema(segments) SchemaArrival
+        +UnsubscribeSchema(segments)
     }
     note for Subscriber "owns fan-out: one provider callback per topic, N local subscribers"
 
@@ -147,7 +156,7 @@ classDiagram
     class InProcessProvider {
         <<shipped>>
     }
-    note for InProcessProvider "lives in gateway/src/main.cpp today — PDA promotes it to a component"
+    note for InProcessProvider "a pubsub component since PDA-DEC, made selectable by RegisterInProcessProvider - the gateway only calls that"
 
 
     PubSubProvider <|-- FastDDSPubSubProvider
@@ -172,8 +181,9 @@ classDiagram
     }
     class SubscriberArrow {
         <<shipped>>
-        +Subscribe(segments, ArrowRow cb)
-        +Subscribe(segments, RecordBatch cb)
+        +Subscribe(segments, SubscribeCallback) per row
+        +Subscribe(segments, RecordBatchCallback, BatchOptions)
+        +SubscribeSchema(segments) SchemaArrival
     }
 
     PublisherArrow --> Publisher
@@ -193,11 +203,13 @@ flowchart LR
 
     IR --> CPPB["cpp_backend<br/>type_table + schema /<br/>decode / view visitors"]
     IR --> TSB["ts_backend<br/>type_table + visitor"]
-    IR --> CSB["csharp_backend<br/>type_table + visitor<br/>+ view visitor"]
+    IR --> CSB["csharp_backend<br/>type_table + visitor: built, BIND-6a<br/>+ view visitor: BIND-7"]
 
-    CPPB --> GCPP["<b>.fletcher.pb.h</b> row class + pub/sub<br/><b>.fletcher.arrow.pb.h</b> view + ToArrowRow<br/><b>.fletcher.accessor.pb.h</b> RecordBatch accessor"]
+    PLUGIN --> ACC["accessor emitter<br/><i>NOT on the IR: FieldKind,<br/>until round RIR</i>"]
+
+    CPPB --> GCPP["<b>.fletcher.pb.h</b> row class + pub/sub<br/><b>.fletcher.arrow.pb.h</b> view + ToArrowRow"]
     TSB --> GTS["<b>.fletcher.ts</b> interface + TypedSchema<br/>+ topic constants<br/><i>Publisher / Subscriber: BIND-T</i>"]
-    CPPB --> GRS["<b>.fletcher.rs</b> RecordBatch accessor only<br/><i>still on FieldKind until round RIR</i>"]
+    ACC --> GACC["<b>.fletcher.accessor.pb.h</b> C++ RecordBatch accessor<br/><b>.fletcher.rs</b> Rust RecordBatch accessor"]
     CSB --> GCS["<b>.fletcher.cs</b> row class + Schema + topics<br/>native pair BIND-6, gateway pair BIND-8<br/><b>.fletcher.arrow.cs</b> view<br/><b>.fletcher.accessor.cs</b> accessor"]
 
     PLUGIN --> IPC["<b>.ipc</b> Arrow IPC schema<br/><i>language-neutral</i>"]
@@ -207,7 +219,9 @@ flowchart LR
 ```
 
 Opt tokens: `--fletcher_opt=` `ts` · `ipc` · `accessor` · `rust` (shipped), plus
-`csharp` · `csharp_accessor` (planned).
+`csharp` (built since BIND-6a: enums and classes with scalar fields; the rest is
+6b–6e) and `csharp_accessor` (planned, BIND-7). Diagram 9 draws the plugin's classes
+and visitors behind this picture.
 
 **One shape per language (D-BIND-72):** each generated file holds a row type per
 message, one schema bound to it, and the topics, and every runtime consumes those.
@@ -325,11 +339,28 @@ classDiagram
         one framed decode per window, handler calls may overlap
     }
     class Fletcher_Generated_cs {
-        <<planned>>
-        generated .fletcher.cs rows
-        BIND-6, writes no wire bytes
+        <<built>>
+        generated .fletcher.cs model layer
+        BIND-6a - enums, scalar fields so far
+        Schema, ToArrow, FromArrow - BIND-6b
+        writes no wire bytes - D-BIND-1
         namespace Fletcher.Gen.PascalPkg - D-BIND-69
     }
+    class Generated_native_pair_cs {
+        <<planned>>
+        Svc_MethodPublisher and Subscriber
+        BIND-6d
+    }
+    class Generated_gateway_pair_cs {
+        <<planned>>
+        typed pair over FletcherClient
+        BIND-8
+    }
+    class Apache_Arrow {
+        <<NuGet>>
+        Apache.Arrow
+    }
+    note for Fletcher_Generated_cs "D-BIND-72: the model layer compiles against Apache.Arrow ONLY, so a gateway or WASM app never pulls in native assets. Each pair references its own runtime package and is emitted only when asked for."
     class Fletcher_GatewayClient_cs {
         <<planned>>
         Eiva.Fletcher.GatewayClient, BIND-8
@@ -343,7 +374,12 @@ classDiagram
     Fletcher_PubSub_cs --> Fletcher_Interop
     Fletcher_SubscriberArrow_cs --> Fletcher_PubSub_cs
     Fletcher_SubscriberArrow_cs --> Fletcher_Codec_cs
-    Fletcher_Generated_cs --> Fletcher_Codec_cs
+    Fletcher_Generated_cs --> Apache_Arrow : model layer
+    Generated_native_pair_cs --> Fletcher_Generated_cs
+    Generated_native_pair_cs --> Fletcher_PubSub_cs
+    Generated_gateway_pair_cs --> Fletcher_Generated_cs
+    Generated_gateway_pair_cs --> Fletcher_GatewayClient_cs
+    Fletcher_GatewayClient_cs --> Apache_Arrow
 
     note "TEST-ONLY, never shipped (D-BIND-62): fletcher-c-abi-probe is the same entry points plus two fl_test_* exports and the copy oracle's probe provider, built only under c-abi's with_probe_shim option from the test package fletcher-copy-probe. It lets the copy oracle score C#'s real publish (D-BIND-58, D-BIND-61)."
 ```
@@ -379,7 +415,8 @@ sequenceDiagram
     Gen->>Pub: Publish(segments, encoder)
     Note over Gen,Pub: encoder is a lambda capturing the row
     Pub->>Prov: Publish(segments, encoder, attachments)
-    Prov->>Prov: loan a transport payload
+    Prov->>Prov: serialize into the DDS payload buffer
+    Note over Prov: Fast DDS writes through WriteSample. The loaned path<br/>is kept and unit-tested but not selected (sample_writer.hpp).
     Prov->>Buf: expose {data, capacity, pos}
     Prov->>Gen: encoder(buffer)
     Gen->>Buf: AppendZeros(null bitfield)
@@ -405,7 +442,8 @@ sequenceDiagram
     App->>Sub: Subscribe(segments, cb)
     Sub->>Prov: Subscribe(segments, multiplexCb)
     Note over Sub: first Subscribe per topic installs ONE provider<br/>callback — later ones just register locally (fan-out)
-    Prov-->>Sub: SubscriptionResult (schema future)
+    Prov-->>Sub: SubscriptionResult (its SchemaArrival)
+    Note over Prov,Sub: SchemaArrival, deliberately NOT a future -<br/>a future has no C form (D-BIND-22)
 
     Net->>Prov: sample arrives (transport thread)
     Prov->>Prov: schema known? else buffer until it is
@@ -591,10 +629,317 @@ isolates native assets to `Interop` alone and CI asserts `GatewayClient` has no
 
 ---
 
+## 9. Class diagrams — the plugin (`fletcher-protoc`) and its visitors (shipped, C# built)
+
+Drawn from `protoc/include` and `protoc/src` at `96aa6df` (BIND-6a), 2026-10-03.
+Three pictures: the IR every backend reads, what the generator dispatches to, and how
+each backend works inside. **A box marked `<<module>>` or `<<visitor fn>>` is a group
+of free functions, not a class**: most of the plugin's visitors are recursive functions
+over the IR's `std::variant`. Only `SchemaVisitor`, `TsVisitor` and `CsVisitor` are
+classes. Everything is `<<shipped>>` except the C# backend, which is `<<built>>`.
+
+### 9a. The IR: one language-neutral model every backend reads
+
+```mermaid
+classDiagram
+    direction LR
+    class IrBuilder {
+        <<module>>
+        +BuildFieldIr(FieldDescriptor) IrNode
+        +BuildMessageIr(Descriptor) StructNode
+    }
+    class IrNode {
+        <<struct>>
+        +NodeKind kind
+        +FieldFacts facts
+        +variant node
+    }
+    class FieldFacts {
+        <<struct>>
+        +bool nullable
+        +bool dictionary
+        +bool repeated
+        +WktKind wkt
+        +int wire_field_id
+        +metadata pairs
+    }
+    class ScalarNode {
+        <<struct>>
+        +LogicalType logical_type
+        +optional EnumIdentity enum_identity
+    }
+    class ListNode {
+        <<struct>>
+        +IrNode element
+    }
+    class FixedSizeListNode {
+        <<struct>>
+        +IrNode element
+        +int size
+    }
+    class StructNode {
+        <<struct>>
+        +StructIdentity identity
+        +vector~StructField~ fields
+    }
+    class StructField {
+        <<struct>>
+        +string name
+        +int field_number
+        +IrNode type
+    }
+    class MapNode {
+        <<struct>>
+        +IrNode key
+        +IrNode value
+    }
+    class UnsupportedNode {
+        <<struct>>
+        +string reason
+    }
+    class LogicalType {
+        <<struct>>
+        +LogicalKind kind
+        +time_unit, timezone, width
+    }
+    class EnumIdentity {
+        <<struct>>
+        +EnumDescriptor descriptor
+        +vector~EnumSymbol~ symbols
+    }
+    IrBuilder ..> IrNode : builds
+    IrNode *-- FieldFacts
+    IrNode *-- ScalarNode : variant
+    IrNode *-- ListNode : variant
+    IrNode *-- FixedSizeListNode : variant
+    IrNode *-- StructNode : variant
+    IrNode *-- MapNode : variant
+    IrNode *-- UnsupportedNode : variant
+    ListNode *-- IrNode : element
+    FixedSizeListNode *-- IrNode : element
+    StructNode *-- StructField
+    StructField *-- IrNode : type
+    MapNode *-- IrNode : key, value
+    ScalarNode *-- LogicalType
+    ScalarNode o-- EnumIdentity
+```
+
+### 9b. The generator and what it dispatches to
+
+One `ArrowRowGenerator` per protoc run. It parses the options, builds the metadata
+resolver once per file, and calls one emitter per output.
+
+```mermaid
+classDiagram
+    direction LR
+    class CodeGenerator {
+        <<protobuf>>
+    }
+    class ArrowRowGenerator {
+        +Generate(file, parameter, context, error) bool
+        +GenerateAll(files, parameter, context, error) bool
+    }
+    class PluginOptions {
+        <<struct>>
+        +bool schema_only
+        +bool ts
+        +bool ipc
+        +bool accessor
+        +bool rust
+        +bool csharp
+        +vector~MetadataRule~ metadata_rules
+    }
+    class OptionMetadataResolver {
+        +Create(rules, pool, error)$ unique_ptr
+        +ForMessage(Descriptor) pairs
+        +ForField(leaf, flatten_chain) pairs
+    }
+    class EncodeVisitor {
+        <<visitor fn>>
+        +EmitFieldEncodeFromIr(out, IrNode)
+    }
+    class DecodeVisitor {
+        <<visitor fn>>
+        +EmitFieldDecodeFromIr(out, IrNode)
+    }
+    class SchemaVisitor {
+        +Visit()
+    }
+    class ViewVisitor {
+        <<visitor fn>>
+        +EmitViewGetterFromIr(out, IrNode)
+        +EmitToArrowRowFieldFromIr(out, IrNode)
+        +EmitAppendToFieldFromIr(out, IrNode)
+    }
+    class TsVisitor {
+        +GenerateFile() string
+    }
+    class CsVisitor {
+        <<built>>
+        +GenerateFile() string
+    }
+    class AccessorEmitter {
+        <<module, on FieldKind>>
+        +EmitAccessorHeader(FileDescriptor) string
+        +EmitRustAccessor(FileDescriptor) string
+        +EmitRustRbaHelpers() string
+    }
+    class FieldMappingBridge {
+        <<module, pre-IR>>
+        +MapField(FieldDescriptor) FieldMapping
+        +GatherFields(Descriptor) vector~FieldInfo~
+    }
+
+    CodeGenerator <|-- ArrowRowGenerator
+    ArrowRowGenerator ..> PluginOptions : parses
+    ArrowRowGenerator ..> OptionMetadataResolver : one per Generate
+    ArrowRowGenerator ..> EncodeVisitor : pb.h row class
+    ArrowRowGenerator ..> DecodeVisitor : pb.h row class
+    ArrowRowGenerator ..> FieldMappingBridge : pb.h field list
+    ArrowRowGenerator ..> SchemaVisitor : pb.h Schema() and ipc
+    ArrowRowGenerator ..> ViewVisitor : arrow.pb.h
+    ArrowRowGenerator ..> TsVisitor : ts
+    ArrowRowGenerator ..> CsVisitor : csharp
+    ArrowRowGenerator ..> AccessorEmitter : accessor, rust
+    AccessorEmitter ..> FieldMappingBridge
+```
+
+### 9c. Inside the backends: one walk, one type table each, no language text on the IR
+
+Every IR backend walks a message through the same `BuildFlattenedFieldList` and takes
+its language's strings from its own type table (GIR locked decision #1), so no
+backend's field set can drift from the schema's. `SchemaVisitor` is the one textbook
+visitor: it drives an abstract sink, so one walk writes the C++ source text of
+`<Msg>Schema()` and also builds the live `ArrowSchema` the `.ipc` files are serialised
+from.
+
+```mermaid
+classDiagram
+    direction LR
+    class FlattenWalk {
+        <<module>>
+        +BuildFlattenedFieldList(Descriptor) vector~SchemaFieldRecord~
+    }
+    class SchemaFieldRecord {
+        <<struct>>
+        +string name
+        +int field_number
+        +string field_id
+        +IrNode node
+        +FieldDescriptor source_field
+        +flatten_chain
+    }
+    class SchemaVisitor {
+        +SchemaVisitor(msg, context_file, sink, resolver)
+        +Visit()
+        -EmitNodeType(IrNode, SchemaRef)
+        -RootMetadata() pairs
+        -FieldMetadata(SchemaFieldRecord) pairs
+    }
+    class SchemaSink {
+        <<abstract>>
+        +Root() SchemaRef
+        +Child(parent, i) SchemaRef
+        +SetTypeScalar(schema, type)
+        +SetTypeList(schema)
+        +SetTypeMap(schema)
+        +SetName(schema, name)
+        +SetNullable(schema, nullable)
+    }
+    class CppSchemaSink {
+        writes C++ source text
+    }
+    class NanoarrowSchemaSink {
+        builds an ArrowSchema in process
+    }
+    class EncodeVisitor {
+        <<visitor fn>>
+    }
+    class DecodeVisitor {
+        <<visitor fn>>
+    }
+    class ViewVisitor {
+        <<visitor fn>>
+    }
+    class CppTypeTable {
+        <<module>>
+        +LookupScalar(LogicalType, EnumIdentity) CppScalarInfo
+        +CppClassName(Descriptor) string
+        +CppEnumName(EnumDescriptor) string
+    }
+    class TsVisitor {
+        +TsVisitor(FileDescriptor)
+        +GenerateFile() string
+        -GenerateMessage(Descriptor) string
+        -InterfaceType(IrNode) string
+        -WireType(IrNode) string
+    }
+    class TsTypeTable {
+        <<module>>
+        +TsLookupScalar(LogicalType, EnumIdentity) TsScalarInfo
+        +TsInterfaceName(Descriptor) string
+        +TsSchemaConstName(Descriptor) string
+    }
+    class CsVisitor {
+        <<built>>
+        +CsVisitor(FileDescriptor)
+        +GenerateFile() string
+        -GenerateEnum(EnumDescriptor) string
+        -GenerateMessage(Descriptor) string
+    }
+    class CsTypeTable {
+        <<module, built>>
+        +CsLookupScalar(LogicalType, EnumIdentity) CsScalarInfo
+        +CsNamespace(FileDescriptor) string
+        +CsTypeName(Descriptor) string
+        +CsPropertyName(name, owner) string
+        +CsEnumMembers(EnumDescriptor) vector
+    }
+
+    FlattenWalk ..> SchemaFieldRecord : yields
+    SchemaVisitor ..> FlattenWalk
+    TsVisitor ..> FlattenWalk
+    CsVisitor ..> FlattenWalk
+    SchemaVisitor --> SchemaSink : drives
+    SchemaSink <|-- CppSchemaSink
+    SchemaSink <|-- NanoarrowSchemaSink
+    SchemaVisitor ..> CppTypeTable
+    EncodeVisitor ..> CppTypeTable
+    DecodeVisitor ..> CppTypeTable
+    ViewVisitor ..> CppTypeTable
+    TsVisitor ..> TsTypeTable
+    CsVisitor ..> CsTypeTable
+```
+
+### 9d. Which option produces which file, through which visitor
+
+| `--fletcher_opt` | Output | Built by | On the IR? |
+|---|---|---|---|
+| *(always)* | `<stem>.fletcher.pb.h`: row class, `<Msg>Schema()`, native pub/sub pair | `EncodeVisitor`, `DecodeVisitor`, `SchemaVisitor` + `CppSchemaSink`; field list from `GatherFields` | yes, but the `FieldInfo` bridge still carries the field list |
+| *(always, unless* `schema_only`*)* | `<stem>.fletcher.arrow.pb.h`: view, `ToArrowRow`, `AppendTo` | `ViewVisitor` | yes |
+| `ipc` | `<stem>.<Msg>.ipc` | `SchemaVisitor` + `NanoarrowSchemaSink`, then `SerializeSchemaIpc` | yes |
+| `ts` | `<stem>.fletcher.ts` | `TsVisitor` + `TsTypeTable` | yes |
+| `csharp` | `<stem>.fletcher.cs` | `CsVisitor` + `CsTypeTable` (BIND-6a) | yes |
+| `accessor` | `<stem>.fletcher.accessor.pb.h` | `AccessorEmitter` | **no**: `FieldKind`, until round RIR |
+| `rust` | `<stem>.fletcher.rs`, plus `__rba.fletcher.rs` once from `GenerateAll` | `AccessorEmitter` | **no**: `FieldKind`, until round RIR |
+
+**Why the last two rows matter to BIND-7:** D-BIND-9 builds the C# accessor on the IR
+directly, so it cannot reuse `AccessorEmitter` the way the C++ and Rust accessors
+share it. It will be the first accessor emitter on the IR.
+
+---
+
 ## Known gaps in these diagrams
 
-*Swept 2026-09-18 against the tree, again 2026-09-25 at BIND-4's close, and
-2026-09-29 for BIND-5 (review Q5). Three
+*Swept 2026-09-18 against the tree, again 2026-09-25 at BIND-4's close,
+2026-09-29 for BIND-5 (review Q5), and 2026-10-03 at BIND-6a, when section 9 was
+added and eight claims were corrected against `96aa6df`: diagram 2's generated C#
+now depends on `Apache.Arrow` only (D-BIND-72, missed when it was ruled); the
+accessor outputs come from the `FieldKind` emitter, not the C++ visitors; Fast DDS
+serialises rather than loans; subscribe returns a `SchemaArrival`, not a future;
+diagram 1's `InProcessProvider` note, `PositionalWriter`, `AppendInPlace` and #128's
+four seam methods; the legend's `main` commit and PDA branch; and C#'s row in the
+support table. Three
 of the first five have closed since these diagrams were drawn on 2026-08-31; they
 are marked rather than deleted, because a gap that closed is worth distinguishing
 from a gap nobody re-checked.*
