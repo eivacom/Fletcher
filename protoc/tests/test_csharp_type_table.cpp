@@ -295,6 +295,40 @@ TEST(CsTypeTable, AnEnumScalarIsItsGeneratedEnumType) {
     EXPECT_FALSE(info->is_reference);
 }
 
+TEST(CsTypeTable, ArrowTypeExpressionsCompileAgainstApacheArrow23) {
+    // The expressions BIND-6b's schema sink renders. Each was compiled against
+    // Apache.Arrow 23.0.0, whose DurationType has no public constructor.
+    EXPECT_EQ(cs::CsArrowScalarTypeExpr(NANOARROW_TYPE_INT32).value_or(""),
+              "global::Apache.Arrow.Types.Int32Type.Default");
+    EXPECT_EQ(cs::CsArrowScalarTypeExpr(NANOARROW_TYPE_BINARY).value_or(""),
+              "global::Apache.Arrow.Types.BinaryType.Default");
+    EXPECT_FALSE(cs::CsArrowScalarTypeExpr(NANOARROW_TYPE_HALF_FLOAT).has_value());
+    EXPECT_EQ(
+        cs::CsArrowDateTimeTypeExpr(NANOARROW_TYPE_TIMESTAMP, NANOARROW_TIME_UNIT_NANO, nullptr)
+            .value_or(""),
+        "new global::Apache.Arrow.Types.TimestampType("
+        "global::Apache.Arrow.Types.TimeUnit.Nanosecond, (string?)null)");
+    EXPECT_EQ(
+        cs::CsArrowDateTimeTypeExpr(NANOARROW_TYPE_TIMESTAMP, NANOARROW_TIME_UNIT_MICRO, "UTC")
+            .value_or(""),
+        "new global::Apache.Arrow.Types.TimestampType("
+        "global::Apache.Arrow.Types.TimeUnit.Microsecond, \"UTC\")");
+    EXPECT_EQ(
+        cs::CsArrowDateTimeTypeExpr(NANOARROW_TYPE_DURATION, NANOARROW_TIME_UNIT_NANO, nullptr)
+            .value_or(""),
+        "global::Apache.Arrow.Types.DurationType.FromTimeUnit("
+        "global::Apache.Arrow.Types.TimeUnit.Nanosecond)");
+}
+
+TEST(CsTypeTable, StringLiteralsEscapeWhatCannotAppearRaw) {
+    EXPECT_EQ(cs::CsStringLiteral("plain"), "\"plain\"");
+    EXPECT_EQ(cs::CsStringLiteral("a\"b\\c"), "\"a\\\"b\\\\c\"");
+    EXPECT_EQ(cs::CsStringLiteral("line\nnext\ttab\r"), "\"line\\nnext\\ttab\\r\"");
+    EXPECT_EQ(cs::CsStringLiteral(std::string("x\x01y", 3)), "\"x\\u0001y\"");
+    // UTF-8 passes through: the generated file is UTF-8.
+    EXPECT_EQ(cs::CsStringLiteral("h\xc3\xa9"), "\"h\xc3\xa9\"");
+}
+
 TEST(CsTypeTable, KindsNotYetMappedReturnNothing) {
     // Temporal types arrive with BIND-6c (D-BIND-26: lossless); until then the
     // table answers "not mapped" rather than a lossy guess.

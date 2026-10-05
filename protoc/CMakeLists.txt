@@ -24,6 +24,7 @@ add_library(fletcher_plugin_core STATIC
     src/ts_backend_type_table.cpp
     src/ts_backend_visitor.cpp
     src/csharp_backend_type_table.cpp
+    src/csharp_backend_schema_sink.cpp
     src/csharp_backend_visitor.cpp
     src/generator.cpp
     src/option_metadata.cpp

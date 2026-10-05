@@ -16,6 +16,7 @@
 // types can sit beside protoc's in one project.
 
 #include <google/protobuf/descriptor.h>
+#include <nanoarrow/nanoarrow.h>
 
 #include <optional>
 #include <string>
@@ -30,12 +31,27 @@ namespace fletcher::csharp_backend {
 struct CsScalarInfo {
     std::string type_text;      // e.g. "int", "string", "byte[]", or a generated enum's name
     bool is_reference = false;  // a reference type: nullable as `T?`, defaulted when not
+    std::string arrow_array;    // the Apache.Arrow array class, e.g. "Int32Array" (BIND-6b)
+    bool is_enum = false;       // stored as int32, cast to and from the generated enum
 };
 
 // Map a scalar logical identity to its C# type, or nullopt for a kind this backend
 // does not map yet (temporal types arrive with BIND-6c, losslessly per D-BIND-26).
 std::optional<CsScalarInfo> CsLookupScalar(const ir::LogicalType& type,
                                            const std::optional<ir::EnumIdentity>& enum_identity);
+
+// The Apache.Arrow C# expression for a nanoarrow scalar type, e.g. NANOARROW_TYPE_INT32 ->
+// "global::Apache.Arrow.Types.Int32Type.Default", or nullopt for one the proto mapping never
+// produces (BIND-6b; the schema sink renders through these).
+std::optional<std::string> CsArrowScalarTypeExpr(ArrowType type);
+
+// The same for a timestamp or duration: the unit, and a timestamp's timezone (null for none).
+std::optional<std::string> CsArrowDateTimeTypeExpr(ArrowType type, ArrowTimeUnit unit,
+                                                   const char* timezone);
+
+// A C# regular string literal, quotes included, with every character that cannot appear
+// raw escaped. Metadata values come from proto options, so they can hold anything.
+std::string CsStringLiteral(std::string_view text);
 
 // protoc's UnderscoresToCamelCase (names.cc), verbatim in behaviour.
 std::string UnderscoresToCamelCase(std::string_view input, bool cap_next_letter,

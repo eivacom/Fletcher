@@ -603,6 +603,37 @@ are marked in the output as 6c's, not dropped silently.
   emitted without the token, nullability ignored, the marker removed) are each caught by the test
   named for them; each mutant compiled, on a scratch copy outside the Conan cache.
 
+**6b-1, the generator half of 6b (2026-10-05).** 6b was split: 6b-1 emits `Schema`, `ToArrow` and
+`FromArrow`; 6b-2 adds `integration-tests/protoc-dotnet` and its lane.
+
+- **One schema, by construction.** The plugin already had the right tool: `SchemaVisitor` drives an
+  abstract `SchemaSink`, and two sinks turned one walk into C++ source and a live `ArrowSchema`. A
+  third, `CsSchemaSink`, records the same calls as a tree and renders Apache.Arrow C# construction
+  code. It reproduces nanoarrow's own defaults (a list's child is "item", nullable; a map's
+  "entries" and "key" are not), and copies a nested message inline by running the visitor into the
+  subtree, as the in-process sink deep-copies it. So the C# `Schema` carries C++'s fields,
+  nullability and metadata, `metadata_from_option` extras included, without a second walk.
+- **Conversion only where it is whole.** `ToArrow(IEnumerable<T>)` and `FromArrow(StructArray, int)`
+  are generated for a message whose fields are all mapped scalars; any other message gets its full
+  `Schema` and a marker naming the field 6c must add first. A `ToArrow` that skipped a field would
+  build a batch its own `Schema` disagrees with.
+- **Tests first, shown red against the committed 6a code:** the 5 new visitor cases failed there and
+  the other 126 passed. One 6a case had asserted a whole class body and was narrowed to how the class
+  opens. 133/133 now, with two type-table cases added.
+- **Measured against the real oracle.** Outside the suite, the generated C# for five messages
+  (lists, an inline struct, a map, a list of structs, Timestamp, Duration, a wrapper) was compiled
+  against Apache.Arrow 23.0.0 with every analyser as an error, and each `Schema` compared with the
+  `.ipc` file the plugin writes from nanoarrow: names, types, nullability, metadata and key order,
+  all the way down. They are equal. A planted difference in an item's nullability, and another in
+  metadata order, were each reported, so the comparison can fail. Three rows with nulls, extremes
+  and non-ASCII text round-trip through `ToArrow` and `FromArrow`.
+- **A wrong guess the build caught:** `DurationType` has no public constructor in Apache.Arrow 23.
+  Reflection over the restored assembly showed `FromTimeUnit`, which the type table now emits, and a
+  type-table case pins every expression the sink renders.
+- **Falsified:** six mutations (list item and map key nullability, conversion despite an unmapped
+  field, the wrong column, a non-nullable string read back as null, root metadata dropped) are each
+  caught by the test named for them; each mutant compiled.
+
 **Tooling now.** The machine lost Python, Conan, CMake and Node in a crash on 2026-10-02. The plugin is
 built and tested in the Linux devcontainer (`eivaorg/fletcher-devcontainer:main`); the image has no
 .NET SDK, so generated C# is compiled on Windows, where the SDK survived.

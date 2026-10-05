@@ -552,7 +552,7 @@ tests between two implementations.
 | 2 gateway client | `test_schema_codec` 11, `test_publish_frame` 9, TS 36 | **56** | Port (BIND-8), true parity: managed code both sides. |
 | 3 pub/sub semantics | `test_publisher_subscriber` 44, `test_segments` 5, `test_pubsub_arrow` 33 | **82** | Port over `inprocess`. **Split confirmed 2026-09-24: the `pubsub` cases are BIND-4's; `test_pubsub_arrow`'s are BIND-5's, whose acceptance row claims them and whose `SubscriberArrow` did not exist before it.** **#128 added 26 `pubsub` cases and 18 `pubsub-arrow` ones (D-BIND-57)**; of the 49 `pubsub` cases, **44 are mapped** - 12 of #128's over `inprocess`, 11 over real Fast DDS in the transport lane, because only a provider that knows options or has a schema channel can answer them - **and 5 are EXCLUDED**, 2 by D-BIND-47 and 3 by D-BIND-57. D-BIND-47's two: `UnsubscribeLastSubscriberUnsubscribesFromProvider` and `UnsubscribeWithRemainingSubscribersKeepsProviderSubscription` assert `mock->unsubscribe_count`, the fan-out's provider-level bookkeeping, which lives in the C++ `Subscriber` the binding WRAPS and does not reimplement - porting them would run that C++ a second time and call it a test of the binding, and the managed surface has no view of provider-level subscriptions by design (D-BIND-24). Reasoning and the full case-by-case mapping: `dotnet/tests/Fletcher.Tests/BucketThreeConformanceTests.cs`. |
 | 4 native providers | Fast DDS: `test_fast_dds_pubsub_provider` 71, `test_profile_document` 33; XRCE: `test_xrce_provider` 7, `test_xrce_document` 11 — **port as driver-selection tests (122)**; `test_fletcher_sample_pub_sub_type` 28 — **excluded**, provider-internal (the Fast DDS `TypeSupport`, a C++ type no managed code touches) | **150** | 122 by driver selection - ONE body over every transport (`integration-tests/pubsub-transport-conformance`), not a port per case; 28 excluded, documented. #128 added 45 of these. |
-| 5 generator | `test_type_mapper` 36, `test_option_metadata` 33, `test_schema_builder` 9, `test_schema_visitor` 9, `test_ir` 8, `test_schema_codec_lockstep` 2, `test_topic_path` 2, `test_ts_visitor` 1, `test_csharp_type_table` 18, `test_csharp_visitor` 7 | **125** | **Stay in C++** — they test a C++ generator; **extended** with `test_csharp_visitor`, `test_csharp_type_table` and the TS pub/sub emitter cases. |
+| 5 generator | `test_type_mapper` 36, `test_option_metadata` 33, `test_schema_builder` 9, `test_schema_visitor` 9, `test_ir` 8, `test_schema_codec_lockstep` 2, `test_topic_path` 2, `test_ts_visitor` 1, `test_csharp_type_table` 20, `test_csharp_visitor` 12 | **132** | **Stay in C++** — they test a C++ generator; **extended** with `test_csharp_visitor`, `test_csharp_type_table` and the TS pub/sub emitter cases. |
 | 6 no managed analogue | `test_owned_schema` 1 | **1** | Excluded, documented (an `ArrowSchemaDeepCopy` ENOMEM path). |
 | Conformance (inherited, not a port target) | `integration-tests/pubsub-conformance` 95 cases; `CallerTier` 22 of them | — | The **oracle** seam §9 hands BIND. BIND writes a C# arm of `CallerTier` and adds cases to the C++ suite (§12.1 expects it); each C# case names the C++ case it mirrors and a script checks the mapping is total. |
 
@@ -1463,6 +1463,21 @@ codec step.
   case) are green, 126/126 in the suite; five mutations are each caught by the test
   named for them; generated C# from a 16-field `.proto` compiles with every analyser
   as an error.
+- **6b-1, 2026-10-05:** every class gets `static Schema Schema`, rendered by a third
+  `SchemaSink`, `CsSchemaSink`, driven by the same `SchemaVisitor` as C++'s two: the
+  fields, nullability and metadata (`metadata_from_option` extras included) are C++'s by
+  construction, nanoarrow's list/map child defaults reproduced, a nested message
+  inlined as the in-process sink copies it. A message whose fields are all mapped
+  scalars gets `ToArrow(IEnumerable<T>)` and `FromArrow(StructArray, int)`; any other
+  message gets its `Schema` and a marker naming the first field conversion waits for
+  (6c), so no `ToArrow` can build a batch its own `Schema` disagrees with. Measured
+  outside the suite: the `Schema` of five messages (lists, an inline struct, a map, a
+  list of structs, Timestamp, Duration, a wrapper) equals the `.ipc` the plugin writes
+  from nanoarrow, field by field and key order included, and the comparison fails on
+  a planted difference; three rows with nulls and extremes round-trip; it all builds
+  against Apache.Arrow 23.0.0 with every analyser as an error. 133/133 in the suite;
+  six mutations caught. **6b-2** (the `protoc-dotnet` project and lane) makes that
+  measurement a test.
 
 ### BIND-7 — Arrow view + accessor emitters + capstone third arm
 

@@ -1769,7 +1769,8 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
     // Optionally emit the C# model (BIND-6). Additive, like `ts`: no other output
     // changes (CsVisitor.CsharpTokenChangesNoExistingOutputAndAddsExactlyOneFile).
     if (opts.csharp) {
-        const std::string cs_content = csharp_backend::CsVisitor(file).GenerateFile();
+        const std::string cs_content =
+            csharp_backend::CsVisitor(file, resolver.get()).GenerateFile();
         std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(
             context->Open(StripProtoSuffix(file->name()) + ".fletcher.cs"));
         if (!WriteToStream(stream.get(), cs_content, error)) return false;

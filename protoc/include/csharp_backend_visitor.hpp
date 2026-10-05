@@ -16,11 +16,16 @@
 
 #include <string>
 
+#include "option_metadata.hpp"
+
 namespace fletcher::csharp_backend {
 
 class CsVisitor {
    public:
-    explicit CsVisitor(const google::protobuf::FileDescriptor* file);
+    // `resolver` (nullable) is the generator's metadata_from_option resolver, so the
+    // C# `Schema` carries the same extra metadata as the C++ one (BIND-6b).
+    explicit CsVisitor(const google::protobuf::FileDescriptor* file,
+                       const OptionMetadataResolver* resolver = nullptr);
 
     // The whole <stem>.fletcher.cs for the file.
     std::string GenerateFile();
@@ -30,6 +35,7 @@ class CsVisitor {
     std::string GenerateMessage(const google::protobuf::Descriptor* msg);
 
     const google::protobuf::FileDescriptor* file_;
+    const OptionMetadataResolver* resolver_ = nullptr;
 };
 
 }  // namespace fletcher::csharp_backend

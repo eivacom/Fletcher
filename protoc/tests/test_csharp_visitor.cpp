@@ -59,6 +59,12 @@ FieldDescriptorProto* AddField(
 //   int32 id = 1;  string name = 2;  optional string label = 3;  bytes data = 4;
 //   Color color = 5;  string player = 6;  int32 class = 7;  repeated int32 scores = 8;
 //   optional double speed = 9;  Mode mode = 10;  string schema = 11;
+//   Stats stats = 12;  map<string, int32> tags = 13;
+// }
+// message Sample {   // every scalar kind, so it gets ToArrow / FromArrow (BIND-6b)
+//   bool flag = 1;  int64 big = 2;  uint32 small = 3;  uint64 huge = 4;  float ratio = 5;
+//   double value = 6;  string name = 7;  optional string note = 8;  bytes blob = 9;
+//   Color color = 10;  optional Color tint = 11;  optional int32 maybe = 12;
 // }
 const FileDescriptor* BuildFixture(DescriptorPool& pool) {
     FileDescriptorProto fdp;
@@ -107,8 +113,43 @@ const FileDescriptor* BuildFixture(DescriptorPool& pool) {
     AddField(m, "mode", 10, FieldDescriptorProto::TYPE_ENUM)
         ->set_type_name(".integration.Player.Mode");
     AddField(m, "schema", 11, FieldDescriptorProto::TYPE_STRING);
+    AddField(m, "stats", 12, FieldDescriptorProto::TYPE_MESSAGE)
+        ->set_type_name(".integration.Player.Stats");
+    auto* entry = m->add_nested_type();
+    entry->set_name("TagsEntry");
+    entry->mutable_options()->set_map_entry(true);
+    AddField(entry, "key", 1, FieldDescriptorProto::TYPE_STRING);
+    AddField(entry, "value", 2, FieldDescriptorProto::TYPE_INT32);
+    AddField(m, "tags", 13, FieldDescriptorProto::TYPE_MESSAGE,
+             FieldDescriptorProto::LABEL_REPEATED)
+        ->set_type_name(".integration.Player.TagsEntry");
     m->add_oneof_decl()->set_name("_label");
     m->add_oneof_decl()->set_name("_speed");
+
+    auto* s = fdp.add_message_type();
+    s->set_name("Sample");
+    AddField(s, "flag", 1, FieldDescriptorProto::TYPE_BOOL);
+    AddField(s, "big", 2, FieldDescriptorProto::TYPE_INT64);
+    AddField(s, "small", 3, FieldDescriptorProto::TYPE_UINT32);
+    AddField(s, "huge", 4, FieldDescriptorProto::TYPE_UINT64);
+    AddField(s, "ratio", 5, FieldDescriptorProto::TYPE_FLOAT);
+    AddField(s, "value", 6, FieldDescriptorProto::TYPE_DOUBLE);
+    AddField(s, "name", 7, FieldDescriptorProto::TYPE_STRING);
+    auto* note = AddField(s, "note", 8, FieldDescriptorProto::TYPE_STRING);
+    note->set_proto3_optional(true);
+    note->set_oneof_index(0);
+    AddField(s, "blob", 9, FieldDescriptorProto::TYPE_BYTES);
+    AddField(s, "color", 10, FieldDescriptorProto::TYPE_ENUM)->set_type_name(".integration.Color");
+    auto* tint = AddField(s, "tint", 11, FieldDescriptorProto::TYPE_ENUM);
+    tint->set_type_name(".integration.Color");
+    tint->set_proto3_optional(true);
+    tint->set_oneof_index(1);
+    auto* maybe = AddField(s, "maybe", 12, FieldDescriptorProto::TYPE_INT32);
+    maybe->set_proto3_optional(true);
+    maybe->set_oneof_index(2);
+    s->add_oneof_decl()->set_name("_note");
+    s->add_oneof_decl()->set_name("_tint");
+    s->add_oneof_decl()->set_name("_maybe");
 
     return pool.BuildFile(fdp);
 }
@@ -132,6 +173,20 @@ std::string CSharp(const FileDescriptor* file) {
 void ExpectContains(const std::string& cs, const std::string& needle) {
     EXPECT_NE(cs.find(needle), std::string::npos) << "missing:\n" << needle << "\n--- in:\n" << cs;
 }
+
+// The text of one generated class, from `public sealed class <name>` to its
+// closing brace at column 0, so a case can say what a class does NOT contain.
+std::string ClassBody(const std::string& cs, const std::string& name) {
+    const std::string head = "public sealed class " + name + "\n{\n";
+    const size_t start = cs.find(head);
+    if (start == std::string::npos) return {};
+    const size_t end = cs.find("\n}\n", start);
+    return cs.substr(start, end == std::string::npos ? std::string::npos : end + 3 - start);
+}
+
+constexpr const char* kField = "new global::Apache.Arrow.Field(";
+constexpr const char* kMeta =
+    "new global::System.Collections.Generic.KeyValuePair<string, string>[] { ";
 
 }  // namespace
 
@@ -167,8 +222,8 @@ TEST(CsVisitor, MessagesAreSealedClassesAndNestedOnesAreFlat) {
     ASSERT_NE(file, nullptr);
     const std::string cs = CSharp(file);
     ExpectContains(cs, "public sealed class Player\n{\n");
-    ExpectContains(cs,
-                   "public sealed class Player_Stats\n{\n    public int Goals { get; set; }\n}\n");
+    // Only how the class opens: since BIND-6b its Schema and conversion follow.
+    ExpectContains(cs, "public sealed class Player_Stats\n{\n    public int Goals { get; set; }\n");
 }
 
 TEST(CsVisitor, ScalarPropertiesCarryTypesAndNullability) {
@@ -219,4 +274,126 @@ TEST(CsVisitor, CsharpTokenChangesNoExistingOutputAndAddsExactlyOneFile) {
         }
         EXPECT_EQ(with.count("player.fletcher.cs"), 1u) << "base '" << base << "'";
     }
+}
+
+// ---------------------------------------------------------------------------
+// BIND-6b: Schema, ToArrow, FromArrow
+// ---------------------------------------------------------------------------
+
+TEST(CsVisitor, SchemaCarriesTheRootAndFieldMetadataCppWrites) {
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const std::string player = ClassBody(CSharp(file), "Player");
+    ExpectContains(player,
+                   "    public static global::Apache.Arrow.Schema Schema { get; } = "
+                   "new global::Apache.Arrow.Schema(\n"
+                   "        new global::Apache.Arrow.Field[]\n        {\n");
+    // proto_package / proto_message on the schema; field_number / field_id on
+    // every field: the pairs SchemaVisitor gives every sink, in its order.
+    ExpectContains(player, std::string("        },\n        ") + kMeta +
+                               "new(\"proto_package\", \"integration\"), "
+                               "new(\"proto_message\", \"Player\") });\n");
+    ExpectContains(player, std::string("            ") + kField +
+                               "\"id\", global::Apache.Arrow.Types.Int32Type.Default, false, " +
+                               kMeta +
+                               "new(\"field_number\", \"1\"), new(\"field_id\", \"1\") }),\n");
+    ExpectContains(player, std::string(kField) +
+                               "\"label\", global::Apache.Arrow.Types.StringType.Default, true, ");
+}
+
+TEST(CsVisitor, SchemaRendersListsStructsAndMapsAsNanoarrowLaysThemOut) {
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const std::string player = ClassBody(CSharp(file), "Player");
+    // A list's child is "item", nullable: nanoarrow's default, which the
+    // visitor never overrides.
+    ExpectContains(player, std::string(kField) +
+                               "\"scores\", new global::Apache.Arrow.Types.ListType(" + kField +
+                               "\"item\", global::Apache.Arrow.Types.Int32Type.Default, true)), ");
+    // A nested message is copied inline, as the in-process sink deep-copies it.
+    ExpectContains(player, std::string(kField) +
+                               "\"stats\", new global::Apache.Arrow.Types.StructType("
+                               "new global::Apache.Arrow.Field[] { " +
+                               kField +
+                               "\"goals\", global::Apache.Arrow.Types.Int32Type.Default, false, ");
+    // A map's key is non-nullable and its value nullable, as nanoarrow sets them.
+    ExpectContains(
+        player, std::string(kField) + "\"tags\", new global::Apache.Arrow.Types.MapType(" + kField +
+                    "\"key\", global::Apache.Arrow.Types.StringType.Default, false), " + kField +
+                    "\"value\", global::Apache.Arrow.Types.Int32Type.Default, true)), ");
+}
+
+TEST(CsVisitor, ScalarOnlyMessageGetsToArrow) {
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const std::string sample = ClassBody(CSharp(file), "Sample");
+    ExpectContains(sample,
+                   "    public static global::Apache.Arrow.RecordBatch ToArrow("
+                   "global::System.Collections.Generic.IEnumerable<Sample> rows)\n    {\n");
+    ExpectContains(sample, "        var c0 = new global::Apache.Arrow.BooleanArray.Builder();\n");
+    ExpectContains(sample, "            c0.Append(row.Flag);\n");
+    ExpectContains(sample,
+                   "            if (row.Note is { } v7) c7.Append(v7); else c7.AppendNull();\n");
+    ExpectContains(sample, "            c8.Append((global::System.ReadOnlySpan<byte>)row.Blob);\n");
+    ExpectContains(sample, "            c9.Append((int)row.Color);\n");
+    ExpectContains(
+        sample,
+        "            if (row.Tint is { } v10) c10.Append((int)v10); else c10.AppendNull();\n");
+    ExpectContains(sample,
+                   "        return new global::Apache.Arrow.RecordBatch(Schema, "
+                   "new global::Apache.Arrow.IArrowArray[] { c0.Build(), c1.Build(), c2.Build(), "
+                   "c3.Build(), c4.Build(), c5.Build(), c6.Build(), c7.Build(), c8.Build(), "
+                   "c9.Build(), c10.Build(), c11.Build() }, length);\n");
+}
+
+TEST(CsVisitor, ScalarOnlyMessageGetsFromArrow) {
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const std::string sample = ClassBody(CSharp(file), "Sample");
+    ExpectContains(sample,
+                   "    public static Sample FromArrow(global::Apache.Arrow.StructArray array, int "
+                   "index)\n");
+    ExpectContains(sample,
+                   "        row.Flag = ((global::Apache.Arrow.BooleanArray)array.Fields[0])"
+                   ".GetValue(index).GetValueOrDefault();\n");
+    ExpectContains(sample,
+                   "        row.Name = ((global::Apache.Arrow.StringArray)array.Fields[6])"
+                   ".GetString(index) ?? \"\";\n");
+    ExpectContains(sample,
+                   "        row.Note = ((global::Apache.Arrow.StringArray)array.Fields[7])"
+                   ".GetString(index);\n");
+    ExpectContains(
+        sample,
+        "        { var a = (global::Apache.Arrow.BinaryArray)array.Fields[8]; row.Blob = "
+        "a.IsNull(index) ? global::System.Array.Empty<byte>() : "
+        "a.GetBytes(index).ToArray(); }\n");
+    ExpectContains(sample,
+                   "        row.Color = (Color)((global::Apache.Arrow.Int32Array)array.Fields[9])"
+                   ".GetValue(index).GetValueOrDefault();\n");
+    ExpectContains(sample,
+                   "        row.Tint = ((global::Apache.Arrow.Int32Array)array.Fields[10])"
+                   ".GetValue(index) is int v10 ? (Color)v10 : null;\n");
+    ExpectContains(sample,
+                   "        row.Maybe = ((global::Apache.Arrow.Int32Array)array.Fields[11])"
+                   ".GetValue(index);\n");
+}
+
+TEST(CsVisitor, MessageWithUnmappedFieldsGetsSchemaButNoConversion) {
+    // A ToArrow that skipped 'scores' would build a batch disagreeing with its own
+    // Schema, so conversion waits for BIND-6c; the Schema is already complete.
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const std::string player = ClassBody(CSharp(file), "Player");
+    ExpectContains(player, "    public static global::Apache.Arrow.Schema Schema { get; }");
+    ExpectContains(
+        player,
+        "    // ToArrow and FromArrow are not generated yet (BIND-6c): field 'scores' is "
+        "a list.\n");
+    EXPECT_EQ(player.find("ToArrow("), std::string::npos) << player;
+    EXPECT_EQ(player.find("FromArrow("), std::string::npos) << player;
 }

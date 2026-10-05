@@ -203,7 +203,7 @@ flowchart LR
 
     IR --> CPPB["cpp_backend<br/>type_table + schema /<br/>decode / view visitors"]
     IR --> TSB["ts_backend<br/>type_table + visitor"]
-    IR --> CSB["csharp_backend<br/>type_table + visitor: built, BIND-6a<br/>+ view visitor: BIND-7"]
+    IR --> CSB["csharp_backend<br/>type_table + visitor + schema sink: built, BIND-6a/6b<br/>+ view visitor: BIND-7"]
 
     PLUGIN --> ACC["accessor emitter<br/><i>NOT on the IR: FieldKind,<br/>until round RIR</i>"]
 
@@ -219,8 +219,8 @@ flowchart LR
 ```
 
 Opt tokens: `--fletcher_opt=` `ts` · `ipc` · `accessor` · `rust` (shipped), plus
-`csharp` (built since BIND-6a: enums and classes with scalar fields; the rest is
-6b–6e) and `csharp_accessor` (planned, BIND-7). Diagram 9 draws the plugin's classes
+`csharp` (built since BIND-6a: enums and classes with scalar fields; every `Schema`
+and scalar-only `ToArrow`/`FromArrow` since 6b; the rest is 6c–6e) and `csharp_accessor` (planned, BIND-7). Diagram 9 draws the plugin's classes
 and visitors behind this picture.
 
 **One shape per language (D-BIND-72):** each generated file holds a row type per
@@ -342,7 +342,8 @@ classDiagram
         <<built>>
         generated .fletcher.cs model layer
         BIND-6a - enums, scalar fields so far
-        Schema, ToArrow, FromArrow - BIND-6b
+        Schema for every message - BIND-6b
+        ToArrow, FromArrow for scalar-only messages - BIND-6b
         writes no wire bytes - D-BIND-1
         namespace Fletcher.Gen.PascalPkg - D-BIND-69
     }
@@ -810,8 +811,9 @@ Every IR backend walks a message through the same `BuildFlattenedFieldList` and 
 its language's strings from its own type table (GIR locked decision #1), so no
 backend's field set can drift from the schema's. `SchemaVisitor` is the one textbook
 visitor: it drives an abstract sink, so one walk writes the C++ source text of
-`<Msg>Schema()` and also builds the live `ArrowSchema` the `.ipc` files are serialised
-from.
+`<Msg>Schema()`, builds the live `ArrowSchema` the `.ipc` files are serialised from, and
+since BIND-6b renders the C# `Schema` through `CsSchemaSink`: three outputs that cannot
+drift, because there is one walk.
 
 ```mermaid
 classDiagram
@@ -851,6 +853,11 @@ classDiagram
     }
     class NanoarrowSchemaSink {
         builds an ArrowSchema in process
+    }
+    class CsSchemaSink {
+        <<built>>
+        renders Apache.Arrow C# code
+        nanoarrow defaults, nested copied inline
     }
     class EncodeVisitor {
         <<visitor fn>>
@@ -903,6 +910,9 @@ classDiagram
     SchemaVisitor --> SchemaSink : drives
     SchemaSink <|-- CppSchemaSink
     SchemaSink <|-- NanoarrowSchemaSink
+    SchemaSink <|-- CsSchemaSink
+    CsVisitor ..> SchemaVisitor : Schema
+    CsSchemaSink ..> CsTypeTable
     SchemaVisitor ..> CppTypeTable
     EncodeVisitor ..> CppTypeTable
     DecodeVisitor ..> CppTypeTable
@@ -919,7 +929,7 @@ classDiagram
 | *(always, unless* `schema_only`*)* | `<stem>.fletcher.arrow.pb.h`: view, `ToArrowRow`, `AppendTo` | `ViewVisitor` | yes |
 | `ipc` | `<stem>.<Msg>.ipc` | `SchemaVisitor` + `NanoarrowSchemaSink`, then `SerializeSchemaIpc` | yes |
 | `ts` | `<stem>.fletcher.ts` | `TsVisitor` + `TsTypeTable` | yes |
-| `csharp` | `<stem>.fletcher.cs` | `CsVisitor` + `CsTypeTable` (BIND-6a) | yes |
+| `csharp` | `<stem>.fletcher.cs` | `CsVisitor` + `CsTypeTable` (BIND-6a); its `Schema` through `SchemaVisitor` + `CsSchemaSink` (BIND-6b) | yes |
 | `accessor` | `<stem>.fletcher.accessor.pb.h` | `AccessorEmitter` | **no**: `FieldKind`, until round RIR |
 | `rust` | `<stem>.fletcher.rs`, plus `__rba.fletcher.rs` once from `GenerateAll` | `AccessorEmitter` | **no**: `FieldKind`, until round RIR |
 

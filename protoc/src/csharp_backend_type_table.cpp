@@ -43,33 +43,141 @@ std::optional<CsScalarInfo> CsLookupScalar(const ir::LogicalType& type,
     // An enum lowers to INT32 storage and carries its identity; C# emits a real
     // `enum` for it (D-BIND-8), so the property's type is the generated enum.
     if (enum_identity.has_value() && enum_identity->descriptor != nullptr)
-        return CsScalarInfo{CsTypeName(enum_identity->descriptor), false};
+        return CsScalarInfo{CsTypeName(enum_identity->descriptor), false, "Int32Array", true};
 
     using LK = ir::LogicalKind;
     switch (type.kind) {
         case LK::BOOL:
-            return CsScalarInfo{"bool", false};
+            return CsScalarInfo{"bool", false, "BooleanArray"};
         case LK::INT32:
-            return CsScalarInfo{"int", false};
+            return CsScalarInfo{"int", false, "Int32Array"};
         case LK::INT64:
-            return CsScalarInfo{"long", false};
+            return CsScalarInfo{"long", false, "Int64Array"};
         case LK::UINT32:
-            return CsScalarInfo{"uint", false};
+            return CsScalarInfo{"uint", false, "UInt32Array"};
         case LK::UINT64:
-            return CsScalarInfo{"ulong", false};
+            return CsScalarInfo{"ulong", false, "UInt64Array"};
         case LK::FLOAT32:
-            return CsScalarInfo{"float", false};
+            return CsScalarInfo{"float", false, "FloatArray"};
         case LK::FLOAT64:
-            return CsScalarInfo{"double", false};
+            return CsScalarInfo{"double", false, "DoubleArray"};
         case LK::UTF8:
-            return CsScalarInfo{"string", true};
+            return CsScalarInfo{"string", true, "StringArray"};
         case LK::BINARY:
-            return CsScalarInfo{"byte[]", true};
+            return CsScalarInfo{"byte[]", true, "BinaryArray"};
         default:
             // Temporal types are BIND-6c's (D-BIND-26: lossless); the rest are not
             // produced by the proto mapping.
             return std::nullopt;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Apache.Arrow C# type expressions for the nanoarrow types SchemaVisitor sets
+// (BIND-6b). Fully qualified, so a generated class named Schema or Field cannot
+// shadow them.
+// ---------------------------------------------------------------------------
+
+std::optional<std::string> CsArrowScalarTypeExpr(ArrowType type) {
+    const char* name = nullptr;
+    switch (type) {
+        case NANOARROW_TYPE_BOOL:
+            name = "BooleanType";
+            break;
+        case NANOARROW_TYPE_INT32:
+            name = "Int32Type";
+            break;
+        case NANOARROW_TYPE_INT64:
+            name = "Int64Type";
+            break;
+        case NANOARROW_TYPE_UINT32:
+            name = "UInt32Type";
+            break;
+        case NANOARROW_TYPE_UINT64:
+            name = "UInt64Type";
+            break;
+        case NANOARROW_TYPE_FLOAT:
+            name = "FloatType";
+            break;
+        case NANOARROW_TYPE_DOUBLE:
+            name = "DoubleType";
+            break;
+        case NANOARROW_TYPE_STRING:
+            name = "StringType";
+            break;
+        case NANOARROW_TYPE_BINARY:
+            name = "BinaryType";
+            break;
+        default:
+            return std::nullopt;
+    }
+    return std::string("global::Apache.Arrow.Types.") + name + ".Default";
+}
+
+std::optional<std::string> CsArrowDateTimeTypeExpr(ArrowType type, ArrowTimeUnit unit,
+                                                   const char* timezone) {
+    const char* unit_name = nullptr;
+    switch (unit) {
+        case NANOARROW_TIME_UNIT_SECOND:
+            unit_name = "Second";
+            break;
+        case NANOARROW_TIME_UNIT_MILLI:
+            unit_name = "Millisecond";
+            break;
+        case NANOARROW_TIME_UNIT_MICRO:
+            unit_name = "Microsecond";
+            break;
+        case NANOARROW_TIME_UNIT_NANO:
+            unit_name = "Nanosecond";
+            break;
+    }
+    if (unit_name == nullptr) return std::nullopt;
+    const std::string unit_expr = std::string("global::Apache.Arrow.Types.TimeUnit.") + unit_name;
+    if (type == NANOARROW_TYPE_TIMESTAMP)
+        return "new global::Apache.Arrow.Types.TimestampType(" + unit_expr + ", " +
+               (timezone != nullptr ? CsStringLiteral(timezone) : std::string("(string?)null")) +
+               ")";
+    // DurationType has no public constructor in Apache.Arrow 23, only per-unit
+    // statics and FromTimeUnit (checked by reflection, 2026-10-05).
+    if (type == NANOARROW_TYPE_DURATION)
+        return "global::Apache.Arrow.Types.DurationType.FromTimeUnit(" + unit_expr + ")";
+    return std::nullopt;
+}
+
+std::string CsStringLiteral(std::string_view text) {
+    static const char kHex[] = "0123456789abcdef";
+    std::string out = "\"";
+    for (const char c : text) {
+        switch (c) {
+            case '"':
+                out += "\\\"";
+                break;
+            case '\\':
+                out += "\\\\";
+                break;
+            case '\n':
+                out += "\\n";
+                break;
+            case '\r':
+                out += "\\r";
+                break;
+            case '\t':
+                out += "\\t";
+                break;
+            default:
+                // Other control characters as \u escapes; bytes >= 0x80 are UTF-8
+                // and the generated file is UTF-8, so they pass through.
+                if (static_cast<unsigned char>(c) < 0x20) {
+                    out += "\\u00";
+                    out += kHex[(c >> 4) & 0xF];
+                    out += kHex[c & 0xF];
+                } else {
+                    out += c;
+                }
+        }
+    }
+    out += '"';
+    return out;
 }
 
 // ---------------------------------------------------------------------------
