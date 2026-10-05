@@ -2490,3 +2490,35 @@ accessors do, for capstone parity (Q18).
   **Declined:** only the names our class actually has (some properties would differ from
   protoc's: a field `clone` stays `Clone` here and is `Clone_` there); protoc's list alone (a field
   named `schema` would not compile).
+
+- **D-BIND-74 - the lossless `Timestamp` and `Duration` types live in a fourth managed package,
+  `Eiva.Fletcher.Model`, that references `Apache.Arrow` alone; amends D-BIND-14' from three
+  packages to four.** *LOCKED BY THE MAINTAINER 2026-10-05,* in one question at the start of
+  slice 6c, **reopened the same day** and re-ruled after a challenge to the first answer.
+
+  **WHY.** D-BIND-26 makes the temporal types `long`-backed structs that carry the unit, with
+  `ToDateTimeOffset()` and `ToTimeSpan()`. D-BIND-72 forbids the model layer a reference to
+  `Eiva.Fletcher`, so they cannot live there, and `Eiva.Fletcher.GatewayClient` would drag a
+  WebSocket client in for two structs. Generated code lives in the consumer's assembly, so a
+  type emitted beside it is defined once PER ASSEMBLY.
+
+  **THE RULING.** `Eiva.Fletcher.Model` holds exactly `Timestamp` and `Duration`, the two
+  well-known types that need a C# type of their own (wrappers map to nullable scalars; `Any` and
+  `Struct` are refused), in namespace `Eiva.Fletcher.Model`. User-defined messages stay in the
+  consumer's assembly. Anything else joining it needs its own ruling (dictionary support is
+  deferred to DICT, D-BIND-8). It depends on `Apache.Arrow` only, ships from
+  the `dotnet/` component at the shared version, and is published by `cd.dotnet.yml` with the
+  others. Generated `.fletcher.cs` files reference it; `GenerateAll` emits no helper. protoc's own
+  C# puts its `Timestamp` and `Duration` in the `Google.Protobuf` runtime package, namespace
+  `Google.Protobuf.WellKnownTypes` (read in protocolbuffers/protobuf `main`, 2026-10-05);
+  D-BIND-72 avoids that package for a different reason.
+
+  **Declined:** emitting the types once per protoc run (the FIRST ruling, same day). Two
+  assemblies that both run protoc each define `Timestamp` in the same namespace, and an app that
+  references both gets CS0433 on the name; a value from one assembly's message is not the type the
+  other's code expects. Emitting per file fails earlier still (CS0101 inside one assembly).
+
+  **Consequences.** D-BIND-14' and D-BIND-28's "three packages" become four (BIND-9's publish
+  list, `dotnet/README.md`). `Eiva.Fletcher` MAY reference `Eiva.Fletcher.Model`; the reverse
+  never. The package name and namespace were chosen by the assistant and are open to the
+  maintainer's rename until BIND-9.

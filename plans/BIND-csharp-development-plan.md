@@ -119,6 +119,9 @@ Marked ′ where an existing decision is amended; new numbers continue from D-BI
   inside `Eiva.Fletcher` keep the C++ component names (`Eiva.Fletcher.PubSub`,
   `Eiva.Fletcher.Arrow`, …) so the split can be re-introduced later without
   renaming types. Alternative: keep the six-package layout of the plan.
+  **Amended 2026-10-05 (D-BIND-74): four packages.** `Eiva.Fletcher.Model` (`Apache.Arrow`
+  only) holds the lossless `Timestamp` and `Duration`, which the Arrow-only model layer
+  (D-BIND-72) needs in one shared definition.
 
 - **D-BIND-17 (new, LOCKED 2026-09-11 with Q11) — exactly one copy of Fletcher per process, and a check.**
   From constraint 1 / `delivery_frame.hpp` P1. The native shim is **one shared
@@ -722,7 +725,10 @@ C# rule, prefix stripped then PascalCase (`COLOR_RED` → `Color.Red`, where C++
 `Color::COLOR_RED`), numbers verbatim. **protoc's rules, read from its source and ruled
 2026-10-03 (D-BIND-73):** they are the specification; a property is suffixed `_` on the
 class name, protoc's eleven reserved member names, and our own `Schema`, `ToArrow` and
-`FromArrow`. **Slices:** 6a plumbing, type table, visitor, classes and enums with scalar
+`FromArrow`. **Temporal types, ruled 2026-10-05 (D-BIND-74):** the lossless `Timestamp`
+and `Duration` structs live in a fourth package, `Eiva.Fletcher.Model`, that references
+`Apache.Arrow` alone, so the model layer stays Arrow-only and one type serves every
+assembly. **Slices:** 6a plumbing, type table, visitor, classes and enums with scalar
 fields; 6b `Schema`, `ToArrow`/`FromArrow` and `integration-tests/protoc-dotnet`; 6c
 composite and temporal types; 6d topics and the native pair; 6e cross-file, NativeAOT,
 side by side with protoc's C#, and the review. **Build integration, ruled 2026-09-29

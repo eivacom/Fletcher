@@ -357,6 +357,12 @@ classDiagram
         typed pair over FletcherClient
         BIND-8
     }
+    class Fletcher_Model_cs {
+        <<planned>>
+        Eiva.Fletcher.Model, BIND-6c
+        lossless Timestamp and Duration - D-BIND-74
+        Apache.Arrow only
+    }
     class Apache_Arrow {
         <<NuGet>>
         Apache.Arrow
@@ -376,6 +382,8 @@ classDiagram
     Fletcher_SubscriberArrow_cs --> Fletcher_PubSub_cs
     Fletcher_SubscriberArrow_cs --> Fletcher_Codec_cs
     Fletcher_Generated_cs --> Apache_Arrow : model layer
+    Fletcher_Generated_cs --> Fletcher_Model_cs : temporal types
+    Fletcher_Model_cs --> Apache_Arrow
     Generated_native_pair_cs --> Fletcher_Generated_cs
     Generated_native_pair_cs --> Fletcher_PubSub_cs
     Generated_gateway_pair_cs --> Fletcher_Generated_cs
@@ -385,10 +393,11 @@ classDiagram
     note "TEST-ONLY, never shipped (D-BIND-62): fletcher-c-abi-probe is the same entry points plus two fl_test_* exports and the copy oracle's probe provider, built only under c-abi's with_probe_shim option from the test package fletcher-copy-probe. It lets the copy oracle score C#'s real publish (D-BIND-58, D-BIND-61)."
 ```
 
-The three C# packages are D-BIND-14′'s: `Eiva.Fletcher.Interop`,
+The four C# packages are D-BIND-14′'s, amended by D-BIND-74: `Eiva.Fletcher.Interop`,
 `Eiva.Fletcher` (every managed tier above the interop, in ONE namespace today —
-the component-named namespaces D-BIND-14′ allows were not needed) and
-`Eiva.Fletcher.GatewayClient`. Generated C# is in none of them: it lives in the
+the component-named namespaces D-BIND-14′ allows were not needed),
+`Eiva.Fletcher.GatewayClient` and `Eiva.Fletcher.Model` (`Apache.Arrow` only, the lossless
+`Timestamp` and `Duration`, planned for 6c). Generated C# is in none of them: it lives in the
 consumer's assembly, in namespace `Fletcher.Gen.<PascalPkg>` (D-BIND-69), with
 nested messages flat as `Outer_Inner`. Until 2026-09-25 this diagram drew six boxes from
 the pre-ruling design, including a managed `IPubSubProvider` that D-BIND-24
@@ -600,6 +609,7 @@ flowchart LR
         D1["Eiva.Fletcher<br/>codec + Arrow tier + pub/sub"]
         D2["Eiva.Fletcher.Interop<br/>native assets per RID"]
         D3["Eiva.Fletcher.Protoc<br/>build time only: the plugin<br/>protoc component, D-BIND-71"]
+        D4["Eiva.Fletcher.Model<br/>Apache.Arrow only: lossless<br/>Timestamp and Duration, D-BIND-74"]
     end
     subgraph browser["Browser / WASM"]
         B1["@eiva/fletcher-gateway-client"]
@@ -614,13 +624,13 @@ flowchart LR
     GW --> S3
 
     classDef planned stroke-dasharray: 5 5
-    class dotnet,D1,D2,D3,B2 planned
+    class dotnet,D1,D2,D3,D4,B2 planned
 ```
 
 **`Eiva.Fletcher.Protoc` is build-time only** (D-BIND-71): it bundles the plugin
 binary and sets `$(FletcherProtocPlugin)`, as `fletcher-protoc::plugin` does for
 C++ and `@eiva/protoc-gen-fletcher` for TypeScript. It is released by
-`cd.protoc.yml`, not with the three dotnet packages, and nothing links it at run
+`cd.protoc.yml`, not with the four dotnet packages, and nothing links it at run
 time.
 
 **Why `GatewayClient` carries no native assets:** WASM cannot load them. Browser

@@ -354,6 +354,11 @@ dotnet/
 | `Eiva.Fletcher` | no | `Interop`, `Apache.Arrow` |
 | `Eiva.Fletcher.GatewayClient` | **no** | `Apache.Arrow` (IPC schema parse) |
 
+**Amended 2026-10-05 (D-BIND-74): FOUR managed packages.** `Eiva.Fletcher.Model`
+(`Apache.Arrow` only; the lossless `Timestamp` and `Duration`, the two well-known types
+that need a C# type of their own) joins the three below, so generated code in separate
+assemblies shares one type. User-defined messages stay in the consumer's assembly.
+
 **Three packages, not six** (Q2, D-BIND-14 as amended). With `Apache.Arrow` a base
 dependency there is no dependency-free tier left for a `Core`/`Arrow`/`PubSub`
 split to protect. Namespaces inside `Eiva.Fletcher` keep the C++ component names
@@ -441,7 +446,7 @@ consumer writes the protoc call in its own build.
 | Rust | in-tree `build.rs` today; a build-dependency crate later | `FLETCHER_PROTOC_PLUGIN` |
 
 `Eiva.Fletcher.Protoc` is released by `cd.protoc.yml`, not `cd.dotnet.yml`, so the
-dotnet component keeps its three packages.
+dotnet component keeps its managed packages (four since D-BIND-74).
 
 ---
 
@@ -473,7 +478,10 @@ Hard rules, straight from GIR and the rulings:
 - **Temporal values are lossless** (D-BIND-26): `Timestamp` and `Duration` map to
   `long`-backed structs carrying the unit, with `ToDateTimeOffset()` /
   `ToTimeSpan()` as explicit conversions; `DateTime` ticks are 100 ns and would
-  silently lose two digits of a nanosecond timestamp.
+  silently lose two digits of a nanosecond timestamp. **Where they live (D-BIND-74,
+  ruled 2026-10-05, after the first answer was reopened):** in a fourth managed package,
+  `Eiva.Fletcher.Model`, which references `Apache.Arrow` alone, so the model layer stays
+  Arrow-only (D-BIND-72) and one type serves every assembly that runs protoc.
 - **Dictionary**: a scalar **modifier**, never a container (GIR-7); C# dictionary
   support is **deferred to whatever DICT concludes** (D-BIND-8).
 - **The accessor emitter builds on the IR directly**, not on `FieldKind`

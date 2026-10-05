@@ -36,7 +36,9 @@ that mirror them are constrained rather than chosen.
 ## §2 — The complete C++ → C# mapping
 
 `Eiva.Fletcher` unless the row says otherwise. Package layout per D-BIND-14′
-(three packages) — namespaces keep the C++ component names either way.
+(three packages, four since D-BIND-74's `Eiva.Fletcher.Model`, which holds the lossless
+`Timestamp` and `Duration` and no row in this mapping) — namespaces keep the C++
+component names either way.
 
 ### 2.1 Vocabulary and failure (seam §3, §5 — frozen)
 
