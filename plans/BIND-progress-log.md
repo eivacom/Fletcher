@@ -634,6 +634,25 @@ are marked in the output as 6c's, not dropped silently.
   field, the wrong column, a non-nullable string read back as null, root metadata dropped) are each
   caught by the test named for them; each mutant compiled.
 
+**6b-2, the consumer's side (2026-10-05).** `integration-tests/protoc-dotnet` makes 6b-1's hand-run
+measurement a test, and `ci.integration-test.protoc-dotnet` runs it on Linux and Windows.
+
+- **The project is a consumer.** It references Apache.Arrow and xunit, nothing of Fletcher's, and its
+  `FletcherGen` target is D-BIND-71's recipe: protoc from an MSBuild `Exec` before compile, the plugin
+  from `$(FletcherProtocPlugin)`, the generated file added to `@(Compile)` inside the target. So the
+  build itself proves the model needs only Apache.Arrow (D-BIND-72), and the recipe works.
+- **16 cases:** every generated `Schema` against the `.ipc` the same run wrote, with a case proving
+  the comparison can fail; the round trip with nulls and extremes; the slice boundary (`Player` has
+  no conversion yet, and the case says it is the one 6c must change); the namespace, the names and the
+  enum numbers; no Fletcher reference in the compiled assembly. Every analyser runs as an error.
+- **Falsified end to end:** a plugin built outside the Conan cache with a map key rendered nullable
+  makes exactly one case fail, naming `Player.tags/entries/key`.
+- **The lane** follows the Rust lane's discovery block, with one change it states: on Windows both
+  paths go through `cygpath -w`, since MSBuild reads them as Windows paths and Git Bash's `find`
+  returns `/c/...`. 16/16 locally on Linux; Windows is CI's.
+- **Deferred to 6d:** the C#-versus-C++ wire-bytes comparison needs the native shim, so it lands with
+  the native publisher pair rather than growing this lane.
+
 **Tooling now.** The machine lost Python, Conan, CMake and Node in a crash on 2026-10-02. The plugin is
 built and tested in the Linux devcontainer (`eivaorg/fletcher-devcontainer:main`); the image has no
 .NET SDK, so generated C# is compiled on Windows, where the SDK survived.

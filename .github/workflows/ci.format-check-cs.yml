@@ -55,7 +55,8 @@ jobs:
         run: |
           for PROJECT in \
             integration-tests/binding-abi-conformance/dotnet/BindingAbiConformance/BindingAbiConformance.csproj \
-            integration-tests/pubsub-transport-conformance/dotnet/PubSubTransportConformance/PubSubTransportConformance.csproj; do
+            integration-tests/pubsub-transport-conformance/dotnet/PubSubTransportConformance/PubSubTransportConformance.csproj \
+            integration-tests/protoc-dotnet/dotnet/ProtocDotnet/ProtocDotnet.csproj; do
             echo "::group::dotnet format $PROJECT"
             dotnet format "$PROJECT" --verify-no-changes --severity warn
             echo '::endgroup::'

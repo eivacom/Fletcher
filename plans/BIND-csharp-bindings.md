@@ -627,7 +627,7 @@ toolchain-install step from every .NET job.
 | `ci.c-abi.yml` | `workflow_call` (`devcontainer-image` input) | Conan build of `fletcher-c-abi` on both platforms; the codec byte-identity test, the compiles-as-C99 test, the packed-size budget for the shim, and the conformance suite's ABI subject. Runs on an **empty** ABI from BIND-0 onward, so the Linux signal is standing before real code exists. |
 | `ci.dotnet.yml` | `workflow_call` (`devcontainer-image` input) | **linux** job in the container + **windows** job native with `actions/setup-dotnet` — the exact two-job split `ci.integration-test.protoc-gen-fletcher-rust.yml` uses. `dotnet restore --locked-mode` → `build -c Release` → `test --logger trx` → `pack`. Uploads `*.nupkg` + `*.snupkg`. The pack step stages `LICENSE` and `THIRD-PARTY-LICENSES.txt` and fails if either is missing (see below). |
 | `ci.format-check-cs.yml` | `pull_request`, paths `dotnet/**`, `.editorconfig` | `dotnet format --verify-no-changes --severity warn`. Standalone and self-triggering, **not** in the `pr_gate` aggregation — same as `ci.format-check-ts.yml`. |
-| `ci.integration-test.protoc-dotnet.yml` | `workflow_call` | `conan create protoc/.`, locate the binary in the Conan cache, export `FLETCHER_PROTOC_PLUGIN`, `dotnet test`. **Copy the discovery block from the Rust workflow verbatim** — the `find ~/.conan2/p -path '*/p/bin/fletcher-protoc' -type f -print -quit` + explicit-error-if-empty idiom is already hardened for both platforms. |
+| `ci.integration-test.protoc-dotnet.yml` | `workflow_call` | `conan create protoc/.`, locate the binary in the Conan cache, export `FLETCHER_PROTOC_PLUGIN`, `dotnet test`. **Copy the discovery block from the Rust workflow verbatim** — the `find ~/.conan2/p -path '*/p/bin/fletcher-protoc' -type f -print -quit` + explicit-error-if-empty idiom is already hardened for both platforms. **Built at BIND-6b-2 (2026-10-05)**, with the block copied and one change, said in the file: the Windows leg converts both paths with `cygpath -w`, because MSBuild reads them as Windows paths and Git Bash's `find` returns `/c/...`. Wired into `ci.pr.yml`'s filter, caller jobs and `pr_gate` (`needs:` and `results:`), and into `ci.format-check-cs`'s project list. |
 | `ci.integration-test.gateway-dotnet-end-to-end.yml` | `workflow_call` | Gateway exe + C# client; mirrors `ci.integration-test.gateway-end-to-end.yml`. |
 | `ci.integration-test.gateway-fastdds-dotnet.yml` | `workflow_call` | Bucket-4 over `fastdds` and `xrce` by selector. Linux-only initially, matching the other FastDDS integration tests. |
 | `cd.dotnet.yml` | `push` tag `dotnet-v[0-9]*.[0-9]*.[0-9]*` | `setup-devcontainer` → `ci.dotnet.yml` → `publish` → `create-release`, structurally identical to `cd.gateway-client.yml`. |
@@ -1478,6 +1478,16 @@ codec step.
   against Apache.Arrow 23.0.0 with every analyser as an error. 133/133 in the suite;
   six mutations caught. **6b-2** (the `protoc-dotnet` project and lane) makes that
   measurement a test.
+- **6b-2, 2026-10-05:** `integration-tests/protoc-dotnet` and
+  `ci.integration-test.protoc-dotnet`. The project references Apache.Arrow and xunit
+  and nothing of Fletcher's; its `FletcherGen` target is D-BIND-71's recipe and runs
+  protoc itself. 16 cases: each generated `Schema` against the `.ipc` from the same run
+  (with a case proving the comparison can fail), the `ToArrow`/`FromArrow` round trip
+  with nulls and extremes, the slice boundary, the namespace and names, enum numbers, and
+  no Fletcher reference in the compiled assembly. 16/16 on Linux locally; a plugin built
+  with a map key rendered nullable makes exactly the `Player` schema case fail, naming
+  the field. **This meets the D-BIND-71 bullet above and D-BIND-72's model-layer
+  bullet**; the wire-bytes comparison with C++ waits for the native pair (6d).
 
 ### BIND-7 — Arrow view + accessor emitters + capstone third arm
 
