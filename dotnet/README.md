@@ -1,6 +1,6 @@
 # Fletcher for .NET
 
-Three NuGet packages, one solution, one version — the managed half of round
+Four NuGet packages, one solution, one version — the managed half of round
 BIND. The C half is [`c-abi/`](../c-abi/README.md), the shim these packages call.
 
 | Package | Native assets? | Depends on |
@@ -8,8 +8,9 @@ BIND. The C half is [`c-abi/`](../c-abi/README.md), the shim these packages call
 | `Eiva.Fletcher.Interop` | **yes** — `runtimes/{rid}/native/` (`win-x64`, `linux-x64` at first release) | — |
 | `Eiva.Fletcher` | no | `Interop`, `Apache.Arrow` |
 | `Eiva.Fletcher.GatewayClient` | **no** | `Apache.Arrow` |
+| `Eiva.Fletcher.Model` | **no** | `Apache.Arrow` |
 
-Three, not six (D-BIND-14′): with `Apache.Arrow` a base dependency there is no
+Four, not six (D-BIND-14′, amended by D-BIND-74): with `Apache.Arrow` a base dependency there is no
 dependency-free tier left for a `Core`/`Arrow`/`PubSub` split to protect.
 Namespaces inside `Eiva.Fletcher` keep the C++ component names
 (`Eiva.Fletcher.PubSub`, `Eiva.Fletcher.Arrow`, …), so a later split needs no
@@ -17,18 +18,24 @@ renames. `Interop` is the only package carrying native assets, which is what
 isolates the RID matrix, the packed-size budget and the LGPL question to one
 artifact. `GatewayClient` has no native dependency at all — it is the managed
 port of `@eiva/fletcher-gateway-client` and the one documented exception to
-"there is exactly one codec".
+"there is exactly one codec". `Model` holds exactly the lossless `Timestamp` and
+`Duration` that generated C# refers to. It is a package of its own because
+generated code is compiled into the consumer's assembly, so a type emitted with
+it would be defined once per assembly and collide in an app that references two;
+and it takes `Apache.Arrow` only, so a gateway or WASM app can use the generated
+model without native assets (D-BIND-72). User-defined messages are not in it.
 
 ## Layout
 
 ```
 dotnet/
   Fletcher.slnx              XML solution (it can carry a licence header; .sln cannot)
-  Directory.Build.props      the single <VersionPrefix> for all three packages
+  Directory.Build.props      the single <VersionPrefix> for all four packages
   global.json                the SDK band, pinned to the devcontainer's
   .editorconfig              what `dotnet format --verify-no-changes` enforces
-  src/…                      the three packages
+  src/…                      the four packages
   tests/Fletcher.Tests/      unit tests
+  tests/Fletcher.Model.Tests/  Model's tests; references Model ALONE, which shows it is Arrow-only
   tests/Fletcher.CopyOracle.Tests/  the copy oracle over C#'s real publish, against the PROBE shim (BIND-5b)
 ```
 

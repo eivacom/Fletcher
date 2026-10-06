@@ -653,6 +653,34 @@ measurement a test, and `ci.integration-test.protoc-dotnet` runs it on Linux and
 - **Deferred to 6d:** the C#-versus-C++ wire-bytes comparison needs the native shim, so it lands with
   the native publisher pair rather than growing this lane.
 
+**6c begins: where the temporal types live (2026-10-05, D-BIND-74; scaffold `8ceaa1e`).** The
+lossless `Timestamp` and `Duration` (D-BIND-26) needed a home that keeps the model layer on
+Apache.Arrow alone (D-BIND-72).
+
+- **The first ruling was wrong, and a question caught it.** I recommended emitting the types once per
+  protoc run from `GenerateAll`, and the maintainer took it. The maintainer then asked whether three
+  packages were still right given the Apache.Arrow reference. They were not the point: generated code is
+  compiled into the CONSUMER's assembly, so two assemblies that each run protoc each define `Timestamp`
+  in the same namespace, and an app referencing both gets CS0433. Per file fails earlier (CS0101).
+  I had weighed the single-project case and not the several-assemblies one.
+- **Re-ruled the same day:** a fourth managed package, `Eiva.Fletcher.Model`, `Apache.Arrow` only, holding
+  exactly `Timestamp` and `Duration`; user messages stay in the consumer's assembly, and anything else
+  joining it needs its own ruling. protoc's C# does likewise with `Google.Protobuf` (read in
+  protocolbuffers/protobuf `main`). D-BIND-14' now says four. The package name is open to rename until
+  BIND-9.
+- **Scaffolded at `8ceaa1e`:** `dotnet/src/Fletcher.Model` and `tests/Fletcher.Model.Tests`, in
+  `Fletcher.slnx`. Second, millisecond and microsecond values convert exactly; a nanosecond value floors
+  to a 100 ns tick toward negative infinity; overflow throws; equality is structural (one second is not
+  1000 milliseconds); the timezone is metadata. 47 cases per TFM (net10.0 and net8.0), six mutants each
+  caught, the CI format command clean. The model tests reference Model alone, so Arrow-only is shown by
+  construction. The first format run missed an IDE1006 because `--include` passed vacuously; only the
+  exact CI command caught it.
+- **Not yet:** `Eiva.Fletcher` does not reference Model, and `protoc-dotnet` has no reference to it; both
+  wait for the 6c generator, which must write `global::Eiva.Fletcher.Model.Timestamp`.
+- **CI:** `ci.pr` 37451032552 on `8ceaa1e` was green on the rerun. One job, the Fast DDS cross-process
+  case `BacklogNeverInterleavesWithLiveSamples`, failed once with "nothing arrived at all" on a commit
+  that touched no C++; across 40 runs that is one data point, so it is on a watch list, not fixed.
+
 **Tooling now.** The machine lost Python, Conan, CMake and Node in a crash on 2026-10-02. The plugin is
 built and tested in the Linux devcontainer (`eivaorg/fletcher-devcontainer:main`); the image has no
 .NET SDK, so generated C# is compiled on Windows, where the SDK survived.

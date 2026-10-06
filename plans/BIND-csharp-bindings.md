@@ -1496,6 +1496,11 @@ codec step.
   with a map key rendered nullable makes exactly the `Player` schema case fail, naming
   the field. **This meets the D-BIND-71 bullet above and D-BIND-72's model-layer
   bullet**; the wire-bytes comparison with C++ waits for the native pair (6d).
+- **6c, first step, 2026-10-06 (D-BIND-74):** `Eiva.Fletcher.Model` is scaffolded at
+  `dotnet/src/Fletcher.Model` with its tests in `tests/Fletcher.Model.Tests`: the lossless
+  `Timestamp` and `Duration` over Arrow's `TimeUnit`, `Apache.Arrow` only. 47 cases per
+  TFM, six mutants caught. Nothing references it yet; the 6c generator will, writing
+  `global::Eiva.Fletcher.Model.Timestamp`.
 
 ### BIND-7 — Arrow view + accessor emitters + capstone third arm
 

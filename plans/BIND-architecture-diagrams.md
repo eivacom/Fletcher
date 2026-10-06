@@ -358,10 +358,11 @@ classDiagram
         BIND-8
     }
     class Fletcher_Model_cs {
-        <<planned>>
-        Eiva.Fletcher.Model, BIND-6c
+        <<built>>
+        Eiva.Fletcher.Model, scaffolded in BIND-6c
         lossless Timestamp and Duration - D-BIND-74
         Apache.Arrow only
+        nothing references it until the 6c generator
     }
     class Apache_Arrow {
         <<NuGet>>
