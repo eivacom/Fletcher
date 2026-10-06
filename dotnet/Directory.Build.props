@@ -3,7 +3,7 @@
 -->
 <Project>
 
-  <!-- ONE version for all three managed packages, as gateway-client-ts ships one
+  <!-- ONE version for all four managed packages, as gateway-client-ts ships one
        version for its npm package. The MAJOR.MINOR here is the cross-package
        compatibility promise shared with the Conan components; PATCH floats per
        component. `cd.dotnet.yml`'s tag check reads these two elements out of this

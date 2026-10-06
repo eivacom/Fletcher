@@ -1,0 +1,27 @@
+<!-- SPDX-License-Identifier: LGPL-3.0-or-later
+     Copyright (C) 2026 The Fletcher Authors
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- References Fletcher.Model and NOTHING else of ours. That is the point of the
+       project: it builds and runs without Eiva.Fletcher, Eiva.Fletcher.Interop and
+       the native shim, which is D-BIND-72's "the model layer is Arrow-only" shown
+       by construction rather than asserted. Adding a ProjectReference here to
+       make a test easier defeats it. -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <!-- A test assembly publishes no API: see Fletcher.Tests for the reasoning. -->
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <RootNamespace>Eiva.Fletcher.Model.Tests</RootNamespace>
+    <RollForward>LatestMajor</RollForward>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Fletcher.Model/Fletcher.Model.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="[18.10.0]" />
+    <PackageReference Include="xunit" Version="[2.9.3]" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="[3.1.5]" />
+  </ItemGroup>
+</Project>

@@ -9,9 +9,11 @@
     <Project Path="src/Fletcher.Interop/Fletcher.Interop.csproj" />
     <Project Path="src/Fletcher/Fletcher.csproj" />
     <Project Path="src/Fletcher.GatewayClient/Fletcher.GatewayClient.csproj" />
+    <Project Path="src/Fletcher.Model/Fletcher.Model.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Fletcher.CopyOracle.Tests/Fletcher.CopyOracle.Tests.csproj" />
     <Project Path="tests/Fletcher.Tests/Fletcher.Tests.csproj" />
+    <Project Path="tests/Fletcher.Model.Tests/Fletcher.Model.Tests.csproj" />
   </Folder>
 </Solution>
