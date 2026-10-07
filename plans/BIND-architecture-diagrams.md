@@ -946,6 +946,7 @@ classDiagram
 | `ipc` | `<stem>.<Msg>.ipc` | `SchemaVisitor` + `NanoarrowSchemaSink`, then `SerializeSchemaIpc` | yes |
 | `ts` | `<stem>.fletcher.ts` | `TsVisitor` + `TsTypeTable` | yes |
 | `csharp` | `<stem>.fletcher.cs` | `CsVisitor` + `CsTypeTable` (BIND-6a); its `Schema` through `SchemaVisitor` + `CsSchemaSink` (BIND-6b) | yes |
+| `csharp` (also) | `<stem>.fletcher.native.cs`: the native `<Svc>_<Method>` pair over `Eiva.Fletcher`, left out by `csharp_model_only` | `CsVisitor` (BIND-6d, D-BIND-76) | yes |
 | `accessor` | `<stem>.fletcher.accessor.pb.h` | `AccessorEmitter` | **no**: `FieldKind`, until round RIR |
 | `rust` | `<stem>.fletcher.rs`, plus `__rba.fletcher.rs` once from `GenerateAll` | `AccessorEmitter` | **no**: `FieldKind`, until round RIR |
 

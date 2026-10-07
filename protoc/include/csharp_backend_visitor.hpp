@@ -27,8 +27,14 @@ class CsVisitor {
     explicit CsVisitor(const google::protobuf::FileDescriptor* file,
                        const OptionMetadataResolver* resolver = nullptr);
 
-    // The whole <stem>.fletcher.cs for the file.
+    // The whole <stem>.fletcher.cs for the file: the model layer, Apache.Arrow only,
+    // including a `<Svc>_<Method>Topic` class per pub/sub method (D-BIND-77).
     std::string GenerateFile();
+
+    // The whole <stem>.fletcher.native.cs (BIND-6d, D-BIND-76): per pub/sub method, a
+    // `<Svc>_<Method>Handler` delegate and the `<Svc>_<Method>Publisher` /
+    // `<Svc>_<Method>Subscriber` pair over Eiva.Fletcher's native runtime.
+    std::string GenerateNativeFile();
 
    private:
     std::string GenerateEnum(const google::protobuf::EnumDescriptor* enm);

@@ -507,6 +507,248 @@ std::string GenerateFromArrow(const std::string& cls, const std::vector<Column>&
     return o.str();
 }
 
+// ---------------------------------------------------------------------------
+// Pub/sub methods (BIND-6d): the topic classes in the model file (D-BIND-77) and
+// the native pair in its own file (D-BIND-76).
+// ---------------------------------------------------------------------------
+
+// One service method, as C++ and TypeScript see it: eligible by the SAME rules
+// (fletcher::ValidateServiceMethod) or skipped with the same reason text.
+struct PubSubMethod {
+    std::string service;
+    std::string method;
+    const Descriptor* input = nullptr;
+    std::string skip_reason;  // empty when eligible
+    std::string Base() const { return service + "_" + method; }
+};
+
+std::vector<PubSubMethod> PubSubMethods(const FileDescriptor* file) {
+    std::set<const Descriptor*> generated;
+    for (const auto* msg : fletcher::OrderedMessages(file))
+        if (!fletcher::IsRecursive(msg)) generated.insert(msg);
+    std::vector<PubSubMethod> out;
+    for (int si = 0; si < file->service_count(); ++si) {
+        const auto* svc = file->service(si);
+        for (int mi = 0; mi < svc->method_count(); ++mi) {
+            const auto* m = svc->method(mi);
+            PubSubMethod p{svc->name(), m->name(), m->input_type(), {}};
+            fletcher::ValidateServiceMethod(m, generated, &p.skip_reason);
+            out.push_back(std::move(p));
+        }
+    }
+    return out;
+}
+
+// The topic's segments, C++'s form: the package is ONE segment, dots kept
+// (D-BIND-72 point 6), so a C# and a C++ publisher of one method share a topic.
+std::vector<std::string> TopicSegments(const FileDescriptor* file, const PubSubMethod& p) {
+    std::vector<std::string> segments;
+    if (!file->package().empty()) segments.push_back(file->package());
+    segments.push_back(p.service);
+    segments.push_back(p.method);
+    return segments;
+}
+
+std::string TopicKey(const std::vector<std::string>& segments) {
+    std::string key;
+    for (size_t i = 0; i < segments.size(); ++i) key += (i > 0 ? "/" : "") + segments[i];
+    return key;
+}
+
+// `public static class <Svc>_<Method>Topic` in the model layer (D-BIND-77).
+std::string GenerateTopicClass(const FileDescriptor* file, const PubSubMethod& p) {
+    const auto segments = TopicSegments(file, p);
+    std::ostringstream o;
+    o << "/// <summary>The topic of " << p.service << "." << p.method
+      << ": the segments a C++ publisher of the same method uses.</summary>\n"
+      << "public static class " << p.Base() << "Topic\n{\n"
+      << "    /// <summary>The topic's segments, the package being one segment with its dots "
+         "kept.</summary>\n"
+      << "    public static global::System.Collections.Generic.IReadOnlyList<string> Segments "
+         "{ get; } = new[] { ";
+    for (size_t i = 0; i < segments.size(); ++i)
+        o << (i > 0 ? ", " : "") << CsStringLiteral(segments[i]);
+    o << " };\n\n"
+      << "    /// <summary>The segments joined with '/'.</summary>\n"
+      << "    public const string Key = " << CsStringLiteral(TopicKey(segments)) << ";\n"
+      << "}\n";
+    return o.str();
+}
+
+constexpr const char* kNs = "global::Eiva.Fletcher.";
+
+// The members both halves of the pair share: the topic and the schema.
+std::string PairStatics(const PubSubMethod& p, const std::string& msg) {
+    std::ostringstream o;
+    o << "    /// <summary>The topic, from <see cref=\"" << p.Base() << "Topic\"/>.</summary>\n"
+      << "    public static " << kNs << "TopicPath Topic { get; } = " << kNs << "TopicPath.Of([.. "
+      << p.Base() << "Topic.Segments]);\n\n"
+      << "    /// <summary>The topic's segments joined with '/'.</summary>\n"
+      << "    public const string TopicKey = " << p.Base() << "Topic.Key;\n\n"
+      << "    /// <summary>The schema rows travel under: <see cref=\"" << msg
+      << ".Schema\"/>.</summary>\n"
+      << "    public static global::Apache.Arrow.Schema Schema => " << msg << ".Schema;\n\n";
+    return o.str();
+}
+
+std::string GeneratePublisherPair(const PubSubMethod& p, const std::string& msg) {
+    const std::string cls = p.Base() + "Publisher";
+    std::ostringstream o;
+    o << "/// <summary>Publishes <see cref=\"" << msg << "\"/> rows on " << p.service << "."
+      << p.method << ", over one provider.</summary>\n"
+      << "/// <remarks>\n"
+      << "/// Declares the topic with <see cref=\"" << msg
+      << ".Schema\"/> when constructed: the native\n"
+      << "/// publish path accepts rows only on a topic THIS publisher declared. Not thread-safe "
+         "to\n"
+      << "/// dispose while publishing.\n"
+      << "/// </remarks>\n"
+      << "public sealed class " << cls << " : global::System.IDisposable\n{\n"
+      << PairStatics(p, msg) << "    private readonly " << kNs << "Publisher _publisher;\n"
+      << "    private readonly " << kNs << "FletcherCodec _codec;\n\n"
+      << "    /// <summary>Declares the topic on <paramref name=\"provider\"/> with the row "
+         "schema.</summary>\n"
+      << "    /// <param name=\"provider\">Borrowed; it must outlive this publisher.</param>\n"
+      << "    /// <param name=\"options\">The topic's options, or <see langword=\"null\"/> for "
+         "the provider's defaults.</param>\n"
+      << "    public " << cls << "(" << kNs << "PubSubProviderHandle provider, " << kNs
+      << "TopicOptions? options = null)\n    {\n"
+      << "        global::System.ArgumentNullException.ThrowIfNull(provider);\n"
+      << "        _codec = new " << kNs << "FletcherCodec(" << msg << ".Schema);\n"
+      << "        try\n        {\n"
+      << "            _publisher = new " << kNs << "Publisher(provider);\n"
+      << "            try\n            {\n"
+      << "                _publisher.CreateTopic(Topic, " << msg << ".Schema, options);\n"
+      << "            }\n            catch\n            {\n"
+      << "                _publisher.Dispose();\n                throw;\n            }\n"
+      << "        }\n        catch\n        {\n"
+      << "            _codec.Dispose();\n            throw;\n        }\n    }\n\n"
+      // D-BIND-78: per-row, synchronous, and the price stated where it is chosen.
+      << "    /// <summary>Publishes one row, before returning.</summary>\n"
+      << "    /// <remarks>\n"
+      << "    /// Builds a one-row Arrow batch, binds it and publishes it. That is the costly "
+         "shape: measured\n"
+      << "    /// at about 3.8 microseconds a row, 19.6 times the generated C++ publisher, "
+         "mostly in\n"
+      << "    /// Apache.Arrow building and exporting the batch (c-abi/benchmarks/README.md, "
+         "D-BIND-49).\n"
+      << "    /// To publish many rows, prefer <c>Publish(IEnumerable&lt;" << msg << "&gt;)</c>,\n"
+      << "    /// which builds and binds once (about 1.23 times C++ per row).\n"
+      << "    /// </remarks>\n"
+      << "    public void Publish(" << msg << " row) => Publish(row, null);\n\n"
+      << "    /// <summary>Publishes one row with its attachments, before returning.</summary>\n"
+      << "    /// <remarks>The cost is <see cref=\"Publish(" << msg << ")\"/>'s.</remarks>\n"
+      << "    public void Publish(" << msg << " row, " << kNs
+      << "AttachmentsBuilder? attachments)\n    {\n"
+      << "        global::System.ArgumentNullException.ThrowIfNull(row);\n"
+      << "        using var batch = " << msg << ".ToArrow(new[] { row });\n"
+      << "        using var bound = _codec.Bind(batch);\n"
+      << "        _publisher.Publish(Topic, bound, 0, attachments);\n    }\n\n"
+      << "    /// <summary>Publishes every row, building and binding them once: the fast "
+         "path.</summary>\n"
+      << "    /// <remarks>A failure at row k leaves rows before it published: the runtime does "
+         "not unwind a partial publication.</remarks>\n"
+      << "    public void Publish(global::System.Collections.Generic.IEnumerable<" << msg
+      << "> rows)\n    {\n"
+      << "        global::System.ArgumentNullException.ThrowIfNull(rows);\n"
+      << "        using var batch = " << msg << ".ToArrow(rows);\n"
+      << "        if (batch.Length == 0) return;\n"
+      << "        using var bound = _codec.Bind(batch);\n"
+      << "        _publisher.Publish(Topic, bound);\n    }\n\n"
+      << "    /// <summary>Releases the publisher and its codec.</summary>\n"
+      << "    public void Dispose()\n    {\n"
+      << "        _publisher.Dispose();\n        _codec.Dispose();\n    }\n"
+      << "}\n";
+    return o.str();
+}
+
+std::string GenerateSubscriberPair(const PubSubMethod& p, const std::string& msg) {
+    const std::string cls = p.Base() + "Subscriber";
+    std::ostringstream o;
+    o << "/// <summary>Receives <see cref=\"" << msg << "\"/> rows published on " << p.service
+      << "." << p.method << ", over one provider.</summary>\n"
+      << "/// <remarks>\n"
+      << "/// Each row is decoded with <see cref=\"" << msg
+      << ".Schema\"/>, as C++'s generated subscriber decodes\n"
+      << "/// with its own class. There is no <c>SubscribeInPlace</c> (Q16): for many rows, "
+         "receive\n"
+      << "/// batches with <c>Eiva.Fletcher.SubscriberArrow</c> and read them with <see "
+         "cref=\""
+      << msg << ".FromArrow\"/>.\n"
+      << "/// </remarks>\n"
+      << "public sealed class " << cls << " : global::System.IDisposable\n{\n"
+      << PairStatics(p, msg) << "    private readonly " << kNs << "Subscriber _subscriber;\n"
+      << "    private readonly " << kNs << "FletcherCodec _codec;\n\n"
+      << "    /// <summary>Binds to <paramref name=\"provider\"/>; the topic is not declared "
+         "here.</summary>\n"
+      << "    /// <param name=\"provider\">Borrowed; it must outlive this subscriber.</param>\n"
+      << "    public " << cls << "(" << kNs << "PubSubProviderHandle provider)\n    {\n"
+      << "        global::System.ArgumentNullException.ThrowIfNull(provider);\n"
+      << "        _codec = new " << kNs << "FletcherCodec(" << msg << ".Schema);\n"
+      << "        try\n        {\n"
+      << "            _subscriber = new " << kNs << "Subscriber(provider);\n"
+      << "        }\n        catch\n        {\n"
+      << "            _codec.Dispose();\n            throw;\n        }\n    }\n\n"
+      << "    /// <summary>Begins delivering rows to <paramref name=\"handler\"/>; never "
+         "blocks.</summary>\n"
+      << "    /// <remarks>\n"
+      << "    /// The handler runs on a transport thread with the row it owns and the "
+         "attachments\n"
+      << "    /// BORROWED for the call. An exception it throws is absorbed and raised as\n"
+      << "    /// <see cref=\"HandlerFaulted\"/>.\n"
+      << "    /// </remarks>\n"
+      << "    /// <param name=\"handler\">Called once per row.</param>\n"
+      << "    /// <param name=\"options\">The topic's options, or <see langword=\"null\"/> for "
+         "the provider's defaults.</param>\n"
+      << "    /// <returns>The subscription; dispose it or pass it to <see "
+         "cref=\"Unsubscribe\"/> to stop.</returns>\n"
+      << "    public " << kNs << "Subscription Subscribe(" << p.Base() << "Handler handler, " << kNs
+      << "TopicOptions? options = null)\n    {\n"
+      << "        global::System.ArgumentNullException.ThrowIfNull(handler);\n"
+      << "        var codec = _codec;\n"
+      << "        var result = _subscriber.Subscribe(Topic, (bytes, schema, attachments) =>\n"
+      << "        {\n"
+      << "            using var batch = codec.Decode(bytes);\n"
+      << "            var columns = new global::Apache.Arrow.StructArray(\n"
+      << "                new global::Apache.Arrow.Types.StructType(batch.Schema.FieldsList), "
+         "batch.Length, batch.Arrays,\n"
+      << "                global::Apache.Arrow.ArrowBuffer.Empty, 0);\n"
+      << "            handler(" << msg << ".FromArrow(columns, 0), attachments);\n"
+      << "        }, options);\n"
+      << "        result.Schema.Dispose();\n"
+      << "        return result.Subscription;\n    }\n\n"
+      << "    /// <summary>Stops a subscription; no delivery begins after this "
+         "returns.</summary>\n"
+      << "    public void Unsubscribe(" << kNs
+      << "Subscription subscription) => _subscriber.Unsubscribe(subscription);\n\n"
+      << "    /// <summary>Raised when a handler throws; the exception does not reach the "
+         "transport.</summary>\n"
+      << "    public event global::System.EventHandler<" << kNs
+      << "HandlerFaultedEventArgs>? HandlerFaulted\n    {\n"
+      << "        add => _subscriber.HandlerFaulted += value;\n"
+      << "        remove => _subscriber.HandlerFaulted -= value;\n    }\n\n"
+      << "    /// <summary>How many handler exceptions have been absorbed.</summary>\n"
+      << "    public ulong AbsorbedCallbackFailures => _subscriber.AbsorbedCallbackFailures;\n\n"
+      << "    /// <summary>Releases the subscriber and its codec.</summary>\n"
+      << "    public void Dispose()\n    {\n"
+      << "        _subscriber.Dispose();\n        _codec.Dispose();\n    }\n"
+      << "}\n";
+    return o.str();
+}
+
+// The opening every generated C# file shares. The <auto-generated> block is what
+// Roslyn's analysers look for to skip a file, as protoc's own C# output does.
+std::string FileHeader(const FileDescriptor* file) {
+    std::ostringstream o;
+    o << "// <auto-generated>\n"
+      << "//     Generated by fletcher-protoc. DO NOT EDIT.\n"
+      << "//     Source: " << file->name() << "\n"
+      << "// </auto-generated>\n"
+      << "#nullable enable\n\n"
+      << "namespace " << CsNamespace(file) << ";\n";
+    return o.str();
+}
+
 }  // namespace
 
 CsVisitor::CsVisitor(const google::protobuf::FileDescriptor* file,
@@ -592,16 +834,10 @@ std::string CsVisitor::GenerateMessage(const Descriptor* msg) {
 
 std::string CsVisitor::GenerateFile() {
     std::ostringstream o;
-    // The <auto-generated> block is what Roslyn's analysers look for to skip a
-    // file, as protoc's own C# output does. Without it a consumer building with
-    // analysers as errors fails on our names by design (CA1707 on Outer_Inner and
-    // Player_, CA1819 on byte[], CA1069 on enum aliases).
-    o << "// <auto-generated>\n"
-      << "//     Generated by fletcher-protoc. DO NOT EDIT.\n"
-      << "//     Source: " << file_->name() << "\n"
-      << "// </auto-generated>\n"
-      << "#nullable enable\n\n"
-      << "namespace " << CsNamespace(file_) << ";\n";
+    // Without the <auto-generated> block a consumer building with analysers as errors
+    // fails on our names by design (CA1707 on Outer_Inner and Player_, CA1819 on
+    // byte[], CA1069 on enum aliases).
+    o << FileHeader(file_);
 
     std::vector<const EnumDescriptor*> enums;
     for (int i = 0; i < file_->enum_type_count(); ++i) enums.push_back(file_->enum_type(i));
@@ -616,6 +852,49 @@ std::string CsVisitor::GenerateFile() {
             continue;
         }
         o << GenerateMessage(msg);
+    }
+
+    // One topic class per pub/sub method (D-BIND-77), in the model layer because the
+    // native pair and BIND-8's gateway pair both need it. A method that is not pub/sub
+    // is named with the reason C++ and TypeScript give.
+    for (const auto& p : PubSubMethods(file_)) {
+        o << "\n";
+        if (!p.skip_reason.empty())
+            o << "// Skipped: " << p.service << "." << p.method << " — " << p.skip_reason << "\n";
+        else
+            o << GenerateTopicClass(file_, p);
+    }
+    return o.str();
+}
+
+std::string CsVisitor::GenerateNativeFile() {
+    std::ostringstream o;
+    o << FileHeader(file_);
+    for (const auto& p : PubSubMethods(file_)) {
+        o << "\n";
+        if (!p.skip_reason.empty()) {
+            o << "// Skipped: " << p.service << "." << p.method << " — " << p.skip_reason << "\n";
+            continue;
+        }
+        // The pair publishes through ToArrow and reads through FromArrow, so a message
+        // whose conversion waits (a field from another file, BIND-6e) gets no pair.
+        std::set<const Descriptor*> visiting;
+        const std::string blocker = ConversionBlocker(p.input, file_, visiting);
+        const std::string msg = CsTypeName(p.input);
+        if (!blocker.empty() || fletcher::IsFlattenedWrapper(p.input)) {
+            o << "// Skipped: " << p.service << "." << p.method << " — " << msg
+              << " has no ToArrow / FromArrow: "
+              << (blocker.empty() ? "it is a flatten wrapper." : blocker) << "\n";
+            continue;
+        }
+        o << "/// <summary>Receives one <see cref=\"" << msg << "\"/> published on " << p.service
+          << "." << p.method << ", with its attachments.</summary>\n"
+          << "/// <param name=\"row\">The decoded row; the handler owns it.</param>\n"
+          << "/// <param name=\"attachments\">BORROWED for this call only.</param>\n"
+          << "public delegate void " << p.Base() << "Handler(" << msg << " row, " << kNs
+          << "AttachmentsView attachments);\n\n"
+          << GeneratePublisherPair(p, msg) << "\n"
+          << GenerateSubscriberPair(p, msg);
     }
     return o.str();
 }

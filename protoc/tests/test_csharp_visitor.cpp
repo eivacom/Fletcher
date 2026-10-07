@@ -15,18 +15,26 @@
 // adding `csharp` changes no existing output by a byte and adds exactly one file.
 
 #include <google/protobuf/compiler/code_generator.h>
+#include <google/protobuf/compiler/parser.h>
 #include <google/protobuf/descriptor.h>
 #include <google/protobuf/descriptor.pb.h>
 #include <google/protobuf/duration.pb.h>
+#include <google/protobuf/empty.pb.h>
+#include <google/protobuf/io/tokenizer.h>
 #include <google/protobuf/io/zero_copy_stream_impl_lite.h>
 #include <google/protobuf/timestamp.pb.h>
 #include <google/protobuf/wrappers.pb.h>
 #include <gtest/gtest.h>
 
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <map>
 #include <string>
 
 #include "generator.hpp"
+#include "generator_internal.hpp"
 
 using namespace google::protobuf;
 
@@ -434,20 +442,29 @@ TEST(CsVisitor, EveryOtherFieldGetsAPropertyEvenWhereConversionWaits) {
     EXPECT_EQ(cs.find("Not generated yet (BIND-6c): field"), std::string::npos) << cs;
 }
 
-TEST(CsVisitor, CsharpTokenChangesNoExistingOutputAndAddsExactlyOneFile) {
+TEST(CsVisitor, CsharpTokenChangesNoExistingOutputAndAddsOnlyItsOwnFiles) {
+    // `csharp` adds the model and the native pair's file (D-BIND-76), and
+    // `csharp,csharp_model_only` the model alone; neither changes another output.
     DescriptorPool pool;
     const FileDescriptor* file = BuildFixture(pool);
     ASSERT_NE(file, nullptr);
     for (const std::string base : {"", "ts", "ts,ipc", "schema_only"}) {
         const auto without = GenerateWith(file, base);
-        const auto with = GenerateWith(file, base.empty() ? "csharp" : base + ",csharp");
-        ASSERT_EQ(with.size(), without.size() + 1) << "base '" << base << "'";
-        for (const auto& [name, content] : without) {
-            const auto it = with.find(name);
-            ASSERT_NE(it, with.end()) << name << " vanished with csharp, base '" << base << "'";
-            EXPECT_EQ(it->second, content) << name << " changed with csharp, base '" << base << "'";
+        const std::string prefix = base.empty() ? "" : base + ",";
+        for (const std::string token : {"csharp", "csharp,csharp_model_only"}) {
+            const auto with = GenerateWith(file, prefix + token);
+            const size_t added = token == "csharp" ? 2 : 1;
+            ASSERT_EQ(with.size(), without.size() + added) << "'" << prefix + token << "'";
+            for (const auto& [name, content] : without) {
+                const auto it = with.find(name);
+                ASSERT_NE(it, with.end()) << name << " vanished with '" << prefix + token << "'";
+                EXPECT_EQ(it->second, content)
+                    << name << " changed with '" << prefix + token << "'";
+            }
+            EXPECT_EQ(with.count("player.fletcher.cs"), 1u) << "'" << prefix + token << "'";
+            EXPECT_EQ(with.count("player.fletcher.native.cs"), added - 1)
+                << "'" << prefix + token << "'";
         }
-        EXPECT_EQ(with.count("player.fletcher.cs"), 1u) << "base '" << base << "'";
     }
 }
 
@@ -704,5 +721,220 @@ TEST(CsVisitor, EveryConvertibleMessageGetsBothHalves) {
         EXPECT_NE(body.find(" ToArrow("), std::string::npos) << name;
         EXPECT_NE(body.find(" ToArrowColumns("), std::string::npos) << name;
         EXPECT_NE(body.find(" FromArrow("), std::string::npos) << name;
+    }
+}
+
+// ===========================================================================
+// BIND-6d: topics in the model file, and the native pair in its own file.
+// Driven by tests/golden/csharp_pair.proto, whose generated C# is committed beside
+// it and compiled by dotnet/tests/Fletcher.Tests against the native runtime.
+// ===========================================================================
+
+namespace {
+
+class CollectErrors : public io::ErrorCollector {
+   public:
+    std::string text;
+    void AddError(int line, int column, const std::string& message) override {
+        text += std::to_string(line) + ":" + std::to_string(column) + ": " + message + "\n";
+    }
+    void AddWarning(int, int, const std::string&) override {}
+};
+
+std::filesystem::path GoldenDir() { return std::filesystem::path(SCHEMA_GOLDEN_DIR); }
+
+std::string ReadText(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
+// Parses tests/golden/csharp_pair.proto into `pool`, with the well-known files it
+// imports copied in first.
+const FileDescriptor* BuildPairFixture(DescriptorPool& pool) {
+    const FileDescriptor* wkt_files[] = {
+        google::protobuf::Timestamp::GetDescriptor()->file(),
+        google::protobuf::Empty::GetDescriptor()->file(),
+    };
+    for (const FileDescriptor* wkt : wkt_files) {
+        if (pool.FindFileByName(wkt->name()) != nullptr) continue;
+        FileDescriptorProto copy;
+        wkt->CopyTo(&copy);
+        if (pool.BuildFile(copy) == nullptr) return nullptr;
+    }
+    const std::string source = ReadText(GoldenDir() / "csharp_pair.proto");
+    if (source.empty()) {
+        ADD_FAILURE() << "cannot read " << (GoldenDir() / "csharp_pair.proto");
+        return nullptr;
+    }
+    io::ArrayInputStream input(source.data(), static_cast<int>(source.size()));
+    CollectErrors errors;
+    io::Tokenizer tokenizer(&input, &errors);
+    compiler::Parser parser;
+    parser.RecordErrorsTo(&errors);
+    FileDescriptorProto fdp;
+    if (!parser.Parse(&tokenizer, &fdp)) {
+        ADD_FAILURE() << "parse failed:\n" << errors.text;
+        return nullptr;
+    }
+    fdp.set_name("csharp_pair.proto");
+    return pool.BuildFile(fdp);
+}
+
+std::string FileOf(const std::map<std::string, std::string>& files, const std::string& name) {
+    const auto it = files.find(name);
+    EXPECT_NE(it, files.end()) << "no " << name << " emitted";
+    return it == files.end() ? std::string() : it->second;
+}
+
+}  // namespace
+
+TEST(CsVisitorPair, TheModelFileSpellsEachTopicAsAStaticClass) {
+    // D-BIND-77: Segments in C++'s form (the package one segment, dots kept) and Key.
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildPairFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const std::string cs = FileOf(GenerateWith(file, "csharp"), "csharp_pair.fletcher.cs");
+    ExpectContains(cs, "public static class Telemetry_ReportTopic\n{\n");
+    ExpectContains(cs,
+                   "    public static global::System.Collections.Generic.IReadOnlyList<string> "
+                   "Segments { get; } = new[] { \"golden.pair\", \"Telemetry\", \"Report\" };\n");
+    ExpectContains(cs, "    public const string Key = \"golden.pair/Telemetry/Report\";\n");
+    // Ping is not pub/sub, and says why in C++'s words.
+    ExpectContains(cs,
+                   "// Skipped: Telemetry.Ping \xE2\x80\x94 request is not streaming (pub/sub "
+                   "requires 'stream' on request)\n");
+    EXPECT_EQ(cs.find("Telemetry_PingTopic"), std::string::npos) << cs;
+    // The model file names nothing of Eiva.Fletcher but the Model package: it compiles
+    // against Apache.Arrow alone (D-BIND-72, D-BIND-74).
+    for (size_t at = cs.find("Eiva.Fletcher."); at != std::string::npos;
+         at = cs.find("Eiva.Fletcher.", at + 1))
+        EXPECT_EQ(cs.compare(at, 20, "Eiva.Fletcher.Model."), 0) << cs.substr(at, 40);
+}
+
+TEST(CsVisitorPair, CsharpWritesThePairUnlessModelOnlyIsAsked) {
+    // D-BIND-76, re-ruled: `csharp` writes the pair in its own file, as C++'s header
+    // always carries its pair; `csharp_model_only` opts out, as `schema_only` does for
+    // C++, and leaves the model file byte-identical.
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildPairFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const auto both = GenerateWith(file, "csharp");
+    const auto model_only = GenerateWith(file, "csharp,csharp_model_only");
+    ASSERT_EQ(both.count("csharp_pair.fletcher.native.cs"), 1u);
+    EXPECT_EQ(model_only.count("csharp_pair.fletcher.native.cs"), 0u);
+    EXPECT_EQ(both.size(), model_only.size() + 1);
+    for (const auto& [name, content] : model_only) {
+        ASSERT_EQ(both.count(name), 1u) << name;
+        EXPECT_EQ(both.at(name), content) << name << " differs between csharp and model-only";
+    }
+    // The opt-out means nothing without `csharp`: it adds no file of its own.
+    DescriptorPool pool2;
+    const FileDescriptor* file2 = BuildPairFixture(pool2);
+    ASSERT_NE(file2, nullptr);
+    EXPECT_EQ(GenerateWith(file2, "csharp_model_only").size(), GenerateWith(file2, "").size());
+}
+
+TEST(CsVisitorPair, ThePublisherDeclaresItsTopicAndPublishesPerRowAndInBatches) {
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildPairFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const std::string native =
+        FileOf(GenerateWith(file, "csharp"), "csharp_pair.fletcher.native.cs");
+    const std::string pub =
+        ClassBody(native, "Telemetry_ReportPublisher : global::System.IDisposable");
+    ASSERT_FALSE(pub.empty()) << native;
+    ExpectContains(pub,
+                   "    public static global::Eiva.Fletcher.TopicPath Topic { get; } = "
+                   "global::Eiva.Fletcher.TopicPath.Of([.. Telemetry_ReportTopic.Segments]);\n");
+    ExpectContains(pub, "    public const string TopicKey = Telemetry_ReportTopic.Key;\n");
+    ExpectContains(pub,
+                   "                _publisher.CreateTopic(Topic, Reading.Schema, options);\n");
+    // D-BIND-78: per-row and synchronous, with the price where it is chosen.
+    ExpectContains(pub, "about 3.8 microseconds a row, 19.6 times the generated C++ publisher");
+    ExpectContains(pub, "        using var batch = Reading.ToArrow(new[] { row });\n");
+    ExpectContains(pub, "        _publisher.Publish(Topic, bound, 0, attachments);\n");
+    // The batch form: one ToArrow, one bind, one crossing.
+    ExpectContains(
+        pub,
+        "    public void Publish(global::System.Collections.Generic.IEnumerable<Reading> "
+        "rows)\n");
+    ExpectContains(pub, "        _publisher.Publish(Topic, bound);\n");
+}
+
+TEST(CsVisitorPair, TheSubscriberTakesAGeneratedDelegateNotAnAction) {
+    // D-BIND-79: Action<Reading, AttachmentsView> does not compile for net8.0.
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildPairFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const std::string native =
+        FileOf(GenerateWith(file, "csharp"), "csharp_pair.fletcher.native.cs");
+    ExpectContains(native,
+                   "public delegate void Telemetry_ReportHandler(Reading row, "
+                   "global::Eiva.Fletcher.AttachmentsView attachments);\n");
+    ExpectContains(
+        native,
+        "    public global::Eiva.Fletcher.Subscription Subscribe(Telemetry_ReportHandler "
+        "handler, global::Eiva.Fletcher.TopicOptions? options = null)\n");
+    ExpectContains(native, "            handler(Reading.FromArrow(columns, 0), attachments);\n");
+    EXPECT_EQ(native.find("Action<"), std::string::npos) << native;
+    // Q16: no such member (the doc comment names it, to say where to go instead).
+    EXPECT_EQ(native.find(" SubscribeInPlace("), std::string::npos) << native;
+}
+
+TEST(CsVisitorPair, AMethodWithoutAPairSaysWhy) {
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildPairFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const std::string native =
+        FileOf(GenerateWith(file, "csharp"), "csharp_pair.fletcher.native.cs");
+    ExpectContains(native,
+                   "// Skipped: Telemetry.Ping \xE2\x80\x94 request is not streaming (pub/sub "
+                   "requires 'stream' on request)\n");
+    ExpectContains(
+        native,
+        "// Skipped: Telemetry.Mark \xE2\x80\x94 Marks has no ToArrow / FromArrow: field "
+        "'at' is a message from another file (BIND-6e).\n");
+    EXPECT_EQ(native.find("Telemetry_MarkPublisher"), std::string::npos) << native;
+}
+
+TEST(CsVisitorPair, TheCommittedGoldensAreThePluginsOutput) {
+    // Fletcher.Tests compiles these goldens; a byte of drift fails HERE, so the C# that
+    // runs against the native runtime is always what the plugin emits today.
+    // FLETCHER_CAPTURE_GOLDENS=1 rewrites them for review as source.
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildPairFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const auto files = GenerateWith(file, "csharp");
+    for (const char* name : {"csharp_pair.fletcher.cs", "csharp_pair.fletcher.native.cs"}) {
+        const std::string generated = FileOf(files, name);
+        const auto path = GoldenDir() / name;
+        if (const char* capture = std::getenv("FLETCHER_CAPTURE_GOLDENS");
+            capture != nullptr && std::string(capture) == "1") {
+            std::ofstream(path, std::ios::binary) << generated;
+            continue;
+        }
+        EXPECT_EQ(ReadText(path), generated) << name << " differs from the plugin's output";
+    }
+}
+
+TEST(CsVisitorPair, TheTwoCsharpTokensFoldIntoThreeStates) {
+    // D-BIND-76: `csharp` and the modifier `csharp_model_only` mean three things, held as
+    // one CsharpOutput. Order does not matter, and the modifier alone means no C#: the
+    // fourth combination two booleans would allow cannot be represented.
+    using fletcher::CsharpOutput;
+    const std::pair<const char*, CsharpOutput> cases[] = {
+        {"", CsharpOutput::None},
+        {"ts,ipc", CsharpOutput::None},
+        {"csharp", CsharpOutput::ModelAndPair},
+        {"ts,csharp,ipc", CsharpOutput::ModelAndPair},
+        {"csharp,csharp_model_only", CsharpOutput::ModelOnly},
+        {"csharp_model_only,csharp", CsharpOutput::ModelOnly},
+        {"csharp_model_only", CsharpOutput::None},
+    };
+    for (const auto& [parameter, expected] : cases) {
+        fletcher::PluginOptions options;
+        std::string error;
+        ASSERT_TRUE(fletcher::ParsePluginParameter(parameter, &options, &error)) << error;
+        EXPECT_EQ(options.csharp, expected) << "'" << parameter << "'";
     }
 }

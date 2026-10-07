@@ -109,6 +109,12 @@
       },
       "Eiva.Fletcher.Interop": {
         "type": "Project"
+      },
+      "Eiva.Fletcher.Model": {
+        "type": "Project",
+        "dependencies": {
+          "Apache.Arrow": "[23.0.0, 23.0.0]"
+        }
       }
     },
     "net8.0": {
@@ -219,6 +225,12 @@
       },
       "Eiva.Fletcher.Interop": {
         "type": "Project"
+      },
+      "Eiva.Fletcher.Model": {
+        "type": "Project",
+        "dependencies": {
+          "Apache.Arrow": "[23.0.0, 23.0.0]"
+        }
       }
     }
   }

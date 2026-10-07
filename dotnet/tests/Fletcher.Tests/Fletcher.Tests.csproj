@@ -23,6 +23,20 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/Fletcher/Fletcher.csproj" />
+    <!-- The generated model's lossless Timestamp and Duration (D-BIND-74), which the
+         compiled C# goldens below refer to. -->
+    <ProjectReference Include="../../src/Fletcher.Model/Fletcher.Model.csproj" />
+  </ItemGroup>
+
+  <!-- The plugin's C# goldens, COMPILED into this assembly (BIND-6d). They are the
+       generator's own output for protoc/tests/golden/csharp_pair.proto - the model
+       and the native publisher/subscriber pair - and the plugin's
+       CsVisitorPair.TheCommittedGoldensAreThePluginsOutput fails if they drift from
+       it by a byte. This project has the native shim; the protoc lanes do not, so this
+       is where the generated pair meets the real runtime (GeneratedPairTests). -->
+  <ItemGroup>
+    <Compile Include="../../../protoc/tests/golden/*.fletcher*.cs"
+             Link="golden/%(Filename)%(Extension)" />
   </ItemGroup>
 
   <!-- The native shim, staged beside the test binary.

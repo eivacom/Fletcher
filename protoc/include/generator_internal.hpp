@@ -58,6 +58,17 @@ struct FieldInfo {
     std::shared_ptr<const ir::IrNode> ir;
 };
 
+// What the C# backend writes for a .proto (BIND-6, D-BIND-76). Two tokens set it,
+// `csharp` and the modifier `csharp_model_only`, but they mean three things, so they
+// are folded into one value and the meaningless fourth combination (the modifier
+// alone) cannot be represented: it is None, as if no C# token had been passed.
+enum class CsharpOutput {
+    None,          // no `csharp`: no C# at all
+    ModelAndPair,  // `csharp`: <stem>.fletcher.cs and <stem>.fletcher.native.cs
+    ModelOnly,     // `csharp,csharp_model_only`: <stem>.fletcher.cs alone, for an
+                   // Apache.Arrow-only project (as C++'s `schema_only` opts out)
+};
+
 // Parsed form of the comma-separated --fletcher_opt=... plugin parameter.
 struct PluginOptions {
     bool schema_only = false;
@@ -65,7 +76,7 @@ struct PluginOptions {
     bool ipc = false;
     bool accessor = false;
     bool rust = false;
-    bool csharp = false;  // BIND-6: <stem>.fletcher.cs
+    CsharpOutput csharp = CsharpOutput::None;
     std::vector<MetadataRule> metadata_rules;
 };
 

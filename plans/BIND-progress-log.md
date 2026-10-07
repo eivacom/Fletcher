@@ -742,6 +742,50 @@ reuses, so nesting is one generated class calling another.
   of the first sed patterns had missed the reformatted source and one hit a different line than named;
   they were retargeted by line and rerun rather than counted. Windows is CI's.
 
+**6d-1, the generated native pair (2026-10-07, D-BIND-76 to 79).** Four questions first, each
+answering what D-BIND-49 and D-BIND-72 had left to BIND-6, one at a time:
+
+- **D-BIND-76, ruled twice.** The first answer was a second token, `csharp_native`, to ask for
+  `<stem>.fletcher.native.cs`. Before it was committed the maintainer asked why one `csharp` was not
+  enough. The reason was D-BIND-72's Arrow-only model layer, but the repository already answers that
+  differently for C++: its header always carries the pair and `schema_only` opts out. Re-ruled the same
+  day to match: `csharp` writes the pair beside the model, and `csharp_model_only` opts out, leaving the
+  model byte-identical (a test holds that). `integration-tests/protoc-dotnet`, the Arrow-only consumer,
+  now passes it, and a case there checks that no native file was written. Inside the plugin the two
+  tokens fold into one `CsharpOutput` (`None`, `ModelAndPair`, `ModelOnly`) rather than two booleans,
+  so the meaningless fourth combination, the modifier alone, cannot be represented; a parser case pins
+  the mapping in every token order.
+- **D-BIND-77:** the topic is a model-layer `<Svc>_<Method>Topic` with `Segments` (C++'s form, the
+  package one segment) and `Key`; the pair's `Topic` is `TopicPath.Of` over them.
+- **D-BIND-78:** `Publish(T)` stays per-row and synchronous, as C++'s does, its documentation stating
+  D-BIND-49's measured price and pointing at the batch form.
+- **D-BIND-79, a frozen signature that could not compile.** Public surface 2.7 said
+  `Subscribe(Action<Msg, AttachmentsView>)`. `AttachmentsView` is a ref struct, and `Action<,>` takes one
+  only from .NET 9, so a net8.0 consumer fails with CS9244; measured before asking, on SDK 10.0.401.
+  The subscriber now takes a generated `<Svc>_<Method>Handler` delegate, which compiles on both
+  frameworks and keeps the attachments borrowed for the call.
+
+**Where the pair is tested, ruled with them:** the plugin's output for a fixture `.proto`
+(`protoc/tests/golden/csharp_pair.proto`) is committed as goldens beside the `.ipc` ones, a plugin test
+fails if they differ from its output by a byte, and `Fletcher.Tests`, which already stages the shim and
+the `.ipc` goldens, compiles them. So no new CI lane: the dotnet lane's sparse checkout and path filter
+already carry `protoc/tests/golden`. The goldens were written by protoc itself, as a consumer's call
+writes them, and the in-process test agreed with them on the first run.
+
+- **Verified.** 150/150 plugin tests; `Fletcher.Tests` 337/337 on both frameworks with 11 new cases over
+  `inprocess`: a row with every kind arrives whole, an empty row arrives empty, the batch form keeps
+  order, attachments travel, the bytes are the codec's own encoding of `ToArrow`, a throwing handler is
+  absorbed and reported, nothing arrives after `Unsubscribe`. Six mutants of the generated pair
+  (attachments dropped, batch truncated, bytes ignored, topic renamed, subscriber and publisher on the
+  wrong topic) were each caught, none by a build failure.
+- **Two of my own test assumptions were wrong, and the tests said so.** One asserted that the native file
+  never contains `SubscribeInPlace`, and my own doc comment names it to say where to go instead; the case
+  now looks for a member. The other compared a round-tripped row's Timestamp including its unit, but a
+  default Timestamp is `(0, Second)` and comes back as `(0, Nanosecond)`, the same instant recounted as
+  6c-2 specified; it now compares the instant.
+- **Still owed, as 6d-2:** the C#-versus-C++ wire-bytes comparison, which needs a C++ build of the same
+  `.proto`'s generated class beside the shim.
+
 **Tooling now.** The machine lost Python, Conan, CMake and Node in a crash on 2026-10-02. The plugin is
 built and tested in the Linux devcontainer (`eivaorg/fletcher-devcontainer:main`); the image has no
 .NET SDK, so generated C# is compiled on Windows, where the SDK survived.

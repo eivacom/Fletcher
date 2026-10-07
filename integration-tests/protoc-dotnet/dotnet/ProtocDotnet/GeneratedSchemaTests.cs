@@ -82,6 +82,16 @@ public sealed class GeneratedSchemaTests
             Assert.True(File.Exists(Path.Combine(GenDir(), $"model.{name}.ipc")), $"model.{name}.ipc was not generated");
     }
 
+    [Fact]
+    public void ModelOnlyLeavesOutTheNativePairFile()
+    {
+        // D-BIND-76: `csharp` writes the native pair beside the model unless this project's
+        // `csharp_model_only` opts out, which is how an Apache.Arrow-only consumer keeps
+        // every Eiva.Fletcher type out of its build.
+        Assert.True(File.Exists(Path.Combine(GenDir(), "model.fletcher.cs")));
+        Assert.Empty(Directory.GetFiles(GenDir(), "*.fletcher.native.cs"));
+    }
+
     private static void CompareField(Field generated, Field ipc, string path, List<string> differences)
     {
         if (generated.Name != ipc.Name) differences.Add($"{path}: name '{generated.Name}' vs '{ipc.Name}'");

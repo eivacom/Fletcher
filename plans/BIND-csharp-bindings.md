@@ -560,7 +560,7 @@ tests between two implementations.
 | 2 gateway client | `test_schema_codec` 11, `test_publish_frame` 9, TS 36 | **56** | Port (BIND-8), true parity: managed code both sides. |
 | 3 pub/sub semantics | `test_publisher_subscriber` 44, `test_segments` 5, `test_pubsub_arrow` 33 | **82** | Port over `inprocess`. **Split confirmed 2026-09-24: the `pubsub` cases are BIND-4's; `test_pubsub_arrow`'s are BIND-5's, whose acceptance row claims them and whose `SubscriberArrow` did not exist before it.** **#128 added 26 `pubsub` cases and 18 `pubsub-arrow` ones (D-BIND-57)**; of the 49 `pubsub` cases, **44 are mapped** - 12 of #128's over `inprocess`, 11 over real Fast DDS in the transport lane, because only a provider that knows options or has a schema channel can answer them - **and 5 are EXCLUDED**, 2 by D-BIND-47 and 3 by D-BIND-57. D-BIND-47's two: `UnsubscribeLastSubscriberUnsubscribesFromProvider` and `UnsubscribeWithRemainingSubscribersKeepsProviderSubscription` assert `mock->unsubscribe_count`, the fan-out's provider-level bookkeeping, which lives in the C++ `Subscriber` the binding WRAPS and does not reimplement - porting them would run that C++ a second time and call it a test of the binding, and the managed surface has no view of provider-level subscriptions by design (D-BIND-24). Reasoning and the full case-by-case mapping: `dotnet/tests/Fletcher.Tests/BucketThreeConformanceTests.cs`. |
 | 4 native providers | Fast DDS: `test_fast_dds_pubsub_provider` 71, `test_profile_document` 33; XRCE: `test_xrce_provider` 7, `test_xrce_document` 11 — **port as driver-selection tests (122)**; `test_fletcher_sample_pub_sub_type` 28 — **excluded**, provider-internal (the Fast DDS `TypeSupport`, a C++ type no managed code touches) | **150** | 122 by driver selection - ONE body over every transport (`integration-tests/pubsub-transport-conformance`), not a port per case; 28 excluded, documented. #128 added 45 of these. |
-| 5 generator | `test_type_mapper` 36, `test_option_metadata` 33, `test_schema_builder` 9, `test_schema_visitor` 9, `test_ir` 8, `test_schema_codec_lockstep` 2, `test_topic_path` 2, `test_ts_visitor` 1, `test_csharp_type_table` 20, `test_csharp_visitor` 23 | **143** | **Stay in C++** — they test a C++ generator; **extended** with `test_csharp_visitor`, `test_csharp_type_table` and the TS pub/sub emitter cases. |
+| 5 generator | `test_type_mapper` 36, `test_option_metadata` 33, `test_schema_builder` 9, `test_schema_visitor` 9, `test_ir` 8, `test_schema_codec_lockstep` 2, `test_topic_path` 2, `test_ts_visitor` 1, `test_csharp_type_table` 20, `test_csharp_visitor` 30 | **150** | **Stay in C++** — they test a C++ generator; **extended** with `test_csharp_visitor`, `test_csharp_type_table` and the TS pub/sub emitter cases. |
 | 6 no managed analogue | `test_owned_schema` 1 | **1** | Excluded, documented (an `ArrowSchemaDeepCopy` ENOMEM path). |
 | Conformance (inherited, not a port target) | `integration-tests/pubsub-conformance` 95 cases; `CallerTier` 22 of them | — | The **oracle** seam §9 hands BIND. BIND writes a C# arm of `CallerTier` and adds cases to the C++ suite (§12.1 expects it); each C# case names the C++ case it mirrors and a script checks the mapping is total. |
 
@@ -856,7 +856,7 @@ Kind: 🟪 spec · 🟦 impl · 🔬 proof · ⚙ pipelines · 📓 docs
 | BIND-3 | `Eiva.Fletcher.Interop` + codec/Arrow tier in `Eiva.Fletcher` | A | 🟦 | BIND-2 | Every PROTO-MAPPING type round-trips through the binding (D-BIND-39, was "Bucket 1 green"); `ErrorTests.EveryHardCaseKeepsItsMessage` | 🟢 |
 | BIND-4 | Pub/sub in `Eiva.Fletcher`: registry, `Publisher`, `Subscriber`, `SchemaArrival`, thunk discipline, error handling | A | 🟦 | BIND-3 | Bucket 3 over `inprocess`; Bucket 4 over `fastdds`/`xrce` by selector; C# arm of `CallerTier`; per-row publish benchmark recorded (D-BIND-37) | 🟢 (reopened twice on 2026-09-25 and re-closed on CI: D-BIND-56 at `78ac363`, bucket 4 over `xrce`; D-BIND-57 at `bdd4fba`, bucket 3's 49-case file set mapped and the matrix checked) |
 | BIND-5 | `SubscriberArrow` batch-first + the copy oracle end-to-end from C# | A | 🔬 | BIND-4 | `pubsub-arrow` cases; copy oracle green with the **C#** producer (D-BIND-58) | 🟢 (closed on CI at `a43c384`, `ci.pr` run 36563607601, 50/50, after a fresh-context review whose 9 BLOCKERs were fixed; D-BIND-58 to 68; conformance 11 of 11) |
-| BIND-6 | C# backend on the IR: type table + visitor → `<stem>.fletcher.cs` | B | 🟦 | — (GIR) | `CsharpVisitor.*` in `protoc/tests`; no-drift test unchanged | 🔴 (6a, 6b, 6c-1 on CI; 6c-2 built; 6d, 6e to do) |
+| BIND-6 | C# backend on the IR: type table + visitor → `<stem>.fletcher.cs` | B | 🟦 | — (GIR) | `CsharpVisitor.*` in `protoc/tests`; no-drift test unchanged | 🔴 (6a, 6b, 6c on CI; 6d-1 built; 6d-2 wire bytes vs C++, 6e to do) |
 | BIND-7 | Arrow view + accessor emitters (`csharp_accessor`) + capstone third arm | B | 🟦 | BIND-6, BIND-3 | `accessor-capstone` C# arm `observed == expected`; `StructArray` windowing fixture at non-zero offset | ⚪ |
 | BIND-T | TS `Publisher`/`Subscriber` emitter | C | 🟦 | — | `TsVisitor.DescriptorByteIdentical` still green + new emitter cases | ⚪ |
 | BIND-8 | `Eiva.Fletcher.GatewayClient` (managed port; the codec exception) | C | 🟦 | — | Bucket 2 green (the Part 4 file set, not a count); `Package.GatewayClientHasNoRuntimesFolder` | ⚪ |
@@ -1437,15 +1437,20 @@ codec step.
 - Per service method, `<Service>_<Method>Publisher` (`Topic`, `TopicKey`,
   `Schema`, `Publish(T)`, `Publish(T, AttachmentsBuilder)`,
   `Publish(IEnumerable<T>)`) and `<Service>_<Method>Subscriber`
-  (`Subscribe(Action<T, AttachmentsView>) → Subscription`), named exactly as the
-  C++ pair; **no `SubscribeInPlace`** (Q16).
+  (`Subscribe(<Service>_<Method>Handler) → Subscription`; ~~`Action<T, AttachmentsView>`~~,
+  which a net8.0 consumer cannot compile, D-BIND-79), named exactly as the
+  C++ pair; **no `SubscribeInPlace`** (Q16). **Ruled 2026-10-07:** `--fletcher_opt=csharp` writes
+  the pair to `<stem>.fletcher.native.cs` beside the model, and `csharp_model_only` opts out, as
+  C++'s `schema_only` does (D-BIND-76); the topic
+  lives in the model layer as `<Service>_<Method>Topic` with `Segments` and `Key` (D-BIND-77).
 - **Batch-first, per D-BIND-49's design input.** `Publish(IEnumerable<T>)` is the
   M3 shape (one `ToArrow`, one bind, one crossing — 1.23× generated C++); a
   per-row `Publish(T)` that binds one row is the M2 shape (3.8 µs, 19.6×, Gen2
   collections, two-thirds of it Apache.Arrow's). `Publish(T)` stays on the frozen
   surface; its documentation states that price and points at the batch form, and
   whether it stays per-row or accumulates behind the caller is settled here, with
-  `c-abi/benchmarks/README.md` as the evidence.
+  `c-abi/benchmarks/README.md` as the evidence. **Settled 2026-10-07 (D-BIND-78): it stays
+  per-row**, synchronous as C++'s `Publish(row)` is, with the price in its documentation.
 - Every mapped type in wire-format spec §"Proto to Arrow Type Mapping" is
   emitted: scalars, `repeated`, `map`, nested struct, nested list, the well-known
   types; **temporal types lossless** (D-BIND-26); maps as
@@ -1523,6 +1528,19 @@ codec step.
   through the Arrow IPC stream format, which checks each column's layout where
   `RecordBatch`'s constructor does not; eight mutants of the generated C# each caught by
   those C# tests, none by a build failure; `Fletcher.Model.Tests` 61/61 on both TFMs.
+- **6d-1, 2026-10-07 (D-BIND-76 to 79):** `csharp` adds a `<Svc>_<Method>Topic` class per pub/sub
+  method to the model file and writes `<stem>.fletcher.native.cs` (unless `csharp_model_only`) with,
+  per method, a
+  `<Svc>_<Method>Handler` delegate, a `<Svc>_<Method>Publisher` (declares its topic on
+  construction; per-row `Publish(T)` with its price documented; `Publish(T, AttachmentsBuilder)`;
+  batch `Publish(IEnumerable<T>)`) and a `<Svc>_<Method>Subscriber` (decodes with the class's own
+  schema, as C++ does; `Subscribe`, `Unsubscribe`, `HandlerFaulted`). Methods are eligible by
+  C++'s own `ValidateServiceMethod`; one whose message cannot convert gets its topic and a
+  marker saying why it has no pair. The plugin's output for `protoc/tests/golden/csharp_pair.proto`
+  is committed as goldens, held to the plugin byte for byte, and compiled into `Fletcher.Tests`,
+  where the pair runs over the native shim: 337/337 on net8.0 and net10.0 (11 new), six
+  mutants of the generated pair each caught, none by a build failure. 150/150 plugin tests.
+  **Still owed (6d-2):** the C#-versus-C++ wire-bytes comparison.
 
 ### BIND-7 — Arrow view + accessor emitters + capstone third arm
 

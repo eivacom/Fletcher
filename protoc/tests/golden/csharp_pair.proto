@@ -1,0 +1,53 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// BIND-6d: the fixture behind the committed C# goldens csharp_pair.fletcher.cs and
+// csharp_pair.fletcher.native.cs. test_csharp_visitor generates both from this file
+// and fails if either differs from the committed copy by a byte, so the goldens are
+// always the plugin's real output; dotnet/tests/Fletcher.Tests compiles them and runs
+// the generated pair over the native runtime (D-BIND-76). Regenerate with
+// FLETCHER_CAPTURE_GOLDENS=1 and review the diff as source.
+syntax = "proto3";
+
+package golden.pair;
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+enum Mood {
+  MOOD_UNSPECIFIED = 0;
+  MOOD_HAPPY = 1;
+}
+
+// Every kind the pair must carry: scalars, an optional, an enum, a list, a map, a
+// nested message, a list of messages and a lossless Timestamp.
+message Reading {
+  int32 id = 1;
+  string name = 2;
+  optional double value = 3;
+  Mood mood = 4;
+  repeated int32 samples = 5;
+  map<string, int64> tags = 6;
+  Stamp stamp = 7;
+  repeated Stamp history = 8;
+  google.protobuf.Timestamp at = 9;
+}
+
+message Stamp {
+  string by = 1;
+}
+
+// A message whose conversion waits for cross-file work (BIND-6e): the IR maps a
+// repeated Timestamp as a list of the struct declared in timestamp.proto.
+message Marks {
+  repeated google.protobuf.Timestamp at = 1;
+}
+
+service Telemetry {
+  // A pub/sub method: a topic class in the model file and a pair in the native file.
+  rpc Report(stream Reading) returns (google.protobuf.Empty);
+  // Skipped with C++'s reason: not a stream.
+  rpc Ping(Reading) returns (google.protobuf.Empty);
+  // A topic class, but no pair: Marks has no ToArrow yet.
+  rpc Mark(stream Marks) returns (google.protobuf.Empty);
+}

@@ -2554,3 +2554,60 @@ accessors do, for capstone parity (Q18).
   `Fletcher.Interop`, `Fletcher.Model`), so it could not have caught a reference to any of them. It is
   now `TheModelReferencesApacheArrowAndFletcherModelAndNothingElseOfFletchers`, looking for the real
   names. It surfaced when `Eiva.Fletcher.Model` was added as a reference and the assertion for it failed.
+
+The next four were ruled on 2026-10-07 at the start of slice 6d, one question each, and answer
+what D-BIND-49 and D-BIND-72 left to BIND-6.
+
+- **D-BIND-76 - `--fletcher_opt=csharp` writes the native pair in its own file,
+  `<stem>.fletcher.native.cs`, beside the model; `csharp_model_only` opts out. Amends D-BIND-72's
+  "only when asked for" to "on by default, with an opt-out".** *LOCKED BY THE MAINTAINER
+  2026-10-07, re-ruled the same day.* The first answer was a second token, `csharp_native`, to ask for
+  the pair. The maintainer asked why there were two tokens where one was expected; the answer was
+  D-BIND-72's Arrow-only model layer, and that the repository already has the other convention: C++'s
+  header always carries its pub/sub pair, and `schema_only` opts out. C# now follows that.
+
+  **THE RULING.** `csharp` writes `<stem>.fletcher.cs` (the model, `Apache.Arrow` only) and
+  `<stem>.fletcher.native.cs` (the pair, which needs `Eiva.Fletcher`), the second even for a file with
+  no pub/sub method, so the output set does not depend on the `.proto`'s contents.
+  `csharp,csharp_model_only` writes the model alone, byte-identical to the model `csharp` writes: the
+  token for a gateway, WASM or other Arrow-only project, and what `integration-tests/protoc-dotnet` now
+  passes. The opt-out is a NEW token, not `schema_only`, because for C++ `schema_only` also drops the
+  row classes, which C#'s model keeps. The pair stays in its own file, so the boundary is a file
+  boundary either way. BIND-8 decides whether the gateway pair follows the same default.
+
+  **Declined:** `csharp_native` to ask for the pair (the first answer: safest for Arrow-only projects,
+  but more to type for the common native case and the reverse of C++'s convention); `csharp` always
+  writing both files with no opt-out (an Arrow-only project would have to remove the native file from
+  its build by hand); the pair appended to `<stem>.fletcher.cs` (one file would then differ between a
+  native and an Arrow-only build).
+
+- **D-BIND-77 - a service method's topic is spelled in the model layer as a static class per method,
+  `<Svc>_<Method>Topic`, with `Segments` and `Key`.** *LOCKED BY THE MAINTAINER 2026-10-07.* D-BIND-72
+  puts C#'s topic in the model layer, because the native pair and BIND-8's gateway pair both need it,
+  and the model layer cannot use `Eiva.Fletcher`'s `TopicPath`. In `<stem>.fletcher.cs`:
+  `public static class <Svc>_<Method>Topic { public static IReadOnlyList<string> Segments { get; } =
+  new[] { "eiva.nav", "Svc", "Method" }; public const string Key = "eiva.nav/Svc/Method"; }`, the
+  segments following C++'s (D-BIND-72 point 6). The native pair's `static TopicPath Topic` is
+  `TopicPath.Of` over them. **Declined:** one class per service with a member per method (member names
+  derived from method names, and a public array is mutable); constants on the input message's class (a
+  message used by two methods would need two names, and the reserved-member list would grow).
+
+- **D-BIND-78 - the generated `Publish(T)` stays per-row; its documentation states the price and
+  points at `Publish(IEnumerable<T>)`.** *LOCKED BY THE MAINTAINER 2026-10-07,* settling what D-BIND-49
+  left to BIND-6. `Publish(T)` builds a one-row batch, binds it and publishes it before returning, as
+  C++'s `Publish(row)` does: when the call returns the row is on the bus and any failure has surfaced
+  at the call. The price is D-BIND-49's M2, 3.8 us and 19.6x generated C++ on Windows, about two-thirds
+  of it Apache.Arrow's; the batch form is M3, 239 ns per row. **Declined:** accumulating behind the
+  caller (asynchronous failure, added latency, a flush every caller must remember, and a divergence
+  from C++); a second, opt-in batching publisher (surface for a need nobody has stated).
+
+- **D-BIND-79 - the generated subscriber takes a generated delegate,
+  `<Svc>_<Method>Handler(<Msg> row, AttachmentsView attachments)`, not `Action<<Msg>,
+  AttachmentsView>`; amends public surface 2.7.** *LOCKED BY THE MAINTAINER 2026-10-07.*
+  `AttachmentsView` is a ref struct, and `Action<,>` accepts one only from .NET 9: a net8.0 consumer
+  fails with CS9244 (measured 2026-10-07 on SDK 10.0.401; net10.0 compiles), while `Eiva.Fletcher`
+  targets both (D-BIND-21). A generated delegate compiles on both, keeps the attachments BORROWED for
+  the callback as the runtime's own `RowHandler` does, and still cannot be captured by an `async`
+  lambda. A lambda at the call site reads as it would with `Action`. **Declined:** `Action<<Msg>,
+  AttachmentsBuilder>` with an owned copy (a copy per row whether read or not); keeping `Action` and
+  requiring .NET 9 for the pair (a net8.0 consumer could not use the generated subscriber).

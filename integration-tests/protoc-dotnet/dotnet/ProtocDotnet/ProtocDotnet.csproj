@@ -69,9 +69,11 @@
       <!-- protoc's well-known types ship beside it, in ../include. -->
       <_FletcherWkt>$([System.IO.Path]::GetFullPath('$([System.IO.Path]::GetDirectoryName($(FletcherProtoc)))/../include'))</_FletcherWkt>
     </PropertyGroup>
+    <!-- csharp_model_only (D-BIND-76): this project is the Apache.Arrow-only consumer, so it
+         opts out of the native pair, as a gateway or WASM project would. -->
     <RemoveDir Directories="$(FletcherGenDir)" />
     <MakeDir Directories="$(FletcherGenDir)" />
-    <Exec Command="&quot;$(FletcherProtoc)&quot; --plugin=protoc-gen-fletcher=&quot;$(FletcherProtocPlugin)&quot; --fletcher_opt=csharp,ipc --fletcher_out=&quot;$(FletcherGenDir)&quot; -I &quot;$(FletcherProtoDir)&quot; -I &quot;$(_FletcherWkt)&quot; &quot;$(FletcherProtoDir)/model.proto&quot;" />
+    <Exec Command="&quot;$(FletcherProtoc)&quot; --plugin=protoc-gen-fletcher=&quot;$(FletcherProtocPlugin)&quot; --fletcher_opt=csharp,csharp_model_only,ipc --fletcher_out=&quot;$(FletcherGenDir)&quot; -I &quot;$(FletcherProtoDir)&quot; -I &quot;$(_FletcherWkt)&quot; &quot;$(FletcherProtoDir)/model.proto&quot;" />
     <ItemGroup>
       <Compile Include="$(FletcherGenDir)/*.fletcher.cs" />
     </ItemGroup>
