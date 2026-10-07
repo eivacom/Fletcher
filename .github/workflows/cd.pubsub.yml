@@ -30,8 +30,14 @@ jobs:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
 
+  eiva-profiles:
+    uses: ./.github/workflows/ci.eiva-profiles.yml
+    with:
+      component: pubsub
+      dependencies: core
+
   upload:
-    needs: release
+    needs: [release, eiva-profiles]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -62,4 +68,4 @@ jobs:
             --title "${{ github.ref_name }}" \
             --generate-notes \
             "fletcher-pubsub-windows-conan-package.tgz" \
-            "fletcher-pubsub-linux-conan-package.tgz"
+            "fletcher-pubsub-linux-conan-package.tgz"             fletcher-pubsub-*-x86_64-*-conan-package.tgz

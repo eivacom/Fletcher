@@ -1,0 +1,135 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+# Builds one component for the profiles EIVA's consumers build with
+# (eivacom/conan-configuration: Visual-Studio-2022-v143-x64-* and
+# Ubuntu22-gcc-12-*), which the msvc194 / gcc13 Release builds in ci.<component>.yml
+# do not cover. Each binary is saved as fletcher-<component>-<profile>-conan-package.tgz
+# so Eiva.LocalArtifactorySync picks it up from the GitHub Release with the others.
+#
+# Called by the cd.<component>.yml release workflows and by
+# cd.eiva-profiles-backfill.yml for tags released before this existed. Tests are
+# not run here: ci.<component>.yml already tests the same sources.
+
+name: ci.eiva-profiles
+
+on:
+  workflow_call:
+    inputs:
+      component:
+        description: Component directory, e.g. pubsub
+        required: true
+        type: string
+      dependencies:
+        description: >-
+          Space-separated component directories to `conan create` first, in
+          order (no Conan remote hosts the fletcher-* packages), e.g. "core pubsub".
+        required: false
+        type: string
+        default: ""
+      ref:
+        description: Git ref to build. Empty means the triggering ref.
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  build-windows:
+    name: Windows-msvc193-x86_64-${{ matrix.build-type }}
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        build-type: [Release, Debug, RelWithDebInfo]
+    env:
+      PROFILE: Windows-msvc193-x86_64-${{ matrix.build-type }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      # The image ships MSVC 14.4x (msvc 194). EIVA builds with 14.39, the
+      # toolset its own runners install, so add that one alongside.
+      - name: Install MSVC 14.39 toolset
+        shell: pwsh
+        run: |
+          $installer = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer"
+          $vs = & "$installer\vswhere.exe" -latest -property installationPath
+          $p = Start-Process -FilePath "$installer\vs_installer.exe" -Wait -PassThru -ArgumentList @(
+            'modify', '--installPath', "`"$vs`"",
+            '--add', 'Microsoft.VisualStudio.Component.VC.14.39.17.9.x86.x64',
+            '--quiet', '--norestart', '--nocache')
+          if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { throw "vs_installer exited $($p.ExitCode)" }
+
+      - name: Install Conan
+        uses: ./.github/actions/conan-install
+
+      - name: Build
+        shell: bash
+        env:
+          COMPONENT: ${{ inputs.component }}
+          DEPENDENCIES: ${{ inputs.dependencies }}
+        run: |
+          set -euo pipefail
+          profile="$GITHUB_WORKSPACE/.conan-profiles/$PROFILE"
+          for dep in $DEPENDENCIES; do
+            conan create "$dep" --build=missing -pr:a="$profile"
+          done
+          conan create "$COMPONENT" --build=missing -pr:a="$profile"
+          ref=$(conan inspect "$COMPONENT" --format json | python -c "import json,sys; d=json.load(sys.stdin); print(d['name'] + '/' + d['version'])")
+          conan cache save "$ref:*" --file "fletcher-$COMPONENT-$PROFILE-conan-package.tgz"
+
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: fletcher-${{ inputs.component }}-${{ env.PROFILE }}
+          path: fletcher-${{ inputs.component }}-${{ env.PROFILE }}-conan-package.tgz
+          retention-days: 5
+
+  build-linux:
+    name: Linux-gcc12-x86_64-${{ matrix.build-type }}
+    runs-on: ubuntu-latest
+    # 22.04's gcc-12 is 12.3, the compiler.version EIVA's profiles declare.
+    container: ubuntu:22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        build-type: [Release, Debug]
+    env:
+      PROFILE: Linux-gcc12-x86_64-${{ matrix.build-type }}
+    steps:
+      # Before checkout, so it gets a real git clone rather than a tarball.
+      - name: Install toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates git make pkg-config gcc-12 g++-12 python3 python3-pip
+          # Keep in step with the conan-version default in .github/actions/conan-install.
+          pip3 install "conan==2.28.1" cmake ninja
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Build
+        shell: bash
+        env:
+          COMPONENT: ${{ inputs.component }}
+          DEPENDENCIES: ${{ inputs.dependencies }}
+        run: |
+          set -euo pipefail
+          conan profile detect --exist-ok
+          profile="$GITHUB_WORKSPACE/.conan-profiles/$PROFILE"
+          for dep in $DEPENDENCIES; do
+            conan create "$dep" --build=missing -pr:a="$profile"
+          done
+          conan create "$COMPONENT" --build=missing -pr:a="$profile"
+          ref=$(conan inspect "$COMPONENT" --format json | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['name'] + '/' + d['version'])")
+          conan cache save "$ref:*" --file "fletcher-$COMPONENT-$PROFILE-conan-package.tgz"
+
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: fletcher-${{ inputs.component }}-${{ env.PROFILE }}
+          path: fletcher-${{ inputs.component }}-${{ env.PROFILE }}-conan-package.tgz
+          retention-days: 5

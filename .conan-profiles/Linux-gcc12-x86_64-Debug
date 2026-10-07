@@ -1,0 +1,19 @@
+# Matches EIVA's Ubuntu22-gcc-12-Debug (eivacom/conan-configuration) so the binaries
+# cover what EIVA consumers resolve. Built in an ubuntu:22.04 container, whose gcc-12 is 12.3.
+[settings]
+arch=x86_64
+build_type=Debug
+compiler=gcc
+compiler.cppstd=20
+compiler.libcxx=libstdc++11
+compiler.version=12.3
+os=Linux
+[options]
+b2/*:toolset=cxx
+b2/*:use_cxx_env=True
+[buildenv]
+CC=gcc-12
+CXX=g++-12
+[conf]
+tools.system.package_manager:mode=install
+tools.system.package_manager:sudo=False

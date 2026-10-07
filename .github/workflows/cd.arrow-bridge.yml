@@ -30,8 +30,14 @@ jobs:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
 
+  eiva-profiles:
+    uses: ./.github/workflows/ci.eiva-profiles.yml
+    with:
+      component: arrow-bridge
+      dependencies: core
+
   upload:
-    needs: release
+    needs: [release, eiva-profiles]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -62,4 +68,4 @@ jobs:
             --title "${{ github.ref_name }}" \
             --generate-notes \
             "fletcher-arrow-bridge-windows-conan-package.tgz" \
-            "fletcher-arrow-bridge-linux-conan-package.tgz"
+            "fletcher-arrow-bridge-linux-conan-package.tgz"             fletcher-arrow-bridge-*-x86_64-*-conan-package.tgz

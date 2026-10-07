@@ -1,0 +1,74 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+# Adds the EIVA-profile binaries (ci.eiva-profiles.yml) to a release made before
+# the cd.<component>.yml workflows built them. Builds the component at the tag
+# and attaches the tarballs to that tag's existing GitHub Release.
+#
+# Triggers:
+#   * workflow_dispatch with a release tag, e.g. pubsub-v0.5.1-alpha.
+
+name: cd.eiva-profiles-backfill
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag, e.g. pubsub-v0.5.1-alpha
+        required: true
+        type: string
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      component: ${{ steps.map.outputs.component }}
+      dependencies: ${{ steps.map.outputs.dependencies }}
+    steps:
+      # The same dependency order the cd.<component>.yml callers pass.
+      - name: Map tag to component
+        id: map
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          case "$TAG" in
+            pubsub-v*)                  c=pubsub;                  d="core" ;;
+            arrow-bridge-v*)            c=arrow-bridge;            d="core" ;;
+            pubsub-arrow-v*)            c=pubsub-arrow;            d="core pubsub arrow-bridge" ;;
+            fastdds-pubsub-provider-v*) c=fastdds-pubsub-provider; d="core pubsub" ;;
+            protoc-v*)                  c=protoc;                  d="" ;;
+            *) echo "::error::$TAG is not a release tag of a component EIVA consumes"; exit 1 ;;
+          esac
+          echo "component=$c" >> "$GITHUB_OUTPUT"
+          echo "dependencies=$d" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: resolve
+    uses: ./.github/workflows/ci.eiva-profiles.yml
+    with:
+      component: ${{ needs.resolve.outputs.component }}
+      dependencies: ${{ needs.resolve.outputs.dependencies }}
+      ref: refs/tags/${{ inputs.tag }}
+
+  attach:
+    needs: [resolve, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          pattern: fletcher-${{ needs.resolve.outputs.component }}-*
+          merge-multiple: true
+
+      - name: Attach to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          ls -lah ./*-conan-package.tgz
+          gh release upload "$TAG" ./*-conan-package.tgz --clobber --repo "${{ github.repository }}"

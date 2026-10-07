@@ -1,0 +1,10 @@
+# Matches EIVA's Visual-Studio-2022-v143-x64-RelWithDebInfo (eivacom/conan-configuration) so the
+# binaries cover what EIVA consumers resolve. Needs the MSVC 14.39 toolset installed.
+[settings]
+arch=x86_64
+build_type=RelWithDebInfo
+compiler=msvc
+compiler.cppstd=20
+compiler.runtime=dynamic
+compiler.version=193
+os=Windows
