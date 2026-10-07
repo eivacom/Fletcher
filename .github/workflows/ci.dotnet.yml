@@ -42,6 +42,12 @@ on:
 # check. A new consumer of a path outside this lane's checkout must add it HERE
 # and to ci.pr.yml's dotnet filter, in the same commit.
 #
+# integration-tests/protoc-coverage/golden is another (BIND-6d-2). Fletcher.Tests
+# compiles the plugin's C# for coverage.proto committed there and compares what it
+# encodes with the .v1.bin files beside it, which the C++ generated class wrote: C#
+# against C++ on the wire. Without the entry both globs match nothing and the
+# comparison has no cases.
+#
 # integration-tests/copy-probe is the second such entry (D-BIND-62). The copy
 # oracle's C# leg, Fletcher.CopyOracle.Tests, loads the PROBE shim, which c-abi
 # builds only under `with_probe_shim` and which links that test-only package. So
@@ -66,6 +72,7 @@ jobs:
             c-abi
             integration-tests/copy-probe
             protoc/tests/golden
+            integration-tests/protoc-coverage/golden
 
       - name: Pull devcontainer image
         uses: ./.github/actions/pull-devcontainer-image
@@ -165,6 +172,7 @@ jobs:
             c-abi
             integration-tests/copy-probe
             protoc/tests/golden
+            integration-tests/protoc-coverage/golden
 
       # global-json-file, not a literal version: dotnet/global.json is the single
       # pin, and the runner's own pre-installed SDKs must not be what decides

@@ -91,6 +91,13 @@ std::optional<std::string> ElementTypeText(const ir::IrNode& node,
             return std::nullopt;
         return CsTypeName(s.identity.descriptor);
     }
+    // 6c-3: a list element that is itself a list, which is how a flatten wrapper around a
+    // repeated field nests (`repeated StructListWrapper` is list<list<struct>>).
+    if (node.kind == ir::NodeKind::LIST) {
+        auto inner = ElementTypeText(*std::get<ir::ListNode>(node.node).element, current_file);
+        if (!inner) return std::nullopt;
+        return "global::System.Collections.Generic.List<" + *inner + ">";
+    }
     if (node.kind != ir::NodeKind::SCALAR) return std::nullopt;
     const auto& s = std::get<ir::ScalarNode>(node.node);
     if (const auto info = CsLookupScalar(s.logical_type, s.enum_identity)) return info->type_text;

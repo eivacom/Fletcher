@@ -786,6 +786,29 @@ writes them, and the in-process test agreed with them on the first run.
 - **Still owed, as 6d-2:** the C#-versus-C++ wire-bytes comparison, which needs a C++ build of the same
   `.proto`'s generated class beside the shim.
 
+**6d-2, C# against C++ on the wire, and the gap it found first (2026-10-07).**
+
+- **The C++ side was already in the tree.** `integration-tests/protoc-coverage` pins the generated C++
+  class's `Encode()` of the coverage fixture rows as twelve committed `.v1.bin` goldens (its parity
+  oracle). So no C++ build beside the shim was needed: C# only had to produce the same bytes for the
+  same `.proto` and the same values.
+- **The first probe found a 6c gap, fixed first as 6c-3 (the maintainer chose that order).** Running
+  the plugin's C# over `coverage.proto` showed that lists of lists, which flatten wrappers around a
+  repeated message produce, got no property at all, with a marker blaming "a message from another file",
+  and that this blocked `CompositeCoverage` and `ServiceRequest`, the richest four goldens. Now
+  `List<List<T>>` to any depth, built and read level by level, and a field without a type says why in
+  the classifier's own words.
+- **How the comparison is wired.** The plugin's C# for `coverage.proto` is committed beside the
+  `.v1.bin` files and held to the plugin by a new `CsGolden.ModelByteIdentical` in that lane, the way its
+  TypeScript golden is. `Fletcher.Tests` compiles it, transcribes `coverage_fixture.hpp` into C#, and for
+  each golden encodes the fixture row through `ToArrow` and the native codec, then decodes the golden,
+  reads it back through `FromArrow` and re-encodes it. A transcription slip shows as a byte difference,
+  never as a pass.
+- **Verified.** 25/25 on net8.0 and net10.0 on the first run, so five mutants were made to be sure it
+  can fail: a fixture value, a map in sorted order, an absent message written as present, depth-3
+  lists dropped, a duration off by one nanosecond. Each was caught. The sorted-map one is D-BIND-75's
+  ruling seen on the wire: a `Dictionary` would have changed the bytes.
+
 **Tooling now.** The machine lost Python, Conan, CMake and Node in a crash on 2026-10-02. The plugin is
 built and tested in the Linux devcontainer (`eivaorg/fletcher-devcontainer:main`); the image has no
 .NET SDK, so generated C# is compiled on Windows, where the SDK survived.

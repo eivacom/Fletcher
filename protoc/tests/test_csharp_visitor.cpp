@@ -91,6 +91,11 @@ FieldDescriptorProto* AddField(
 //   optional google.protobuf.Timestamp maybe_at = 3;  google.protobuf.Int32Value boxed = 4;
 // }
 // message Wraps { Timed timed = 1; }   // embeds a message whose conversion is blocked
+// message StatsRow { option (fletcher.flatten) = true; repeated Player.Stats values = 1; }
+// message StatsGrid { option (fletcher.flatten) = true; repeated StatsRow rows = 1; }
+// message Nested {   // lists of lists, as flatten wrappers nest them (BIND-6c-3)
+//   repeated StatsRow table = 1;  repeated StatsGrid cube = 2;
+// }
 const FileDescriptor* BuildFixture(DescriptorPool& pool) {
     // The well-known files the fixture imports, copied into the local pool. Naming a
     // linked-in C++ WKT type forces its descriptor to register.
@@ -245,6 +250,34 @@ const FileDescriptor* BuildFixture(DescriptorPool& pool) {
     wraps->set_name("Wraps");
     AddField(wraps, "timed", 1, FieldDescriptorProto::TYPE_MESSAGE)
         ->set_type_name(".integration.Timed");
+
+    // 6c-3: flatten wrappers around a repeated message, which nest into lists of lists.
+    // (fletcher.flatten) is option 50000 on the message, set here as an unknown varint,
+    // which is how the type mapper reads it.
+    const auto set_flatten = [](DescriptorProto* m) {
+        auto* opts = m->mutable_options();
+        opts->GetReflection()->MutableUnknownFields(opts)->AddVarint(50000, 1);
+    };
+    auto* stats_row = fdp.add_message_type();
+    stats_row->set_name("StatsRow");
+    set_flatten(stats_row);
+    AddField(stats_row, "values", 1, FieldDescriptorProto::TYPE_MESSAGE,
+             FieldDescriptorProto::LABEL_REPEATED)
+        ->set_type_name(".integration.Player.Stats");
+    auto* stats_grid = fdp.add_message_type();
+    stats_grid->set_name("StatsGrid");
+    set_flatten(stats_grid);
+    AddField(stats_grid, "rows", 1, FieldDescriptorProto::TYPE_MESSAGE,
+             FieldDescriptorProto::LABEL_REPEATED)
+        ->set_type_name(".integration.StatsRow");
+    auto* nested = fdp.add_message_type();
+    nested->set_name("Nested");
+    AddField(nested, "table", 1, FieldDescriptorProto::TYPE_MESSAGE,
+             FieldDescriptorProto::LABEL_REPEATED)
+        ->set_type_name(".integration.StatsRow");
+    AddField(nested, "cube", 2, FieldDescriptorProto::TYPE_MESSAGE,
+             FieldDescriptorProto::LABEL_REPEATED)
+        ->set_type_name(".integration.StatsGrid");
 
     return pool.BuildFile(fdp);
 }
@@ -422,7 +455,9 @@ TEST(CsVisitor, AMessageFromAnotherFileHasNoClassYetSoItsFieldIsAMarker) {
     ASSERT_NE(file, nullptr);
     const std::string timed = ClassBody(CSharp(file), "Timed");
     ExpectContains(
-        timed, "    // Not generated yet (BIND-6e): field 'marks' (list) has no C# type here.\n");
+        timed,
+        "    // Not generated yet: field 'marks' (list) has no C# type here: a message from "
+        "another file (BIND-6e).\n");
     EXPECT_EQ(timed.find(" Marks "), std::string::npos) << timed;
 }
 
@@ -435,8 +470,8 @@ TEST(CsVisitor, EveryOtherFieldGetsAPropertyEvenWhereConversionWaits) {
     ASSERT_NE(file, nullptr);
     const std::string cs = CSharp(file);
     size_t markers = 0;
-    for (size_t at = cs.find("// Not generated yet (BIND-6e)"); at != std::string::npos;
-         at = cs.find("// Not generated yet (BIND-6e)", at + 1))
+    for (size_t at = cs.find("// Not generated yet:"); at != std::string::npos;
+         at = cs.find("// Not generated yet:", at + 1))
         ++markers;
     EXPECT_EQ(markers, 1u) << cs;
     EXPECT_EQ(cs.find("Not generated yet (BIND-6c): field"), std::string::npos) << cs;
@@ -716,7 +751,7 @@ TEST(CsVisitor, EveryConvertibleMessageGetsBothHalves) {
     const FileDescriptor* file = BuildFixture(pool);
     ASSERT_NE(file, nullptr);
     const std::string cs = CSharp(file);
-    for (const char* name : {"Player", "Player_Stats", "Sample", "Holder", "Clock"}) {
+    for (const char* name : {"Player", "Player_Stats", "Sample", "Holder", "Clock", "Nested"}) {
         const std::string body = ClassBody(cs, name);
         EXPECT_NE(body.find(" ToArrow("), std::string::npos) << name;
         EXPECT_NE(body.find(" ToArrowColumns("), std::string::npos) << name;
@@ -937,4 +972,47 @@ TEST(CsVisitorPair, TheTwoCsharpTokensFoldIntoThreeStates) {
         ASSERT_TRUE(fletcher::ParsePluginParameter(parameter, &options, &error)) << error;
         EXPECT_EQ(options.csharp, expected) << "'" << parameter << "'";
     }
+}
+
+// ===========================================================================
+// BIND-6c-3: lists of lists, which flatten wrappers around a repeated message produce.
+// Before 6c-3 such a field got no property and a marker blaming the wrong cause.
+// ===========================================================================
+
+TEST(CsVisitor, AListOfListsIsAListOfListsNotADroppedField) {
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const std::string nested = ClassBody(CSharp(file), "Nested");
+    ExpectContains(nested,
+                   "    public global::System.Collections.Generic.List<"
+                   "global::System.Collections.Generic.List<Player_Stats>> Table { get; set; } = "
+                   "new();\n");
+    ExpectContains(
+        nested,
+        "    public global::System.Collections.Generic.List<"
+        "global::System.Collections.Generic.List<global::System.Collections.Generic.List<"
+        "Player_Stats>>> Cube { get; set; } = new();\n");
+    EXPECT_EQ(nested.find("Not generated yet"), std::string::npos) << nested;
+}
+
+TEST(CsVisitor, AListOfListsConvertsLevelByLevel) {
+    // Each level's offsets come from the inner lists' lengths and its child is built from
+    // their elements flattened, down to the element class's own columns; reading walks the
+    // same levels with each list array's own offsets.
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const std::string nested = ClassBody(CSharp(file), "Nested");
+    ExpectContains(nested, "        foreach (var row in rows) v0.Add(row.Table);\n");
+    ExpectContains(nested,
+                   "        var t0 = (global::Apache.Arrow.Types.ListType)"
+                   "Schema.GetFieldByIndex(0).DataType;\n");
+    ExpectContains(nested, "Player_Stats.ToArrowColumns(f0_)");
+    ExpectContains(nested, "Player_Stats.ToArrowColumns(f1__)");  // three levels deep
+    ExpectContains(nested, "        var c0 = a0;\n");
+    ExpectContains(nested, "x0.Add(Player_Stats.FromArrow(e0_, j0_));\n");
+    ExpectContains(nested, "            x.Add(x0);\n");
+    EXPECT_NE(nested.find(" ToArrow("), std::string::npos) << nested;
+    EXPECT_NE(nested.find(" FromArrow("), std::string::npos) << nested;
 }

@@ -219,7 +219,7 @@ public sealed class Reading
 
 public sealed class Marks
 {
-    // Not generated yet (BIND-6e): field 'at' (list) has no C# type here.
+    // Not generated yet: field 'at' (list) has no C# type here: a message from another file (BIND-6e).
 
     public static global::Apache.Arrow.Schema Schema { get; } = new global::Apache.Arrow.Schema(
         new global::Apache.Arrow.Field[]

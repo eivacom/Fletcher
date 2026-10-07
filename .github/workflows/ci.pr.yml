@@ -119,6 +119,7 @@ jobs:
               - 'c-abi/**'
               - 'integration-tests/copy-probe/**'
               - 'protoc/tests/golden/**'
+              - 'integration-tests/protoc-coverage/golden/**'
               - '.github/workflows/ci.pr.yml'
               - '.github/workflows/ci.dotnet.yml'
               - '.github/workflows/ci.setup-devcontainer-image.yml'

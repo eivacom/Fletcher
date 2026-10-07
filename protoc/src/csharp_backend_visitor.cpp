@@ -3,6 +3,7 @@
 //
 #include "csharp_backend_visitor.hpp"
 
+#include <memory>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -54,12 +55,16 @@ void CollectEnums(const Descriptor* msg, std::vector<const EnumDescriptor*>& out
 // Classification: what each column of a message converts as (BIND-6c-2).
 // ---------------------------------------------------------------------------
 
-// One list element, one map key or one map value: a mapped scalar, or a message of
-// this file whose own class converts.
+// One list element, one map key or one map value: a mapped scalar, a message of this
+// file whose own class converts, or (6c-3) itself a list of such elements, which is how
+// a flatten wrapper around a repeated field nests: `repeated StructListWrapper` is a
+// list<list<struct>>.
 struct Elem {
     bool is_struct = false;
-    CsScalarInfo scalar;  // when !is_struct
-    std::string cls;      // when is_struct
+    bool is_list = false;
+    CsScalarInfo scalar;          // when neither
+    std::string cls;              // when is_struct
+    std::shared_ptr<Elem> inner;  // when is_list: the element of this inner list
 };
 
 enum class ColKind { SCALAR, TEMPORAL, STRUCT, LIST, MAP };
@@ -106,6 +111,14 @@ std::optional<Elem> ElemOf(const IrNode& node, const FileDescriptor* file,
             e.scalar = *info;
             return e;
         }
+    }
+    if (node.kind == NodeKind::LIST) {
+        auto inner = ElemOf(*std::get<ir::ListNode>(node.node).element, file, visiting, why);
+        if (!inner) return std::nullopt;
+        Elem e;
+        e.is_list = true;
+        e.inner = std::make_shared<Elem>(std::move(*inner));
+        return e;
     }
     why = std::string("a ") + PendingKind(node) + " element this backend cannot convert";
     return std::nullopt;
@@ -216,8 +229,6 @@ std::string ReadElement(const CsScalarInfo& info, const std::string& arr, const 
     return arr + ".GetValue(" + j + ").GetValueOrDefault()";
 }
 
-std::string ElemTypeText(const Elem& e) { return e.is_struct ? e.cls : e.scalar.type_text; }
-
 std::string FieldType(size_t n, const std::string& type_class) {
     return "(global::Apache.Arrow.Types." + type_class + ")Schema.GetFieldByIndex(" +
            std::to_string(n) + ").DataType";
@@ -225,6 +236,81 @@ std::string FieldType(size_t n, const std::string& type_class) {
 
 std::string ListOf(const std::string& t) {
     return "global::System.Collections.Generic.List<" + t + ">";
+}
+
+std::string ElemTypeText(const Elem& e) {
+    if (e.is_list) return ListOf(ElemTypeText(*e.inner));
+    return e.is_struct ? e.cls : e.scalar.type_text;
+}
+
+// 6c-3: statements that build ONE Arrow array holding every element of `values` (a C#
+// IReadOnlyList of the element's type), typed `type` (a C# expression for its Arrow
+// type, read from the Schema). Returns the variable holding the array. A list element
+// recurses: its offsets come from the inner lists' lengths and its child is built from
+// their elements flattened, so a list<list<list<struct>>> is three calls deep. `id`
+// keeps every level's variables distinct.
+std::string BuildElemArray(std::ostringstream& o, const Elem& e, const std::string& values,
+                           const std::string& type, const std::string& id) {
+    const std::string in = "        ";
+    const std::string a = "a" + id;
+    if (e.is_list) {
+        const std::string t = "t" + id, off = "o" + id, flat = "f" + id, x = "x" + id;
+        o << in << "var " << t << " = (global::Apache.Arrow.Types.ListType)" << type << ";\n"
+          << in << "var " << off << " = new global::Apache.Arrow.ArrowBuffer.Builder<int>("
+          << values << ".Count + 1);\n"
+          << in << off << ".Append(0);\n"
+          << in << "var " << flat << " = new " << ListOf(ElemTypeText(*e.inner)) << "();\n"
+          << in << "foreach (var " << x << " in " << values << ")\n"
+          << in << "{\n"
+          << in << "    " << flat << ".AddRange(" << x << ");\n"
+          << in << "    " << off << ".Append(" << flat << ".Count);\n"
+          << in << "}\n";
+        const std::string child = BuildElemArray(o, *e.inner, flat, t + ".ValueDataType", id + "_");
+        o << in << "var " << a << " = new global::Apache.Arrow.ListArray(" << t << ", " << values
+          << ".Count, " << off << ".Build(), " << child << ", " << kEmpty << ", 0, 0);\n";
+        return a;
+    }
+    if (e.is_struct) {
+        o << in << "var " << a << " = new global::Apache.Arrow.StructArray("
+          << "(global::Apache.Arrow.Types.StructType)" << type << ", " << values << ".Count, "
+          << e.cls << ".ToArrowColumns(" << values << "), " << kEmpty << ", 0, 0);\n";
+        return a;
+    }
+    const std::string b = "b" + id, x = "x" + id;
+    o << in << "var " << b << " = new " << ArrayClass(e.scalar) << ".Builder();\n"
+      << in << "foreach (var " << x << " in " << values << ") " << b << ".Append("
+      << AppendArgument(e.scalar, x) << ");\n"
+      << in << "var " << a << " = " << b << ".Build();\n";
+    return a;
+}
+
+// 6c-3: statements that read the elements `start` (inclusive) to `end` (exclusive) of
+// the list array `list` into a new C# list `out`, recursing for a list element.
+void EmitReadList(std::ostringstream& o, const Elem& e, const std::string& list,
+                  const std::string& start, const std::string& end, const std::string& out,
+                  const std::string& id, const std::string& in) {
+    const std::string values = "e" + id, j = "j" + id;
+    const std::string values_class = e.is_list     ? "global::Apache.Arrow.ListArray"
+                                     : e.is_struct ? "global::Apache.Arrow.StructArray"
+                                                   : ArrayClass(e.scalar);
+    o << in << "var " << out << " = new " << ListOf(ElemTypeText(e)) << "(" << end << " - " << start
+      << ");\n"
+      << in << "var " << values << " = (" << values_class << ")" << list << ".Values;\n"
+      << in << "for (var " << j << " = " << start << "; " << j << " < " << end << "; " << j
+      << "++)\n"
+      << in << "{\n";
+    if (e.is_list) {
+        const std::string inner = "x" + id;
+        EmitReadList(o, *e.inner, values, values + ".ValueOffsets[" + j + "]",
+                     values + ".ValueOffsets[" + j + " + 1]", inner, id + "_", in + "    ");
+        o << in << "    " << out << ".Add(" << inner << ");\n";
+    } else {
+        o << in << "    " << out << ".Add("
+          << (e.is_struct ? e.cls + ".FromArrow(" + values + ", " + j + ")"
+                          : ReadElement(e.scalar, values, j))
+          << ");\n";
+    }
+    o << in << "}\n";
 }
 
 // The statement that counts the nulls of column `n` (bitmap builder m<n>) into z<n>,
@@ -303,6 +389,21 @@ void EmitColumn(std::ostringstream& o, const Column& c) {
             return;
         }
         case ColKind::LIST: {
+            if (c.elem.is_list) {
+                // 6c-3: a list of lists. The column is itself a list element of the
+                // rows, so the rows' values are gathered and built by the recursion.
+                Elem column;
+                column.is_list = true;
+                column.inner = std::make_shared<Elem>(c.elem);
+                o << in << "var v" << n << " = new " << ListOf(ElemTypeText(column))
+                  << "(rows.Count);\n"
+                  << in << "foreach (var row in rows) v" << n << ".Add(row." << c.property
+                  << ");\n";
+                const std::string built = BuildElemArray(
+                    o, column, "v" + n, "Schema.GetFieldByIndex(" + n + ").DataType", n);
+                o << in << "var c" << n << " = " << built << ";\n";
+                return;
+            }
             o << in << "var t" << n << " = " << FieldType(c.index, "ListType") << ";\n"
               << in << "var o" << n
               << " = new global::Apache.Arrow.ArrowBuffer.Builder<int>(rows.Count + 1);\n"
@@ -452,6 +553,15 @@ void EmitRead(std::ostringstream& o, const Column& c) {
               << ".FromArrow(s, index); }\n";
             return;
         case ColKind::LIST: {
+            if (c.elem.is_list) {
+                // 6c-3: a list of lists, read level by level.
+                o << in << "{\n"
+                  << in << "    var l = (global::Apache.Arrow.ListArray)" << field << ";\n";
+                EmitReadList(o, c.elem, "l", "l.ValueOffsets[index]", "l.ValueOffsets[index + 1]",
+                             "x", "0", in + "    ");
+                o << in << "    row." << c.property << " = x;\n" << in << "}\n";
+                return;
+            }
             const std::string values =
                 c.elem.is_struct ? "global::Apache.Arrow.StructArray" : ArrayClass(c.elem.scalar);
             o << in << "{\n"
@@ -780,13 +890,15 @@ std::string CsVisitor::GenerateMessage(const Descriptor* msg) {
         const IrNode& node = *rec.node;
         const auto field_type = CsFieldTypeOf(node, file_);
         if (!field_type.has_value()) {
-            // The one way a mapped field gets no type today: it uses a message declared in
-            // another file (a repeated google.protobuf.Timestamp is one: the IR maps it as a
-            // struct, not as a timestamp), and cross-file is BIND-6e's.
-            o << "    // Not generated yet (BIND-6e): field '" << rec.name << "' ("
-              << PendingKind(node) << ") has no C# type here.\n";
-            if (pending.empty())
-                pending = "field '" + rec.name + "' is a message from another file (BIND-6e).";
+            // A mapped field without a C# type says why, in the classifier's own words. The
+            // common case today is a message declared in another file (a repeated
+            // google.protobuf.Timestamp is one: the IR maps it as a struct), which is BIND-6e's.
+            std::string why;
+            std::set<const Descriptor*> seen{msg};
+            ClassifyColumn(node, file_, seen, why);
+            o << "    // Not generated yet: field '" << rec.name << "' (" << PendingKind(node)
+              << ") has no C# type here: " << why << ".\n";
+            if (pending.empty()) pending = "field '" + rec.name + "' is " + why + ".";
             continue;
         }
         const bool nullable = field_type->nullable;

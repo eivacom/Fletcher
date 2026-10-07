@@ -93,6 +93,10 @@ set(GENERATED_CPP_HEADERS
     "${GENERATED_DIR}/${_stem}.fletcher.pb.h"
     "${GENERATED_DIR}/${_stem}.fletcher.arrow.pb.h"
     "${GENERATED_DIR}/${_stem}.fletcher.accessor.pb.h")
+# BIND-6d-2: the C# model, compiled by dotnet/tests/Fletcher.Tests against the .v1.bin
+# goldens below, so the C# write path is held to the bytes C++ writes.
+set(GENERATED_CS
+    "${GENERATED_DIR}/${_stem}.fletcher.cs")
 set(GENERATED_TS
     "${GENERATED_DIR}/${_stem}.fletcher.ts")
 set(GENERATED_RUST
@@ -141,13 +145,13 @@ endforeach()
 string(REPLACE ";" "|" _expected_ipc_arg "${_expected_ipc_names}")
 
 set(GENERATED_OUTPUTS
-    ${GENERATED_CPP_HEADERS} ${GENERATED_TS} ${GENERATED_RUST} ${GENERATED_IPC})
+    ${GENERATED_CPP_HEADERS} ${GENERATED_TS} ${GENERATED_RUST} ${GENERATED_IPC} ${GENERATED_CS})
 
 add_custom_command(
     OUTPUT  ${GENERATED_OUTPUTS}
     COMMAND "$<TARGET_FILE:protobuf::protoc>"
             "--plugin=protoc-gen-fletcher=$<TARGET_FILE:fletcher-protoc::plugin>"
-            "--fletcher_opt=ipc,accessor,ts,rust"
+            "--fletcher_opt=ipc,accessor,ts,rust,csharp,csharp_model_only"
             "--fletcher_out=${GENERATED_DIR}"
             "-I" "${PROTO_DIR}"
             "-I" "${FLETCHER_PROTO_INCLUDE_DIR}"
@@ -164,7 +168,7 @@ add_custom_command(
     DEPENDS "${_src}" fletcher-protoc::plugin
             "${FLETCHER_PROTO_INCLUDE_DIR}/fletcher/options.proto"
             "${CMAKE_CURRENT_SOURCE_DIR}/cmake/validate_generated_ipc.cmake"
-    COMMENT "protoc-gen-fletcher (ipc,accessor,ts,rust): ${_stem}.proto"
+    COMMENT "protoc-gen-fletcher (ipc,accessor,ts,rust,csharp): ${_stem}.proto"
     VERBATIM
 )
 
@@ -387,6 +391,19 @@ target_compile_definitions(coverage_ts_visitor_tests PRIVATE
 target_link_libraries(coverage_ts_visitor_tests PRIVATE GTest::gtest_main)
 
 # ---------------------------------------------------------------------------
+# BIND-6d-2: the C# model the plugin emits for coverage.proto must be byte-identical
+# to the committed golden (golden/coverage.fletcher.cs). dotnet/tests/Fletcher.Tests
+# compiles that golden and holds its ToArrow/encode path to the .v1.bin bytes C++
+# writes, so this check is what keeps the compiled C# the plugin's real output.
+# ---------------------------------------------------------------------------
+add_executable(coverage_cs_golden_tests tests/test_cs_golden.cpp)
+add_dependencies(coverage_cs_golden_tests generate_coverage_outputs)
+target_compile_definitions(coverage_cs_golden_tests PRIVATE
+    GENERATED_CS_PATH="${GENERATED_DIR}/${_stem}.fletcher.cs"
+    CS_GOLDEN_PATH="${CMAKE_CURRENT_SOURCE_DIR}/golden/${_stem}.fletcher.cs")
+target_link_libraries(coverage_cs_golden_tests PRIVATE GTest::gtest_main)
+
+# ---------------------------------------------------------------------------
 # GIR-9 (#75) forcing test: EnumEmit.GeneratedEnumSymbolsRoundTrip. Compiles and
 # runs the generated enum classes + typed accessors for enum_coverage.proto
 # (and the additive typed accessors on the existing coverage.proto enum fields).
@@ -474,6 +491,8 @@ gtest_discover_tests(coverage_accessor_tests DISCOVERY_MODE PRE_TEST
 gtest_discover_tests(coverage_view_visitor_tests DISCOVERY_MODE PRE_TEST
     PROPERTIES TIMEOUT 60)
 gtest_discover_tests(coverage_ts_visitor_tests DISCOVERY_MODE PRE_TEST
+    PROPERTIES TIMEOUT 60)
+gtest_discover_tests(coverage_cs_golden_tests DISCOVERY_MODE PRE_TEST
     PROPERTIES TIMEOUT 60)
 gtest_discover_tests(coverage_enum_emit_tests DISCOVERY_MODE PRE_TEST
     PROPERTIES TIMEOUT 60)

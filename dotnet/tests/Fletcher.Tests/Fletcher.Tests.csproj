@@ -39,6 +39,19 @@
              Link="golden/%(Filename)%(Extension)" />
   </ItemGroup>
 
+  <!-- C# against C++ on the wire (BIND-6d-2). The plugin's C# for protoc-coverage's
+       coverage.proto, committed as a golden there and held to the plugin byte for byte by
+       that lane's CsGolden.ModelByteIdentical, is compiled here; the .v1.bin goldens
+       beside it are the C++ generated class's Encode() of the same fixture rows, pinned
+       by that lane's parity oracle. CoverageWireBytesTests compares the two. -->
+  <ItemGroup>
+    <Compile Include="../../../integration-tests/protoc-coverage/golden/coverage.fletcher.cs"
+             Link="coverage/%(Filename)%(Extension)" />
+    <None Include="../../../integration-tests/protoc-coverage/golden/*.v1.bin"
+          Link="coverage/%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <!-- The native shim, staged beside the test binary.
        There is no NuGet layout in a source build, so nothing puts the shim where
        the loader can find it. `conan create c-abi` leaves it in the Conan cache
