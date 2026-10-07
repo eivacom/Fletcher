@@ -42,6 +42,44 @@ internal static class UnitMath
     internal static long FromTicks(long ticks, TimeUnit unit) =>
         unit == TimeUnit.Nanosecond ? checked(ticks * 100L) : FloorDivide(ticks, TicksPerUnit(unit));
 
+    /// <summary>How many nanoseconds one <paramref name="unit"/> is.</summary>
+    private static long NanosecondsPerUnit(TimeUnit unit) => unit switch
+    {
+        TimeUnit.Second => 1_000_000_000L,
+        TimeUnit.Millisecond => 1_000_000L,
+        TimeUnit.Microsecond => 1_000L,
+        TimeUnit.Nanosecond => 1L,
+        _ => throw new ArgumentOutOfRangeException(nameof(unit), unit, "Not an Arrow time unit."),
+    };
+
+    /// <summary><paramref name="value"/> counted in <paramref name="from"/>, recounted in <paramref name="to"/> EXACTLY.</summary>
+    /// <remarks>
+    /// Unlike the tick conversions above, this one never rounds: it is what puts a value into
+    /// an Arrow column of a fixed unit, and a column that silently dropped digits would be the
+    /// loss D-BIND-26 exists to prevent. A finer unit multiplies; a coarser one divides only
+    /// when nothing is left over.
+    /// </remarks>
+    /// <exception cref="ArgumentException">A coarser unit cannot hold the value without losing its remainder.</exception>
+    /// <exception cref="OverflowException">A finer unit's count does not fit in a <see cref="long"/>.</exception>
+    internal static long Recount(long value, TimeUnit from, TimeUnit to)
+    {
+        long fromNs = NanosecondsPerUnit(from);
+        long toNs = NanosecondsPerUnit(to);
+        if (fromNs >= toNs)
+        {
+            return checked(value * (fromNs / toNs));
+        }
+
+        long ratio = toNs / fromNs;
+        if (value % ratio != 0)
+        {
+            throw new ArgumentException(
+                $"{value} {from} is not a whole number of {to}: recounting it would lose precision.", nameof(value));
+        }
+
+        return value / ratio;
+    }
+
     private static long FloorDivide(long dividend, long divisor)
     {
         long quotient = dividend / divisor;

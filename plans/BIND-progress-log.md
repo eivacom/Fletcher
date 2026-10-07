@@ -710,6 +710,38 @@ map shape, and the rest followed from earlier rulings.
   lane now excludes that one diagnostic for this project only, and the ci.pr filter and the lane's
   comment name `Fletcher.Model`, `Directory.Build.props` and `.editorconfig` as inputs.
 
+**6c-2, conversion for the composite and temporal fields (2026-10-07).** Every message whose fields all
+convert now gets `ToArrow` and `FromArrow`, and an `internal ToArrowColumns` that a message embedding it
+reuses, so nesting is one generated class calling another.
+
+- **Probed first, as 6b-1 did for `DurationType`.** Apache.Arrow 23 has public constructors for
+  `ListArray`, `StructArray` and `MapArray` that take prebuilt children, so a nested column is built from
+  the element class's own columns rather than through builders that cannot hold a struct. The same probe
+  answered a BIND-7 question in passing: `StructArray.Fields` returns children already sliced to a sliced
+  parent's offset (offset 2 and length 2 after `Slice(2, 2)`), which D-BIND-10 asked to be settled
+  empirically.
+- **The schema decides every type.** A composite column's Arrow type is read from the class's own
+  `Schema`, so `ToArrow` cannot build a column its `Schema` disagrees with, which was 6b's rule for
+  scalars.
+- **Writing Timestamp and Duration never drops a digit.** The column is in nanoseconds; a value is
+  recounted into the column's unit by a new `WithUnit` on the `Eiva.Fletcher.Model` types, which
+  multiplies exactly and refuses a coarser unit that would leave a remainder. Reading returns the column's
+  unit, so a value written in seconds comes back as the same instant in nanoseconds; structural equality
+  sees two values, `ToDateTimeOffset` one instant. Fourteen Model cases cover it, 61/61 on both TFMs.
+- **A test that would have hidden layout errors.** `RecordBatch`'s constructor does not check a column
+  against its field, so a wrong offsets buffer would round-trip through our own `FromArrow` and look
+  right. Every batch in the consumer tests is therefore written as an Arrow IPC stream and read back,
+  which does check it.
+- **Blocking is explicit and propagates.** A field without a class here (a message from another file) and
+  a message embedding one whose conversion waits both leave a marker naming the field and the reason, so
+  no class calls a `ToArrowColumns` that does not exist.
+- **Verified.** 144/144 plugin tests and clang-format-18 clean; the consumer project 24/24 on Linux with
+  every analyser as an error (the first build failed on `GetValueOffset`, obsolete in Apache.Arrow 23, now
+  `ValueOffsets`). Eight mutants of the generated C# (validity, offsets, unit recount, unit on read, null
+  struct read, list start, map key slot) were each caught by those C# tests, not by a failed build. Two
+  of the first sed patterns had missed the reformatted source and one hit a different line than named;
+  they were retargeted by line and rerun rather than counted. Windows is CI's.
+
 **Tooling now.** The machine lost Python, Conan, CMake and Node in a crash on 2026-10-02. The plugin is
 built and tested in the Linux devcontainer (`eivaorg/fletcher-devcontainer:main`); the image has no
 .NET SDK, so generated C# is compiled on Windows, where the SDK survived.

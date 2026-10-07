@@ -221,7 +221,8 @@ flowchart LR
 Opt tokens: `--fletcher_opt=` `ts` · `ipc` · `accessor` · `rust` (shipped), plus
 `csharp` (built since BIND-6a: enums and classes; every `Schema` and scalar-only
 `ToArrow`/`FromArrow` since 6b; a typed property for every field whose type is generated
-in the file since 6c-1, D-BIND-75; the conversion of the rest is 6c-2 to 6e) and
+in the file since 6c-1, D-BIND-75; `ToArrow`/`FromArrow` for lists, messages, maps and
+Timestamp/Duration since 6c-2; a message from another file is 6e) and
 `csharp_accessor` (planned, BIND-7). Diagram 9 draws the plugin's classes
 and visitors behind this picture.
 
@@ -347,7 +348,7 @@ classDiagram
         a typed property per field - BIND-6c-1, D-BIND-75
         map is a List of KeyValuePair, list is a List
         Schema for every message - BIND-6b
-        ToArrow, FromArrow for scalar-only messages - BIND-6b
+        ToArrow, FromArrow - 6b scalars, 6c-2 composites and temporal
         writes no wire bytes - D-BIND-1
         namespace Fletcher.Gen.PascalPkg - D-BIND-69
     }

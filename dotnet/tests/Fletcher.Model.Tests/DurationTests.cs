@@ -88,6 +88,22 @@ public class DurationTests
         Assert.Throws<OverflowException>(() => Duration.FromTimeSpan(TimeSpan.MinValue, TimeUnit.Nanosecond));
     }
 
+    [Theory]
+    [InlineData(2L, TimeUnit.Second, TimeUnit.Millisecond, 2_000L)]
+    [InlineData(-9L, TimeUnit.Microsecond, TimeUnit.Nanosecond, -9_000L)]
+    [InlineData(6_000L, TimeUnit.Microsecond, TimeUnit.Millisecond, 6L)]
+    public void WithUnitRecountsExactly(long value, TimeUnit from, TimeUnit to, long expected)
+    {
+        Assert.Equal(new Duration(expected, to), new Duration(value, from).WithUnit(to));
+    }
+
+    [Fact]
+    public void WithUnitRefusesToDropARemainderOrToOverflow()
+    {
+        Assert.Throws<ArgumentException>(() => new Duration(1_001L, TimeUnit.Microsecond).WithUnit(TimeUnit.Millisecond));
+        Assert.Throws<OverflowException>(() => new Duration(long.MinValue / 2, TimeUnit.Millisecond).WithUnit(TimeUnit.Nanosecond));
+    }
+
     [Fact]
     public void DefaultIsZeroSeconds()
     {

@@ -78,6 +78,11 @@ FieldDescriptorProto* AddField(
 //   Player.Stats best = 1;  repeated Player.Stats history = 2;  map<string, Player.Stats> by_name =
 //   3;
 // }
+// message Clock {   // the temporal types where every field converts (BIND-6c-2)
+//   google.protobuf.Timestamp at = 1;  google.protobuf.Duration took = 2;
+//   optional google.protobuf.Timestamp maybe_at = 3;  google.protobuf.Int32Value boxed = 4;
+// }
+// message Wraps { Timed timed = 1; }   // embeds a message whose conversion is blocked
 const FileDescriptor* BuildFixture(DescriptorPool& pool) {
     // The well-known files the fixture imports, copied into the local pool. Naming a
     // linked-in C++ WKT type forces its descriptor to register.
@@ -213,6 +218,25 @@ const FileDescriptor* BuildFixture(DescriptorPool& pool) {
     AddField(holder, "by_name", 3, FieldDescriptorProto::TYPE_MESSAGE,
              FieldDescriptorProto::LABEL_REPEATED)
         ->set_type_name(".integration.Holder.ByNameEntry");
+
+    auto* clock = fdp.add_message_type();
+    clock->set_name("Clock");
+    AddField(clock, "at", 1, FieldDescriptorProto::TYPE_MESSAGE)
+        ->set_type_name(".google.protobuf.Timestamp");
+    AddField(clock, "took", 2, FieldDescriptorProto::TYPE_MESSAGE)
+        ->set_type_name(".google.protobuf.Duration");
+    auto* clock_maybe = AddField(clock, "maybe_at", 3, FieldDescriptorProto::TYPE_MESSAGE);
+    clock_maybe->set_type_name(".google.protobuf.Timestamp");
+    clock_maybe->set_proto3_optional(true);
+    clock_maybe->set_oneof_index(0);
+    clock->add_oneof_decl()->set_name("_maybe_at");
+    AddField(clock, "boxed", 4, FieldDescriptorProto::TYPE_MESSAGE)
+        ->set_type_name(".google.protobuf.Int32Value");
+
+    auto* wraps = fdp.add_message_type();
+    wraps->set_name("Wraps");
+    AddField(wraps, "timed", 1, FieldDescriptorProto::TYPE_MESSAGE)
+        ->set_type_name(".integration.Timed");
 
     return pool.BuildFile(fdp);
 }
@@ -477,27 +501,37 @@ TEST(CsVisitor, SchemaRendersListsStructsAndMapsAsNanoarrowLaysThemOut) {
 }
 
 TEST(CsVisitor, ScalarOnlyMessageGetsToArrow) {
+    // ToArrow materialises the rows once and builds the batch from ToArrowColumns, which
+    // a message embedding this one as a struct reuses (BIND-6c-2). One builder per column.
     DescriptorPool pool;
     const FileDescriptor* file = BuildFixture(pool);
     ASSERT_NE(file, nullptr);
     const std::string sample = ClassBody(CSharp(file), "Sample");
-    ExpectContains(sample,
-                   "    public static global::Apache.Arrow.RecordBatch ToArrow("
-                   "global::System.Collections.Generic.IEnumerable<Sample> rows)\n    {\n");
-    ExpectContains(sample, "        var c0 = new global::Apache.Arrow.BooleanArray.Builder();\n");
-    ExpectContains(sample, "            c0.Append(row.Flag);\n");
-    ExpectContains(sample,
-                   "            if (row.Note is { } v7) c7.Append(v7); else c7.AppendNull();\n");
-    ExpectContains(sample, "            c8.Append((global::System.ReadOnlySpan<byte>)row.Blob);\n");
-    ExpectContains(sample, "            c9.Append((int)row.Color);\n");
     ExpectContains(
         sample,
-        "            if (row.Tint is { } v10) c10.Append((int)v10); else c10.AppendNull();\n");
+        "    public static global::Apache.Arrow.RecordBatch ToArrow("
+        "global::System.Collections.Generic.IEnumerable<Sample> rows)\n    {\n"
+        "        global::System.ArgumentNullException.ThrowIfNull(rows);\n"
+        "        var all = rows as global::System.Collections.Generic.IReadOnlyList<Sample>"
+        " ?? new global::System.Collections.Generic.List<Sample>(rows);\n"
+        "        return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), "
+        "all.Count);\n    }\n");
     ExpectContains(sample,
-                   "        return new global::Apache.Arrow.RecordBatch(Schema, "
-                   "new global::Apache.Arrow.IArrowArray[] { c0.Build(), c1.Build(), c2.Build(), "
-                   "c3.Build(), c4.Build(), c5.Build(), c6.Build(), c7.Build(), c8.Build(), "
-                   "c9.Build(), c10.Build(), c11.Build() }, length);\n");
+                   "    internal static global::Apache.Arrow.IArrowArray[] ToArrowColumns("
+                   "global::System.Collections.Generic.IReadOnlyList<Sample> rows)\n");
+    ExpectContains(sample, "        var b0 = new global::Apache.Arrow.BooleanArray.Builder();\n");
+    ExpectContains(sample, "            b0.Append(row.Flag);\n");
+    ExpectContains(sample,
+                   "            if (row.Note is { } x7) b7.Append(x7); else b7.AppendNull();\n");
+    ExpectContains(sample, "            b8.Append((global::System.ReadOnlySpan<byte>)row.Blob);\n");
+    ExpectContains(sample, "            b9.Append((int)row.Color);\n");
+    ExpectContains(
+        sample,
+        "            if (row.Tint is { } x10) b10.Append((int)x10); else b10.AppendNull();\n");
+    ExpectContains(
+        sample,
+        "        return new global::Apache.Arrow.IArrowArray[] { c0, c1, c2, c3, c4, c5, c6, "
+        "c7, c8, c9, c10, c11 };\n");
 }
 
 TEST(CsVisitor, ScalarOnlyMessageGetsFromArrow) {
@@ -533,18 +567,142 @@ TEST(CsVisitor, ScalarOnlyMessageGetsFromArrow) {
                    ".GetValue(index);\n");
 }
 
-TEST(CsVisitor, MessageWithUnmappedFieldsGetsSchemaButNoConversion) {
-    // A ToArrow that skipped 'scores' would build a batch disagreeing with its own
-    // Schema, so conversion waits for BIND-6c; the Schema is already complete.
+TEST(CsVisitor, ListsStructsAndMapsConvertWithTheirSchemasOwnTypes) {
+    // BIND-6c-2: every Arrow type a composite column is built with is read back from the
+    // class's own Schema, so a ToArrow cannot build a column its Schema disagrees with.
     DescriptorPool pool;
     const FileDescriptor* file = BuildFixture(pool);
     ASSERT_NE(file, nullptr);
     const std::string player = ClassBody(CSharp(file), "Player");
-    ExpectContains(player, "    public static global::Apache.Arrow.Schema Schema { get; }");
+    // repeated int32 scores = 8 (column 7): offsets, then the element builder.
+    ExpectContains(player,
+                   "        var t7 = (global::Apache.Arrow.Types.ListType)"
+                   "Schema.GetFieldByIndex(7).DataType;\n");
+    ExpectContains(player, "            foreach (var x7 in row.Scores) b7.Append(x7);\n");
+    ExpectContains(player, "            o7.Append(b7.Length);\n");
     ExpectContains(
         player,
-        "    // ToArrow and FromArrow are not generated yet (BIND-6c): field 'scores' is "
-        "a list.\n");
-    EXPECT_EQ(player.find("ToArrow("), std::string::npos) << player;
-    EXPECT_EQ(player.find("FromArrow("), std::string::npos) << player;
+        "        var c7 = new global::Apache.Arrow.ListArray(t7, rows.Count, o7.Build(), e7, "
+        "global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);\n");
+    // Stats stats = 12 (column 11): an absent message keeps its slot as a default
+    // instance and a cleared validity bit; its children come from its own class.
+    ExpectContains(player,
+                   "            else { r11.Add(new Player_Stats()); m11.Append(false); }\n");
+    ExpectContains(player,
+                   "        var c11 = new global::Apache.Arrow.StructArray(t11, rows.Count, "
+                   "Player_Stats.ToArrowColumns(r11), z11 > 0 ? m11.Build() : "
+                   "global::Apache.Arrow.ArrowBuffer.Empty, z11, 0);\n");
+    // map<string, int32> tags = 13 (column 12): keys and values in entry order.
+    ExpectContains(player, "                k12.Append(x12.Key);\n");
+    ExpectContains(player, "                b12.Append(x12.Value);\n");
+    ExpectContains(
+        player,
+        "        var c12 = new global::Apache.Arrow.MapArray(t12, rows.Count, o12.Build(), "
+        "kv12, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);\n");
+    // Reading back: the list's slice, the struct's validity, the map's pairs.
+    ExpectContains(
+        player,
+        "        { var s = (global::Apache.Arrow.StructArray)array.Fields[11]; row.Stats = "
+        "s.IsNull(index) ? null : Player_Stats.FromArrow(s, index); }\n");
+    ExpectContains(player,
+                   "    for (var j = start; j < end; j++) x.Add(new "
+                   "global::System.Collections.Generic.KeyValuePair<string, int>(k.GetString(j) ?? "
+                   "\"\", e.GetValue(j).GetValueOrDefault()));\n");
+}
+
+TEST(CsVisitor, ListsAndMapsOfMessagesReuseTheElementClass) {
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const std::string holder = ClassBody(CSharp(file), "Holder");
+    ExpectContains(holder, "            f1.AddRange(row.History);\n");
+    ExpectContains(
+        holder,
+        "        var e1 = new global::Apache.Arrow.StructArray("
+        "(global::Apache.Arrow.Types.StructType)t1.ValueDataType, f1.Count, "
+        "Player_Stats.ToArrowColumns(f1), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);\n");
+    ExpectContains(holder, "                f2.Add(x2.Value);\n");
+    ExpectContains(
+        holder,
+        "x.Add(new global::System.Collections.Generic.KeyValuePair<string, Player_Stats>("
+        "k.GetString(j) ?? \"\", Player_Stats.FromArrow(e, j)));\n");
+}
+
+TEST(CsVisitor, TimestampAndDurationAreRecountedInTheColumnsUnitExactly) {
+    // D-BIND-26: writing goes through WithUnit, which refuses to drop a remainder, so a
+    // digit is never lost on the way in; reading returns the column's unit and zone.
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const std::string clock = ClassBody(CSharp(file), "Clock");
+    ExpectContains(clock,
+                   "        var t0 = (global::Apache.Arrow.Types.TimestampType)"
+                   "Schema.GetFieldByIndex(0).DataType;\n");
+    ExpectContains(clock, "            v0.Append(row.At.WithUnit(t0.Unit).Value);\n");
+    ExpectContains(
+        clock,
+        "        var c0 = new global::Apache.Arrow.TimestampArray(t0, v0.Build(), z0 > 0 ? "
+        "m0.Build() : global::Apache.Arrow.ArrowBuffer.Empty, rows.Count, z0, 0);\n");
+    ExpectContains(
+        clock,
+        "            if (row.MaybeAt is { } x2) { v2.Append(x2.WithUnit(t2.Unit).Value); "
+        "m2.Append(true); }\n");
+    ExpectContains(
+        clock,
+        "        var c1 = new global::Apache.Arrow.DurationArray(t1, v1.Build(), z1 > 0 ? "
+        "m1.Build() : global::Apache.Arrow.ArrowBuffer.Empty, rows.Count, z1, 0);\n");
+    ExpectContains(clock,
+                   "        row.At = new global::Eiva.Fletcher.Model.Timestamp("
+                   "a.GetValue(index).GetValueOrDefault(), t.Unit, t.Timezone);\n");
+    ExpectContains(clock,
+                   "        row.MaybeAt = a.GetValue(index) is long v ? new "
+                   "global::Eiva.Fletcher.Model.Timestamp(v, t.Unit, t.Timezone) : null;\n");
+    ExpectContains(clock,
+                   "        row.Took = new global::Eiva.Fletcher.Model.Duration("
+                   "a.GetValue(index).GetValueOrDefault(), t.Unit);\n");
+}
+
+TEST(CsVisitor, AFieldWithoutAClassBlocksConversionAndSaysWhy) {
+    // A ToArrow that skipped 'marks' would build a batch disagreeing with its own Schema,
+    // so the message gets its Schema and a marker naming the field and the reason.
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const std::string timed = ClassBody(CSharp(file), "Timed");
+    ExpectContains(timed, "    public static global::Apache.Arrow.Schema Schema { get; }");
+    ExpectContains(
+        timed,
+        "    // ToArrow and FromArrow are not generated: field 'marks' is a message from "
+        "another file (BIND-6e).\n");
+    EXPECT_EQ(timed.find("ToArrow("), std::string::npos) << timed;
+    EXPECT_EQ(timed.find("FromArrow("), std::string::npos) << timed;
+}
+
+TEST(CsVisitor, AMessageEmbeddingABlockedOneIsBlockedToo) {
+    // Wraps embeds Timed, whose own conversion waits; converting Wraps would need Timed's
+    // ToArrowColumns, which does not exist, so the block propagates and says so.
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const std::string wraps = ClassBody(CSharp(file), "Wraps");
+    ExpectContains(
+        wraps,
+        "    // ToArrow and FromArrow are not generated: field 'timed' is a message whose "
+        "own conversion waits.\n");
+    EXPECT_EQ(wraps.find("ToArrowColumns("), std::string::npos) << wraps;
+}
+
+TEST(CsVisitor, EveryConvertibleMessageGetsBothHalves) {
+    // The other side of the two cases above: no message whose fields all convert is left
+    // without ToArrow, ToArrowColumns and FromArrow.
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const std::string cs = CSharp(file);
+    for (const char* name : {"Player", "Player_Stats", "Sample", "Holder", "Clock"}) {
+        const std::string body = ClassBody(cs, name);
+        EXPECT_NE(body.find(" ToArrow("), std::string::npos) << name;
+        EXPECT_NE(body.find(" ToArrowColumns("), std::string::npos) << name;
+        EXPECT_NE(body.find(" FromArrow("), std::string::npos) << name;
+    }
 }

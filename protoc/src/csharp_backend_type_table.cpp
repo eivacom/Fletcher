@@ -27,7 +27,7 @@ const std::set<std::string, std::less<>>& ReservedMemberNames() {
         "Types", "Descriptor", "Equals", "ToString", "GetHashCode", "WriteTo", "Clone",
         "CalculateSize", "MergeFrom", "OnConstruction", "Parser",
         // The generated class's own members.
-        "Schema", "ToArrow", "FromArrow"};
+        "Schema", "ToArrow", "FromArrow", "ToArrowColumns"};
     return kNames;
 }
 

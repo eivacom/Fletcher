@@ -46,6 +46,16 @@ public readonly record struct Timestamp(long Value, TimeUnit Unit, string? TimeZ
         return new DateTimeOffset(ticks, TimeSpan.Zero);
     }
 
+    /// <summary>The same instant counted in <paramref name="unit"/>, exactly; the timezone is kept.</summary>
+    /// <remarks>
+    /// This is how a value enters an Arrow column of a fixed unit: generated <c>ToArrow</c>
+    /// calls it with the column's unit. A finer unit is always exact; a coarser one is
+    /// refused rather than rounded when the value has a remainder.
+    /// </remarks>
+    /// <exception cref="ArgumentException"><paramref name="unit"/> is coarser and the value is not a whole number of it.</exception>
+    /// <exception cref="OverflowException">The count in a finer <paramref name="unit"/> does not fit in 64 bits.</exception>
+    public Timestamp WithUnit(TimeUnit unit) => new(UnitMath.Recount(Value, Unit, unit), unit, TimeZone);
+
     /// <summary>Builds a timestamp counting <paramref name="unit"/>s from a <see cref="DateTimeOffset"/>.</summary>
     /// <param name="value">The instant. Its offset is ignored: only the UTC instant is kept.</param>
     /// <param name="unit">The unit to count in. A unit coarser than 100 ns floors the sub-unit part.</param>

@@ -12,10 +12,10 @@
 //   * Player holds a list, a nested struct, a map, a list of structs, an enum alias and
 //     a member starting with a digit, and fields named after the class, a C# keyword,
 //     one of protoc's reserved members and one of ours: its Schema is compared with the
-//     plugin's .ipc, and its conversion is BIND-6c's;
+//     plugin's .ipc, and it round-trips through ToArrow / FromArrow (BIND-6c-2);
 //   * Timed holds the date-time and wrapper types: their Schema is compared, and since 6c
 //     their properties are the lossless Eiva.Fletcher.Model types (D-BIND-74), absent-able
-//     only for the `optional` one; its conversion is BIND-6c's.
+//     only for the `optional` one; they round-trip to the nanosecond (BIND-6c-2).
 syntax = "proto3";
 
 package integration.protoc_dotnet;

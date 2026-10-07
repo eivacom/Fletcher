@@ -164,6 +164,8 @@ TEST(CsNames, TheGeneratedClassOwnMembersAreSuffixed) {
     EXPECT_EQ(cs::CsPropertyName("schema", m), "Schema_");
     EXPECT_EQ(cs::CsPropertyName("to_arrow", m), "ToArrow_");
     EXPECT_EQ(cs::CsPropertyName("from_arrow", m), "FromArrow_");
+    // BIND-6c-2 added ToArrowColumns, the columns a message embedding this one reuses.
+    EXPECT_EQ(cs::CsPropertyName("to_arrow_columns", m), "ToArrowColumns_");
     // A name merely CONTAINING a reserved word is left alone.
     EXPECT_EQ(cs::CsPropertyName("schema_version", m), "SchemaVersion");
 }

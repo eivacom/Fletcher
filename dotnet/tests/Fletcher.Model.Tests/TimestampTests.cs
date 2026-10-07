@@ -156,4 +156,35 @@ public class TimestampTests
     {
         Assert.Throws<ArgumentOutOfRangeException>(() => new Timestamp(1L, (TimeUnit)99).ToDateTimeOffset());
     }
+
+    [Theory]
+    [InlineData(3L, TimeUnit.Second, TimeUnit.Nanosecond, 3_000_000_000L)]
+    [InlineData(3L, TimeUnit.Millisecond, TimeUnit.Microsecond, 3_000L)]
+    [InlineData(-7L, TimeUnit.Microsecond, TimeUnit.Nanosecond, -7_000L)]
+    [InlineData(5_000_000_000L, TimeUnit.Nanosecond, TimeUnit.Second, 5L)]
+    [InlineData(-4_000L, TimeUnit.Millisecond, TimeUnit.Second, -4L)]
+    [InlineData(42L, TimeUnit.Millisecond, TimeUnit.Millisecond, 42L)]
+    public void WithUnitRecountsExactly(long value, TimeUnit from, TimeUnit to, long expected)
+    {
+        var recounted = new Timestamp(value, from, "Europe/Copenhagen").WithUnit(to);
+
+        Assert.Equal(new Timestamp(expected, to, "Europe/Copenhagen"), recounted);
+    }
+
+    [Theory]
+    [InlineData(1_500L, TimeUnit.Millisecond, TimeUnit.Second)]
+    [InlineData(-1L, TimeUnit.Nanosecond, TimeUnit.Microsecond)]
+    [InlineData(123_456_789L, TimeUnit.Nanosecond, TimeUnit.Millisecond)]
+    public void WithUnitRefusesToDropARemainder(long value, TimeUnit from, TimeUnit to)
+    {
+        // The step that puts a value into a column of fixed unit must not be where a digit
+        // is lost: D-BIND-26 allows that only in a conversion the caller names.
+        Assert.Throws<ArgumentException>(() => new Timestamp(value, from).WithUnit(to));
+    }
+
+    [Fact]
+    public void WithUnitRefusesToOverflowAFinerUnit()
+    {
+        Assert.Throws<OverflowException>(() => new Timestamp(long.MaxValue / 10, TimeUnit.Second).WithUnit(TimeUnit.Nanosecond));
+    }
 }
