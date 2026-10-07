@@ -168,28 +168,43 @@ std::string CsVisitor::GenerateMessage(const Descriptor* msg) {
     for (size_t i = 0; i < records.size(); ++i) {
         const auto& rec = records[i];
         const IrNode& node = *rec.node;
+        const auto field_type = CsFieldTypeOf(node, file_);
+        if (!field_type.has_value()) {
+            // The one way a mapped field gets no type today: it uses a message declared in
+            // another file (a repeated google.protobuf.Timestamp is one: the IR maps it as a
+            // struct, not as a timestamp), and cross-file is BIND-6e's.
+            o << "    // Not generated yet (BIND-6e): field '" << rec.name << "' ("
+              << PendingKind(node) << ") has no C# type here.\n";
+            if (pending.empty())
+                pending = "field '" + rec.name + "' is " + PendingReason(node) + ".";
+            continue;
+        }
+        const bool nullable = field_type->nullable;
+        const std::string property = CsPropertyName(rec.name, msg);
+        o << "    public " << field_type->type_text << (nullable ? "?" : "") << " " << property
+          << " { get; set; }";
+        // A collection starts empty and a non-nullable reference starts as the proto
+        // default, never null, so the property honours its own annotation.
+        if (field_type->is_collection)
+            o << " = new();";
+        else if (field_type->is_reference && !nullable)
+            o << (field_type->type_text == "string" ? " = \"\";"
+                                                    : " = global::System.Array.Empty<byte>();");
+        o << "\n";
+
+        // Conversion is generated while every field is a plain scalar; the first field
+        // that is not (a list, a message, a map, Timestamp or Duration) is named in the
+        // marker below, so no ToArrow can build a batch its own Schema disagrees with.
         std::optional<CsScalarInfo> info;
         if (node.kind == NodeKind::SCALAR) {
             const auto& s = std::get<ir::ScalarNode>(node.node);
             info = CsLookupScalar(s.logical_type, s.enum_identity);
         }
         if (!info.has_value()) {
-            o << "    // Not generated yet (BIND-6c): field '" << rec.name << "' ("
-              << PendingKind(node) << ").\n";
             if (pending.empty())
                 pending = "field '" + rec.name + "' is " + PendingReason(node) + ".";
             continue;
         }
-        const bool nullable = node.facts.nullable;
-        const std::string property = CsPropertyName(rec.name, msg);
-        o << "    public " << info->type_text << (nullable ? "?" : "") << " " << property
-          << " { get; set; }";
-        // A non-nullable reference starts as the proto default, never null, so the
-        // property honours its own annotation.
-        if (info->is_reference && !nullable)
-            o << (info->type_text == "string" ? " = \"\";"
-                                              : " = global::System.Array.Empty<byte>();");
-        o << "\n";
         columns.push_back({i, property, *info, nullable});
     }
 

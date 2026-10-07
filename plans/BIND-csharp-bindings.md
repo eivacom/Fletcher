@@ -1499,8 +1499,15 @@ codec step.
 - **6c, first step, 2026-10-06 (D-BIND-74):** `Eiva.Fletcher.Model` is scaffolded at
   `dotnet/src/Fletcher.Model` with its tests in `tests/Fletcher.Model.Tests`: the lossless
   `Timestamp` and `Duration` over Arrow's `TimeUnit`, `Apache.Arrow` only. 47 cases per
-  TFM, six mutants caught. Nothing references it yet; the 6c generator will, writing
-  `global::Eiva.Fletcher.Model.Timestamp`.
+  TFM, six mutants caught.
+- **6c-1, 2026-10-07 (D-BIND-75):** every field whose type is generated in the file gets its
+  property: `List<T>` for a repeated field, `List<KeyValuePair<K,V>>` for a map (order and
+  duplicates kept, as C++'s pairs do), the generated class (`?` when absent) for a message,
+  and the `Eiva.Fletcher.Model` types for Timestamp and Duration, nullable where the schema
+  is. A message from another file has no class yet, so its field is a comment naming BIND-6e.
+  `ToArrow` / `FromArrow` still wait for 6c-2. 139/139 plugin tests (clang-format-18 clean),
+  and `integration-tests/protoc-dotnet` 20/20 on Linux with `Fletcher.Model` referenced and
+  every analyser as an error.
 
 ### BIND-7 — Arrow view + accessor emitters + capstone third arm
 

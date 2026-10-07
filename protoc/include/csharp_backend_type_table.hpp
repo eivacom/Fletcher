@@ -40,6 +40,31 @@ struct CsScalarInfo {
 std::optional<CsScalarInfo> CsLookupScalar(const ir::LogicalType& type,
                                            const std::optional<ir::EnumIdentity>& enum_identity);
 
+// How one field's property is declared on the row class (BIND-6c). Every field the IR
+// maps has one, including the ones ToArrow / FromArrow cannot convert yet.
+struct CsFieldType {
+    std::string type_text;       // the property's type, without a trailing '?'
+    bool is_collection = false;  // a List<...>: never null, starts empty
+    bool nullable = false;       // the property is annotated `?` (an absent value is null)
+    bool is_reference =
+        false;  // a scalar reference type (string, byte[]) defaulted when not nullable
+};
+
+// The C# property type for an IR field node, or nullopt for a node this backend has
+// no type for. The shapes (D-BIND-75):
+//   scalar            the CsLookupScalar type
+//   Timestamp/Duration  global::Eiva.Fletcher.Model.Timestamp / Duration (D-BIND-26, D-BIND-74),
+//                     nullable only where the field is (the schema says which)
+//   message           the generated class, `?` when the field can be absent
+//   repeated T        List<T>
+//   map<K,V>          List<KeyValuePair<K,V>>: entry order is on the wire, and C++'s row class
+//                     holds ordered pairs too, so a Dictionary's unspecified order is refused
+// A message type is named as `CsTypeName` names it, in the namespace of `current_file`, the
+// file being generated. A message declared in another file has no class there yet, so such a
+// field has no type (nullopt): cross-file is BIND-6e.
+std::optional<CsFieldType> CsFieldTypeOf(const ir::IrNode& node,
+                                         const google::protobuf::FileDescriptor* current_file);
+
 // The Apache.Arrow C# expression for a nanoarrow scalar type, e.g. NANOARROW_TYPE_INT32 ->
 // "global::Apache.Arrow.Types.Int32Type.Default", or nullopt for one the proto mapping never
 // produces (BIND-6b; the schema sink renders through these).

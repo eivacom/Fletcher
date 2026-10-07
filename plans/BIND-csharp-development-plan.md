@@ -728,8 +728,11 @@ class name, protoc's eleven reserved member names, and our own `Schema`, `ToArro
 `FromArrow`. **Temporal types, ruled 2026-10-05 (D-BIND-74):** the lossless `Timestamp`
 and `Duration` structs live in a fourth package, `Eiva.Fletcher.Model`, that references
 `Apache.Arrow` alone, so the model layer stays Arrow-only and one type serves every
-assembly. **Slices:** 6a plumbing, type table, visitor, classes and enums with scalar
-fields; 6b `Schema`, `ToArrow`/`FromArrow` and `integration-tests/protoc-dotnet`; 6c
+assembly. **Property shapes, ruled 2026-10-07 (D-BIND-75):** a map is `List<KeyValuePair<K,V>>`
+(entry order is on the wire and C++ holds ordered pairs, so a `Dictionary` is refused), a
+repeated field is `List<T>`, a message field is the generated class, and Timestamp and
+Duration are nullable where the schema is. **Slices:** 6a plumbing, type table, visitor,
+classes and enums with scalar fields; 6b `Schema`, `ToArrow`/`FromArrow` and `integration-tests/protoc-dotnet`; 6c
 composite and temporal types; 6d topics and the native pair; 6e cross-file, NativeAOT,
 side by side with protoc's C#, and the review. **Build integration, ruled 2026-09-29
 (D-BIND-71):** the shared pattern, one plugin binary and a thin locator per

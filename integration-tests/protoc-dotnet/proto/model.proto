@@ -13,7 +13,9 @@
 //     a member starting with a digit, and fields named after the class, a C# keyword,
 //     one of protoc's reserved members and one of ours: its Schema is compared with the
 //     plugin's .ipc, and its conversion is BIND-6c's;
-//   * Timed holds the date-time and wrapper types, for the Schema only.
+//   * Timed holds the date-time and wrapper types: their Schema is compared, and since 6c
+//     their properties are the lossless Eiva.Fletcher.Model types (D-BIND-74), absent-able
+//     only for the `optional` one; its conversion is BIND-6c's.
 syntax = "proto3";
 
 package integration.protoc_dotnet;
@@ -73,4 +75,5 @@ message Timed {
   google.protobuf.Timestamp at = 1;
   google.protobuf.Duration took = 2;
   google.protobuf.Int32Value boxed = 3;
+  optional google.protobuf.Timestamp maybe_at = 4;
 }

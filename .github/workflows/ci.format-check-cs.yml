@@ -58,6 +58,16 @@ jobs:
             integration-tests/pubsub-transport-conformance/dotnet/PubSubTransportConformance/PubSubTransportConformance.csproj \
             integration-tests/protoc-dotnet/dotnet/ProtocDotnet/ProtocDotnet.csproj; do
             echo "::group::dotnet format $PROJECT"
-            dotnet format "$PROJECT" --verify-no-changes --severity warn
+            # ProtocDotnet's model types (Reading, Player, Timed, ...) are written by protoc
+            # in its own build target, so format's design-time load, which runs no protoc,
+            # cannot see them. That load used to fail quietly; since D-BIND-74 the project
+            # references Fletcher.Model, and the same load then REPORTS every use of a
+            # generated type as CS0246. Those are not formatting findings, so they are
+            # excluded for this project only; the build proves the types resolve.
+            EXTRA=()
+            case "$PROJECT" in
+              *ProtocDotnet.csproj) EXTRA=(--exclude-diagnostics CS0246) ;;
+            esac
+            dotnet format "$PROJECT" --verify-no-changes --severity warn "${EXTRA[@]}"
             echo '::endgroup::'
           done

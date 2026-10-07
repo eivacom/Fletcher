@@ -17,7 +17,10 @@
 #include <google/protobuf/compiler/code_generator.h>
 #include <google/protobuf/descriptor.h>
 #include <google/protobuf/descriptor.pb.h>
+#include <google/protobuf/duration.pb.h>
 #include <google/protobuf/io/zero_copy_stream_impl_lite.h>
+#include <google/protobuf/timestamp.pb.h>
+#include <google/protobuf/wrappers.pb.h>
 #include <gtest/gtest.h>
 
 #include <map>
@@ -66,11 +69,37 @@ FieldDescriptorProto* AddField(
 //   double value = 6;  string name = 7;  optional string note = 8;  bytes blob = 9;
 //   Color color = 10;  optional Color tint = 11;  optional int32 maybe = 12;
 // }
+// message Timed {   // the well-known types (BIND-6c)
+//   google.protobuf.Timestamp at = 1;  google.protobuf.Duration took = 2;
+//   google.protobuf.Int32Value boxed = 3;  repeated google.protobuf.Timestamp marks = 4;
+//   optional google.protobuf.Timestamp maybe_at = 5;
+// }
+// message Holder {   // a message field and a repeated one, of generated classes
+//   Player.Stats best = 1;  repeated Player.Stats history = 2;  map<string, Player.Stats> by_name =
+//   3;
+// }
 const FileDescriptor* BuildFixture(DescriptorPool& pool) {
+    // The well-known files the fixture imports, copied into the local pool. Naming a
+    // linked-in C++ WKT type forces its descriptor to register.
+    const FileDescriptor* wkt_files[] = {
+        google::protobuf::Timestamp::GetDescriptor()->file(),
+        google::protobuf::Duration::GetDescriptor()->file(),
+        google::protobuf::Int32Value::GetDescriptor()->file(),  // wrappers.proto
+    };
+    for (const FileDescriptor* wkt : wkt_files) {
+        if (pool.FindFileByName(wkt->name()) != nullptr) continue;
+        FileDescriptorProto copy;
+        wkt->CopyTo(&copy);
+        if (pool.BuildFile(copy) == nullptr) return nullptr;
+    }
+
     FileDescriptorProto fdp;
     fdp.set_name("player.proto");
     fdp.set_package("integration");
     fdp.set_syntax("proto3");
+    fdp.add_dependency("google/protobuf/timestamp.proto");
+    fdp.add_dependency("google/protobuf/duration.proto");
+    fdp.add_dependency("google/protobuf/wrappers.proto");
     fdp.mutable_options()->set_csharp_namespace("Eiva.Integration");
 
     auto* color = fdp.add_enum_type();
@@ -150,6 +179,40 @@ const FileDescriptor* BuildFixture(DescriptorPool& pool) {
     s->add_oneof_decl()->set_name("_note");
     s->add_oneof_decl()->set_name("_tint");
     s->add_oneof_decl()->set_name("_maybe");
+
+    auto* timed = fdp.add_message_type();
+    timed->set_name("Timed");
+    AddField(timed, "at", 1, FieldDescriptorProto::TYPE_MESSAGE)
+        ->set_type_name(".google.protobuf.Timestamp");
+    AddField(timed, "took", 2, FieldDescriptorProto::TYPE_MESSAGE)
+        ->set_type_name(".google.protobuf.Duration");
+    AddField(timed, "boxed", 3, FieldDescriptorProto::TYPE_MESSAGE)
+        ->set_type_name(".google.protobuf.Int32Value");
+    AddField(timed, "marks", 4, FieldDescriptorProto::TYPE_MESSAGE,
+             FieldDescriptorProto::LABEL_REPEATED)
+        ->set_type_name(".google.protobuf.Timestamp");
+    auto* maybe_at = AddField(timed, "maybe_at", 5, FieldDescriptorProto::TYPE_MESSAGE);
+    maybe_at->set_type_name(".google.protobuf.Timestamp");
+    maybe_at->set_proto3_optional(true);
+    maybe_at->set_oneof_index(0);
+    timed->add_oneof_decl()->set_name("_maybe_at");
+
+    auto* holder = fdp.add_message_type();
+    holder->set_name("Holder");
+    AddField(holder, "best", 1, FieldDescriptorProto::TYPE_MESSAGE)
+        ->set_type_name(".integration.Player.Stats");
+    AddField(holder, "history", 2, FieldDescriptorProto::TYPE_MESSAGE,
+             FieldDescriptorProto::LABEL_REPEATED)
+        ->set_type_name(".integration.Player.Stats");
+    auto* by_name = holder->add_nested_type();
+    by_name->set_name("ByNameEntry");
+    by_name->mutable_options()->set_map_entry(true);
+    AddField(by_name, "key", 1, FieldDescriptorProto::TYPE_STRING);
+    AddField(by_name, "value", 2, FieldDescriptorProto::TYPE_MESSAGE)
+        ->set_type_name(".integration.Player.Stats");
+    AddField(holder, "by_name", 3, FieldDescriptorProto::TYPE_MESSAGE,
+             FieldDescriptorProto::LABEL_REPEATED)
+        ->set_type_name(".integration.Holder.ByNameEntry");
 
     return pool.BuildFile(fdp);
 }
@@ -251,12 +314,100 @@ TEST(CsVisitor, PropertyNamesFollowDBind73) {
     ExpectContains(cs, "    public string Schema_ { get; set; } = \"\";\n");
 }
 
-TEST(CsVisitor, CompositeFieldsAreMarkedNotDroppedSilently) {
+TEST(CsVisitor, ListsAreNonNullListsThatStartEmpty) {
     DescriptorPool pool;
     const FileDescriptor* file = BuildFixture(pool);
     ASSERT_NE(file, nullptr);
     const std::string cs = CSharp(file);
-    ExpectContains(cs, "    // Not generated yet (BIND-6c): field 'scores' (list).\n");
+    ExpectContains(cs,
+                   "    public global::System.Collections.Generic.List<int> Scores { get; set; }"
+                   " = new();\n");
+    ExpectContains(cs,
+                   "    public global::System.Collections.Generic.List<Player_Stats> History"
+                   " { get; set; } = new();\n");
+}
+
+TEST(CsVisitor, MessageFieldsAreNullableReferencesToTheGeneratedClass) {
+    // A message field can be absent, and null is how C# says so: the same fact the
+    // schema records as a nullable struct column.
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const std::string cs = CSharp(file);
+    ExpectContains(cs, "    public Player_Stats? Stats { get; set; }\n");
+    ExpectContains(cs, "    public Player_Stats? Best { get; set; }\n");
+}
+
+TEST(CsVisitor, MapsAreOrderedListsOfPairsNotDictionaries) {
+    // D-BIND-75: entry order is on the wire and C++'s row class holds ordered pairs,
+    // so a Dictionary, whose enumeration order .NET leaves unspecified, is refused.
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const std::string cs = CSharp(file);
+    ExpectContains(cs,
+                   "    public global::System.Collections.Generic.List<"
+                   "global::System.Collections.Generic.KeyValuePair<string, int>> Tags"
+                   " { get; set; } = new();\n");
+    ExpectContains(cs,
+                   "    public global::System.Collections.Generic.List<"
+                   "global::System.Collections.Generic.KeyValuePair<string, Player_Stats>> ByName"
+                   " { get; set; } = new();\n");
+    EXPECT_EQ(cs.find("Dictionary<"), std::string::npos) << cs;
+}
+
+TEST(CsVisitor, TimestampAndDurationUseTheModelPackageNotDateTime) {
+    // D-BIND-26 and D-BIND-74: lossless, and named in full so a message called
+    // Timestamp in the same file cannot shadow them. They are nullable exactly where
+    // the schema says so: a plain Timestamp field is always present (its Arrow column is
+    // non-nullable), an `optional` one is not.
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const std::string cs = CSharp(file);
+    ExpectContains(cs, "    public global::Eiva.Fletcher.Model.Timestamp At { get; set; }\n");
+    ExpectContains(cs, "    public global::Eiva.Fletcher.Model.Duration Took { get; set; }\n");
+    ExpectContains(cs, "    public global::Eiva.Fletcher.Model.Timestamp? MaybeAt { get; set; }\n");
+    EXPECT_EQ(cs.find("DateTime"), std::string::npos) << cs;
+    EXPECT_EQ(cs.find("TimeSpan"), std::string::npos) << cs;
+}
+
+TEST(CsVisitor, AWrapperIsANullableScalar) {
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildFixture(pool);
+    ASSERT_NE(file, nullptr);
+    ExpectContains(CSharp(file), "    public int? Boxed { get; set; }\n");
+}
+
+TEST(CsVisitor, AMessageFromAnotherFileHasNoClassYetSoItsFieldIsAMarker) {
+    // `repeated google.protobuf.Timestamp` is mapped by the IR as a list of the struct
+    // seconds/nanos, and that struct is declared in timestamp.proto, not in this file.
+    // Naming it would emit a type that does not exist, so the field is a comment that
+    // names BIND-6e (cross-file) and ToArrow / FromArrow wait on it, as for any field
+    // conversion cannot yet carry.
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const std::string timed = ClassBody(CSharp(file), "Timed");
+    ExpectContains(
+        timed, "    // Not generated yet (BIND-6e): field 'marks' (list) has no C# type here.\n");
+    EXPECT_EQ(timed.find(" Marks "), std::string::npos) << timed;
+}
+
+TEST(CsVisitor, EveryOtherFieldGetsAPropertyEvenWhereConversionWaits) {
+    // 6c's first step gives every field whose type is generated here its property;
+    // ToArrow / FromArrow for the composite ones follow. Only the cross-file field above
+    // is a comment.
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const std::string cs = CSharp(file);
+    size_t markers = 0;
+    for (size_t at = cs.find("// Not generated yet (BIND-6e)"); at != std::string::npos;
+         at = cs.find("// Not generated yet (BIND-6e)", at + 1))
+        ++markers;
+    EXPECT_EQ(markers, 1u) << cs;
+    EXPECT_EQ(cs.find("Not generated yet (BIND-6c): field"), std::string::npos) << cs;
 }
 
 TEST(CsVisitor, CsharpTokenChangesNoExistingOutputAndAddsExactlyOneFile) {

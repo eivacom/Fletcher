@@ -33,9 +33,12 @@ on:
 # the project's own target refuses to build without them, so an empty find cannot
 # turn into a green run over nothing.
 #
-# THE CHECKOUT INCLUDES dotnet/ for one file, dotnet/global.json: the Windows leg's
-# setup-dotnet reads the SDK pin from it. A new consumer of a path outside this
-# lane's checkout adds it HERE and to ci.pr.yml's filter, in the same commit.
+# THE CHECKOUT INCLUDES dotnet/ for two reasons. dotnet/global.json: the Windows leg's
+# setup-dotnet reads the SDK pin from it. And, since D-BIND-74, the project references
+# dotnet/src/Fletcher.Model (the lossless Timestamp and Duration), which takes its
+# framework targets and analyser settings from dotnet/Directory.Build.props and
+# dotnet/.editorconfig. A new consumer of a path outside this lane's checkout adds it
+# HERE and to ci.pr.yml's filter, in the same commit.
 jobs:
   linux:
     runs-on: ubuntu-latest

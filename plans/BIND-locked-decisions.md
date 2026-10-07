@@ -2522,3 +2522,35 @@ accessors do, for capstone parity (Q18).
   list, `dotnet/README.md`). `Eiva.Fletcher` MAY reference `Eiva.Fletcher.Model`; the reverse
   never. The package name and namespace were chosen by the assistant and are open to the
   maintainer's rename until BIND-9.
+
+- **D-BIND-75 - the shapes of a generated class's properties: a map is an ORDERED LIST OF PAIRS,
+  and the rest follow from D-BIND-26, 69, 72 and 74.** *The map shape LOCKED BY THE MAINTAINER
+  2026-10-07,* in one question at the start of slice 6c-1. The other shapes were stated with that
+  question and are set out here for review with the commit that implements them.
+
+  **WHY the map needed ruling.** A proto `map<K,V>` is an Arrow map, whose entry order is on the wire,
+  and C++'s generated row class holds it as `std::vector<std::pair<K,V>>`. A C# `Dictionary<K,V>`
+  enumerates in an order .NET leaves unspecified (insertion order in practice, until a removal) and
+  cannot hold a duplicate key, so a C#-versus-C++ wire comparison (6d) could fail for a reason the
+  model hides.
+
+  **THE SHAPES** (all in `csharp_backend_type_table`, `CsFieldTypeOf`):
+  - **map<K,V>** is `List<KeyValuePair<K,V>>`, never null, empty by default. Order and duplicates round
+    trip. A lookup-by-key type of our own was declined: it would put a third thing in
+    `Eiva.Fletcher.Model`, which D-BIND-74 limits to `Timestamp` and `Duration`.
+  - **repeated T** is `List<T>`, never null, empty by default.
+  - **A message field** is the generated class, `?` when the field can be absent.
+  - **Timestamp and Duration** are `global::Eiva.Fletcher.Model.Timestamp` / `Duration`, nullable
+    exactly where the schema is: a plain field is always present (its Arrow column is non-nullable), an
+    `optional` one is `?`. Wrappers stay nullable scalars. Named in full, so a message called
+    `Timestamp` in the same file cannot shadow them.
+  - **A message declared in another file has no class in this one**, so such a field is a comment
+    naming BIND-6e (cross-file) and `ToArrow` / `FromArrow` wait on it. This includes
+    `repeated google.protobuf.Timestamp`, which the IR maps as a list of the struct `seconds`/`nanos`,
+    not as a list of timestamps: that is how the schema already treats it, and the C# type follows.
+
+  **A test that could not fail.** `TheModelReferencesNothingOfFletchers` looked for assembly names
+  starting `Eiva.Fletcher`, but the assemblies are named after their projects (`Fletcher`,
+  `Fletcher.Interop`, `Fletcher.Model`), so it could not have caught a reference to any of them. It is
+  now `TheModelReferencesApacheArrowAndFletcherModelAndNothingElseOfFletchers`, looking for the real
+  names. It surfaced when `Eiva.Fletcher.Model` was added as a reference and the assertion for it failed.

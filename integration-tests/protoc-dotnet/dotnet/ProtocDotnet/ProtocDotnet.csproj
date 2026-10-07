@@ -33,11 +33,16 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Apache.Arrow and the test framework, and NOTHING of Fletcher's: the generated
-         model must compile against Apache.Arrow alone (D-BIND-72). A reference to
-         Eiva.Fletcher here would hide exactly the failure this project exists to
-         catch, and a test asserts the compiled assembly has none. -->
+    <!-- Apache.Arrow, the test framework, and Eiva.Fletcher.Model: the generated model
+         must compile against Apache.Arrow alone (D-BIND-72), and the one Fletcher
+         assembly it may add is Model, which holds the lossless Timestamp and Duration
+         (D-BIND-74) and is itself Apache.Arrow only. A reference to Eiva.Fletcher here
+         would hide exactly the failure this project exists to catch, and a test
+         asserts the compiled assembly references no Fletcher assembly but Model.
+         A ProjectReference because the package is not published until BIND-9; a
+         consumer writes a PackageReference. -->
     <PackageReference Include="Apache.Arrow" Version="[23.0.0]" />
+    <ProjectReference Include="../../../../dotnet/src/Fletcher.Model/Fletcher.Model.csproj" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="[18.10.0]" />
     <PackageReference Include="xunit" Version="[2.9.3]" />
     <PackageReference Include="xunit.runner.visualstudio" Version="[3.1.5]" />

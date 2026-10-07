@@ -681,6 +681,35 @@ Apache.Arrow alone (D-BIND-72).
   case `BacklogNeverInterleavesWithLiveSamples`, failed once with "nothing arrived at all" on a commit
   that touched no C++; across 40 runs that is one data point, so it is on a watch list, not fixed.
 
+**6c-1, every field gets its property (2026-10-07, D-BIND-75).** 6c was split as 6b was: 6c-1 gives each
+field a typed property, 6c-2 converts the composite ones. The maintainer ruled one question first, the
+map shape, and the rest followed from earlier rulings.
+
+- **A map is an ordered list of pairs.** `List<KeyValuePair<K,V>>`, because the Arrow map keeps entry
+  order and duplicates on the wire, and C++'s row class holds `std::vector<std::pair<K,V>>`. A
+  `Dictionary` would enumerate in an order .NET leaves unspecified, so 6d's byte comparison against C++
+  could fail for a reason the model hides. A lookup type of our own was declined: it would be a third
+  type in `Eiva.Fletcher.Model`.
+- **The other shapes:** a repeated field is `List<T>`, a message field is the generated class (`?` when
+  absent), and Timestamp and Duration are the `Eiva.Fletcher.Model` types, `?` only where the schema's
+  column is nullable. `CsFieldTypeOf` in the type table is the one place that decides.
+- **The test found two things I had wrong.** I had written `Timestamp?` for a plain Timestamp field; the
+  schema says its column is non-nullable, so a plain field is always present and only an `optional` one
+  is `?`. And `repeated google.protobuf.Timestamp` is not a list of timestamps in this IR but a list of
+  the struct `seconds`/`nanos`, declared in another file, so naming its C# type would emit a class that
+  does not exist. Such a field is now a comment naming BIND-6e, and conversion waits on it.
+- **Verified:** 139/139 plugin tests, clang-format-18 clean, and the generated file builds with every
+  analyser as an error in `integration-tests/protoc-dotnet`, now referencing `Fletcher.Model`: 20/20 on
+  Linux. Windows is CI's.
+- **A test that could not fail, found on the way.** The model-references-nothing test looked for assembly
+  names starting `Eiva.Fletcher`; the assemblies are named after their projects, so it would never have
+  fired for the codec, the interop package or the gateway client. It now looks for `Fletcher`,
+  `Fletcher.*` and requires exactly `Fletcher.Model`.
+- **The format lane changed with it.** Referencing `Fletcher.Model` made `dotnet format`'s design-time
+  load, which runs no protoc, report every generated type as CS0246 where it used to fail quietly; the
+  lane now excludes that one diagnostic for this project only, and the ci.pr filter and the lane's
+  comment name `Fletcher.Model`, `Directory.Build.props` and `.editorconfig` as inputs.
+
 **Tooling now.** The machine lost Python, Conan, CMake and Node in a crash on 2026-10-02. The plugin is
 built and tested in the Linux devcontainer (`eivaorg/fletcher-devcontainer:main`); the image has no
 .NET SDK, so generated C# is compiled on Windows, where the SDK survived.

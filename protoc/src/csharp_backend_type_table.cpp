@@ -72,6 +72,83 @@ std::optional<CsScalarInfo> CsLookupScalar(const ir::LogicalType& type,
     }
 }
 
+namespace {
+
+// The two well-known types that need a C# type of their own live in Eiva.Fletcher.Model
+// (D-BIND-74), named in full so a message called Timestamp in the file cannot shadow them.
+constexpr const char* kModelTimestamp = "global::Eiva.Fletcher.Model.Timestamp";
+constexpr const char* kModelDuration = "global::Eiva.Fletcher.Model.Duration";
+
+// The type of one list element or map entry part: no nullability, no collection.
+std::optional<std::string> ElementTypeText(const ir::IrNode& node,
+                                           const google::protobuf::FileDescriptor* current_file) {
+    if (node.kind == ir::NodeKind::STRUCT) {
+        const auto& s = std::get<ir::StructNode>(node.node);
+        // A message declared in another file has no generated class here: that is
+        // cross-file work (BIND-6e), and naming it would not compile. This includes
+        // google.protobuf.Timestamp as a list element, which the IR maps as a struct.
+        if (s.identity.descriptor == nullptr || s.identity.descriptor->file() != current_file)
+            return std::nullopt;
+        return CsTypeName(s.identity.descriptor);
+    }
+    if (node.kind != ir::NodeKind::SCALAR) return std::nullopt;
+    const auto& s = std::get<ir::ScalarNode>(node.node);
+    if (const auto info = CsLookupScalar(s.logical_type, s.enum_identity)) return info->type_text;
+    if (s.logical_type.kind == ir::LogicalKind::WKT_TIMESTAMP) return std::string(kModelTimestamp);
+    if (s.logical_type.kind == ir::LogicalKind::WKT_DURATION) return std::string(kModelDuration);
+    return std::nullopt;
+}
+
+}  // namespace
+
+std::optional<CsFieldType> CsFieldTypeOf(const ir::IrNode& node,
+                                         const google::protobuf::FileDescriptor* current_file) {
+    CsFieldType out;
+    switch (node.kind) {
+        case ir::NodeKind::SCALAR: {
+            const auto& s = std::get<ir::ScalarNode>(node.node);
+            auto text = ElementTypeText(node, current_file);
+            if (!text) return std::nullopt;
+            out.type_text = std::move(*text);
+            out.nullable = node.facts.nullable;
+            if (const auto info = CsLookupScalar(s.logical_type, s.enum_identity))
+                out.is_reference = info->is_reference;
+            return out;
+        }
+        case ir::NodeKind::STRUCT: {
+            auto text = ElementTypeText(node, current_file);
+            if (!text) return std::nullopt;
+            out.type_text = std::move(*text);
+            out.nullable = true;  // a message field can be absent
+            return out;
+        }
+        case ir::NodeKind::LIST: {
+            auto element =
+                ElementTypeText(*std::get<ir::ListNode>(node.node).element, current_file);
+            if (!element) return std::nullopt;
+            out.type_text = "global::System.Collections.Generic.List<" + *element + ">";
+            out.is_collection = true;
+            return out;
+        }
+        case ir::NodeKind::MAP: {
+            const auto& m = std::get<ir::MapNode>(node.node);
+            auto key = ElementTypeText(*m.key, current_file);
+            auto value = ElementTypeText(*m.value, current_file);
+            if (!key || !value) return std::nullopt;
+            out.type_text =
+                "global::System.Collections.Generic.List<"
+                "global::System.Collections.Generic.KeyValuePair<" +
+                *key + ", " + *value + ">>";
+            out.is_collection = true;
+            return out;
+        }
+        case ir::NodeKind::FIXED_SIZE_LIST:
+        case ir::NodeKind::UNSUPPORTED:
+            return std::nullopt;
+    }
+    return std::nullopt;
+}
+
 // ---------------------------------------------------------------------------
 // Apache.Arrow C# type expressions for the nanoarrow types SchemaVisitor sets
 // (BIND-6b). Fully qualified, so a generated class named Schema or Field cannot
