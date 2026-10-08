@@ -2611,3 +2611,24 @@ what D-BIND-49 and D-BIND-72 left to BIND-6.
   lambda. A lambda at the call site reads as it would with `Action`. **Declined:** `Action<<Msg>,
   AttachmentsBuilder>` with an owned copy (a copy per row whether read or not); keeping `Action` and
   requiring .NET 9 for the pair (a net8.0 consumer could not use the generated subscriber).
+
+The next one was ruled on 2026-10-07 at the start of slice 6e, cross-file references.
+
+- **D-BIND-80 - a message from another file builds its struct column through that class's public
+  `ToArrow`, never its internal `ToArrowColumns`; a message of the same file still lends
+  `ToArrowColumns`.** *LOCKED BY THE MAINTAINER 2026-10-07.* Since BIND-6e a field may name a message
+  from another file: its class is generated from that file (the consumer generates every file its
+  imports reach, as C++ includes the other file's `.fletcher.pb.h`), in that file's namespace,
+  `global::Fletcher.Gen.<Pkg>.<Name>` when the package differs. The consumer may compile that class into
+  ANOTHER assembly, a contracts project, and from there an `internal` member is absent: a call to
+  `ToArrowColumns` fails with CS0117 (measured by mutant in `integration-tests/protoc-dotnet`, whose
+  `ProtocDotnetShared` assembly holds `shared.proto` and `timestamp.proto`). So the embedding class
+  calls `<Other>.ToArrow(rows).Arrays` for the struct's children: the same arrays, built under the
+  other class's own `Schema`, plus one `RecordBatch` object per such column per call. A class of the
+  same file keeps the internal call, so every single-file output is byte-identical to before.
+  `repeated google.protobuf.Timestamp` is the common case: the IR maps it as timestamp.proto's struct
+  (D-BIND-75), so its element is `global::Fletcher.Gen.Google.Protobuf.Timestamp`, generated from
+  timestamp.proto. **Declined:** making `ToArrowColumns` public with `[EditorBrowsable(Never)]` (one path,
+  but a public member on every generated class that nobody should call); keeping it internal and
+  requiring every file in one assembly (a contracts assembly is the usual way to share messages, and
+  it would fail to compile).

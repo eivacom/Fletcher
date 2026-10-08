@@ -55,15 +55,16 @@ void CollectEnums(const Descriptor* msg, std::vector<const EnumDescriptor*>& out
 // Classification: what each column of a message converts as (BIND-6c-2).
 // ---------------------------------------------------------------------------
 
-// One list element, one map key or one map value: a mapped scalar, a message of this
-// file whose own class converts, or (6c-3) itself a list of such elements, which is how
-// a flatten wrapper around a repeated field nests: `repeated StructListWrapper` is a
+// One list element, one map key or one map value: a mapped scalar, a message whose own
+// class converts, or (6c-3) itself a list of such elements, which is how a flatten
+// wrapper around a repeated field nests: `repeated StructListWrapper` is a
 // list<list<struct>>.
 struct Elem {
     bool is_struct = false;
     bool is_list = false;
     CsScalarInfo scalar;          // when neither
     std::string cls;              // when is_struct
+    bool other_file = false;      // when is_struct: the class is generated from another file
     std::shared_ptr<Elem> inner;  // when is_list: the element of this inner list
 };
 
@@ -77,6 +78,7 @@ struct Column {
     CsScalarInfo scalar;        // SCALAR
     bool is_timestamp = false;  // TEMPORAL: Timestamp, else Duration
     std::string cls;            // STRUCT
+    bool other_file = false;    // STRUCT: the class is generated from another file
     Elem elem;                  // LIST element, MAP value
     Elem key;                   // MAP key
 };
@@ -84,11 +86,12 @@ struct Column {
 std::string ConversionBlocker(const Descriptor* msg, const FileDescriptor* file,
                               std::set<const Descriptor*>& visiting);
 
-// The reason a message-typed element or field cannot convert, or empty when it can.
+// The reason a message-typed element or field cannot convert, or empty when it can. A
+// message from another file converts when its own class does (BIND-6e): that class is
+// generated from its own file, by the same rules.
 std::string StructBlocker(const ir::StructNode& s, const FileDescriptor* file,
                           std::set<const Descriptor*>& visiting) {
-    if (s.identity.descriptor == nullptr || s.identity.descriptor->file() != file)
-        return "a message from another file (BIND-6e)";
+    if (s.identity.descriptor == nullptr) return "a message the IR does not identify";
     if (ConversionBlocker(s.identity.descriptor, file, visiting).empty()) return {};
     return "a message whose own conversion waits";
 }
@@ -101,12 +104,13 @@ std::optional<Elem> ElemOf(const IrNode& node, const FileDescriptor* file,
         if (!why.empty()) return std::nullopt;
         Elem e;
         e.is_struct = true;
-        e.cls = CsTypeName(s.identity.descriptor);
+        e.cls = CsTypeRef(s.identity.descriptor, file);
+        e.other_file = s.identity.descriptor->file() != file;
         return e;
     }
     if (node.kind == NodeKind::SCALAR) {
         const auto& s = std::get<ir::ScalarNode>(node.node);
-        if (auto info = CsLookupScalar(s.logical_type, s.enum_identity)) {
+        if (auto info = CsLookupScalar(s.logical_type, s.enum_identity, file)) {
             Elem e;
             e.scalar = *info;
             return e;
@@ -132,7 +136,7 @@ std::optional<Column> ClassifyColumn(const IrNode& node, const FileDescriptor* f
     switch (node.kind) {
         case NodeKind::SCALAR: {
             const auto& s = std::get<ir::ScalarNode>(node.node);
-            if (auto info = CsLookupScalar(s.logical_type, s.enum_identity)) {
+            if (auto info = CsLookupScalar(s.logical_type, s.enum_identity, file)) {
                 c.kind = ColKind::SCALAR;
                 c.scalar = *info;
                 return c;
@@ -152,7 +156,8 @@ std::optional<Column> ClassifyColumn(const IrNode& node, const FileDescriptor* f
             if (!why.empty()) return std::nullopt;
             c.kind = ColKind::STRUCT;
             c.nullable = true;  // as its property: a message field can be absent
-            c.cls = CsTypeName(s.identity.descriptor);
+            c.cls = CsTypeRef(s.identity.descriptor, file);
+            c.other_file = s.identity.descriptor->file() != file;
             return c;
         }
         case NodeKind::LIST: {
@@ -238,6 +243,15 @@ std::string ListOf(const std::string& t) {
     return "global::System.Collections.Generic.List<" + t + ">";
 }
 
+// The child arrays of a struct column of `cls`, built from `rows`. A class of this file lends
+// its internal ToArrowColumns. One from another file may be compiled into another assembly,
+// where internal is out of reach, so its public ToArrow builds them (D-BIND-80): the same
+// arrays, and one RecordBatch more per column.
+std::string ChildArrays(const std::string& cls, bool other_file, const std::string& rows) {
+    return other_file ? cls + ".ToArrow(" + rows + ").Arrays"
+                      : cls + ".ToArrowColumns(" + rows + ")";
+}
+
 std::string ElemTypeText(const Elem& e) {
     if (e.is_list) return ListOf(ElemTypeText(*e.inner));
     return e.is_struct ? e.cls : e.scalar.type_text;
@@ -273,7 +287,7 @@ std::string BuildElemArray(std::ostringstream& o, const Elem& e, const std::stri
     if (e.is_struct) {
         o << in << "var " << a << " = new global::Apache.Arrow.StructArray("
           << "(global::Apache.Arrow.Types.StructType)" << type << ", " << values << ".Count, "
-          << e.cls << ".ToArrowColumns(" << values << "), " << kEmpty << ", 0, 0);\n";
+          << ChildArrays(e.cls, e.other_file, values) << ", " << kEmpty << ", 0, 0);\n";
         return a;
     }
     const std::string b = "b" + id, x = "x" + id;
@@ -384,8 +398,8 @@ void EmitColumn(std::ostringstream& o, const Column& c) {
               << ".Append(false); }\n"
               << in << "}\n"
               << CountNulls(n) << in << "var c" << n << " = new global::Apache.Arrow.StructArray(t"
-              << n << ", rows.Count, " << c.cls << ".ToArrowColumns(r" << n << "), " << Bitmap(n)
-              << ", z" << n << ", 0);\n";
+              << n << ", rows.Count, " << ChildArrays(c.cls, c.other_file, "r" + n) << ", "
+              << Bitmap(n) << ", z" << n << ", 0);\n";
             return;
         }
         case ColKind::LIST: {
@@ -417,8 +431,8 @@ void EmitColumn(std::ostringstream& o, const Column& c) {
                   << in << "}\n"
                   << in << "var e" << n << " = new global::Apache.Arrow.StructArray("
                   << "(global::Apache.Arrow.Types.StructType)t" << n << ".ValueDataType, f" << n
-                  << ".Count, " << c.elem.cls << ".ToArrowColumns(f" << n << "), " << kEmpty
-                  << ", 0, 0);\n";
+                  << ".Count, " << ChildArrays(c.elem.cls, c.elem.other_file, "f" + n) << ", "
+                  << kEmpty << ", 0, 0);\n";
             } else {
                 o << in << "var b" << n << " = new " << ArrayClass(c.elem.scalar) << ".Builder();\n"
                   << in << "foreach (var row in rows)\n"
@@ -462,8 +476,9 @@ void EmitColumn(std::ostringstream& o, const Column& c) {
                 c.elem.is_struct
                     ? "new "
                       "global::Apache.Arrow.StructArray((global::Apache.Arrow.Types.StructType)t" +
-                          n + ".ValueField.DataType, f" + n + ".Count, " + c.elem.cls +
-                          ".ToArrowColumns(f" + n + "), " + kEmpty + ", 0, 0)"
+                          n + ".ValueField.DataType, f" + n + ".Count, " +
+                          ChildArrays(c.elem.cls, c.elem.other_file, "f" + n) + ", " + kEmpty +
+                          ", 0, 0)"
                     : "b" + n + ".Build()";
             o << in << "var kv" << n << " = new global::Apache.Arrow.StructArray(t" << n
               << ".KeyValueType, k" << n << ".Length, new global::Apache.Arrow.IArrowArray[] { k"
@@ -890,9 +905,9 @@ std::string CsVisitor::GenerateMessage(const Descriptor* msg) {
         const IrNode& node = *rec.node;
         const auto field_type = CsFieldTypeOf(node, file_);
         if (!field_type.has_value()) {
-            // A mapped field without a C# type says why, in the classifier's own words. The
-            // common case today is a message declared in another file (a repeated
-            // google.protobuf.Timestamp is one: the IR maps it as a struct), which is BIND-6e's.
+            // A mapped field without a C# type says why, in the classifier's own words. Since
+            // BIND-6e no field the proto mapping produces lands here; this guards an IR kind
+            // the table does not map yet.
             std::string why;
             std::set<const Descriptor*> seen{msg};
             ClassifyColumn(node, file_, seen, why);
@@ -989,7 +1004,7 @@ std::string CsVisitor::GenerateNativeFile() {
             continue;
         }
         // The pair publishes through ToArrow and reads through FromArrow, so a message
-        // whose conversion waits (a field from another file, BIND-6e) gets no pair.
+        // whose conversion waits, or a flatten wrapper, which has neither, gets no pair.
         std::set<const Descriptor*> visiting;
         const std::string blocker = ConversionBlocker(p.input, file_, visiting);
         const std::string msg = CsTypeName(p.input);

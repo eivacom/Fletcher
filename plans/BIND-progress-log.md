@@ -809,6 +809,35 @@ writes them, and the in-process test agreed with them on the first run.
   lists dropped, a duration off by one nanosecond. Each was caught. The sorted-map one is D-BIND-75's
   ruling seen on the wire: a `Dictionary` would have changed the bytes.
 
+**6e-1, types from another file (2026-10-07, D-BIND-80).**
+
+- **What was missing.** A field whose message was declared in another file had no property, only a
+  marker naming BIND-6e, and its message no conversion. The commonest case is `repeated
+  google.protobuf.Timestamp`, which the IR maps as timestamp.proto's struct. Reading the code also
+  turned up a latent bug: an enum from another package was named bare and would not have compiled.
+- **The naming follows C++.** C++ names `::fletcher_gen::<pkg>::<Name>` and includes the other
+  file's header, so its consumer generates every file its imports reach. C# now does the same:
+  `CsTypeRef` names the other file's class `global::Fletcher.Gen.<Pkg>.<Name>` (bare in the same
+  namespace), for messages and enums alike.
+- **The one ruling.** The embedding class used to build a struct column from the nested class's
+  `internal ToArrowColumns`. A consumer that keeps shared messages in a contracts assembly would then
+  not compile, so the maintainer ruled the cross-file path through the public `ToArrow` (D-BIND-80),
+  keeping the same-file call so single-file output did not move by a byte. The mutant that undoes it
+  measured the failure as CS0117, not CS0122 as first said: from another assembly an internal member is
+  not inaccessible but absent.
+- **What changed in the tests because the refusal is gone.** After 6e no `.proto` reaches the "not
+  generated" path: the IR drops recursion, oneofs and Any/Struct before C# sees them, and produces no
+  kind the C# table lacks. Four plugin cases used `Timed.marks` as their example of a blocked
+  conversion; they now assert the cross-file conversion instead, and the "no pair" branch is reached by
+  a flatten-wrapper input, the one reason a `.proto` still produces.
+- **Verified.** Plugin 156/156. The golden `Marks` gained its pair and the plugin's
+  `google/protobuf/timestamp.fletcher.cs` became a golden, so `Fletcher.Tests` (362/362, both TFMs)
+  publishes and receives a cross-file row over the native shim. `protoc-dotnet` gained
+  `ProtocDotnetShared`, a separate assembly generated from `shared.proto` and timestamp.proto, and
+  `Route`, which uses its types five ways: 28/28 on the first run, so four mutants were made, one
+  behavioural (two tests fail) and three that the compiler catches with exactly the error each rule
+  exists to prevent.
+
 **Tooling now.** The machine lost Python, Conan, CMake and Node in a crash on 2026-10-02. The plugin is
 built and tested in the Linux devcontainer (`eivaorg/fletcher-devcontainer:main`); the image has no
 .NET SDK, so generated C# is compiled on Windows, where the SDK survived.

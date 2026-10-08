@@ -29,6 +29,8 @@ using Fletcher.Gen.Golden.Pair;
 
 using Xunit;
 
+using PbTimestamp = Fletcher.Gen.Google.Protobuf.Timestamp;
+
 namespace Eiva.Fletcher.Tests;
 
 public sealed class GeneratedPairTests : IDisposable
@@ -229,11 +231,28 @@ public sealed class GeneratedPairTests : IDisposable
     }
 
     [Fact]
-    public void AMethodWhoseMessageCannotConvertGetsATopicButNoPair()
+    public void APairWhoseRowsCarryAnotherFilesMessageRoundTrips()
     {
-        // Mark's message waits for cross-file work (BIND-6e): its topic is in the model
-        // layer, and the native file names why it has no pair rather than omitting it.
+        // BIND-6e: Marks holds `repeated google.protobuf.Timestamp`, which the IR maps as a
+        // list of timestamp.proto's struct, so each element is the class generated from that
+        // file (a golden too) and its column is built by that class's public ToArrow
+        // (D-BIND-80). The native codec encodes and decodes it like any list of structs.
+        using var subscriber = new Telemetry_MarkSubscriber(_provider);
+        var seen = new List<string>();
+        using Subscription subscription = subscriber.Subscribe((row, attachments) =>
+            seen.Add(string.Join(",", row.At.Select(t => t.Seconds + ":" + t.Nanos))));
+        using var publisher = new Telemetry_MarkPublisher(_provider);
+
+        Marks[] sent =
+        {
+            new() { At = { new PbTimestamp { Seconds = 1_700_000_000, Nanos = 123_456_789 },
+                           new PbTimestamp { Seconds = long.MinValue, Nanos = -1 } } },
+            new(),
+            new() { At = { new PbTimestamp { Seconds = -1, Nanos = 999_999_999 } } },
+        };
+        publisher.Publish(sent);
+
+        Assert.Equal(new[] { "1700000000:123456789," + long.MinValue + ":-1", "", "-1:999999999" }, seen);
         Assert.Equal("golden.pair/Telemetry/Mark", Telemetry_MarkTopic.Key);
-        Assert.Null(typeof(Reading).Assembly.GetType("Fletcher.Gen.Golden.Pair.Telemetry_MarkPublisher"));
     }
 }

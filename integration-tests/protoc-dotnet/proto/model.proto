@@ -15,12 +15,17 @@
 //     plugin's .ipc, and it round-trips through ToArrow / FromArrow (BIND-6c-2);
 //   * Timed holds the date-time and wrapper types: their Schema is compared, and since 6c
 //     their properties are the lossless Eiva.Fletcher.Model types (D-BIND-74), absent-able
-//     only for the `optional` one; they round-trip to the nanosecond (BIND-6c-2).
+//     only for the `optional` one; they round-trip to the nanosecond (BIND-6c-2);
+//   * Route holds types from another file and package, shared.proto, whose classes are
+//     compiled into another assembly, and `repeated google.protobuf.Timestamp`, whose
+//     element is the class generated from timestamp.proto in that same assembly (BIND-6e,
+//     D-BIND-80): its Schema is compared and it round-trips like the others.
 syntax = "proto3";
 
 package integration.protoc_dotnet;
 option csharp_namespace = "Eiva.Integration.ShouldBeIgnored";
 
+import "shared.proto";
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/wrappers.proto";
@@ -76,4 +81,14 @@ message Timed {
   google.protobuf.Duration took = 2;
   google.protobuf.Int32Value boxed = 3;
   optional google.protobuf.Timestamp maybe_at = 4;
+}
+
+message Route {
+  integration.shared_types.Pos start = 1;
+  repeated integration.shared_types.Pos legs = 2;
+  map<string, integration.shared_types.Pos> stops = 3;
+  integration.shared_types.Quality quality = 4;
+  repeated integration.shared_types.Quality checks = 5;
+  integration.shared_types.Fix fix = 6;
+  repeated google.protobuf.Timestamp marks = 7;
 }

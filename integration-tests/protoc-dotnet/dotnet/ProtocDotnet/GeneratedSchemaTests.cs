@@ -32,7 +32,7 @@ namespace Eiva.Fletcher.ProtocDotnet;
 public sealed class GeneratedSchemaTests
 {
     public static TheoryData<string> Messages =>
-        new() { "Reading", "Player", "Player_Stats", "Timed" };
+        new() { "Reading", "Player", "Player_Stats", "Timed", "Route" };
 
     [Theory]
     [MemberData(nameof(Messages))]
@@ -44,6 +44,7 @@ public sealed class GeneratedSchemaTests
             "Player" => Player.Schema,
             "Player_Stats" => Player_Stats.Schema,
             "Timed" => Timed.Schema,
+            "Route" => Route.Schema,
             _ => throw new ArgumentOutOfRangeException(nameof(message)),
         };
         Schema ipc = ReadIpcSchema($"model.{message}.ipc");
@@ -78,7 +79,7 @@ public sealed class GeneratedSchemaTests
     {
         // A missing .ipc would make the theory above fail on a file error, which reads
         // like a generator fault. Say what is missing instead.
-        foreach (var name in new[] { "Reading", "Player", "Player_Stats", "Timed" })
+        foreach (var name in new[] { "Reading", "Player", "Player_Stats", "Timed", "Route" })
             Assert.True(File.Exists(Path.Combine(GenDir(), $"model.{name}.ipc")), $"model.{name}.ipc was not generated");
     }
 

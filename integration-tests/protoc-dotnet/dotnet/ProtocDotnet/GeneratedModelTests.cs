@@ -16,6 +16,7 @@ using Apache.Arrow.Types;
 using Eiva.Fletcher.Model;
 
 using Fletcher.Gen.Integration.ProtocDotnet;
+using Fletcher.Gen.Integration.SharedTypes;
 
 using Xunit;
 
@@ -52,6 +53,37 @@ public sealed class GeneratedModelTests
         Assert.Equal(2, (int)Color.DarkBlue);
         Assert.Equal(1, (int)Player_Mode._2D);
         Assert.Equal(1, (int)Player_Mode.Flat);
+    }
+
+    [Fact]
+    public void TypesFromAnotherFileAreThatFilesClassesInAnotherAssembly()
+    {
+        // BIND-6e: Route's property types are the classes generated from shared.proto and
+        // timestamp.proto, named in their own package's namespace, and they live in
+        // ProtocDotnetShared, not here. That is the topology D-BIND-80 is for: were Route
+        // to call their internal ToArrowColumns, this project would not compile (CS0117,
+        // measured by mutant: from another assembly an internal member is simply absent).
+        Type[] other = { typeof(Pos), typeof(Fix), typeof(Quality), typeof(global::Fletcher.Gen.Google.Protobuf.Timestamp) };
+        foreach (Type t in other)
+        {
+            Assert.NotEqual(typeof(Route).Assembly, t.Assembly);
+            Assert.Equal("ProtocDotnetShared", t.Assembly.GetName().Name);
+        }
+
+        Assert.Equal("Fletcher.Gen.Integration.SharedTypes", typeof(Pos).Namespace);
+        Assert.Equal(typeof(Pos), typeof(Route).GetProperty("Start")!.PropertyType);
+        Assert.Equal(typeof(List<global::Fletcher.Gen.Google.Protobuf.Timestamp>), typeof(Route).GetProperty("Marks")!.PropertyType);
+        Assert.Equal(typeof(List<KeyValuePair<string, Pos>>), typeof(Route).GetProperty("Stops")!.PropertyType);
+        Assert.Equal(typeof(List<Quality>), typeof(Route).GetProperty("Checks")!.PropertyType);
+
+        // ToArrowColumns stays internal: the cross-file path did not widen the surface.
+        Assert.Null(typeof(Pos).GetMethod("ToArrowColumns", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static));
+        Assert.NotNull(typeof(Pos).GetMethod("ToArrowColumns", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static));
+
+        // The other assembly is a model too: Apache.Arrow, and nothing of Fletcher's at all.
+        var references = typeof(Pos).Assembly.GetReferencedAssemblies().Select(a => a.Name ?? "").ToList();
+        Assert.Contains("Apache.Arrow", references);
+        Assert.DoesNotContain(references, name => name == "Fletcher" || name.StartsWith("Fletcher.", StringComparison.Ordinal));
     }
 
     [Fact]

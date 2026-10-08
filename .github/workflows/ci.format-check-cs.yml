@@ -56,6 +56,7 @@ jobs:
           for PROJECT in \
             integration-tests/binding-abi-conformance/dotnet/BindingAbiConformance/BindingAbiConformance.csproj \
             integration-tests/pubsub-transport-conformance/dotnet/PubSubTransportConformance/PubSubTransportConformance.csproj \
+            integration-tests/protoc-dotnet/dotnet/ProtocDotnetShared/ProtocDotnetShared.csproj \
             integration-tests/protoc-dotnet/dotnet/ProtocDotnet/ProtocDotnet.csproj; do
             echo "::group::dotnet format $PROJECT"
             # ProtocDotnet's model types (Reading, Player, Timed, ...) are written by protoc

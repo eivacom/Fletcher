@@ -33,10 +33,15 @@
        and the native publisher/subscriber pair - and the plugin's
        CsVisitorPair.TheCommittedGoldensAreThePluginsOutput fails if they drift from
        it by a byte. This project has the native shim; the protoc lanes do not, so this
-       is where the generated pair meets the real runtime (GeneratedPairTests). -->
+       is where the generated pair meets the real runtime (GeneratedPairTests).
+       BIND-6e: csharp_pair.proto's Marks refers to google.protobuf.Timestamp as a message,
+       so the plugin's model for timestamp.proto is a golden too, compiled beside it, as a
+       consumer compiles every file its imports reach. -->
   <ItemGroup>
     <Compile Include="../../../protoc/tests/golden/*.fletcher*.cs"
              Link="golden/%(Filename)%(Extension)" />
+    <Compile Include="../../../protoc/tests/golden/google/protobuf/timestamp.fletcher.cs"
+             Link="golden/google/protobuf/%(Filename)%(Extension)" />
   </ItemGroup>
 
   <!-- C# against C++ on the wire (BIND-6d-2). The plugin's C# for protoc-coverage's

@@ -444,37 +444,29 @@ TEST(CsVisitor, AWrapperIsANullableScalar) {
     ExpectContains(CSharp(file), "    public int? Boxed { get; set; }\n");
 }
 
-TEST(CsVisitor, AMessageFromAnotherFileHasNoClassYetSoItsFieldIsAMarker) {
-    // `repeated google.protobuf.Timestamp` is mapped by the IR as a list of the struct
-    // seconds/nanos, and that struct is declared in timestamp.proto, not in this file.
-    // Naming it would emit a type that does not exist, so the field is a comment that
-    // names BIND-6e (cross-file) and ToArrow / FromArrow wait on it, as for any field
-    // conversion cannot yet carry.
+TEST(CsVisitor, ARepeatedTimestampIsAListOfTheClassTimestampProtoGenerates) {
+    // BIND-6e: `repeated google.protobuf.Timestamp` is mapped by the IR as a list of the
+    // struct seconds/nanos declared in timestamp.proto, not as a list of timestamps, so the
+    // element is that file's class, as C++ names ::fletcher_gen::google::protobuf::Timestamp
+    // and includes its header. The consumer generates timestamp.proto too.
     DescriptorPool pool;
     const FileDescriptor* file = BuildFixture(pool);
     ASSERT_NE(file, nullptr);
     const std::string timed = ClassBody(CSharp(file), "Timed");
     ExpectContains(
         timed,
-        "    // Not generated yet: field 'marks' (list) has no C# type here: a message from "
-        "another file (BIND-6e).\n");
-    EXPECT_EQ(timed.find(" Marks "), std::string::npos) << timed;
+        "    public global::System.Collections.Generic.List<"
+        "global::Fletcher.Gen.Google.Protobuf.Timestamp> Marks { get; set; } = new();\n");
 }
 
-TEST(CsVisitor, EveryOtherFieldGetsAPropertyEvenWhereConversionWaits) {
-    // 6c's first step gives every field whose type is generated here its property;
-    // ToArrow / FromArrow for the composite ones follow. Only the cross-file field above
-    // is a comment.
+TEST(CsVisitor, EveryFieldTheMappingProducesGetsAProperty) {
+    // Since BIND-6e no field is a comment: a type from another file is named in full.
     DescriptorPool pool;
     const FileDescriptor* file = BuildFixture(pool);
     ASSERT_NE(file, nullptr);
     const std::string cs = CSharp(file);
-    size_t markers = 0;
-    for (size_t at = cs.find("// Not generated yet:"); at != std::string::npos;
-         at = cs.find("// Not generated yet:", at + 1))
-        ++markers;
-    EXPECT_EQ(markers, 1u) << cs;
-    EXPECT_EQ(cs.find("Not generated yet (BIND-6c): field"), std::string::npos) << cs;
+    EXPECT_EQ(cs.find("// Not generated yet"), std::string::npos) << cs;
+    EXPECT_EQ(cs.find("are not generated"), std::string::npos) << cs;
 }
 
 TEST(CsVisitor, CsharpTokenChangesNoExistingOutputAndAddsOnlyItsOwnFiles) {
@@ -714,49 +706,207 @@ TEST(CsVisitor, TimestampAndDurationAreRecountedInTheColumnsUnitExactly) {
                    "a.GetValue(index).GetValueOrDefault(), t.Unit);\n");
 }
 
-TEST(CsVisitor, AFieldWithoutAClassBlocksConversionAndSaysWhy) {
-    // A ToArrow that skipped 'marks' would build a batch disagreeing with its own Schema,
-    // so the message gets its Schema and a marker naming the field and the reason.
+TEST(CsVisitor, AMessageFromAnotherFileConvertsThroughItsPublicToArrow) {
+    // D-BIND-80: the other file's class may be compiled into another assembly, where its
+    // internal ToArrowColumns is out of reach, so its public ToArrow builds the children.
+    // Reading back goes through its public FromArrow, as for any message.
     DescriptorPool pool;
     const FileDescriptor* file = BuildFixture(pool);
     ASSERT_NE(file, nullptr);
     const std::string timed = ClassBody(CSharp(file), "Timed");
-    ExpectContains(timed, "    public static global::Apache.Arrow.Schema Schema { get; }");
-    ExpectContains(
-        timed,
-        "    // ToArrow and FromArrow are not generated: field 'marks' is a message from "
-        "another file (BIND-6e).\n");
-    EXPECT_EQ(timed.find("ToArrow("), std::string::npos) << timed;
-    EXPECT_EQ(timed.find("FromArrow("), std::string::npos) << timed;
+    ExpectContains(timed,
+                   "        var e3 = new global::Apache.Arrow.StructArray("
+                   "(global::Apache.Arrow.Types.StructType)t3.ValueDataType, f3.Count, "
+                   "global::Fletcher.Gen.Google.Protobuf.Timestamp.ToArrow(f3).Arrays, "
+                   "global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);\n");
+    ExpectContains(timed, "global::Fletcher.Gen.Google.Protobuf.Timestamp.FromArrow(e, j)");
+    EXPECT_EQ(timed.find("Timestamp.ToArrowColumns("), std::string::npos) << timed;
 }
 
-TEST(CsVisitor, AMessageEmbeddingABlockedOneIsBlockedToo) {
-    // Wraps embeds Timed, whose own conversion waits; converting Wraps would need Timed's
-    // ToArrowColumns, which does not exist, so the block propagates and says so.
+TEST(CsVisitor, AMessageOfThisFileStillLendsItsInternalColumns) {
+    // Wraps embeds Timed, declared in the same file: its children come from the internal
+    // ToArrowColumns, so the output for a single file is what it was before BIND-6e.
     DescriptorPool pool;
     const FileDescriptor* file = BuildFixture(pool);
     ASSERT_NE(file, nullptr);
     const std::string wraps = ClassBody(CSharp(file), "Wraps");
-    ExpectContains(
-        wraps,
-        "    // ToArrow and FromArrow are not generated: field 'timed' is a message whose "
-        "own conversion waits.\n");
-    EXPECT_EQ(wraps.find("ToArrowColumns("), std::string::npos) << wraps;
+    ExpectContains(wraps, "rows.Count, Timed.ToArrowColumns(r0), ");
+    EXPECT_EQ(wraps.find(".ToArrow(r0)"), std::string::npos) << wraps;
 }
 
 TEST(CsVisitor, EveryConvertibleMessageGetsBothHalves) {
-    // The other side of the two cases above: no message whose fields all convert is left
-    // without ToArrow, ToArrowColumns and FromArrow.
+    // No message whose fields all convert is left without ToArrow, ToArrowColumns and
+    // FromArrow; since BIND-6e that is every message of the fixture but the flatten
+    // wrappers, which are inlined where they are used.
     DescriptorPool pool;
     const FileDescriptor* file = BuildFixture(pool);
     ASSERT_NE(file, nullptr);
     const std::string cs = CSharp(file);
-    for (const char* name : {"Player", "Player_Stats", "Sample", "Holder", "Clock", "Nested"}) {
+    for (const char* name :
+         {"Player", "Player_Stats", "Sample", "Timed", "Holder", "Clock", "Wraps", "Nested"}) {
         const std::string body = ClassBody(cs, name);
         EXPECT_NE(body.find(" ToArrow("), std::string::npos) << name;
         EXPECT_NE(body.find(" ToArrowColumns("), std::string::npos) << name;
         EXPECT_NE(body.find(" FromArrow("), std::string::npos) << name;
     }
+}
+
+// ===========================================================================
+// BIND-6e: types from another file, in another package.
+// ===========================================================================
+
+namespace {
+
+// shared.proto:  package geo.shared_types;
+//   enum Quality { QUALITY_UNSPECIFIED = 0; QUALITY_GOOD = 1; }
+//   message Pos { double lat = 1; }
+// track.proto:   package app;  import "shared.proto";  import "google/protobuf/empty.proto";
+//   message Track {
+//     geo.shared_types.Pos at = 1;  repeated geo.shared_types.Pos path = 2;
+//     map<string, geo.shared_types.Pos> by_name = 3;  geo.shared_types.Quality q = 4;
+//     repeated geo.shared_types.Quality qs = 5;
+//   }
+//   message Batch { option (fletcher.flatten) = true; repeated geo.shared_types.Pos items = 1; }
+//   service Feed {
+//     rpc Send(stream Track) returns (google.protobuf.Empty);
+//     rpc Push(stream Batch) returns (google.protobuf.Empty);
+//   }
+const FileDescriptor* BuildCrossFileFixture(DescriptorPool& pool) {
+    const FileDescriptor* empty = google::protobuf::Empty::GetDescriptor()->file();
+    FileDescriptorProto empty_copy;
+    empty->CopyTo(&empty_copy);
+    if (pool.BuildFile(empty_copy) == nullptr) return nullptr;
+
+    FileDescriptorProto shared;
+    shared.set_name("shared.proto");
+    shared.set_package("geo.shared_types");
+    shared.set_syntax("proto3");
+    auto* quality = shared.add_enum_type();
+    quality->set_name("Quality");
+    auto* q0 = quality->add_value();
+    q0->set_name("QUALITY_UNSPECIFIED");
+    q0->set_number(0);
+    auto* q1 = quality->add_value();
+    q1->set_name("QUALITY_GOOD");
+    q1->set_number(1);
+    AddField(shared.add_message_type(), "lat", 1, FieldDescriptorProto::TYPE_DOUBLE);
+    shared.mutable_message_type(0)->set_name("Pos");
+    if (pool.BuildFile(shared) == nullptr) return nullptr;
+
+    FileDescriptorProto fdp;
+    fdp.set_name("track.proto");
+    fdp.set_package("app");
+    fdp.set_syntax("proto3");
+    fdp.add_dependency("shared.proto");
+    fdp.add_dependency("google/protobuf/empty.proto");
+    auto* track = fdp.add_message_type();
+    track->set_name("Track");
+    AddField(track, "at", 1, FieldDescriptorProto::TYPE_MESSAGE)
+        ->set_type_name(".geo.shared_types.Pos");
+    AddField(track, "path", 2, FieldDescriptorProto::TYPE_MESSAGE,
+             FieldDescriptorProto::LABEL_REPEATED)
+        ->set_type_name(".geo.shared_types.Pos");
+    auto* entry = track->add_nested_type();
+    entry->set_name("ByNameEntry");
+    entry->mutable_options()->set_map_entry(true);
+    AddField(entry, "key", 1, FieldDescriptorProto::TYPE_STRING);
+    AddField(entry, "value", 2, FieldDescriptorProto::TYPE_MESSAGE)
+        ->set_type_name(".geo.shared_types.Pos");
+    AddField(track, "by_name", 3, FieldDescriptorProto::TYPE_MESSAGE,
+             FieldDescriptorProto::LABEL_REPEATED)
+        ->set_type_name(".app.Track.ByNameEntry");
+    AddField(track, "q", 4, FieldDescriptorProto::TYPE_ENUM)
+        ->set_type_name(".geo.shared_types.Quality");
+    AddField(track, "qs", 5, FieldDescriptorProto::TYPE_ENUM, FieldDescriptorProto::LABEL_REPEATED)
+        ->set_type_name(".geo.shared_types.Quality");
+
+    auto* batch = fdp.add_message_type();
+    batch->set_name("Batch");
+    batch->mutable_options()
+        ->GetReflection()
+        ->MutableUnknownFields(batch->mutable_options())
+        ->AddVarint(50000, 1);  // (fletcher.flatten) = true, as BuildFixture sets it
+    AddField(batch, "items", 1, FieldDescriptorProto::TYPE_MESSAGE,
+             FieldDescriptorProto::LABEL_REPEATED)
+        ->set_type_name(".geo.shared_types.Pos");
+
+    auto* feed = fdp.add_service();
+    feed->set_name("Feed");
+    for (const auto& [name, input] :
+         {std::pair<const char*, const char*>{"Send", ".app.Track"}, {"Push", ".app.Batch"}}) {
+        auto* m = feed->add_method();
+        m->set_name(name);
+        m->set_input_type(input);
+        m->set_output_type(".google.protobuf.Empty");
+        m->set_client_streaming(true);
+    }
+    return pool.BuildFile(fdp);
+}
+
+std::string Emitted(const std::map<std::string, std::string>& files, const std::string& name) {
+    const auto it = files.find(name);
+    EXPECT_NE(it, files.end()) << "no " << name << " emitted";
+    return it == files.end() ? std::string() : it->second;
+}
+
+}  // namespace
+
+TEST(CsVisitorCrossFile, TypesFromAnotherPackageAreNamedInFull) {
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildCrossFileFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const std::string track =
+        ClassBody(Emitted(GenerateWith(file, "csharp"), "track.fletcher.cs"), "Track");
+    const std::string pos = "global::Fletcher.Gen.Geo.SharedTypes.Pos";
+    const std::string quality = "global::Fletcher.Gen.Geo.SharedTypes.Quality";
+    ExpectContains(track, "    public " + pos + "? At { get; set; }\n");
+    ExpectContains(track, "    public global::System.Collections.Generic.List<" + pos +
+                              "> Path { get; set; } = new();\n");
+    ExpectContains(track,
+                   "    public global::System.Collections.Generic.List<global::System.Collections."
+                   "Generic.KeyValuePair<string, " +
+                       pos + ">> ByName { get; set; } = new();\n");
+    ExpectContains(track, "    public " + quality + " Q { get; set; }\n");
+    ExpectContains(track, "    public global::System.Collections.Generic.List<" + quality +
+                              "> Qs { get; set; } = new();\n");
+}
+
+TEST(CsVisitorCrossFile, EveryStructColumnOfAnotherFileIsBuiltByItsPublicToArrow) {
+    // D-BIND-80, at each place a child class builds columns: a message field, a list
+    // element and a map value. An enum from the other file crosses as int32 both ways.
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildCrossFileFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const std::string cs = Emitted(GenerateWith(file, "csharp"), "track.fletcher.cs");
+    const std::string track = ClassBody(cs, "Track");
+    const std::string pos = "global::Fletcher.Gen.Geo.SharedTypes.Pos";
+    ExpectContains(track, "rows.Count, " + pos + ".ToArrow(r0).Arrays, ");
+    ExpectContains(track, "f1.Count, " + pos + ".ToArrow(f1).Arrays, ");
+    ExpectContains(track, "f2.Count, " + pos + ".ToArrow(f2).Arrays, ");
+    ExpectContains(track, pos + ".FromArrow(");
+    ExpectContains(track, "(int)row.Q");
+    ExpectContains(track, "(global::Fletcher.Gen.Geo.SharedTypes.Quality)");
+    EXPECT_EQ(track.find(pos + ".ToArrowColumns("), std::string::npos) << track;
+    // Nothing of shared.proto is declared again here: it is generated from its own file.
+    EXPECT_EQ(cs.find("class Pos"), std::string::npos) << cs;
+    EXPECT_EQ(cs.find("enum Quality"), std::string::npos) << cs;
+}
+
+TEST(CsVisitorCrossFile, APairCarriesAnotherFilesMessageAndAFlattenWrapperGetsNone) {
+    // Track converts, so Feed.Send gets its pair. Batch is a flatten wrapper: inlined where
+    // it is used, it has no Schema, ToArrow or FromArrow, so Feed.Push gets its topic and
+    // the reason it has no pair. Since BIND-6e this is the one such reason a .proto reaches.
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildCrossFileFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const auto files = GenerateWith(file, "csharp");
+    const std::string native = Emitted(files, "track.fletcher.native.cs");
+    ExpectContains(native, "public sealed class Feed_SendPublisher");
+    ExpectContains(native,
+                   "// Skipped: Feed.Push \xE2\x80\x94 Batch has no ToArrow / FromArrow: it is a "
+                   "flatten wrapper.\n");
+    EXPECT_EQ(native.find("Feed_PushPublisher"), std::string::npos) << native;
+    ExpectContains(Emitted(files, "track.fletcher.cs"), "public static class Feed_PushTopic\n");
 }
 
 // ===========================================================================
@@ -925,11 +1075,9 @@ TEST(CsVisitorPair, AMethodWithoutAPairSaysWhy) {
     ExpectContains(native,
                    "// Skipped: Telemetry.Ping \xE2\x80\x94 request is not streaming (pub/sub "
                    "requires 'stream' on request)\n");
-    ExpectContains(
-        native,
-        "// Skipped: Telemetry.Mark \xE2\x80\x94 Marks has no ToArrow / FromArrow: field "
-        "'at' is a message from another file (BIND-6e).\n");
-    EXPECT_EQ(native.find("Telemetry_MarkPublisher"), std::string::npos) << native;
+    EXPECT_EQ(native.find("Telemetry_PingPublisher"), std::string::npos) << native;
+    // Since BIND-6e, Mark, whose rows carry timestamp.proto's struct, has its pair.
+    ExpectContains(native, "public sealed class Telemetry_MarkPublisher");
 }
 
 TEST(CsVisitorPair, TheCommittedGoldensAreThePluginsOutput) {
@@ -939,12 +1087,20 @@ TEST(CsVisitorPair, TheCommittedGoldensAreThePluginsOutput) {
     DescriptorPool pool;
     const FileDescriptor* file = BuildPairFixture(pool);
     ASSERT_NE(file, nullptr);
-    const auto files = GenerateWith(file, "csharp");
-    for (const char* name : {"csharp_pair.fletcher.cs", "csharp_pair.fletcher.native.cs"}) {
+    auto files = GenerateWith(file, "csharp");
+    // BIND-6e: Marks names timestamp.proto's class, so its model is a golden too, generated
+    // as a consumer's protoc call generates it, from the same pool.
+    const FileDescriptor* timestamp = pool.FindFileByName("google/protobuf/timestamp.proto");
+    ASSERT_NE(timestamp, nullptr);
+    for (auto& [name, content] : GenerateWith(timestamp, "csharp,csharp_model_only"))
+        files.emplace(name, content);
+    for (const char* name : {"csharp_pair.fletcher.cs", "csharp_pair.fletcher.native.cs",
+                             "google/protobuf/timestamp.fletcher.cs"}) {
         const std::string generated = FileOf(files, name);
         const auto path = GoldenDir() / name;
         if (const char* capture = std::getenv("FLETCHER_CAPTURE_GOLDENS");
             capture != nullptr && std::string(capture) == "1") {
+            std::filesystem::create_directories(path.parent_path());
             std::ofstream(path, std::ios::binary) << generated;
             continue;
         }

@@ -193,6 +193,57 @@ TEST(CsNames, NestedTypesAreFlattenedWithUnderscores) {
     EXPECT_EQ(cs::CsTypeName(in->enum_type(0)), "Outer_Inner_Color");
 }
 
+TEST(CsNames, ATypeFromAnotherPackageIsQualifiedFromTheGlobalNamespace) {
+    // BIND-6e: a field's type may be declared in another file. In the same package it shares
+    // the namespace, so the flat name resolves; in another one it is named in full, from
+    // global::, so no name in the referring file can shadow it.
+    DescriptorPool pool;
+    FileDescriptorProto shared;
+    shared.set_name("shared.proto");
+    shared.set_package("geo.shared_types");
+    shared.set_syntax("proto3");
+    auto* pos = shared.add_message_type();
+    pos->set_name("Pos");
+    pos->add_nested_type()->set_name("Fix");
+    auto* q = shared.add_enum_type();
+    q->set_name("Quality");
+    q->add_value()->set_name("QUALITY_UNSPECIFIED");
+    const FileDescriptor* other = pool.BuildFile(shared);
+    ASSERT_NE(other, nullptr);
+
+    FileDescriptorProto same;
+    same.set_name("same.proto");
+    same.set_package("geo.shared_types");
+    same.set_syntax("proto3");
+    const FileDescriptor* sibling = pool.BuildFile(same);
+    ASSERT_NE(sibling, nullptr);
+
+    FileDescriptorProto user;
+    user.set_name("user.proto");
+    user.set_package("app");
+    user.set_syntax("proto3");
+    const FileDescriptor* file = pool.BuildFile(user);
+    ASSERT_NE(file, nullptr);
+
+    const Descriptor* p = other->message_type(0);
+    EXPECT_EQ(cs::CsTypeRef(p, other), "Pos");
+    EXPECT_EQ(cs::CsTypeRef(p, sibling), "Pos");
+    EXPECT_EQ(cs::CsTypeRef(p, file), "global::Fletcher.Gen.Geo.SharedTypes.Pos");
+    EXPECT_EQ(cs::CsTypeRef(p->nested_type(0), file),
+              "global::Fletcher.Gen.Geo.SharedTypes.Pos_Fix");
+    EXPECT_EQ(cs::CsTypeRef(other->enum_type(0), file),
+              "global::Fletcher.Gen.Geo.SharedTypes.Quality");
+
+    // The enum's scalar type is named the same way, from the file being generated.
+    fletcher::ir::LogicalType t{};
+    t.kind = fletcher::ir::LogicalKind::INT32;
+    fletcher::ir::EnumIdentity id;
+    id.descriptor = other->enum_type(0);
+    EXPECT_EQ(cs::CsLookupScalar(t, id, file).value().type_text,
+              "global::Fletcher.Gen.Geo.SharedTypes.Quality");
+    EXPECT_EQ(cs::CsLookupScalar(t, id, sibling).value().type_text, "Quality");
+}
+
 // ---------------------------------------------------------------------------
 // Enum members (GetEnumValueName + the duplicate loop in csharp_enum.cc)
 // ---------------------------------------------------------------------------
@@ -276,7 +327,7 @@ TEST(CsTypeTable, ScalarsMapToCSharpTypes) {
     for (const auto& [kind, text] : cases) {
         fletcher::ir::LogicalType t{};
         t.kind = kind;
-        const auto info = cs::CsLookupScalar(t, std::nullopt);
+        const auto info = cs::CsLookupScalar(t, std::nullopt, nullptr);
         ASSERT_TRUE(info.has_value()) << text;
         EXPECT_EQ(info->type_text, text);
         EXPECT_EQ(info->is_reference, text == "string" || text == "byte[]") << text;
@@ -291,7 +342,7 @@ TEST(CsTypeTable, AnEnumScalarIsItsGeneratedEnumType) {
     t.kind = fletcher::ir::LogicalKind::INT32;
     fletcher::ir::EnumIdentity id;
     id.descriptor = e;
-    const auto info = cs::CsLookupScalar(t, id);
+    const auto info = cs::CsLookupScalar(t, id, e->file());
     ASSERT_TRUE(info.has_value());
     EXPECT_EQ(info->type_text, "Color");
     EXPECT_FALSE(info->is_reference);
@@ -336,7 +387,7 @@ TEST(CsTypeTable, KindsNotYetMappedReturnNothing) {
     // table answers "not mapped" rather than a lossy guess.
     fletcher::ir::LogicalType t{};
     t.kind = fletcher::ir::LogicalKind::WKT_TIMESTAMP;
-    EXPECT_FALSE(cs::CsLookupScalar(t, std::nullopt).has_value());
+    EXPECT_FALSE(cs::CsLookupScalar(t, std::nullopt, nullptr).has_value());
     t.kind = fletcher::ir::LogicalKind::WKT_DURATION;
-    EXPECT_FALSE(cs::CsLookupScalar(t, std::nullopt).has_value());
+    EXPECT_FALSE(cs::CsLookupScalar(t, std::nullopt, nullptr).has_value());
 }

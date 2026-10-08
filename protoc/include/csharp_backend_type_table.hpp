@@ -37,8 +37,10 @@ struct CsScalarInfo {
 
 // Map a scalar logical identity to its C# type, or nullopt for a kind this backend
 // does not map yet (temporal types arrive with BIND-6c, losslessly per D-BIND-26).
+// An enum is named as seen from `current_file`, the file being generated (CsTypeRef).
 std::optional<CsScalarInfo> CsLookupScalar(const ir::LogicalType& type,
-                                           const std::optional<ir::EnumIdentity>& enum_identity);
+                                           const std::optional<ir::EnumIdentity>& enum_identity,
+                                           const google::protobuf::FileDescriptor* current_file);
 
 // How one field's property is declared on the row class (BIND-6c). Every field the IR
 // maps has one, including the ones ToArrow / FromArrow cannot convert yet.
@@ -59,9 +61,11 @@ struct CsFieldType {
 //   repeated T        List<T>
 //   map<K,V>          List<KeyValuePair<K,V>>: entry order is on the wire, and C++'s row class
 //                     holds ordered pairs too, so a Dictionary's unspecified order is refused
-// A message type is named as `CsTypeName` names it, in the namespace of `current_file`, the
-// file being generated. A message declared in another file has no class there yet, so such a
-// field has no type (nullopt): cross-file is BIND-6e.
+// A message or enum type is named as `CsTypeRef` names it from `current_file`, the file being
+// generated: a type from another file is its class in that file's namespace (BIND-6e), which
+// the consumer generates too, as C++ includes the other file's header. That holds for
+// `repeated google.protobuf.Timestamp`, which the IR maps as the struct seconds/nanos, not as
+// a timestamp: its class is generated from timestamp.proto.
 std::optional<CsFieldType> CsFieldTypeOf(const ir::IrNode& node,
                                          const google::protobuf::FileDescriptor* current_file);
 
@@ -94,6 +98,14 @@ std::string CsNamespace(const google::protobuf::FileDescriptor* file);
 // (Outer.Inner -> Outer_Inner), as every Fletcher backend does (D-BIND-69).
 std::string CsTypeName(const google::protobuf::Descriptor* msg);
 std::string CsTypeName(const google::protobuf::EnumDescriptor* enm);
+
+// The same type as code in `current_file` names it (BIND-6e): CsTypeName when both files share
+// a namespace, else `global::<CsNamespace>.<CsTypeName>`, so a type from another package
+// resolves and no name in this file can shadow it.
+std::string CsTypeRef(const google::protobuf::Descriptor* msg,
+                      const google::protobuf::FileDescriptor* current_file);
+std::string CsTypeRef(const google::protobuf::EnumDescriptor* enm,
+                      const google::protobuf::FileDescriptor* current_file);
 
 // The property for proto field `field_name` of `owner`: protoc's GetPropertyName,
 // with the generated class's own members added to the reserved list (D-BIND-73).

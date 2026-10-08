@@ -17,8 +17,11 @@ using Apache.Arrow.Types;
 using Eiva.Fletcher.Model;
 
 using Fletcher.Gen.Integration.ProtocDotnet;
+using Fletcher.Gen.Integration.SharedTypes;
 
 using Xunit;
+
+using PbTimestamp = Fletcher.Gen.Google.Protobuf.Timestamp;
 
 namespace Eiva.Fletcher.ProtocDotnet;
 
@@ -198,6 +201,7 @@ public sealed class ConversionTests
             Timed.ToArrow(new[] { new Timed { At = new Timestamp(9L, TimeUnit.Nanosecond) } }),
             b => Timed.FromArrow(AsStruct(b), 0).At.Value,
             9L);
+        Check(Route.ToArrow(new[] { new Route(), Trip }), b => Describe(Route.FromArrow(AsStruct(b), 1)), Describe(Trip));
 
         static void Check<T>(RecordBatch batch, Func<RecordBatch, T> read, T expected)
         {
@@ -218,6 +222,52 @@ public sealed class ConversionTests
             }
         }
     }
+
+    // BIND-6e: every place a type from another file and assembly can sit, at values a
+    // default would not reproduce. Pos, Fix and Quality come from shared.proto and the
+    // marks' element from timestamp.proto, all compiled into ProtocDotnetShared.
+    private static readonly Route Trip = new()
+    {
+        Start = new Pos { Lat = 55.67, Lon = 12.57, Label = "start" },
+        Legs = { new Pos { Lat = -90, Lon = 180 }, new Pos { Lat = double.Epsilon, Label = "" } },
+        Stops = { new("b", new Pos { Lon = 1 }), new("a", new Pos { Lat = 2 }), new("b", new Pos { Label = "dup" }) },
+        Quality = Quality.Poor,
+        Checks = { Quality.Good, Quality.Unspecified, Quality.Poor },
+        Fix = new Fix { Pos = null, Trail = { new Pos { Lat = 1, Lon = 2 } }, Quality = Quality.Good },
+        Marks = { new PbTimestamp { Seconds = long.MinValue, Nanos = -1 }, new PbTimestamp { Seconds = 1_700_000_000, Nanos = 999_999_999 } },
+    };
+
+    [Fact]
+    public void RouteRoundTripsTypesFromAnotherFileAndAssembly()
+    {
+        // D-BIND-80: Route's columns for Pos, Fix and Timestamp are built by those classes'
+        // public ToArrow, since their internal ToArrowColumns is out of reach from this
+        // assembly. An empty Route between two full ones shows no row bleeds into the next.
+        Route[] sent = { Trip, new Route(), Trip };
+        using RecordBatch batch = Route.ToArrow(sent);
+        StructArray rows = AsStruct(batch);
+
+        Assert.Equal(sent.Select(Describe), Enumerable.Range(0, sent.Length).Select(i => Describe(Route.FromArrow(rows, i))));
+        Route empty = Route.FromArrow(rows, 1);
+        Assert.Null(empty.Start);
+        Assert.Null(empty.Fix);
+        Assert.Empty(empty.Legs);
+        Assert.Empty(empty.Marks);
+    }
+
+    private static string Describe(Route r) => string.Join(" | ",
+        Describe(r.Start),
+        "[" + string.Join(",", r.Legs.Select(p => Describe(p))) + "]",
+        "{" + string.Join(",", r.Stops.Select(s => s.Key + "=" + Describe(s.Value))) + "}",
+        r.Quality,
+        "[" + string.Join(",", r.Checks) + "]",
+        r.Fix is null ? "<null>" : Describe(r.Fix.Pos) + "/[" + string.Join(",", r.Fix.Trail.Select(p => Describe(p))) + "]/" + r.Fix.Quality,
+        "[" + string.Join(",", r.Marks.Select(m => m.Seconds + ":" + m.Nanos)) + "]");
+
+    private static string Describe(Pos? p) => p is null
+        ? "<null>"
+        : string.Join(";", p.Lat.ToString("R", System.Globalization.CultureInfo.InvariantCulture),
+            p.Lon.ToString("R", System.Globalization.CultureInfo.InvariantCulture), p.Label ?? "<null>");
 
     private static StructArray AsStruct(RecordBatch batch) =>
         new(new StructType(batch.Schema.FieldsList), batch.Length, batch.Arrays, ArrowBuffer.Empty, 0);

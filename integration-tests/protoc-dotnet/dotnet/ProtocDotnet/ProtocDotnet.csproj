@@ -43,6 +43,10 @@
          consumer writes a PackageReference. -->
     <PackageReference Include="Apache.Arrow" Version="[23.0.0]" />
     <ProjectReference Include="../../../../dotnet/src/Fletcher.Model/Fletcher.Model.csproj" />
+    <!-- BIND-6e: the classes of shared.proto and timestamp.proto, which model.proto's Route
+         names, generated into another assembly, as a consumer's contracts project would
+         hold them (D-BIND-80). -->
+    <ProjectReference Include="../ProtocDotnetShared/ProtocDotnetShared.csproj" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="[18.10.0]" />
     <PackageReference Include="xunit" Version="[2.9.3]" />
     <PackageReference Include="xunit.runner.visualstudio" Version="[3.1.5]" />

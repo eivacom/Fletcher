@@ -7,6 +7,10 @@
 // always the plugin's real output; dotnet/tests/Fletcher.Tests compiles them and runs
 // the generated pair over the native runtime (D-BIND-76). Regenerate with
 // FLETCHER_CAPTURE_GOLDENS=1 and review the diff as source.
+//
+// BIND-6e: Marks refers to a message from another file, so the plugin's output for
+// google/protobuf/timestamp.proto is committed too (golden/google/protobuf/), as a
+// consumer generates every file its own imports reach.
 syntax = "proto3";
 
 package golden.pair;
@@ -37,8 +41,8 @@ message Stamp {
   string by = 1;
 }
 
-// A message whose conversion waits for cross-file work (BIND-6e): the IR maps a
-// repeated Timestamp as a list of the struct declared in timestamp.proto.
+// A message from another file (BIND-6e): the IR maps a repeated Timestamp as a list
+// of the struct declared in timestamp.proto, whose class is generated from that file.
 message Marks {
   repeated google.protobuf.Timestamp at = 1;
 }
@@ -48,6 +52,6 @@ service Telemetry {
   rpc Report(stream Reading) returns (google.protobuf.Empty);
   // Skipped with C++'s reason: not a stream.
   rpc Ping(Reading) returns (google.protobuf.Empty);
-  // A topic class, but no pair: Marks has no ToArrow yet.
+  // A pair whose rows carry another file's message.
   rpc Mark(stream Marks) returns (google.protobuf.Empty);
 }

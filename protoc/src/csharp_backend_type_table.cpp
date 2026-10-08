@@ -39,11 +39,13 @@ const std::set<std::string, std::less<>>& ReservedMemberNames() {
 // ---------------------------------------------------------------------------
 
 std::optional<CsScalarInfo> CsLookupScalar(const ir::LogicalType& type,
-                                           const std::optional<ir::EnumIdentity>& enum_identity) {
+                                           const std::optional<ir::EnumIdentity>& enum_identity,
+                                           const google::protobuf::FileDescriptor* current_file) {
     // An enum lowers to INT32 storage and carries its identity; C# emits a real
     // `enum` for it (D-BIND-8), so the property's type is the generated enum.
     if (enum_identity.has_value() && enum_identity->descriptor != nullptr)
-        return CsScalarInfo{CsTypeName(enum_identity->descriptor), false, "Int32Array", true};
+        return CsScalarInfo{CsTypeRef(enum_identity->descriptor, current_file), false, "Int32Array",
+                            true};
 
     using LK = ir::LogicalKind;
     switch (type.kind) {
@@ -84,12 +86,8 @@ std::optional<std::string> ElementTypeText(const ir::IrNode& node,
                                            const google::protobuf::FileDescriptor* current_file) {
     if (node.kind == ir::NodeKind::STRUCT) {
         const auto& s = std::get<ir::StructNode>(node.node);
-        // A message declared in another file has no generated class here: that is
-        // cross-file work (BIND-6e), and naming it would not compile. This includes
-        // google.protobuf.Timestamp as a list element, which the IR maps as a struct.
-        if (s.identity.descriptor == nullptr || s.identity.descriptor->file() != current_file)
-            return std::nullopt;
-        return CsTypeName(s.identity.descriptor);
+        if (s.identity.descriptor == nullptr) return std::nullopt;
+        return CsTypeRef(s.identity.descriptor, current_file);
     }
     // 6c-3: a list element that is itself a list, which is how a flatten wrapper around a
     // repeated field nests (`repeated StructListWrapper` is list<list<struct>>).
@@ -100,7 +98,8 @@ std::optional<std::string> ElementTypeText(const ir::IrNode& node,
     }
     if (node.kind != ir::NodeKind::SCALAR) return std::nullopt;
     const auto& s = std::get<ir::ScalarNode>(node.node);
-    if (const auto info = CsLookupScalar(s.logical_type, s.enum_identity)) return info->type_text;
+    if (const auto info = CsLookupScalar(s.logical_type, s.enum_identity, current_file))
+        return info->type_text;
     if (s.logical_type.kind == ir::LogicalKind::WKT_TIMESTAMP) return std::string(kModelTimestamp);
     if (s.logical_type.kind == ir::LogicalKind::WKT_DURATION) return std::string(kModelDuration);
     return std::nullopt;
@@ -118,7 +117,7 @@ std::optional<CsFieldType> CsFieldTypeOf(const ir::IrNode& node,
             if (!text) return std::nullopt;
             out.type_text = std::move(*text);
             out.nullable = node.facts.nullable;
-            if (const auto info = CsLookupScalar(s.logical_type, s.enum_identity))
+            if (const auto info = CsLookupScalar(s.logical_type, s.enum_identity, current_file))
                 out.is_reference = info->is_reference;
             return out;
         }
@@ -357,6 +356,27 @@ std::string FlatName(const D* d) {
 std::string CsTypeName(const google::protobuf::Descriptor* msg) { return FlatName(msg); }
 
 std::string CsTypeName(const google::protobuf::EnumDescriptor* enm) { return FlatName(enm); }
+
+namespace {
+
+template <typename D>
+std::string TypeRef(const D* d, const google::protobuf::FileDescriptor* current_file) {
+    const std::string ns = CsNamespace(d->file());
+    if (ns == CsNamespace(current_file)) return FlatName(d);
+    return "global::" + ns + "." + FlatName(d);
+}
+
+}  // namespace
+
+std::string CsTypeRef(const google::protobuf::Descriptor* msg,
+                      const google::protobuf::FileDescriptor* current_file) {
+    return TypeRef(msg, current_file);
+}
+
+std::string CsTypeRef(const google::protobuf::EnumDescriptor* enm,
+                      const google::protobuf::FileDescriptor* current_file) {
+    return TypeRef(enm, current_file);
+}
 
 std::string CsPropertyName(std::string_view field_name, const google::protobuf::Descriptor* owner) {
     std::string property = UnderscoresToCamelCase(field_name, true, false);

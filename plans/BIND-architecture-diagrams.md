@@ -222,7 +222,8 @@ Opt tokens: `--fletcher_opt=` `ts` · `ipc` · `accessor` · `rust` (shipped), p
 `csharp` (built since BIND-6a: enums and classes; every `Schema` and scalar-only
 `ToArrow`/`FromArrow` since 6b; a typed property for every field whose type is generated
 in the file since 6c-1, D-BIND-75; `ToArrow`/`FromArrow` for lists, messages, maps and
-Timestamp/Duration since 6c-2; a message from another file is 6e) and
+Timestamp/Duration since 6c-2; a message or enum from another file since 6e-1, named in
+that file's namespace, its column built through that class's public `ToArrow`, D-BIND-80) and
 `csharp_accessor` (planned, BIND-7). Diagram 9 draws the plugin's classes
 and visitors behind this picture.
 

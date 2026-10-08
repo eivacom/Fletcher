@@ -219,7 +219,7 @@ public sealed class Reading
 
 public sealed class Marks
 {
-    // Not generated yet: field 'at' (list) has no C# type here: a message from another file (BIND-6e).
+    public global::System.Collections.Generic.List<global::Fletcher.Gen.Google.Protobuf.Timestamp> At { get; set; } = new();
 
     public static global::Apache.Arrow.Schema Schema { get; } = new global::Apache.Arrow.Schema(
         new global::Apache.Arrow.Field[]
@@ -228,7 +228,44 @@ public sealed class Marks
         },
         new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("proto_package", "golden.pair"), new("proto_message", "Marks") });
 
-    // ToArrow and FromArrow are not generated: field 'at' is a message from another file (BIND-6e).
+    public static global::Apache.Arrow.RecordBatch ToArrow(global::System.Collections.Generic.IEnumerable<Marks> rows)
+    {
+        global::System.ArgumentNullException.ThrowIfNull(rows);
+        var all = rows as global::System.Collections.Generic.IReadOnlyList<Marks> ?? new global::System.Collections.Generic.List<Marks>(rows);
+        return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
+    }
+
+    internal static global::Apache.Arrow.IArrowArray[] ToArrowColumns(global::System.Collections.Generic.IReadOnlyList<Marks> rows)
+    {
+        var t0 = (global::Apache.Arrow.Types.ListType)Schema.GetFieldByIndex(0).DataType;
+        var o0 = new global::Apache.Arrow.ArrowBuffer.Builder<int>(rows.Count + 1);
+        o0.Append(0);
+        var f0 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Google.Protobuf.Timestamp>();
+        foreach (var row in rows)
+        {
+            f0.AddRange(row.At);
+            o0.Append(f0.Count);
+        }
+        var e0 = new global::Apache.Arrow.StructArray((global::Apache.Arrow.Types.StructType)t0.ValueDataType, f0.Count, global::Fletcher.Gen.Google.Protobuf.Timestamp.ToArrow(f0).Arrays, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var c0 = new global::Apache.Arrow.ListArray(t0, rows.Count, o0.Build(), e0, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        return new global::Apache.Arrow.IArrowArray[] { c0 };
+    }
+
+    public static Marks FromArrow(global::Apache.Arrow.StructArray array, int index)
+    {
+        global::System.ArgumentNullException.ThrowIfNull(array);
+        var row = new Marks();
+        {
+            var l = (global::Apache.Arrow.ListArray)array.Fields[0];
+            var e = (global::Apache.Arrow.StructArray)l.Values;
+            var start = l.ValueOffsets[index];
+            var end = l.ValueOffsets[index + 1];
+            var x = new global::System.Collections.Generic.List<global::Fletcher.Gen.Google.Protobuf.Timestamp>(end - start);
+            for (var j = start; j < end; j++) x.Add(global::Fletcher.Gen.Google.Protobuf.Timestamp.FromArrow(e, j));
+            row.At = x;
+        }
+        return row;
+    }
 }
 
 /// <summary>The topic of Telemetry.Report: the segments a C++ publisher of the same method uses.</summary>
