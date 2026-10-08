@@ -79,6 +79,7 @@ jobs:
                      echo '::endgroup::' && \
                      echo '::group::dotnet test (the project runs protoc itself, D-BIND-71)' && \
                        (cd integration-tests/protoc-dotnet/dotnet/ProtocDotnet && dotnet test -c Release) && \
+                       (cd integration-tests/protoc-dotnet/dotnet/ProtocDotnetBeside && dotnet test -c Release) && \
                      echo '::endgroup::'"
 
   windows:
@@ -132,3 +133,5 @@ jobs:
           export FLETCHER_PROTOC_PLUGIN PROTOC
           echo "plugin=$FLETCHER_PROTOC_PLUGIN  protoc=$PROTOC"
           dotnet test -c Release
+          # BIND-6e: Fletcher's C# beside protoc's own, in one project, without CS0101.
+          dotnet test ../ProtocDotnetBeside -c Release

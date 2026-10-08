@@ -57,6 +57,7 @@ jobs:
             integration-tests/binding-abi-conformance/dotnet/BindingAbiConformance/BindingAbiConformance.csproj \
             integration-tests/pubsub-transport-conformance/dotnet/PubSubTransportConformance/PubSubTransportConformance.csproj \
             integration-tests/protoc-dotnet/dotnet/ProtocDotnetShared/ProtocDotnetShared.csproj \
+            integration-tests/protoc-dotnet/dotnet/ProtocDotnetBeside/ProtocDotnetBeside.csproj \
             integration-tests/protoc-dotnet/dotnet/ProtocDotnet/ProtocDotnet.csproj; do
             echo "::group::dotnet format $PROJECT"
             # ProtocDotnet's model types (Reading, Player, Timed, ...) are written by protoc
@@ -65,9 +66,11 @@ jobs:
             # references Fletcher.Model, and the same load then REPORTS every use of a
             # generated type as CS0246. Those are not formatting findings, so they are
             # excluded for this project only; the build proves the types resolve.
+            # ProtocDotnetBeside is the same case (BIND-6e): its types come from protoc's
+            # own --csharp_out and from Fletcher's, both run in its build target.
             EXTRA=()
             case "$PROJECT" in
-              *ProtocDotnet.csproj) EXTRA=(--exclude-diagnostics CS0246) ;;
+              *ProtocDotnet.csproj|*ProtocDotnetBeside.csproj) EXTRA=(--exclude-diagnostics CS0246) ;;
             esac
             dotnet format "$PROJECT" --verify-no-changes --severity warn "${EXTRA[@]}"
             echo '::endgroup::'

@@ -94,6 +94,13 @@ std::string TryRemovePrefix(std::string_view prefix, std::string_view value);
 // package. `option csharp_namespace` is ignored (D-BIND-69).
 std::string CsNamespace(const google::protobuf::FileDescriptor* file);
 
+// BIND-6e: the reason `file` cannot be generated with `csharp`, or nullopt. Fletcher.Gen is
+// reserved for Fletcher's generated C# (D-BIND-69), and protoc's own C# for `file` would land
+// in it: in `option csharp_namespace` when set, else in the PascalCased package (protoc's
+// GetFileNamespace, names.cc). Its types and Fletcher's could then share a namespace, which
+// is CS0101 in a project that compiles both.
+std::optional<std::string> CsProtocNamespaceConflict(const google::protobuf::FileDescriptor* file);
+
 // A message's or enum's C# type name: nested types flattened with '_'
 // (Outer.Inner -> Outer_Inner), as every Fletcher backend does (D-BIND-69).
 std::string CsTypeName(const google::protobuf::Descriptor* msg);

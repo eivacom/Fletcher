@@ -23,6 +23,7 @@
 #include "cpp_backend_schema_visitor.hpp"
 #include "cpp_backend_type_table.hpp"
 #include "cpp_backend_view_visitor.hpp"
+#include "csharp_backend_type_table.hpp"
 #include "csharp_backend_visitor.hpp"
 #include "generator_internal.hpp"
 #include "ir.hpp"
@@ -1746,6 +1747,15 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
     // process a shape they cannot represent (they assume a struct leaf). The edge /
     // view / IPC / TS backends keep supporting it.
     if (!ValidateBackendsSupportFields(file, emit_accessor, emit_rust, error)) return false;
+
+    // BIND-6e: with `csharp`, refuse a file whose protoc C# namespace falls inside Fletcher.Gen,
+    // before any artifact is emitted (CsProtocNamespaceConflict says why).
+    if (opts.csharp != CsharpOutput::None) {
+        if (auto conflict = csharp_backend::CsProtocNamespaceConflict(file)) {
+            *error = std::move(*conflict);
+            return false;
+        }
+    }
 
     // Always emit the C++ header (edge-compatible, nanoarrow only).
     {

@@ -193,6 +193,49 @@ TEST(CsNames, NestedTypesAreFlattenedWithUnderscores) {
     EXPECT_EQ(cs::CsTypeName(in->enum_type(0)), "Outer_Inner_Color");
 }
 
+TEST(CsNames, ProtocsNamespaceInsideFletcherGenIsRefused) {
+    // BIND-6e: Fletcher.Gen is reserved for Fletcher's C# (D-BIND-69). protoc's own C# goes to
+    // csharp_namespace when set, else to the PascalCased package; inside Fletcher.Gen its types
+    // could share a namespace with Fletcher's (CS0101 in a project compiling both).
+    struct Case {
+        const char* package;
+        const char* csharp_namespace;  // nullptr: not set
+        bool refused;
+    };
+    const Case cases[] = {
+        {"nav", "Fletcher.Gen", true},
+        {"nav", "Fletcher.Gen.Nav", true},
+        {"fletcher.gen.nav", nullptr, true},  // protoc's default: Fletcher.Gen.Nav
+        {"fletcher.gen", nullptr, true},
+        {"nav", "Fletcher.Generated", false},  // a prefix of the text, not of the namespace
+        {"fletcher.generator", nullptr, false},
+        {"nav", "Eiva.Nav", false},
+        {"fletcher.gen.nav", "Eiva.Nav", false},  // the option wins over the package, as in protoc
+        {"", nullptr, false},
+    };
+    int n = 0;
+    for (const auto& c : cases) {
+        FileDescriptorProto fdp;
+        fdp.set_name("ns" + std::to_string(n++) + ".proto");
+        fdp.set_package(c.package);
+        fdp.set_syntax("proto3");
+        if (c.csharp_namespace != nullptr)
+            fdp.mutable_options()->set_csharp_namespace(c.csharp_namespace);
+        DescriptorPool pool;
+        const FileDescriptor* file = pool.BuildFile(fdp);
+        ASSERT_NE(file, nullptr);
+        const auto conflict = cs::CsProtocNamespaceConflict(file);
+        EXPECT_EQ(conflict.has_value(), c.refused)
+            << "package '" << c.package << "', csharp_namespace '"
+            << (c.csharp_namespace ? c.csharp_namespace : "<unset>") << "'";
+        if (conflict) {
+            EXPECT_NE(conflict->find("reserved for Fletcher's generated C#"), std::string::npos)
+                << *conflict;
+            EXPECT_NE(conflict->find(file->name()), std::string::npos) << *conflict;
+        }
+    }
+}
+
 TEST(CsNames, ATypeFromAnotherPackageIsQualifiedFromTheGlobalNamespace) {
     // BIND-6e: a field's type may be declared in another file. In the same package it shares
     // the namespace, so the flat name resolves; in another one it is named in full, from

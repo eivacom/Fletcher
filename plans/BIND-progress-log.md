@@ -860,6 +860,24 @@ writes them, and the in-process test agreed with them on the first run.
   Windows locked restore and Release build clean on 10.0.401; format, actionlint and the build-time
   mutant as above.
 
+**6e-3, beside protoc's own C# (2026-10-08, D-BIND-82).**
+
+- **The test.** `ProtocDotnetBeside` is a consumer that already uses protoc's C# messages and adds
+  Fletcher's for the same files: one protoc call runs both generators into one directory, and one
+  assembly holds both. It compiled first time and its four cases passed, so two plugin mutants were
+  made that break D-BIND-69's namespace rule (honour `csharp_namespace`; drop the `Fletcher.Gen.`
+  prefix); each fails the build with exactly CS0101.
+- **What the first attempt found instead.** The project first used `model.proto`, and the build failed
+  in protoc's OWN output: CS0102, its property `Clone` meeting its own `Clone()`. That file names a
+  field `clone` on purpose to test D-BIND-73's reserved names, and D-BIND-73 was read from protoc's
+  `main`, whose reserved list has `Clone`; the protoc 3.21.12 this repository ships predates it.
+  Fletcher's `Clone_` matches current protoc; D-BIND-73's "named exactly as protoc's output names it"
+  holds for that, not for 3.21.12. The project got its own `beside.proto`.
+- **The gap the test exposed, and the ruling.** The separation holds only while protoc stays out of
+  `Fletcher.Gen`, and a `csharp_namespace` (or a package `fletcher.gen.*`) can put it there. The
+  maintainer chose a refusal over a warning or a note: with `csharp`, such a file fails before any
+  output, saying why. Two mutants of the guard are each caught by the case written for them.
+
 **Tooling now.** The machine lost Python, Conan, CMake and Node in a crash on 2026-10-02. The plugin is
 built and tested in the Linux devcontainer (`eivaorg/fletcher-devcontainer:main`); the image has no
 .NET SDK, so generated C# is compiled on Windows, where the SDK survived.

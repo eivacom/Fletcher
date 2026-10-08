@@ -3,6 +3,8 @@
 //
 #include "csharp_backend_type_table.hpp"
 
+#include <google/protobuf/descriptor.pb.h>
+
 #include <functional>
 #include <set>
 #include <string>
@@ -338,6 +340,25 @@ std::string TryRemovePrefix(std::string_view prefix, std::string_view value) {
 std::string CsNamespace(const google::protobuf::FileDescriptor* file) {
     const std::string package = UnderscoresToCamelCase(file->package(), true, true);
     return package.empty() ? "Fletcher.Gen" : "Fletcher.Gen." + package;
+}
+
+std::optional<std::string> CsProtocNamespaceConflict(const google::protobuf::FileDescriptor* file) {
+    const bool explicit_ns = file->options().has_csharp_namespace();
+    const std::string protoc_ns = explicit_ns ? file->options().csharp_namespace()
+                                              : UnderscoresToCamelCase(file->package(), true, true);
+    constexpr std::string_view kReserved = "Fletcher.Gen";
+    const bool inside =
+        protoc_ns == kReserved || (protoc_ns.size() > kReserved.size() &&
+                                   protoc_ns.compare(0, kReserved.size(), kReserved) == 0 &&
+                                   protoc_ns[kReserved.size()] == '.');
+    if (!inside) return std::nullopt;
+    return file->name() + ": protoc's C# for this file would be in namespace '" + protoc_ns +
+           "' (" +
+           (explicit_ns ? std::string("from option csharp_namespace")
+                        : "from package '" + file->package() + "'") +
+           "), inside Fletcher.Gen, which is reserved for Fletcher's generated C# (D-BIND-69). "
+           "Its types and Fletcher's could then share a namespace, which is CS0101 in a project "
+           "that compiles both. Set option csharp_namespace to a namespace outside Fletcher.Gen.";
 }
 
 namespace {

@@ -2491,6 +2491,14 @@ accessors do, for capstone parity (Q18).
   protoc's: a field `clone` stays `Clone` here and is `Clone_` there); protoc's list alone (a field
   named `schema` would not compile).
 
+  **Note, measured 2026-10-08 (BIND-6e-3); the ruling is unchanged.** "Named exactly as protoc's
+  output names it" holds for the protoc this was read from (`main`, 2026-10-03), NOT for the protoc
+  3.21.12 this repository ships: that version's reserved list predates `Clone`, so its own C# for a
+  field `clone` names the property `Clone` and fails to compile against its own `Clone()` (CS0102,
+  seen with `integration-tests/protoc-dotnet/proto/model.proto`). Fletcher's `Clone_` is the current
+  protoc's name and is correct; do not "align" it with 3.21.12. Other names in the list may differ
+  the same way across protoc versions; none has been measured.
+
 - **D-BIND-74 - the lossless `Timestamp` and `Duration` types live in a fourth managed package,
   `Eiva.Fletcher.Model`, that references `Apache.Arrow` alone; amends D-BIND-14' from three
   packages to four.** *LOCKED BY THE MAINTAINER 2026-10-05,* in one question at the start of
@@ -2664,3 +2672,18 @@ The next one was ruled on 2026-10-07 at the start of slice 6e, cross-file refere
     smoke app out of the solution with no lock file (the guarantee would then be one Linux step).
   The NativeAOT static-linking caveat for the LGPL (N-8) is unchanged: this publish loads the shim as a
   shared library beside the binary.
+
+- **D-BIND-82 - with `csharp`, a file whose protoc C# namespace falls inside `Fletcher.Gen` is
+  refused.** *LOCKED BY THE MAINTAINER 2026-10-08, at slice 6e.* D-BIND-69 keeps Fletcher's C# apart
+  from protoc's by owning `Fletcher.Gen.<Package>` and ignoring `csharp_namespace`; measured in
+  `integration-tests/protoc-dotnet/dotnet/ProtocDotnetBeside`, where both generators write into one
+  project with no CS0101, and where honouring `csharp_namespace` or dropping the `Fletcher.Gen.` prefix
+  each fails the build with CS0101. That separation holds only while protoc stays OUT of
+  `Fletcher.Gen`, and a `.proto` can put it there: `option csharp_namespace = "Fletcher.Gen.Nav"`, or a
+  package `fletcher.gen.nav` with no option (protoc's default namespace is the PascalCased package).
+  So the plugin computes protoc's namespace as protoc does (`GetFileNamespace`: the option, else
+  `UnderscoresToCamelCase(package)`), and when it is `Fletcher.Gen` or below it fails the file before
+  any output is written, naming the file, the namespace and where it came from. A namespace that only
+  shares the TEXT prefix (`Fletcher.Generated`) is accepted. Without `csharp` nothing changes.
+  **Declined:** a warning on stderr (protoc's output is easy to miss, and the failure would surface
+  later as CS0101); documenting the reservation only.

@@ -909,6 +909,33 @@ TEST(CsVisitorCrossFile, APairCarriesAnotherFilesMessageAndAFlattenWrapperGetsNo
     ExpectContains(Emitted(files, "track.fletcher.cs"), "public static class Feed_PushTopic\n");
 }
 
+TEST(CsVisitorCrossFile, AFileWhoseProtocNamespaceIsInsideFletcherGenIsRefusedBeforeAnyOutput) {
+    // BIND-6e: with `csharp`, a file whose protoc C# would land in Fletcher.Gen fails the whole
+    // file before anything is written, so no half-generated set is left behind. Without
+    // `csharp` there is no Fletcher C# to collide with, and nothing changes.
+    FileDescriptorProto fdp;
+    fdp.set_name("reserved.proto");
+    fdp.set_package("nav");
+    fdp.set_syntax("proto3");
+    fdp.mutable_options()->set_csharp_namespace("Fletcher.Gen.Nav");
+    AddField(fdp.add_message_type(), "lat", 1, FieldDescriptorProto::TYPE_DOUBLE);
+    fdp.mutable_message_type(0)->set_name("Fix");
+    DescriptorPool pool;
+    const FileDescriptor* file = pool.BuildFile(fdp);
+    ASSERT_NE(file, nullptr);
+
+    MemoryContext ctx;
+    std::string error;
+    EXPECT_FALSE(fletcher::ArrowRowGenerator().Generate(file, "csharp", &ctx, &error));
+    EXPECT_NE(error.find("reserved.proto: protoc's C# for this file would be in namespace "
+                         "'Fletcher.Gen.Nav' (from option csharp_namespace)"),
+              std::string::npos)
+        << error;
+    EXPECT_TRUE(ctx.files().empty()) << ctx.files().size() << " file(s) written";
+
+    EXPECT_FALSE(GenerateWith(file, "").empty());
+}
+
 // ===========================================================================
 // BIND-6d: topics in the model file, and the native pair in its own file.
 // Driven by tests/golden/csharp_pair.proto, whose generated C# is committed beside
