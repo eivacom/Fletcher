@@ -30,8 +30,14 @@ jobs:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
 
+  eiva-profiles:
+    uses: ./.github/workflows/ci.eiva-profiles.yml
+    with:
+      component: fastdds-pubsub-provider
+      dependencies: core pubsub
+
   upload:
-    needs: release
+    needs: [release, eiva-profiles]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -62,4 +68,4 @@ jobs:
             --title "${{ github.ref_name }}" \
             --generate-notes \
             "fletcher-fastdds-pubsub-provider-windows-conan-package.tgz" \
-            "fletcher-fastdds-pubsub-provider-linux-conan-package.tgz"
+            "fletcher-fastdds-pubsub-provider-linux-conan-package.tgz"             fletcher-fastdds-pubsub-provider-*-x86_64-*-conan-package.tgz

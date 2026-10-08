@@ -52,6 +52,11 @@ jobs:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
 
+  eiva-profiles:
+    uses: ./.github/workflows/ci.eiva-profiles.yml
+    with:
+      component: protoc
+
   npm-publish:
     needs: release
     runs-on: ubuntu-latest
@@ -106,7 +111,7 @@ jobs:
     # `release` is also a transitive dep (via npm-publish), but it's
     # named explicitly here so the verify-tag-version-conan step below
     # can reference ${{ needs.release.outputs.conan-ref }}.
-    needs: [release, npm-publish]
+    needs: [release, npm-publish, eiva-profiles]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -123,11 +128,12 @@ jobs:
           conan-ref: ${{ needs.release.outputs.conan-ref }}
           tag-prefix: protoc-v
 
-      # Download all four upstream artifacts at once:
+      # Download all upstream artifacts at once:
       #   - fletcher-protoc-linux + fletcher-protoc-windows
       #       → shared-linked Conan-package tarballs (from ci.protoc.yml)
       #   - fletcher-protoc-linux-static + fletcher-protoc-windows-static
       #       → static-linked raw binaries (from build-static-* jobs)
+      #   - fletcher-protoc-<EIVA profile> → Conan-package tarballs (from ci.eiva-profiles.yml)
       # `merge-multiple: true` flattens each artifact's single file into
       # the current directory, matching the file names the gh release
       # create command below expects.
@@ -175,4 +181,5 @@ jobs:
             "fletcher-protoc-windows-conan-package.tgz" \
             "fletcher-protoc-linux-conan-package.tgz" \
             "protoc-gen-fletcher-linux-x64" \
-            "protoc-gen-fletcher-windows-x64.exe"
+            "protoc-gen-fletcher-windows-x64.exe" \
+            fletcher-protoc-*-x86_64-*-conan-package.tgz
