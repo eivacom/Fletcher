@@ -23,6 +23,8 @@
 #include "cpp_backend_schema_visitor.hpp"
 #include "cpp_backend_type_table.hpp"
 #include "cpp_backend_view_visitor.hpp"
+#include "csharp_backend_type_table.hpp"
+#include "csharp_backend_visitor.hpp"
 #include "generator_internal.hpp"
 #include "ir.hpp"
 #include "option_metadata.hpp"
@@ -1654,6 +1656,10 @@ nanoarrow::UniqueSchema BuildMessageSchema(const google::protobuf::Descriptor* m
 bool ParsePluginParameter(const std::string& parameter, PluginOptions* out, std::string* error) {
     std::istringstream ss(parameter);
     std::string token;
+    // The two C# tokens are read independently, so their order does not matter, and
+    // folded into one CsharpOutput after the loop.
+    bool csharp = false;
+    bool csharp_model_only = false;
     while (std::getline(ss, token, ',')) {
         if (token == "schema_only")
             out->schema_only = true;
@@ -1665,10 +1671,17 @@ bool ParsePluginParameter(const std::string& parameter, PluginOptions* out, std:
             out->accessor = true;
         else if (token == "rust")
             out->rust = true;
+        else if (token == "csharp")
+            csharp = true;
+        else if (token == "csharp_model_only")
+            csharp_model_only = true;
         // Unknown tokens are ignored, unchanged from the pre-existing behaviour
         // the RBA-1 no-drift contract depends on. metadata_from_option= tokens
         // are claimed below and MUST parse.
     }
+    out->csharp = !csharp             ? CsharpOutput::None
+                  : csharp_model_only ? CsharpOutput::ModelOnly
+                                      : CsharpOutput::ModelAndPair;
     return ParseMetadataRules(parameter, &out->metadata_rules, error);
 }
 
@@ -1735,6 +1748,15 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
     // view / IPC / TS backends keep supporting it.
     if (!ValidateBackendsSupportFields(file, emit_accessor, emit_rust, error)) return false;
 
+    // BIND-6e: with `csharp`, refuse a file whose protoc C# namespace falls inside Fletcher.Gen,
+    // before any artifact is emitted (CsProtocNamespaceConflict says why).
+    if (opts.csharp != CsharpOutput::None) {
+        if (auto conflict = csharp_backend::CsProtocNamespaceConflict(file)) {
+            *error = std::move(*conflict);
+            return false;
+        }
+    }
+
     // Always emit the C++ header (edge-compatible, nanoarrow only).
     {
         const std::string content = GenerateFile(file, schema_only, resolver.get());
@@ -1761,6 +1783,29 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
         std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(
             context->Open(ts_out_name));
         if (!WriteToStream(stream.get(), ts_content, error)) return false;
+    }
+
+    // Optionally emit the C# model (BIND-6), in both C# states. Additive, like `ts`: no
+    // other output changes (CsVisitor.CsharpTokenChangesNoExistingOutputAndAddsOnlyItsOwnFiles).
+    if (opts.csharp != CsharpOutput::None) {
+        const std::string cs_content =
+            csharp_backend::CsVisitor(file, resolver.get()).GenerateFile();
+        std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(
+            context->Open(StripProtoSuffix(file->name()) + ".fletcher.cs"));
+        if (!WriteToStream(stream.get(), cs_content, error)) return false;
+    }
+
+    // The C# native publisher/subscriber pair (D-BIND-76), in its own file beside the
+    // model, always with `csharp`, as C++'s header always carries its pair.
+    // `csharp_model_only` opts out, as C++'s `schema_only` does: a project that compiles
+    // against Apache.Arrow alone (D-BIND-72) then receives no type that needs
+    // Eiva.Fletcher. The model file is the same either way.
+    if (opts.csharp == CsharpOutput::ModelAndPair) {
+        const std::string native_content =
+            csharp_backend::CsVisitor(file, resolver.get()).GenerateNativeFile();
+        std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(
+            context->Open(StripProtoSuffix(file->name()) + ".fletcher.native.cs"));
+        if (!WriteToStream(stream.get(), native_content, error)) return false;
     }
 
     // Optionally emit one serialized Arrow IPC schema file per message

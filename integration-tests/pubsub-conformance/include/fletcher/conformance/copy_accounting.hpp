@@ -15,6 +15,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <fletcher/copy_probe/ledger.hpp>
 #include <fletcher/core/types.hpp>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/provider.hpp>
@@ -31,149 +32,16 @@
 namespace fletcher {
 namespace conformance {
 
-/// Addresses are sampled into integers WHILE THE STORAGE IS LIVE and compared
-/// afterwards: using the pointer values themselves is implementation-defined
-/// once the storage dies ([basic.stc.general]/4), and the verdict is read after
-/// the round trip returns. 0 means "no address".
-using Address = uintptr_t;
-
-// ── The ledger ──────────────────────────────────────────────────────
-
-/// One attachment's provenance: where its bytes were published and delivered.
-/// `delivered_data == 0` means the delivery carried nothing under this key,
-/// which Judge() scores as a copy.
-///
-/// NOTE on `content_ok`: it compares the delivered bytes against the PUBLISHED
-/// ADDRESS, so when provenance holds it is comparing a buffer with itself and
-/// says nothing. That is deliberate and sufficient here — its job is to catch a
-/// COPY that garbled the bytes, which by definition sits at a second address —
-/// but it is not a liveness check. The liveness claim is `retained_content_ok`,
-/// which compares against harness-owned storage for exactly this reason.
-struct AttachmentTrace {
-    std::string key;
-    Address published_data = 0;
-    size_t published_len = 0;
-    Address delivered_data = 0;
-    size_t delivered_len = 0;
-    /// memcmp against the published bytes, read BEFORE the verdict so
-    /// "garbled" and "at a second address" are different failures.
-    bool content_ok = false;
-};
-
-/// Everything one publish→delivery round trip observed. Written on the
-/// publishing thread only (P2), so no lock.
-struct CopyLedger {
-    /// PRODUCER side — where the row's bytes were written BY THE CLIENT, sampled
-    /// at production time. This is the half §8.1 used to begin after: the
-    /// measured interval started at "the window base after the encoder's last
-    /// append", so a client that composed its row elsewhere and handed it over
-    /// was invisible. `produced_at == 0` means the sampler never ran and NO
-    /// verdict may be read — an unsampled leg must fail as itself rather than
-    /// default into `encode_copies == 1`.
-    Address produced_at = 0;
-    size_t produced_len = 0;
-    /// Sampled INSIDE the producer: was `produced_at` exactly the subject
-    /// buffer's own write cursor, `Data() + Position()`? Only the producer can
-    /// answer that, and only while it is running.
-    bool produced_in_window = false;
-
-    /// Encode side: the window base after the encoder's LAST append, and the
-    /// position then. Now an INTERIOR point of the measured interval, not its
-    /// start — `row_copies` is preceded by `encode_copies`, not replaced by it.
-    Address encode_base = 0;
-    size_t encode_len = 0;
-    /// Appends across which the base changed while `Position() > 0` — a refill
-    /// that relocated already-written bytes — and how many bytes moved.
-    /// Reported, never failed (2026-09-01 ruling).
-    size_t refill_moves = 0;
-    size_t refill_bytes = 0;
-
-    /// Delivery side, captured inside the subscriber callback. `deliveries` is
-    /// asserted `== 1` before any verdict is read: zero deliveries must never
-    /// read as "no copies".
-    size_t deliveries = 0;
-    Address delivered_data = 0;
-    size_t delivered_len = 0;
-    bool row_content_ok = false;
-    /// P5 enforced rather than merely documented: the encode window still held
-    /// the row, byte for byte, when the callback ran. This catches a subject that
-    /// clobbers or recycles the window before delivery, and relabels the failure
-    /// as a P5 violation instead of a copy count. It does NOT catch a window
-    /// freed and handed back at the same address with its bytes intact — see
-    /// "Not airtight" in the harness README.
-    bool window_intact = false;
-    /// What the DELIVERY carried — the published-side count comes from the
-    /// input map and so cannot catch a dropped entry.
-    size_t delivered_attachments = 0;
-
-    /// INPUT. When non-empty, the capture keeps its own copy of the attachment
-    /// delivered under this key — §3.2 clause 1's "a callee that keeps it takes
-    /// its own reference" — and the two fields below are read AFTER the callback
-    /// has returned. Empty means the leg is not run.
-    std::string retain_key;
-    /// INPUT. What the retained bytes must still read back as, held by the
-    /// HARNESS in its own storage.
-    ///
-    /// It has to be an independent copy, and that is not a detail: the retained
-    /// blob's address IS the published address when provenance holds, so
-    /// comparing the two would be `memcmp(p, p, n)` — true by construction, for a
-    /// live owner and a dead one alike. Measured, not reasoned: a mutation that
-    /// gave the blob an owner unrelated to the arena left this leg green until
-    /// the comparand moved off the arena.
-    std::vector<uint8_t> retain_expected;
-    /// Where the retained bytes live once the delivery call is over, and whether
-    /// they still read back byte for byte. A blob whose bytes die with the
-    /// callback cannot satisfy both: either the owner is real, or it is not.
-    ///
-    /// Read only AFTER the subject has been destroyed (`subject_released`), so
-    /// the `Blob`'s own owner is the only thing that can still be holding those
-    /// bytes. Read while the provider was alive, `retained_content_ok` would
-    /// pass for a span with no owner at all — the exact case it claims to
-    /// distinguish, and a vacuous guard.
-    Address retained_data = 0;
-    bool retained_content_ok = false;
-    /// The subject really was destroyed before the two fields above were read —
-    /// a `weak_ptr` to it had expired. Asserted by the tests, so that a keep-alive
-    /// added later cannot quietly make the ownership claim vacuous again.
-    bool subject_released = false;
-
-    std::vector<AttachmentTrace> attachments;
-};
-
-/// What Judge() decided. No subject-keyed expectation lives here, deliberately:
-/// every registered subject faces the same numbers, so a provider cannot
-/// declare its way to green.
-struct CopyVerdict {
-    /// The CLIENT's half of the send path: 0 iff the producer wrote the row
-    /// straight into the delivered window, 1 if it composed elsewhere and the
-    /// bytes were copied in. `row_copies` cannot see this — a staged row is
-    /// copied into the window BEFORE the window base is sampled, so the
-    /// provider half is a clean zero either way. That blindness is the defect
-    /// PDA-DEC-A1 removes, and `StagingProducerIsCaught` is it, pinned.
-    ///
-    /// EMPTY on a leg whose producer was never sampled, which is every leg that
-    /// does not run through `RunProducerRoundTrip`. It is an optional rather
-    /// than a number precisely so that an unsampled leg cannot default into
-    /// "the client copied the row": reading it there throws
-    /// `std::bad_optional_access` and the leg fails as itself, which is the rule
-    /// `CopyLedger::produced_at` states and nothing but convention used to
-    /// enforce.
-    std::optional<size_t> encode_copies;
-    size_t row_copies = 0;
-    size_t attachment_copies = 0;
-    size_t refill_moves = 0;
-    size_t refill_bytes = 0;
-};
-
-/// The whole decision, as a pure function of the ledger — testable without a
-/// provider, and exactly ONE scoring path for every subject and control.
-/// `row_copies` is 0 iff the delivered span is EXACTLY the encode window; not
-/// containment, which for a shorter range admits an identity-preserving in-place
-/// `memmove` to the window base with `memcmp` passing by construction.
-/// `encode_copies` is 0 iff the producer wrote into that window itself, and is
-/// EMPTY when no producer was sampled. The two are consecutive halves of one
-/// path, not two views of the same half.
-CopyVerdict Judge(const CopyLedger& ledger);
+// ── The ledger and Judge() ───────────────────────────────────────────
+//
+// In `fletcher-copy-probe` since D-BIND-62, so that this harness and the
+// binding shim's probe variant score with ONE Judge(). Named here unchanged, so
+// every clause reads as it did.
+using copy_probe::Address;
+using copy_probe::AttachmentTrace;
+using copy_probe::CopyLedger;
+using copy_probe::CopyVerdict;
+using copy_probe::Judge;
 
 // ── Subjects ────────────────────────────────────────────────────────
 
@@ -268,8 +136,66 @@ enum class ProducerMode { kInPlace, kStaged };
 RoundTrip RunProducerRoundTrip(CopyRunner& runner, const Topic& topic, size_t row_bytes,
                                ProducerMode mode);
 
+/// What a caller-supplied producer REPORTS: where the row ended up, and how long
+/// it is.
+///
+/// Self-reported on purpose, and the reason is the difference between a
+/// measurement and a tautology. The harness cannot see inside a producer it does
+/// not own, so a sampler that recorded the LENT SPAN regardless of what the
+/// producer did would score every such producer as zero-copy by construction —
+/// including one that composed the row elsewhere and copied it in. `kStaged`
+/// reports its staging vector's address for exactly this reason, and
+/// `BindingProducerStagingIsCaught` is the control that keeps this honest.
+///
+/// A producer that misreports is unmeasurable here, which is the same bound the
+/// README already states for `AppendInPlace` itself: a producer is trusted to
+/// report what it wrote.
+struct ProducedRow {
+    const uint8_t* at = nullptr;
+    size_t len = 0;
+};
+
+/// One round trip whose producer is supplied by the CALLER, instrumented by the
+/// same `AppendInPlace` sampling and scored by the same `Judge()` as the modes
+/// above.
+///
+/// It exists so that a producer THIS HARNESS DOES NOT OWN can be measured —
+/// specifically a language binding reached through a C ABI (BIND-2d,
+/// D-BIND-34). Without it the only way to score such a producer would be to link
+/// the binding into `copy_accounting.cpp`, which every suite in this harness
+/// compiles; with it the instrument stays here and the foreign code stays in the
+/// one translation unit that needs it.
+///
+/// `payload` is what the delivery is checked against, so a caller whose encoding
+/// is not `CopyPayload` passes its own expected bytes and the row-content check
+/// stays real rather than being relaxed for the new leg.
+RoundTrip RunCustomProducerRoundTrip(CopyRunner& runner, const Topic& topic,
+                                     const std::vector<uint8_t>& payload,
+                                     const std::function<ProducedRow(uint8_t*, size_t)>& produce);
+
 /// Build `kAttachmentCount` attachments of `kAttachmentBytes` each.
 Attachments MakeCopyAttachments();
+
+// -- The binding producer (BIND-2d, D-BIND-34) -----------------------
+//
+// Implemented in `binding_producer.cpp`, which is the ONLY translation unit in
+// this harness that links `fletcher-c-abi`. Declared here so the clause file can
+// call it without seeing the ABI's header.
+
+/// The value the binding leg puts in its one binary field, sized so the encoded
+/// row is exactly `row_bytes`.
+std::vector<uint8_t> BindingRowValue(size_t row_bytes);
+
+/// One round trip whose producer is the SHIPPED codec reached through the
+/// SHIPPED C ABI: `fl_codec_open`, `fl_rows_bind`, `fl_encode_row` into a span
+/// of the probe's own window. Scored by the same ledger as every other leg.
+RoundTrip RunBindingProducerRoundTrip(CopyRunner& runner, const Topic& topic, size_t row_bytes);
+
+/// The binding leg's live negative control: the same ABI, composing the row in
+/// storage of its own and copying it into the lent span. Scores 1, or the leg
+/// above is measuring nothing.
+RoundTrip RunBindingStagingProducerRoundTrip(CopyRunner& runner, const Topic& topic,
+                                             size_t row_bytes);
 
 /// Leg 3 — the copy §3.2 forces on a provider holding payload bytes in memory
 /// IT owns (a stand-in for a transport-loaned sample).

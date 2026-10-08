@@ -1,0 +1,46 @@
+<!-- SPDX-License-Identifier: LGPL-3.0-or-later
+     Copyright (C) 2026 The Fletcher Authors
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- BIND-6e, D-BIND-81: a consumer application, published with NativeAOT.
+
+       BIND-6's acceptance asks that "a NativeAOT publish of a consumer app succeeds
+       with zero trim warnings". This is that app: the plugin's committed C# goldens
+       (the model and native pair of protoc/tests/golden/csharp_pair.proto, and the
+       model of timestamp.proto, which the pair's Marks refers to) compiled against
+       Eiva.Fletcher, publishing and receiving rows over `inprocess`. ci.dotnet's Linux
+       job publishes it for both TFMs with warnings as errors, so any trim or AOT
+       warning from the generated code, the runtime or Apache.Arrow fails the publish,
+       and then RUNS the binary against the shim, so a publish that trimmed something
+       the app needs fails too. In a plain `dotnet build` of the solution it is an
+       ordinary program, built with the AOT analysers on. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <RootNamespace>Eiva.Fletcher.AotSmoke</RootNamespace>
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- Every trim or AOT warning by assembly and code, not one summary line per
+         package: a failing publish names what to fix. -->
+    <TrimmerSingleWarn>false</TrimmerSingleWarn>
+    <!-- The RIDs a NativeAOT publish may target, so a locked-mode restore of the
+         solution already holds the ILCompiler packages for them. -->
+    <RuntimeIdentifiers>linux-x64;win-x64</RuntimeIdentifiers>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Fletcher/Fletcher.csproj" />
+    <ProjectReference Include="../../src/Fletcher.Model/Fletcher.Model.csproj" />
+    <PackageReference Include="Apache.Arrow" Version="[23.0.0]" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="../../../protoc/tests/golden/*.fletcher*.cs"
+             Link="golden/%(Filename)%(Extension)" />
+    <Compile Include="../../../protoc/tests/golden/google/protobuf/timestamp.fletcher.cs"
+             Link="golden/google/protobuf/%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>

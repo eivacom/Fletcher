@@ -1,0 +1,29 @@
+<!-- SPDX-License-Identifier: LGPL-3.0-or-later
+     Copyright (C) 2026 The Fletcher Authors
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The shared model types that generated C# refers to: today exactly the
+       lossless Timestamp and Duration (D-BIND-26, D-BIND-74). They live here and
+       not beside the generated code because generated code is compiled into the
+       CONSUMER's assembly, so a type emitted with it would be defined once per
+       assembly and collide in an app that references two (CS0433).
+       Apache.Arrow ONLY: the model layer must build for a gateway or WASM app
+       that never loads native assets (D-BIND-72). No reference to Eiva.Fletcher
+       or Eiva.Fletcher.Interop, and Fletcher.Model.Tests proves it by construction. -->
+  <PropertyGroup>
+    <PackageId>Eiva.Fletcher.Model</PackageId>
+    <RootNamespace>Eiva.Fletcher.Model</RootNamespace>
+    <Description>Shared model types for Fletcher-generated C#: lossless Timestamp and Duration. Depends on Apache.Arrow only.</Description>
+    <PackageTags>fletcher;arrow;timestamp;duration</PackageTags>
+    <!-- D-BIND-81: safe for trimming and NativeAOT (see Eiva.Fletcher's project). -->
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The same exact pin as Eiva.Fletcher and Eiva.Fletcher.GatewayClient: a
+         consumer that references several must not be asked to resolve two
+         versions of the Arrow types that appear in their surfaces. TimeUnit is
+         the one this package's public API uses. -->
+    <PackageReference Include="Apache.Arrow" Version="[23.0.0]" />
+  </ItemGroup>
+</Project>

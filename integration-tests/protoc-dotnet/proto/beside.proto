@@ -1,0 +1,43 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// BIND-6e: the fixture ProtocDotnetBeside generates with protoc's own --csharp_out AND
+// Fletcher's csharp, into one project. It sets csharp_namespace, which protoc follows and
+// Fletcher ignores (D-BIND-69); shared.proto, generated beside it, sets none, so protoc
+// takes its namespace from the package. Both hold the shapes whose names the two generators
+// share: an enum, a nested message, a message from another file, a map and a well-known type.
+//
+// Not model.proto: that file names a field `clone` on purpose, to test Fletcher's reserved
+// names (D-BIND-73), and protoc 3.21.12's own C# does not compile it (CS0102: its property
+// `Clone` meets its own Clone() method; newer protoc suffixes it, as Fletcher does).
+syntax = "proto3";
+
+package integration.beside;
+option csharp_namespace = "Eiva.Integration.Beside";
+
+import "shared.proto";
+import "google/protobuf/timestamp.proto";
+
+enum Mood {
+  MOOD_UNSPECIFIED = 0;
+  MOOD_HAPPY = 1;
+}
+
+message Reading {
+  message Note { string text = 1; }
+
+  int32 id = 1;
+  string name = 2;
+  Mood mood = 3;
+  Note note = 4;
+  repeated Note notes = 5;
+}
+
+message Route {
+  integration.shared_types.Pos start = 1;
+  repeated integration.shared_types.Pos legs = 2;
+  map<string, integration.shared_types.Pos> stops = 3;
+  integration.shared_types.Quality quality = 4;
+  repeated integration.shared_types.Quality checks = 5;
+  repeated google.protobuf.Timestamp marks = 6;
+}

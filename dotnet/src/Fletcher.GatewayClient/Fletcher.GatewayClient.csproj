@@ -1,0 +1,25 @@
+<!-- SPDX-License-Identifier: LGPL-3.0-or-later
+     Copyright (C) 2026 The Fletcher Authors
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The managed WebSocket client, a port of @eiva/fletcher-gateway-client and
+       the ONE documented exception to "there is exactly one codec": it speaks the
+       gateway's frames in managed code and has no native dependency at all. That
+       is what keeps a browser/WASM-adjacent story alive and what makes this
+       package referenceable without the shim (D-BIND-14', D-BIND-1). -->
+  <PropertyGroup>
+    <PackageId>Eiva.Fletcher.GatewayClient</PackageId>
+    <RootNamespace>Eiva.Fletcher.GatewayClient</RootNamespace>
+    <Description>Managed WebSocket client for the Fletcher gateway. No native dependencies.</Description>
+    <PackageTags>fletcher;arrow;gateway;websocket</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Apache.Arrow for IPC schema parsing only; the same pin as Eiva.Fletcher,
+         because a consumer that references both must not be asked to resolve two
+         versions of the Arrow types that appear in both surfaces. -->
+    <PackageReference Include="Apache.Arrow" Version="[23.0.0]" />
+  </ItemGroup>
+
+</Project>

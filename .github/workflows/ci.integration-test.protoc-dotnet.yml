@@ -1,0 +1,137 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+name: ci.integration-test.protoc-dotnet
+
+concurrency:
+  group: ci.integration-test.protoc-dotnet-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_call:
+    inputs:
+      devcontainer-image:
+        description: >-
+          Pre-built devcontainer image reference (e.g.
+          eivaorg/fletcher-devcontainer:<sha>). The caller is
+          responsible for invoking ci.setup-devcontainer-image.yml; this
+          workflow only consumes the resulting image. ci.pr.yml passes the
+          image it built once and shares across all callers. Only the
+          Linux job needs it; the Windows job runs natively on the
+          windows-2022 runner.
+        required: true
+        type: string
+
+# BIND-6: the generated C# as a consumer meets it. The test project runs protoc
+# from its own MSBuild target (D-BIND-71's recipe), compiles the result against
+# Apache.Arrow ONLY (D-BIND-72), and compares every generated Schema with the .ipc
+# the same protoc run wrote from nanoarrow.
+#
+# Plugin discovery is the Rust lane's, as D-BIND-16 requires: build the plugin with
+# `conan create protoc`, find it and protoc in the Conan cache, export
+# FLETCHER_PROTOC_PLUGIN and PROTOC. Both legs fail loudly when either is missing:
+# the project's own target refuses to build without them, so an empty find cannot
+# turn into a green run over nothing.
+#
+# THE CHECKOUT INCLUDES dotnet/ for two reasons. dotnet/global.json: the Windows leg's
+# setup-dotnet reads the SDK pin from it. And, since D-BIND-74, the project references
+# dotnet/src/Fletcher.Model (the lossless Timestamp and Duration), which takes its
+# framework targets and analyser settings from dotnet/Directory.Build.props and
+# dotnet/.editorconfig. A new consumer of a path outside this lane's checkout adds it
+# HERE and to ci.pr.yml's filter, in the same commit.
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            protoc
+            integration-tests/protoc-dotnet
+            dotnet
+            .conan-profiles
+            .github
+
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
+        with:
+          image: ${{ inputs.devcontainer-image }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build plugin, export discovery env, dotnet test
+        run: |
+          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace \
+            fletcher-build \
+            bash -c "set -e && \
+                     PROFILE=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release && \
+                     echo '::group::conan create protoc (builds the fletcher-protoc plugin)' && \
+                       conan create protoc/. --build=missing -pr:a=\$PROFILE && \
+                     echo '::endgroup::' && \
+                     echo '::group::locate the just-built plugin in the Conan cache' && \
+                       BIN=\$(find ~/.conan2/p -path '*/p/bin/fletcher-protoc' -type f -print -quit) && \
+                       if [ -z \"\$BIN\" ]; then echo '::error::fletcher-protoc binary not found in Conan cache'; find ~/.conan2 -name 'fletcher-protoc*' -type f; exit 1; fi && \
+                       export FLETCHER_PROTOC_PLUGIN=\"\$BIN\" && \
+                       PROTOC=\$(find ~/.conan2 \( -name protoc -o -name 'protoc-[0-9]*' \) \( -type f -o -type l \) -print -quit 2>/dev/null || true) && \
+                       if [ -z \"\$PROTOC\" ]; then PROTOC=\$(command -v protoc 2>/dev/null || true); fi && \
+                       if [ -z \"\$PROTOC\" ]; then echo '::error::protoc not found in the Conan cache or on PATH'; exit 1; fi && \
+                       export PROTOC && \
+                       echo \"plugin=\$FLETCHER_PROTOC_PLUGIN  protoc=\$PROTOC\" && \
+                     echo '::endgroup::' && \
+                     echo '::group::dotnet test (the project runs protoc itself, D-BIND-71)' && \
+                       (cd integration-tests/protoc-dotnet/dotnet/ProtocDotnet && dotnet test -c Release) && \
+                       (cd integration-tests/protoc-dotnet/dotnet/ProtocDotnetBeside && dotnet test -c Release) && \
+                     echo '::endgroup::'"
+
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            protoc
+            integration-tests/protoc-dotnet
+            dotnet
+            .conan-profiles
+            .github
+
+      - name: Install Conan
+        uses: ./.github/actions/conan-install
+
+      # global-json-file, not a literal version: dotnet/global.json is the single
+      # pin, and the runner's own pre-installed SDKs must not decide this.
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: dotnet/global.json
+
+      - name: Build fletcher-protoc plugin
+        shell: bash
+        run: conan create protoc --build=missing -pr:a=.conan-profiles/Windows-msvc194-x86_64-Release
+
+      - name: Export discovery env + dotnet test
+        shell: bash
+        working-directory: integration-tests/protoc-dotnet/dotnet/ProtocDotnet
+        run: |
+          set -e
+          BIN=$(find ~/.conan2/p -path '*/p/bin/fletcher-protoc.exe' -type f -print -quit)
+          if [ -z "$BIN" ]; then
+            echo "::error::fletcher-protoc.exe not found in Conan cache"
+            find ~/.conan2 -name 'fletcher-protoc*' -type f
+            exit 1
+          fi
+          export FLETCHER_PROTOC_PLUGIN="$BIN"
+          PROTOC=$(find ~/.conan2 \( -name protoc.exe -o -name 'protoc-[0-9]*.exe' \) -type f -print -quit 2>/dev/null || true)
+          if [ -z "$PROTOC" ]; then PROTOC=$(command -v protoc 2>/dev/null || true); fi
+          if [ -z "$PROTOC" ]; then
+            echo "::error::protoc.exe not found in the Conan cache or on PATH"
+            exit 1
+          fi
+          # The one change from the Rust lane's block: Git Bash's find returns
+          # /c/Users/... paths, and MSBuild's Exists() and Exec read the variables
+          # as Windows paths, so both are converted before they are exported.
+          FLETCHER_PROTOC_PLUGIN=$(cygpath -w "$FLETCHER_PROTOC_PLUGIN")
+          PROTOC=$(cygpath -w "$PROTOC")
+          export FLETCHER_PROTOC_PLUGIN PROTOC
+          echo "plugin=$FLETCHER_PROTOC_PLUGIN  protoc=$PROTOC"
+          dotnet test -c Release
+          # BIND-6e: Fletcher's C# beside protoc's own, in one project, without CS0101.
+          dotnet test ../ProtocDotnetBeside -c Release

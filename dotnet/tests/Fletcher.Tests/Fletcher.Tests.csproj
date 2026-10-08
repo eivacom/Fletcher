@@ -1,0 +1,94 @@
+<!-- SPDX-License-Identifier: LGPL-3.0-or-later
+     Copyright (C) 2026 The Fletcher Authors
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <!-- A test assembly publishes no API, so the missing-XML-comment rule the
+         libraries are held to (CS1591, an error there) would only add ceremony
+         here. The prose that matters in this project lives in comments that say
+         WHY a case exists, not in doc tags on [Fact] methods. -->
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <RootNamespace>Eiva.Fletcher.Tests</RootNamespace>
+    <!-- The C Data Interface surface of Apache.Arrow is pointer-based: exporting
+         an array means handing it a CArrowArray* to fill in. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Both library TFMs are exercised, and the net8.0 leg runs on whatever
+         runtime the SDK ships: the devcontainer and the CI runners carry the
+         .NET 10 runtime only, and rolling forward is how the net8.0-compiled
+         assemblies get executed rather than merely compiled. -->
+    <RollForward>LatestMajor</RollForward>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Fletcher/Fletcher.csproj" />
+    <!-- The generated model's lossless Timestamp and Duration (D-BIND-74), which the
+         compiled C# goldens below refer to. -->
+    <ProjectReference Include="../../src/Fletcher.Model/Fletcher.Model.csproj" />
+  </ItemGroup>
+
+  <!-- The plugin's C# goldens, COMPILED into this assembly (BIND-6d). They are the
+       generator's own output for protoc/tests/golden/csharp_pair.proto - the model
+       and the native publisher/subscriber pair - and the plugin's
+       CsVisitorPair.TheCommittedGoldensAreThePluginsOutput fails if they drift from
+       it by a byte. This project has the native shim; the protoc lanes do not, so this
+       is where the generated pair meets the real runtime (GeneratedPairTests).
+       BIND-6e: csharp_pair.proto's Marks refers to google.protobuf.Timestamp as a message,
+       so the plugin's model for timestamp.proto is a golden too, compiled beside it, as a
+       consumer compiles every file its imports reach. -->
+  <ItemGroup>
+    <Compile Include="../../../protoc/tests/golden/*.fletcher*.cs"
+             Link="golden/%(Filename)%(Extension)" />
+    <Compile Include="../../../protoc/tests/golden/google/protobuf/timestamp.fletcher.cs"
+             Link="golden/google/protobuf/%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!-- C# against C++ on the wire (BIND-6d-2). The plugin's C# for protoc-coverage's
+       coverage.proto, committed as a golden there and held to the plugin byte for byte by
+       that lane's CsGolden.ModelByteIdentical, is compiled here; the .v1.bin goldens
+       beside it are the C++ generated class's Encode() of the same fixture rows, pinned
+       by that lane's parity oracle. CoverageWireBytesTests compares the two. -->
+  <ItemGroup>
+    <Compile Include="../../../integration-tests/protoc-coverage/golden/coverage.fletcher.cs"
+             Link="coverage/%(Filename)%(Extension)" />
+    <None Include="../../../integration-tests/protoc-coverage/golden/*.v1.bin"
+          Link="coverage/%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- The native shim, staged beside the test binary.
+       There is no NuGet layout in a source build, so nothing puts the shim where
+       the loader can find it. `conan create c-abi` leaves it in the Conan cache
+       under a content-addressed path that MSBuild cannot guess, so the path is
+       passed in: `dotnet test -p:FletcherNativeShim=<path>`, which is what
+       `ci.dotnet.yml` does after building the component.
+
+       Absent, the native rows FAIL rather than skip, carrying the resolver's
+       diagnostic - "the shim was never built" must not read green. -->
+  <ItemGroup Condition="'$(FletcherNativeShim)' != '' And Exists('$(FletcherNativeShim)')">
+    <None Include="$(FletcherNativeShim)"
+          Link="%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- The plugin's schema goldens, staged beside the test binary.
+       They are the generator's OWN output: the .ipc file the schema option emits
+       for each message, so opening a codec over every one of them is the only
+       check in the round that the descriptors BIND-6 will generate are
+       descriptors BIND-3's codec accepts. Copied rather than read through a
+       relative path so that the dependency is declared where a build can see it,
+       and so a golden that is renamed breaks here instead of silently skipping. -->
+  <ItemGroup>
+    <None Include="../../../protoc/tests/golden/*.ipc"
+          Link="golden/%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="[18.10.0]" />
+    <PackageReference Include="xunit" Version="[2.9.3]" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="[3.1.5]" />
+  </ItemGroup>
+
+</Project>
