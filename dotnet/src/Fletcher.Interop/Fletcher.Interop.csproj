@@ -13,6 +13,8 @@
     <RootNamespace>Eiva.Fletcher.Interop</RootNamespace>
     <Description>P/Invoke surface and native shim for Fletcher. Referenced by Eiva.Fletcher; not intended to be used directly.</Description>
     <PackageTags>fletcher;arrow;interop;native</PackageTags>
+    <!-- D-BIND-81: safe for trimming and NativeAOT (see Eiva.Fletcher's project). -->
+    <IsAotCompatible>true</IsAotCompatible>
   </PropertyGroup>
 
   <!-- BIND-3a: the declarations have arrived. The NATIVE ASSETS still have not -

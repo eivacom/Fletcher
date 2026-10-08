@@ -1,0 +1,41 @@
+<!-- SPDX-License-Identifier: LGPL-3.0-or-later
+     Copyright (C) 2026 The Fletcher Authors
+-->
+<Project>
+  <!-- The AOT toolchain packages, PINNED (D-BIND-81).
+
+       IsAotCompatible (the libraries) and PublishAot (tests/Fletcher.AotSmoke) add
+       implicit package references whose versions the SDK decides: Microsoft.NET.ILLink.Tasks,
+       which since .NET 8 also carries the trim and AOT analysers, and the ILCompiler
+       packages. Each SDK patch bundles its own, so the lock files a locked-mode restore
+       checks would differ between two SDKs of one feature band: measured 2026-10-08, CI's
+       Linux image runs SDK 10.0.400 (packs 10.0.11 / 8.0.30) while its Windows runner
+       rolls forward to 10.0.401 (10.0.12), and a lock file written on one fails NU1004 on
+       the other.
+
+       So the versions are fixed here, at what SDK 10.0.400 (dotnet/global.json) bundles,
+       for every SDK that builds this tree. Raise them deliberately, with the global.json
+       pin, then re-write the lock files. A newer SDK runs these older packs without
+       complaint; they are build-time tools, not shipped. -->
+  <PropertyGroup>
+    <FletcherAotPackNet10>10.0.11</FletcherAotPackNet10>
+    <FletcherAotPackNet8>8.0.30</FletcherAotPackNet8>
+  </PropertyGroup>
+
+  <Target Name="FletcherPinAotPacks" BeforeTargets="ProcessFrameworkReferences">
+    <ItemGroup>
+      <KnownILLinkPack Condition="'%(KnownILLinkPack.TargetFramework)' == 'net10.0'">
+        <ILLinkPackVersion>$(FletcherAotPackNet10)</ILLinkPackVersion>
+      </KnownILLinkPack>
+      <KnownILLinkPack Condition="'%(KnownILLinkPack.TargetFramework)' == 'net8.0'">
+        <ILLinkPackVersion>$(FletcherAotPackNet8)</ILLinkPackVersion>
+      </KnownILLinkPack>
+      <KnownILCompilerPack Condition="'%(KnownILCompilerPack.TargetFramework)' == 'net10.0'">
+        <ILCompilerPackVersion>$(FletcherAotPackNet10)</ILCompilerPackVersion>
+      </KnownILCompilerPack>
+      <KnownILCompilerPack Condition="'%(KnownILCompilerPack.TargetFramework)' == 'net8.0'">
+        <ILCompilerPackVersion>$(FletcherAotPackNet8)</ILCompilerPackVersion>
+      </KnownILCompilerPack>
+    </ItemGroup>
+  </Target>
+</Project>

@@ -2632,3 +2632,35 @@ The next one was ruled on 2026-10-07 at the start of slice 6e, cross-file refere
   but a public member on every generated class that nobody should call); keeping it internal and
   requiring every file in one assembly (a contracts assembly is the usual way to share messages, and
   it would fail to compile).
+
+- **D-BIND-81 - `Eiva.Fletcher`, `Eiva.Fletcher.Interop` and `Eiva.Fletcher.Model` declare
+  `IsAotCompatible`; a NativeAOT consumer is published and RUN in `ci.dotnet`'s Linux job; and the AOT
+  toolchain packages are pinned so one set of lock files holds on every SDK of the band.** *LOCKED BY
+  THE MAINTAINER 2026-10-08, in three questions at slice 6e.* BIND-6's acceptance asks that "a NativeAOT
+  publish of a consumer app succeeds with zero trim warnings". Measured first: a console app compiling
+  the plugin's goldens (the model, the native pair, and timestamp.proto's class) against
+  `Eiva.Fletcher` published with NativeAOT with ONE warning, IL3000, from `NativeLoader`'s use of
+  `Assembly.Location`, which is empty in an AOT or single-file app; the generated code and Apache.Arrow
+  23 raised none. `NativeLoader` now probes `AppContext.BaseDirectory`, the same directory in an
+  ordinary build. Then:
+  - **The claim.** The three libraries set `IsAotCompatible`, which turns the trim and AOT analysers on
+    in every build (the IL3000 line put back fails the Interop build itself, 4 errors) and stamps each
+    assembly `IsTrimmable`. `Eiva.Fletcher.GatewayClient` was not asked about and does not yet carry it.
+  - **The evidence.** `dotnet/tests/Fletcher.AotSmoke`, in `Fletcher.slnx`, is that consumer: it
+    publishes and receives a `Reading` and a cross-file `Marks` over `inprocess` and exits non-zero
+    unless exactly the rows sent come back. `ci.dotnet`'s Linux job publishes it for net8.0 and net10.0
+    (warnings are errors, so any IL warning fails the publish; gcc links, the image has no clang) and
+    runs each binary against the shim already built there. **Declined:** a lane of its own (a second
+    shim build for no new evidence); Windows too (twice the added time for a toolchain difference
+    nothing so far suggests).
+  - **The pin.** `IsAotCompatible` and `PublishAot` add implicit references to
+    `Microsoft.NET.ILLink.Tasks` (which carries the analysers since .NET 8) and the ILCompiler packages,
+    at versions the SDK bundles. CI's Linux image runs SDK 10.0.400 (packs 10.0.11 and 8.0.30) and its
+    Windows runner rolls forward to 10.0.401 (10.0.12), so a lock file written on one failed
+    `restore --locked-mode` on the other (NU1004, measured). `dotnet/Directory.Build.targets` fixes the
+    pack versions at SDK 10.0.400's for every SDK, raised deliberately with `global.json`; 10.0.401
+    restores locked against them, and without the pin fails with 8 x NU1004. **Declined:** `global.json`
+    `rollForward: disable` (every machine on exactly one SDK patch); dropping the claim and keeping the
+    smoke app out of the solution with no lock file (the guarantee would then be one Linux step).
+  The NativeAOT static-linking caveat for the LGPL (N-8) is unchanged: this publish loads the shim as a
+  shared library beside the binary.

@@ -102,12 +102,18 @@ internal static class NativeLoader
     }
 
     /// <summary>Where a source build might have staged the shim.</summary>
+    /// <remarks>
+    /// Beside the APPLICATION, not beside this assembly's file: in a NativeAOT or
+    /// single-file app an assembly has no file, so <c>Assembly.Location</c> is empty
+    /// (trim warning IL3000, found by BIND-6e's NativeAOT publish), while
+    /// <see cref="AppContext.BaseDirectory"/> is the directory the app runs from. In an
+    /// ordinary build the two are the same directory.
+    /// </remarks>
     private static IEnumerable<string> CandidatePaths()
     {
-        string? beside = Path.GetDirectoryName(typeof(NativeLoader).Assembly.Location);
+        string beside = AppContext.BaseDirectory;
         if (string.IsNullOrEmpty(beside))
         {
-            // A single-file or in-memory assembly has no location to be beside.
             yield break;
         }
 

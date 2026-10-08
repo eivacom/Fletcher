@@ -838,6 +838,28 @@ writes them, and the in-process test agreed with them on the first run.
   behavioural (two tests fail) and three that the compiler catches with exactly the error each rule
   exists to prevent.
 
+**6e-2, NativeAOT (2026-10-08, D-BIND-81).**
+
+- **Measured before deciding anything.** A console app compiling the plugin's goldens against
+  `Eiva.Fletcher`, published with NativeAOT in the devcontainer (gcc links; the image has no clang),
+  ran correctly and raised exactly one warning: IL3000, `NativeLoader` asking for `Assembly.Location`,
+  which an AOT app does not have. The generated code and Apache.Arrow 23 raised none. The loader now
+  asks for `AppContext.BaseDirectory`, which is the same directory everywhere else; CopyOracle, which
+  loads the probe shim through that fallback, still passes 5/5.
+- **Three questions, three rulings.** Where the proof lives (a step in `ci.dotnet`'s Linux job, after
+  the tests, reusing its shim); whether the libraries claim AOT safety (yes: `IsAotCompatible` on the
+  three, so the analysers run in every ordinary build, and putting the old line back now fails the
+  Interop build); and, because that claim surfaced a CI problem, how to keep the lock files valid.
+- **The problem the claim surfaced.** The analysers and the AOT compiler arrive as implicit packages
+  versioned by the SDK. CI's Linux image runs 10.0.400 and its Windows runner 10.0.401 (read from the
+  runner's own log), so no single lock file satisfied both. Pinning the packs in
+  `Directory.Build.targets` fixed it, proven both ways on 10.0.401: locked restore passes with the pin
+  and fails with 8 NU1004 without it.
+- **Verified.** The Linux CI step rehearsed end to end in the devcontainer after building the probe
+  shim CI builds (all suites green, both AOT binaries print `AotSmoke: OK`, all four packages pack);
+  Windows locked restore and Release build clean on 10.0.401; format, actionlint and the build-time
+  mutant as above.
+
 **Tooling now.** The machine lost Python, Conan, CMake and Node in a crash on 2026-10-02. The plugin is
 built and tested in the Linux devcontainer (`eivaorg/fletcher-devcontainer:main`); the image has no
 .NET SDK, so generated C# is compiled on Windows, where the SDK survived.

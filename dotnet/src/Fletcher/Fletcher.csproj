@@ -12,6 +12,11 @@
     <RootNamespace>Eiva.Fletcher</RootNamespace>
     <Description>Fletcher for .NET: Arrow-typed publish/subscribe over one wire format, with the codec running natively.</Description>
     <PackageTags>fletcher;arrow;pubsub;dds</PackageTags>
+    <!-- D-BIND-81: safe for trimming and NativeAOT. This turns the trim and AOT
+         analysers on in every build, so a regression fails here, and stamps the
+         assembly IsTrimmable; tests/Fletcher.AotSmoke publishes a consumer with
+         NativeAOT and runs it, which is the evidence for the claim. -->
+    <IsAotCompatible>true</IsAotCompatible>
   </PropertyGroup>
 
   <PropertyGroup>

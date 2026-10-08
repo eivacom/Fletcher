@@ -131,6 +131,20 @@ jobs:
               dotnet restore Fletcher.slnx --locked-mode
               dotnet build Fletcher.slnx -c Release --no-restore -p:FletcherNativeShim="$SHIM" -p:FletcherProbeShim="$PROBE"
               dotnet test Fletcher.slnx -c Release --no-build --logger "trx;LogFileName=linux.trx"
+
+              # D-BIND-81: a consumer of the generated pair, published with NativeAOT for both
+              # TFMs. Warnings are errors (Directory.Build.props), so any trim or AOT warning
+              # fails the publish; the binary then runs against the shim and exits non-zero
+              # unless exactly the rows sent come back. gcc links: the image has no clang.
+              for TFM in net8.0 net10.0; do
+                echo "::group::NativeAOT publish and run, $TFM"
+                dotnet publish tests/Fletcher.AotSmoke -c Release -f $TFM -r linux-x64 --no-restore -p:CppCompilerAndLinker=gcc
+                OUT=tests/Fletcher.AotSmoke/bin/Release/$TFM/linux-x64/publish
+                cp "$SHIM" "$OUT/"
+                "$OUT/Fletcher.AotSmoke"
+                echo "::endgroup::"
+              done
+
               dotnet pack Fletcher.slnx -c Release --no-build -o /workspace/dotnet/artifacts
             '
 

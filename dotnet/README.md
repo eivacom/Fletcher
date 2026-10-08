@@ -31,12 +31,14 @@ model without native assets (D-BIND-72). User-defined messages are not in it.
 dotnet/
   Fletcher.slnx              XML solution (it can carry a licence header; .sln cannot)
   Directory.Build.props      the single <VersionPrefix> for all four packages
+  Directory.Build.targets    the AOT toolchain packs, pinned with global.json (D-BIND-81)
   global.json                the SDK band, pinned to the devcontainer's
   .editorconfig              what `dotnet format --verify-no-changes` enforces
   src/…                      the four packages
   tests/Fletcher.Tests/      unit tests
   tests/Fletcher.Model.Tests/  Model's tests; references Model ALONE, which shows it is Arrow-only
   tests/Fletcher.CopyOracle.Tests/  the copy oracle over C#'s real publish, against the PROBE shim (BIND-5b)
+  tests/Fletcher.AotSmoke/   a NativeAOT consumer of the generated pair, published and run by CI (D-BIND-81)
 ```
 
 ## Building
@@ -62,6 +64,40 @@ developer's host cannot silently diverge. Bump them together. CI restores with
 Libraries target **`net8.0;net10.0`**. The test project targets both as well and
 rolls forward to the installed runtime, so the net8.0-compiled assemblies are
 executed, not merely compiled.
+
+## NativeAOT
+
+*A draft for the package README (BIND-9); the facts are D-BIND-81's.*
+
+`Eiva.Fletcher`, `Eiva.Fletcher.Interop` and `Eiva.Fletcher.Model` are marked
+`IsAotCompatible` and raise no trim or AOT warnings; `Eiva.Fletcher.GatewayClient`
+makes no such claim yet. Whether an application uses NativeAOT is the
+**application's** choice, not the packages': set `<PublishAot>true</PublishAot>` in
+the app's project, or don't, and the packages behave the same either way. Generated
+C# is compiled into the app and follows the app's settings.
+
+What an application can control:
+
+- **Keep all of a package's code** if trimming ever removes something it needs:
+  `<TrimmerRootAssembly Include="Fletcher" />` (likewise `Fletcher.Interop`,
+  `Fletcher.Model`; these are the assembly names). NativeAOT honours it too.
+- **Trim only assemblies marked trimmable** with `<TrimMode>partial</TrimMode>`; the
+  default, `full`, trims everything.
+
+What it cannot:
+
+- **AOT for some assemblies only.** NativeAOT compiles the whole app, with no JIT fallback.
+- **Fold the native shim into the executable.** `fletcher-c-abi` stays a separate
+  shared library beside the app (`libfletcher-c-abi.so` / `fletcher-c-abi.dll`), with
+  or without AOT. Linking it statically is not supported, and would change the LGPL
+  obligations (risk N-8).
+
+Deployment facts that apply with or without AOT: one build per RID (`linux-x64`,
+`win-x64`); the Linux shim needs **glibc 2.38 or newer** and only the system's
+`libstdc++`, `libm`, `libgcc_s` and `libc`; and the shim must come from the same
+release as the managed packages, because its ABI version is checked at load
+(exact minor before 1.0). Proven by `tests/Fletcher.AotSmoke` on Linux in CI;
+Windows NativeAOT has not yet been exercised.
 
 ## Status — round BIND
 

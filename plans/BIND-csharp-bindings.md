@@ -856,7 +856,7 @@ Kind: 🟪 spec · 🟦 impl · 🔬 proof · ⚙ pipelines · 📓 docs
 | BIND-3 | `Eiva.Fletcher.Interop` + codec/Arrow tier in `Eiva.Fletcher` | A | 🟦 | BIND-2 | Every PROTO-MAPPING type round-trips through the binding (D-BIND-39, was "Bucket 1 green"); `ErrorTests.EveryHardCaseKeepsItsMessage` | 🟢 |
 | BIND-4 | Pub/sub in `Eiva.Fletcher`: registry, `Publisher`, `Subscriber`, `SchemaArrival`, thunk discipline, error handling | A | 🟦 | BIND-3 | Bucket 3 over `inprocess`; Bucket 4 over `fastdds`/`xrce` by selector; C# arm of `CallerTier`; per-row publish benchmark recorded (D-BIND-37) | 🟢 (reopened twice on 2026-09-25 and re-closed on CI: D-BIND-56 at `78ac363`, bucket 4 over `xrce`; D-BIND-57 at `bdd4fba`, bucket 3's 49-case file set mapped and the matrix checked) |
 | BIND-5 | `SubscriberArrow` batch-first + the copy oracle end-to-end from C# | A | 🔬 | BIND-4 | `pubsub-arrow` cases; copy oracle green with the **C#** producer (D-BIND-58) | 🟢 (closed on CI at `a43c384`, `ci.pr` run 36563607601, 50/50, after a fresh-context review whose 9 BLOCKERs were fixed; D-BIND-58 to 68; conformance 11 of 11) |
-| BIND-6 | C# backend on the IR: type table + visitor → `<stem>.fletcher.cs` | B | 🟦 | — (GIR) | `CsharpVisitor.*` in `protoc/tests`; no-drift test unchanged | 🔴 (6a to 6d-2 on CI; 6e-1 cross-file built; NativeAOT, beside protoc's C# and the review to do) |
+| BIND-6 | C# backend on the IR: type table + visitor → `<stem>.fletcher.cs` | B | 🟦 | — (GIR) | `CsharpVisitor.*` in `protoc/tests`; no-drift test unchanged | 🔴 (6a to 6d-2 on CI; 6e-1 cross-file pushed; 6e-2 NativeAOT built; beside protoc's C# and the review to do) |
 | BIND-7 | Arrow view + accessor emitters (`csharp_accessor`) + capstone third arm | B | 🟦 | BIND-6, BIND-3 | `accessor-capstone` C# arm `observed == expected`; `StructArray` windowing fixture at non-zero offset | ⚪ |
 | BIND-T | TS `Publisher`/`Subscriber` emitter | C | 🟦 | — | `TsVisitor.DescriptorByteIdentical` still green + new emitter cases | ⚪ |
 | BIND-8 | `Eiva.Fletcher.GatewayClient` (managed port; the codec exception) | C | 🟦 | — | Bucket 2 green (the Part 4 file set, not a count); `Package.GatewayClientHasNoRuntimesFolder` | ⚪ |
@@ -1460,7 +1460,9 @@ codec step.
 - Nullability annotations match the Arrow schema's nullability, or the capstone
   fails (G-5).
 - Reflection-free: a NativeAOT publish of a consumer app succeeds with **zero**
-  trim warnings.
+  trim warnings. **Met by 6e-2 (2026-10-08, D-BIND-81):** `dotnet/tests/Fletcher.AotSmoke`,
+  published for net8.0 and net10.0 with warnings as errors and run against the shim in
+  `ci.dotnet`'s Linux job.
 - New cases in `protoc/tests/test_csharp_type_table.cpp` and
   `test_csharp_visitor.cpp`, mirroring the TS pair; the no-drift test proves every
   pre-existing output is byte-identical with the new tokens absent and present.
@@ -1580,8 +1582,27 @@ codec step.
   them as a field, a list, a map value, an enum and a list of enums: its `Schema` equals the `.ipc`, it
   round-trips and survives the IPC stream, 28/28 first run. Four mutants: children built in reverse
   (two tests fail, no compile error); D-BIND-80 undone (CS0117 ×5); the flag lost for elements only
-  (CS0117 ×3); every name bare (CS0246 ×7). **Still owed by 6e:** NativeAOT with zero trim warnings,
-  generation beside protoc's own C# without CS0101, and the item review.
+  (CS0117 ×3); every name bare (CS0246 ×7).
+- **6e-2, 2026-10-08 (D-BIND-81): NativeAOT.** Measured first: a consumer of the generated pair
+  published with NativeAOT raised one warning, IL3000, from `NativeLoader`'s `Assembly.Location`
+  (empty in an AOT app), and none from the generated code or Apache.Arrow 23; the loader now probes
+  `AppContext.BaseDirectory`. `Eiva.Fletcher`, `.Interop` and `.Model` declare `IsAotCompatible`, so
+  the analysers run in every build: the old line put back fails the Interop build (IL3000 ×4).
+  `dotnet/tests/Fletcher.AotSmoke` (in `Fletcher.slnx`) publishes and receives a `Reading` and a
+  cross-file `Marks` and exits non-zero unless exactly those rows return; `ci.dotnet`'s Linux job
+  publishes it for net8.0 and net10.0 (gcc links) and runs it against the shim. The implicit ILLink and
+  ILCompiler packages are pinned in `dotnet/Directory.Build.targets` to SDK 10.0.400's versions, since
+  CI's Windows runner (SDK 10.0.401) would otherwise fail the Linux-written lock files with NU1004:
+  measured, 10.0.401 restores locked with the pin and fails without it (NU1004 ×8). The whole Linux
+  step rehearsed in the devcontainer (CopyOracle 5/5, Fletcher.Tests 362/362 both TFMs, both AOT
+  binaries OK, pack); locked restore and build on Windows with SDK 10.0.401 clean. **Open notes for
+  the 6e review (not defects, not yet proven):** (1) **Windows NativeAOT is unexercised.** D-BIND-81
+  put the publish-and-run step on Linux only; a Windows publish links with MSVC, nothing is known to
+  break, but no Windows AOT binary has been built or run. (2) **The smoke app reaches only the
+  `inprocess` transport.** Fast DDS and XRCE live inside the shim, so AOT does not touch them, but
+  their deliveries enter managed code on foreign transport threads, which has run only under the JIT;
+  the AOT analysers cover that code statically, at compile time. **Still owed by 6e:** generation
+  beside protoc's own C# without CS0101, and the item review.
 
 ### BIND-7 — Arrow view + accessor emitters + capstone third arm
 

@@ -740,7 +740,11 @@ price documented (D-BIND-78); the subscriber takes a generated `<Svc>_<Method>Ha
 2026-10-07 (D-BIND-80):** a message from another file is that file's class, named
 `global::Fletcher.Gen.<Pkg>.<Name>`, and its struct column is built through its public
 `ToArrow`, because a contracts assembly holding it hides the internal `ToArrowColumns`; a
-same-file class still lends `ToArrowColumns`. **Slices:** 6a plumbing,
+same-file class still lends `ToArrowColumns`. **NativeAOT, ruled 2026-10-08 (D-BIND-81):** the
+three runtime libraries declare `IsAotCompatible`; `tests/Fletcher.AotSmoke` is published with
+NativeAOT and run against the shim in `ci.dotnet`'s Linux job; and the SDK-bundled ILLink and
+ILCompiler packages are pinned in `dotnet/Directory.Build.targets`, so the lock files hold on CI's
+two SDK patches. **Slices:** 6a plumbing,
 type table, visitor, classes and enums with scalar fields; 6b `Schema`, `ToArrow`/`FromArrow` and
 `integration-tests/protoc-dotnet`; 6c composite and temporal types; 6d topics and the native
 pair; 6e cross-file, NativeAOT,

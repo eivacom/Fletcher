@@ -15,6 +15,8 @@
     <RootNamespace>Eiva.Fletcher.Model</RootNamespace>
     <Description>Shared model types for Fletcher-generated C#: lossless Timestamp and Duration. Depends on Apache.Arrow only.</Description>
     <PackageTags>fletcher;arrow;timestamp;duration</PackageTags>
+    <!-- D-BIND-81: safe for trimming and NativeAOT (see Eiva.Fletcher's project). -->
+    <IsAotCompatible>true</IsAotCompatible>
   </PropertyGroup>
 
   <ItemGroup>
