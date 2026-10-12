@@ -450,7 +450,7 @@ public sealed class Leaf
 
 public sealed class Branch
 {
-    public Leaf? Leaf { get; set; }
+    public Leaf Leaf { get; set; } = new();
     public Leaf? OptionalLeaf { get; set; }
     public global::System.Collections.Generic.List<Leaf> Leaves { get; set; } = new();
 
@@ -474,14 +474,9 @@ public sealed class Branch
     {
         var t0 = (global::Apache.Arrow.Types.StructType)Schema.GetFieldByIndex(0).DataType;
         var r0 = new global::System.Collections.Generic.List<Leaf>(rows.Count);
-        var m0 = new global::Apache.Arrow.ArrowBuffer.BitmapBuilder(rows.Count);
-        foreach (var row in rows)
-        {
-            if (row.Leaf is { } x0) { r0.Add(x0); m0.Append(true); }
-            else { r0.Add(new Leaf()); m0.Append(false); }
-        }
-        var z0 = m0.UnsetBitCount;
-        var c0 = new global::Apache.Arrow.StructArray(t0, rows.Count, Leaf.ToArrowColumns(r0), z0 > 0 ? m0.Build() : global::Apache.Arrow.ArrowBuffer.Empty, z0, 0);
+        for (var i = 0; i < rows.Count; i++)
+            r0.Add(rows[i].Leaf ?? throw new global::System.ArgumentException($"Branch.Leaf is null in row {i}, but the field is not optional: it is always present.", nameof(rows)));
+        var c0 = new global::Apache.Arrow.StructArray(t0, rows.Count, Leaf.ToArrowColumns(r0), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         var t1 = (global::Apache.Arrow.Types.StructType)Schema.GetFieldByIndex(1).DataType;
         var r1 = new global::System.Collections.Generic.List<Leaf>(rows.Count);
         var m1 = new global::Apache.Arrow.ArrowBuffer.BitmapBuilder(rows.Count);
@@ -510,7 +505,7 @@ public sealed class Branch
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new Branch();
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[0]; row.Leaf = s.IsNull(index) ? null : Leaf.FromArrow(s, index); }
+        { var s = (global::Apache.Arrow.StructArray)array.Fields[0]; row.Leaf = Leaf.FromArrow(s, index); }
         { var s = (global::Apache.Arrow.StructArray)array.Fields[1]; row.OptionalLeaf = s.IsNull(index) ? null : Leaf.FromArrow(s, index); }
         {
             var l = (global::Apache.Arrow.ListArray)array.Fields[2];
@@ -633,9 +628,9 @@ public sealed class FieldFlattenedPosition
 
 public sealed class CompositeCoverage
 {
-    public ScalarCoverage? Scalars { get; set; }
+    public ScalarCoverage Scalars { get; set; } = new();
     public ScalarCoverage? OptionalScalars { get; set; }
-    public Branch? Branch { get; set; }
+    public Branch Branch { get; set; } = new();
     public Branch? OptionalBranch { get; set; }
     public global::System.Collections.Generic.List<int> RepeatedScalar { get; set; } = new();
     public global::System.Collections.Generic.List<string> RepeatedString { get; set; } = new();
@@ -647,8 +642,8 @@ public sealed class CompositeCoverage
     public global::System.Collections.Generic.List<global::System.Collections.Generic.List<Leaf>> NestedStructLists { get; set; } = new();
     public global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<Leaf>>> Depth3StructLists { get; set; } = new();
     public global::System.Collections.Generic.List<Leaf> OptionalFlattenedStructList { get; set; } = new();
-    public FlattenedPoint? MessageFlattenedPoint { get; set; }
-    public FieldFlattenedPosition? FieldFlattenedPosition { get; set; }
+    public FlattenedPoint MessageFlattenedPoint { get; set; } = new();
+    public FieldFlattenedPosition FieldFlattenedPosition { get; set; } = new();
 
     public static global::Apache.Arrow.Schema Schema { get; } = new global::Apache.Arrow.Schema(
         new global::Apache.Arrow.Field[]
@@ -683,14 +678,9 @@ public sealed class CompositeCoverage
     {
         var t0 = (global::Apache.Arrow.Types.StructType)Schema.GetFieldByIndex(0).DataType;
         var r0 = new global::System.Collections.Generic.List<ScalarCoverage>(rows.Count);
-        var m0 = new global::Apache.Arrow.ArrowBuffer.BitmapBuilder(rows.Count);
-        foreach (var row in rows)
-        {
-            if (row.Scalars is { } x0) { r0.Add(x0); m0.Append(true); }
-            else { r0.Add(new ScalarCoverage()); m0.Append(false); }
-        }
-        var z0 = m0.UnsetBitCount;
-        var c0 = new global::Apache.Arrow.StructArray(t0, rows.Count, ScalarCoverage.ToArrowColumns(r0), z0 > 0 ? m0.Build() : global::Apache.Arrow.ArrowBuffer.Empty, z0, 0);
+        for (var i = 0; i < rows.Count; i++)
+            r0.Add(rows[i].Scalars ?? throw new global::System.ArgumentException($"CompositeCoverage.Scalars is null in row {i}, but the field is not optional: it is always present.", nameof(rows)));
+        var c0 = new global::Apache.Arrow.StructArray(t0, rows.Count, ScalarCoverage.ToArrowColumns(r0), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         var t1 = (global::Apache.Arrow.Types.StructType)Schema.GetFieldByIndex(1).DataType;
         var r1 = new global::System.Collections.Generic.List<ScalarCoverage>(rows.Count);
         var m1 = new global::Apache.Arrow.ArrowBuffer.BitmapBuilder(rows.Count);
@@ -703,14 +693,9 @@ public sealed class CompositeCoverage
         var c1 = new global::Apache.Arrow.StructArray(t1, rows.Count, ScalarCoverage.ToArrowColumns(r1), z1 > 0 ? m1.Build() : global::Apache.Arrow.ArrowBuffer.Empty, z1, 0);
         var t2 = (global::Apache.Arrow.Types.StructType)Schema.GetFieldByIndex(2).DataType;
         var r2 = new global::System.Collections.Generic.List<Branch>(rows.Count);
-        var m2 = new global::Apache.Arrow.ArrowBuffer.BitmapBuilder(rows.Count);
-        foreach (var row in rows)
-        {
-            if (row.Branch is { } x2) { r2.Add(x2); m2.Append(true); }
-            else { r2.Add(new Branch()); m2.Append(false); }
-        }
-        var z2 = m2.UnsetBitCount;
-        var c2 = new global::Apache.Arrow.StructArray(t2, rows.Count, Branch.ToArrowColumns(r2), z2 > 0 ? m2.Build() : global::Apache.Arrow.ArrowBuffer.Empty, z2, 0);
+        for (var i = 0; i < rows.Count; i++)
+            r2.Add(rows[i].Branch ?? throw new global::System.ArgumentException($"CompositeCoverage.Branch is null in row {i}, but the field is not optional: it is always present.", nameof(rows)));
+        var c2 = new global::Apache.Arrow.StructArray(t2, rows.Count, Branch.ToArrowColumns(r2), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         var t3 = (global::Apache.Arrow.Types.StructType)Schema.GetFieldByIndex(3).DataType;
         var r3 = new global::System.Collections.Generic.List<Branch>(rows.Count);
         var m3 = new global::Apache.Arrow.ArrowBuffer.BitmapBuilder(rows.Count);
@@ -879,24 +864,14 @@ public sealed class CompositeCoverage
         var c13 = new global::Apache.Arrow.ListArray(t13, rows.Count, o13.Build(), e13, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         var t14 = (global::Apache.Arrow.Types.StructType)Schema.GetFieldByIndex(14).DataType;
         var r14 = new global::System.Collections.Generic.List<FlattenedPoint>(rows.Count);
-        var m14 = new global::Apache.Arrow.ArrowBuffer.BitmapBuilder(rows.Count);
-        foreach (var row in rows)
-        {
-            if (row.MessageFlattenedPoint is { } x14) { r14.Add(x14); m14.Append(true); }
-            else { r14.Add(new FlattenedPoint()); m14.Append(false); }
-        }
-        var z14 = m14.UnsetBitCount;
-        var c14 = new global::Apache.Arrow.StructArray(t14, rows.Count, FlattenedPoint.ToArrowColumns(r14), z14 > 0 ? m14.Build() : global::Apache.Arrow.ArrowBuffer.Empty, z14, 0);
+        for (var i = 0; i < rows.Count; i++)
+            r14.Add(rows[i].MessageFlattenedPoint ?? throw new global::System.ArgumentException($"CompositeCoverage.MessageFlattenedPoint is null in row {i}, but the field is not optional: it is always present.", nameof(rows)));
+        var c14 = new global::Apache.Arrow.StructArray(t14, rows.Count, FlattenedPoint.ToArrowColumns(r14), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         var t15 = (global::Apache.Arrow.Types.StructType)Schema.GetFieldByIndex(15).DataType;
         var r15 = new global::System.Collections.Generic.List<FieldFlattenedPosition>(rows.Count);
-        var m15 = new global::Apache.Arrow.ArrowBuffer.BitmapBuilder(rows.Count);
-        foreach (var row in rows)
-        {
-            if (row.FieldFlattenedPosition is { } x15) { r15.Add(x15); m15.Append(true); }
-            else { r15.Add(new FieldFlattenedPosition()); m15.Append(false); }
-        }
-        var z15 = m15.UnsetBitCount;
-        var c15 = new global::Apache.Arrow.StructArray(t15, rows.Count, FieldFlattenedPosition.ToArrowColumns(r15), z15 > 0 ? m15.Build() : global::Apache.Arrow.ArrowBuffer.Empty, z15, 0);
+        for (var i = 0; i < rows.Count; i++)
+            r15.Add(rows[i].FieldFlattenedPosition ?? throw new global::System.ArgumentException($"CompositeCoverage.FieldFlattenedPosition is null in row {i}, but the field is not optional: it is always present.", nameof(rows)));
+        var c15 = new global::Apache.Arrow.StructArray(t15, rows.Count, FieldFlattenedPosition.ToArrowColumns(r15), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         return new global::Apache.Arrow.IArrowArray[] { c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15 };
     }
 
@@ -904,9 +879,9 @@ public sealed class CompositeCoverage
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new CompositeCoverage();
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[0]; row.Scalars = s.IsNull(index) ? null : ScalarCoverage.FromArrow(s, index); }
+        { var s = (global::Apache.Arrow.StructArray)array.Fields[0]; row.Scalars = ScalarCoverage.FromArrow(s, index); }
         { var s = (global::Apache.Arrow.StructArray)array.Fields[1]; row.OptionalScalars = s.IsNull(index) ? null : ScalarCoverage.FromArrow(s, index); }
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[2]; row.Branch = s.IsNull(index) ? null : Branch.FromArrow(s, index); }
+        { var s = (global::Apache.Arrow.StructArray)array.Fields[2]; row.Branch = Branch.FromArrow(s, index); }
         { var s = (global::Apache.Arrow.StructArray)array.Fields[3]; row.OptionalBranch = s.IsNull(index) ? null : Branch.FromArrow(s, index); }
         {
             var l = (global::Apache.Arrow.ListArray)array.Fields[4];
@@ -1020,15 +995,15 @@ public sealed class CompositeCoverage
             for (var j = start; j < end; j++) x.Add(Leaf.FromArrow(e, j));
             row.OptionalFlattenedStructList = x;
         }
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[14]; row.MessageFlattenedPoint = s.IsNull(index) ? null : FlattenedPoint.FromArrow(s, index); }
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[15]; row.FieldFlattenedPosition = s.IsNull(index) ? null : FieldFlattenedPosition.FromArrow(s, index); }
+        { var s = (global::Apache.Arrow.StructArray)array.Fields[14]; row.MessageFlattenedPoint = FlattenedPoint.FromArrow(s, index); }
+        { var s = (global::Apache.Arrow.StructArray)array.Fields[15]; row.FieldFlattenedPosition = FieldFlattenedPosition.FromArrow(s, index); }
         return row;
     }
 }
 
 public sealed class ServiceRequest
 {
-    public CompositeCoverage? Payload { get; set; }
+    public CompositeCoverage Payload { get; set; } = new();
 
     public static global::Apache.Arrow.Schema Schema { get; } = new global::Apache.Arrow.Schema(
         new global::Apache.Arrow.Field[]
@@ -1048,14 +1023,9 @@ public sealed class ServiceRequest
     {
         var t0 = (global::Apache.Arrow.Types.StructType)Schema.GetFieldByIndex(0).DataType;
         var r0 = new global::System.Collections.Generic.List<CompositeCoverage>(rows.Count);
-        var m0 = new global::Apache.Arrow.ArrowBuffer.BitmapBuilder(rows.Count);
-        foreach (var row in rows)
-        {
-            if (row.Payload is { } x0) { r0.Add(x0); m0.Append(true); }
-            else { r0.Add(new CompositeCoverage()); m0.Append(false); }
-        }
-        var z0 = m0.UnsetBitCount;
-        var c0 = new global::Apache.Arrow.StructArray(t0, rows.Count, CompositeCoverage.ToArrowColumns(r0), z0 > 0 ? m0.Build() : global::Apache.Arrow.ArrowBuffer.Empty, z0, 0);
+        for (var i = 0; i < rows.Count; i++)
+            r0.Add(rows[i].Payload ?? throw new global::System.ArgumentException($"ServiceRequest.Payload is null in row {i}, but the field is not optional: it is always present.", nameof(rows)));
+        var c0 = new global::Apache.Arrow.StructArray(t0, rows.Count, CompositeCoverage.ToArrowColumns(r0), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         return new global::Apache.Arrow.IArrowArray[] { c0 };
     }
 
@@ -1063,7 +1033,7 @@ public sealed class ServiceRequest
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new ServiceRequest();
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[0]; row.Payload = s.IsNull(index) ? null : CompositeCoverage.FromArrow(s, index); }
+        { var s = (global::Apache.Arrow.StructArray)array.Fields[0]; row.Payload = CompositeCoverage.FromArrow(s, index); }
         return row;
     }
 }

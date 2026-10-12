@@ -50,6 +50,7 @@ struct CsFieldType {
     bool nullable = false;       // the property is annotated `?` (an absent value is null)
     bool is_reference =
         false;  // a scalar reference type (string, byte[]) defaulted when not nullable
+    bool is_message = false;  // a generated class: `new()` when not nullable (D-BIND-83)
 };
 
 // The C# property type for an IR field node, or nullopt for a node this backend has
@@ -57,7 +58,9 @@ struct CsFieldType {
 //   scalar            the CsLookupScalar type
 //   Timestamp/Duration  global::Eiva.Fletcher.Model.Timestamp / Duration (D-BIND-26, D-BIND-74),
 //                     nullable only where the field is (the schema says which)
-//   message           the generated class, `?` when the field can be absent
+//   message           the generated class: `?` only for an `optional` field, whose column is
+//                     nullable; otherwise never null, `new()` by default and always written
+//                     present, as C++'s row class does (D-BIND-83)
 //   repeated T        List<T>
 //   map<K,V>          List<KeyValuePair<K,V>>: entry order is on the wire, and C++'s row class
 //                     holds ordered pairs too, so a Dictionary's unspecified order is refused

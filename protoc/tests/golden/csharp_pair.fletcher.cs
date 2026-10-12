@@ -58,7 +58,7 @@ public sealed class Reading
     public Mood Mood { get; set; }
     public global::System.Collections.Generic.List<int> Samples { get; set; } = new();
     public global::System.Collections.Generic.List<global::System.Collections.Generic.KeyValuePair<string, long>> Tags { get; set; } = new();
-    public Stamp? Stamp { get; set; }
+    public Stamp Stamp { get; set; } = new();
     public global::System.Collections.Generic.List<Stamp> History { get; set; } = new();
     public global::Eiva.Fletcher.Model.Timestamp At { get; set; }
 
@@ -139,14 +139,9 @@ public sealed class Reading
         var c5 = new global::Apache.Arrow.MapArray(t5, rows.Count, o5.Build(), kv5, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         var t6 = (global::Apache.Arrow.Types.StructType)Schema.GetFieldByIndex(6).DataType;
         var r6 = new global::System.Collections.Generic.List<Stamp>(rows.Count);
-        var m6 = new global::Apache.Arrow.ArrowBuffer.BitmapBuilder(rows.Count);
-        foreach (var row in rows)
-        {
-            if (row.Stamp is { } x6) { r6.Add(x6); m6.Append(true); }
-            else { r6.Add(new Stamp()); m6.Append(false); }
-        }
-        var z6 = m6.UnsetBitCount;
-        var c6 = new global::Apache.Arrow.StructArray(t6, rows.Count, Stamp.ToArrowColumns(r6), z6 > 0 ? m6.Build() : global::Apache.Arrow.ArrowBuffer.Empty, z6, 0);
+        for (var i = 0; i < rows.Count; i++)
+            r6.Add(rows[i].Stamp ?? throw new global::System.ArgumentException($"Reading.Stamp is null in row {i}, but the field is not optional: it is always present.", nameof(rows)));
+        var c6 = new global::Apache.Arrow.StructArray(t6, rows.Count, Stamp.ToArrowColumns(r6), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         var t7 = (global::Apache.Arrow.Types.ListType)Schema.GetFieldByIndex(7).DataType;
         var o7 = new global::Apache.Arrow.ArrowBuffer.Builder<int>(rows.Count + 1);
         o7.Append(0);
@@ -198,7 +193,7 @@ public sealed class Reading
             for (var j = start; j < end; j++) x.Add(new global::System.Collections.Generic.KeyValuePair<string, long>(k.GetString(j) ?? "", e.GetValue(j).GetValueOrDefault()));
             row.Tags = x;
         }
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[6]; row.Stamp = s.IsNull(index) ? null : Stamp.FromArrow(s, index); }
+        { var s = (global::Apache.Arrow.StructArray)array.Fields[6]; row.Stamp = Stamp.FromArrow(s, index); }
         {
             var l = (global::Apache.Arrow.ListArray)array.Fields[7];
             var e = (global::Apache.Arrow.StructArray)l.Values;

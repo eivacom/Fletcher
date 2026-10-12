@@ -126,14 +126,16 @@ public sealed class GeneratedModelTests
     }
 
     [Fact]
-    public void CollectionsStartEmptyAndAMessageFieldStartsAbsent()
+    public void CollectionsStartEmptyAndAPlainMessageFieldStartsAsADefault()
     {
         var player = new Player();
 
         Assert.Empty(player.Scores);
         Assert.Empty(player.Tags);
         Assert.Empty(player.History);
-        Assert.Null(player.Stats);
+        // D-BIND-83: not optional, so never null, as C++'s getter returns a default.
+        Assert.NotNull(player.Stats);
+        Assert.Equal(0, player.Stats.Goals);
         // A Timestamp field is always present, as its non-nullable Arrow column says: the
         // default is the epoch in seconds, not null.
         Assert.Equal(default(Timestamp), new Timed().At);

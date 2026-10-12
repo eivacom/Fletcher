@@ -43,6 +43,10 @@ briefed by the author. Two of them found B1 independently, from opposite sides o
 ## BLOCKERs
 
 ### B1 — An absent non-`optional` message field is a null on the wire, and C++ cannot decode the row
+
+> **FIXED 2026-10-09 (D-BIND-83).** A plain message field is now non-null and always written
+> present. The C++-written golden `coverage.CompositeCoverage.defaulted.v1.bin` is matched by C# byte
+> for byte, and a mutant restoring the old shape fails exactly that case.
 *Found by the runtime reviewer (G-B1) and the plugin reviewer (P-B3). Reproduced.*
 
 A proto3 message field without `optional` (`Stamp stamp = 7;`) is non-nullable in the class's own

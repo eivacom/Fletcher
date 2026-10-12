@@ -98,8 +98,9 @@ public sealed class GeneratedPairTests : IDisposable
     [Fact]
     public void AnEmptyRowArrivesAsAnEmptyRowNotAsAFullOne()
     {
-        // The message field absent, the optional null, every collection empty: the
-        // defaults a decoder could invent are all distinguishable from what was sent.
+        // A fresh row: the optional null, every collection empty, and the plain message field
+        // a default instance, which is what C++ writes and reads for it (D-BIND-83: it is
+        // never null, so it arrives as a default Stamp, not as null).
         using var subscriber = new Telemetry_ReportSubscriber(_provider);
         Reading? got = null;
         using Subscription subscription = subscriber.Subscribe((row, attachments) => got = row);
@@ -108,7 +109,8 @@ public sealed class GeneratedPairTests : IDisposable
         publisher.Publish(new Reading());
 
         Assert.NotNull(got);
-        Assert.Null(got!.Stamp);
+        Assert.NotNull(got!.Stamp);
+        Assert.Equal("", got.Stamp.By);
         Assert.Null(got.Value);
         Assert.Empty(got.Samples);
         Assert.Empty(got.Tags);
@@ -228,6 +230,24 @@ public sealed class GeneratedPairTests : IDisposable
         Assert.Throws<ArgumentNullException>(() => publisher.Publish((IEnumerable<Reading>)null!));
         using var subscriber = new Telemetry_ReportSubscriber(_provider);
         Assert.Throws<ArgumentNullException>(() => subscriber.Subscribe(null!));
+    }
+
+    [Fact]
+    public void ANullForcedIntoAPlainMessageFieldIsRefusedAndNothingIsPublished()
+    {
+        // D-BIND-83: `Stamp stamp = 7` is always present, as C++ writes it. A null forced past
+        // the annotation would have been a null on the wire that C++'s decoder reads past, so
+        // ToArrow refuses it, naming the field and the row, before anything is published.
+        using var subscriber = new Telemetry_ReportSubscriber(_provider);
+        int deliveries = 0;
+        using Subscription subscription = subscriber.Subscribe((row, attachments) => deliveries++);
+        using var publisher = new Telemetry_ReportPublisher(_provider);
+
+        ArgumentException e = Assert.Throws<ArgumentException>(
+            () => publisher.Publish(new[] { Full(1), new Reading { Stamp = null! } }));
+
+        Assert.Contains("Reading.Stamp is null in row 1", e.Message, StringComparison.Ordinal);
+        Assert.Equal(0, deliveries);
     }
 
     [Fact]

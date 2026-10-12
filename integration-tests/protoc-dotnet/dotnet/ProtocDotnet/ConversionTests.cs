@@ -135,11 +135,16 @@ public sealed class ConversionTests
     }
 
     [Fact]
-    public void AnAbsentMessageReadsBackAsNullNotAsADefaultInstance()
+    public void APlainMessageFieldIsAlwaysPresentAndItsColumnHasNoNulls()
     {
+        // D-BIND-83: `Stats stats = 8` is not optional, so its column is non-nullable and C++
+        // always writes it present. A fresh Player's Stats is a default instance, written with
+        // no null, and read back as one.
         using RecordBatch batch = Player.ToArrow(new[] { new Player() });
-        Assert.Null(Player.FromArrow(AsStruct(batch), 0).Stats);
-        Assert.Equal(1, batch.Column(Player.Schema.GetFieldIndex("stats", StringComparer.Ordinal)).NullCount);
+        Player back = Player.FromArrow(AsStruct(batch), 0);
+        Assert.NotNull(back.Stats);
+        Assert.Equal(0, back.Stats.Goals);
+        Assert.Equal(0, batch.Column(Player.Schema.GetFieldIndex("stats", StringComparer.Ordinal)).NullCount);
     }
 
     [Fact]
@@ -233,7 +238,7 @@ public sealed class ConversionTests
         Stops = { new("b", new Pos { Lon = 1 }), new("a", new Pos { Lat = 2 }), new("b", new Pos { Label = "dup" }) },
         Quality = Quality.Poor,
         Checks = { Quality.Good, Quality.Unspecified, Quality.Poor },
-        Fix = new Fix { Pos = null, Trail = { new Pos { Lat = 1, Lon = 2 } }, Quality = Quality.Good },
+        Fix = new Fix { Trail = { new Pos { Lat = 1, Lon = 2 } }, Quality = Quality.Good },
         Marks = { new PbTimestamp { Seconds = long.MinValue, Nanos = -1 }, new PbTimestamp { Seconds = 1_700_000_000, Nanos = 999_999_999 } },
     };
 
@@ -249,8 +254,9 @@ public sealed class ConversionTests
 
         Assert.Equal(sent.Select(Describe), Enumerable.Range(0, sent.Length).Select(i => Describe(Route.FromArrow(rows, i))));
         Route empty = Route.FromArrow(rows, 1);
-        Assert.Null(empty.Start);
-        Assert.Null(empty.Fix);
+        // Plain message fields from the other assembly are present defaults (D-BIND-83).
+        Assert.Equal(0, empty.Start.Lat);
+        Assert.Empty(empty.Fix.Trail);
         Assert.Empty(empty.Legs);
         Assert.Empty(empty.Marks);
     }

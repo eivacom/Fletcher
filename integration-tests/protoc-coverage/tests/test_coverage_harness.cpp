@@ -346,6 +346,7 @@ TEST(CoverageHarness, GeneratedCppCompilesEncodesAndReconstructs) {
                         "coverage.CompositeCoverage.alternate-null-empty.v1.bin");
     ReconstructAndCheck(fx::MakeCompositeWithMapsNonSorted(),
                         "coverage.CompositeCoverage.maps-non-sorted.v1.bin");
+    ReconstructAndCheck(fx::MakeCompositeDefaulted(), "coverage.CompositeCoverage.defaulted.v1.bin");
     ReconstructAndCheck(fx::MakeBranch(), "coverage.Branch.v1.bin");
     ReconstructAndCheck(fx::MakeLeaf(42, "leaf", fx::kTopLevelStatusError), "coverage.Leaf.v1.bin");
     ReconstructAndCheck(fx::MakeNestedEnums(), "coverage.NestedEnums.v1.bin");

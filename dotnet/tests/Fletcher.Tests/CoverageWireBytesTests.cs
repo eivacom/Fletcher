@@ -161,6 +161,11 @@ public sealed class CoverageWireBytesTests
         return c;
     }
 
+    // BIND-6 review B1 (D-BIND-83): nothing set. Every plain message field is then a default
+    // instance, nested ones included, and C++ writes each PRESENT; before D-BIND-83 C# wrote
+    // them as nulls, which C++'s decoder cannot read. C++'s MakeCompositeDefaulted().
+    private static CompositeCoverage MakeCompositeDefaulted() => new();
+
     private static ServiceRequest MakeServiceRequest() => new() { Payload = MakeComposite() };
 
     // ── One case per committed golden, as test_parity_oracle.cpp pairs them ──
@@ -172,6 +177,7 @@ public sealed class CoverageWireBytesTests
         "coverage.CompositeCoverage.v1.bin",
         "coverage.CompositeCoverage.alternate-null-empty.v1.bin",
         "coverage.CompositeCoverage.maps-non-sorted.v1.bin",
+        "coverage.CompositeCoverage.defaulted.v1.bin",
         "coverage.Branch.v1.bin",
         "coverage.Leaf.v1.bin",
         "coverage.NestedEnums.v1.bin",
@@ -190,6 +196,7 @@ public sealed class CoverageWireBytesTests
         "coverage.CompositeCoverage.v1.bin" => (CompositeCoverage.ToArrow(new[] { MakeComposite() }), b => CompositeCoverage.ToArrow(new[] { CompositeCoverage.FromArrow(AsStruct(b), 0) })),
         "coverage.CompositeCoverage.alternate-null-empty.v1.bin" => (CompositeCoverage.ToArrow(new[] { MakeCompositeWithAlternateNullsAndEmpties() }), b => CompositeCoverage.ToArrow(new[] { CompositeCoverage.FromArrow(AsStruct(b), 0) })),
         "coverage.CompositeCoverage.maps-non-sorted.v1.bin" => (CompositeCoverage.ToArrow(new[] { MakeCompositeWithMapsNonSorted() }), b => CompositeCoverage.ToArrow(new[] { CompositeCoverage.FromArrow(AsStruct(b), 0) })),
+        "coverage.CompositeCoverage.defaulted.v1.bin" => (CompositeCoverage.ToArrow(new[] { MakeCompositeDefaulted() }), b => CompositeCoverage.ToArrow(new[] { CompositeCoverage.FromArrow(AsStruct(b), 0) })),
         "coverage.Branch.v1.bin" => (Branch.ToArrow(new[] { MakeBranch() }), b => Branch.ToArrow(new[] { Branch.FromArrow(AsStruct(b), 0) })),
         "coverage.Leaf.v1.bin" => (Leaf.ToArrow(new[] { MakeLeaf(42, "leaf", TopLevelStatus.Error) }), b => Leaf.ToArrow(new[] { Leaf.FromArrow(AsStruct(b), 0) })),
         "coverage.NestedEnums.v1.bin" => (NestedEnums.ToArrow(new[] { MakeNestedEnums() }), b => NestedEnums.ToArrow(new[] { NestedEnums.FromArrow(AsStruct(b), 0) })),

@@ -127,7 +127,10 @@ std::optional<CsFieldType> CsFieldTypeOf(const ir::IrNode& node,
             auto text = ElementTypeText(node, current_file);
             if (!text) return std::nullopt;
             out.type_text = std::move(*text);
-            out.nullable = true;  // a message field can be absent
+            // D-BIND-83: nullable exactly where the schema is, which for a message is an
+            // `optional` field. A plain one is always present, as in C++'s row class.
+            out.nullable = node.facts.nullable;
+            out.is_message = true;
             return out;
         }
         case ir::NodeKind::LIST: {

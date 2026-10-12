@@ -155,7 +155,8 @@ std::optional<Column> ClassifyColumn(const IrNode& node, const FileDescriptor* f
             why = StructBlocker(s, file, visiting);
             if (!why.empty()) return std::nullopt;
             c.kind = ColKind::STRUCT;
-            c.nullable = true;  // as its property: a message field can be absent
+            // As its property and its column: nullable only for `optional` (D-BIND-83).
+            c.nullable = node.facts.nullable;
             c.cls = CsTypeRef(s.identity.descriptor, file);
             c.other_file = s.identity.descriptor->file() != file;
             return c;
@@ -338,7 +339,7 @@ std::string Bitmap(const std::string& n) {
 }
 
 // Statements that build `c<n>`, the array for one column, from `rows`.
-void EmitColumn(std::ostringstream& o, const Column& c) {
+void EmitColumn(std::ostringstream& o, const Column& c, const std::string& owner) {
     const std::string n = std::to_string(c.index);
     const std::string in = "        ";
     switch (c.kind) {
@@ -384,8 +385,26 @@ void EmitColumn(std::ostringstream& o, const Column& c) {
             return;
         }
         case ColKind::STRUCT: {
-            // A null message keeps its slot: its row holds a default instance, whose
-            // children are not read back because the validity bit says null.
+            if (!c.nullable) {
+                // D-BIND-83: a plain message field is always present, as C++ writes it
+                // (value_or a default instance), so its column has no validity bitmap and
+                // the codec never puts a null on the wire that C++'s decoder would read past.
+                // A null forced past the annotation is refused, never written.
+                o << in << "var t" << n << " = " << FieldType(c.index, "StructType") << ";\n"
+                  << in << "var r" << n << " = new " << ListOf(c.cls) << "(rows.Count);\n"
+                  << in << "for (var i = 0; i < rows.Count; i++)\n"
+                  << in << "    r" << n << ".Add(rows[i]." << c.property
+                  << " ?? throw new global::System.ArgumentException($\"" << owner << "."
+                  << c.property
+                  << " is null in row {i}, but the field is not optional: it is always "
+                     "present.\", nameof(rows)));\n"
+                  << in << "var c" << n << " = new global::Apache.Arrow.StructArray(t" << n
+                  << ", rows.Count, " << ChildArrays(c.cls, c.other_file, "r" + n) << ", " << kEmpty
+                  << ", 0, 0);\n";
+                return;
+            }
+            // An `optional` message that is null keeps its slot: its row holds a default
+            // instance, whose children are not read back because the validity bit says null.
             o << in << "var t" << n << " = " << FieldType(c.index, "StructType") << ";\n"
               << in << "var r" << n << " = new " << ListOf(c.cls) << "(rows.Count);\n"
               << in << "var m" << n
@@ -504,7 +523,7 @@ std::string GenerateToArrow(const std::string& cls, const std::vector<Column>& c
       << "    }\n\n"
       << "    internal static global::Apache.Arrow.IArrowArray[] ToArrowColumns("
       << "global::System.Collections.Generic.IReadOnlyList<" << cls << "> rows)\n    {\n";
-    for (const auto& c : columns) EmitColumn(o, c);
+    for (const auto& c : columns) EmitColumn(o, c, cls);
     o << "        return new global::Apache.Arrow.IArrowArray[] { ";
     for (size_t i = 0; i < columns.size(); ++i) o << (i > 0 ? ", " : "") << "c" << columns[i].index;
     o << (columns.empty() ? "};\n" : " };\n") << "    }\n";
@@ -563,8 +582,10 @@ void EmitRead(std::ostringstream& o, const Column& c) {
             return;
         }
         case ColKind::STRUCT:
+            // D-BIND-83: a plain message field is read unconditionally, as C++'s decoder
+            // reads it; only an `optional` one consults the validity bit.
             o << in << "{ var s = (global::Apache.Arrow.StructArray)" << field << "; row."
-              << c.property << " = s.IsNull(index) ? null : " << c.cls
+              << c.property << " = " << (c.nullable ? "s.IsNull(index) ? null : " : "") << c.cls
               << ".FromArrow(s, index); }\n";
             return;
         case ColKind::LIST: {
@@ -920,9 +941,10 @@ std::string CsVisitor::GenerateMessage(const Descriptor* msg) {
         const std::string property = CsPropertyName(rec.name, msg);
         o << "    public " << field_type->type_text << (nullable ? "?" : "") << " " << property
           << " { get; set; }";
-        // A collection starts empty and a non-nullable reference starts as the proto
-        // default, never null, so the property honours its own annotation.
-        if (field_type->is_collection)
+        // A collection starts empty, a plain message field as a default instance (D-BIND-83)
+        // and a non-nullable reference as the proto default, never null, so the property
+        // honours its own annotation.
+        if (field_type->is_collection || (field_type->is_message && !nullable))
             o << " = new();";
         else if (field_type->is_reference && !nullable)
             o << (field_type->type_text == "string" ? " = \"\";"

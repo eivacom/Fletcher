@@ -82,9 +82,9 @@ FieldDescriptorProto* AddField(
 //   google.protobuf.Int32Value boxed = 3;  repeated google.protobuf.Timestamp marks = 4;
 //   optional google.protobuf.Timestamp maybe_at = 5;
 // }
-// message Holder {   // a message field and a repeated one, of generated classes
-//   Player.Stats best = 1;  repeated Player.Stats history = 2;  map<string, Player.Stats> by_name =
-//   3;
+// message Holder {   // message fields of generated classes: plain, optional, repeated, map value
+//   Player.Stats best = 1;  repeated Player.Stats history = 2;
+//   map<string, Player.Stats> by_name = 3;  optional Player.Stats maybe_best = 4;
 // }
 // message Clock {   // the temporal types where every field converts (BIND-6c-2)
 //   google.protobuf.Timestamp at = 1;  google.protobuf.Duration took = 2;
@@ -231,6 +231,11 @@ const FileDescriptor* BuildFixture(DescriptorPool& pool) {
     AddField(holder, "by_name", 3, FieldDescriptorProto::TYPE_MESSAGE,
              FieldDescriptorProto::LABEL_REPEATED)
         ->set_type_name(".integration.Holder.ByNameEntry");
+    auto* maybe_best = AddField(holder, "maybe_best", 4, FieldDescriptorProto::TYPE_MESSAGE);
+    maybe_best->set_type_name(".integration.Player.Stats");
+    maybe_best->set_proto3_optional(true);
+    maybe_best->set_oneof_index(0);
+    holder->add_oneof_decl()->set_name("_maybe_best");
 
     auto* clock = fdp.add_message_type();
     clock->set_name("Clock");
@@ -392,15 +397,18 @@ TEST(CsVisitor, ListsAreNonNullListsThatStartEmpty) {
                    " { get; set; } = new();\n");
 }
 
-TEST(CsVisitor, MessageFieldsAreNullableReferencesToTheGeneratedClass) {
-    // A message field can be absent, and null is how C# says so: the same fact the
-    // schema records as a nullable struct column.
+TEST(CsVisitor, AMessageFieldIsNullableOnlyWhereItsColumnIs) {
+    // D-BIND-83: as C++'s row class does, a plain message field is always present (its
+    // column is non-nullable), so the property is never null and starts as a default
+    // instance; only an `optional` one, whose column is nullable, can be absent.
     DescriptorPool pool;
     const FileDescriptor* file = BuildFixture(pool);
     ASSERT_NE(file, nullptr);
     const std::string cs = CSharp(file);
-    ExpectContains(cs, "    public Player_Stats? Stats { get; set; }\n");
-    ExpectContains(cs, "    public Player_Stats? Best { get; set; }\n");
+    ExpectContains(cs, "    public Player_Stats Stats { get; set; } = new();\n");
+    ExpectContains(cs, "    public Player_Stats Best { get; set; } = new();\n");
+    ExpectContains(cs, "    public Player_Stats? MaybeBest { get; set; }\n");
+    EXPECT_EQ(cs.find("Player_Stats? Stats"), std::string::npos) << cs;
 }
 
 TEST(CsVisitor, MapsAreOrderedListsOfPairsNotDictionaries) {
@@ -628,14 +636,19 @@ TEST(CsVisitor, ListsStructsAndMapsConvertWithTheirSchemasOwnTypes) {
         player,
         "        var c7 = new global::Apache.Arrow.ListArray(t7, rows.Count, o7.Build(), e7, "
         "global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);\n");
-    // Stats stats = 12 (column 11): an absent message keeps its slot as a default
-    // instance and a cleared validity bit; its children come from its own class.
-    ExpectContains(player,
-                   "            else { r11.Add(new Player_Stats()); m11.Append(false); }\n");
+    // Stats stats = 12 (column 11), a plain message field: always present, so no validity
+    // bitmap, and a null forced past the annotation is refused with the row (D-BIND-83);
+    // its children come from its own class.
+    ExpectContains(
+        player,
+        "            r11.Add(rows[i].Stats ?? throw new global::System.ArgumentException("
+        "$\"Player.Stats is null in row {i}, but the field is not optional: it is "
+        "always present.\", nameof(rows)));\n");
     ExpectContains(player,
                    "        var c11 = new global::Apache.Arrow.StructArray(t11, rows.Count, "
-                   "Player_Stats.ToArrowColumns(r11), z11 > 0 ? m11.Build() : "
-                   "global::Apache.Arrow.ArrowBuffer.Empty, z11, 0);\n");
+                   "Player_Stats.ToArrowColumns(r11), global::Apache.Arrow.ArrowBuffer.Empty, 0, "
+                   "0);\n");
+    EXPECT_EQ(player.find("m11"), std::string::npos) << player;
     // map<string, int32> tags = 13 (column 12): keys and values in entry order.
     ExpectContains(player, "                k12.Append(x12.Key);\n");
     ExpectContains(player, "                b12.Append(x12.Value);\n");
@@ -643,11 +656,12 @@ TEST(CsVisitor, ListsStructsAndMapsConvertWithTheirSchemasOwnTypes) {
         player,
         "        var c12 = new global::Apache.Arrow.MapArray(t12, rows.Count, o12.Build(), "
         "kv12, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);\n");
-    // Reading back: the list's slice, the struct's validity, the map's pairs.
+    // Reading back: the list's slice, the plain struct read as present (D-BIND-83), the
+    // map's pairs.
     ExpectContains(
         player,
         "        { var s = (global::Apache.Arrow.StructArray)array.Fields[11]; row.Stats = "
-        "s.IsNull(index) ? null : Player_Stats.FromArrow(s, index); }\n");
+        "Player_Stats.FromArrow(s, index); }\n");
     ExpectContains(player,
                    "    for (var j = start; j < end; j++) x.Add(new "
                    "global::System.Collections.Generic.KeyValuePair<string, int>(k.GetString(j) ?? "
@@ -670,6 +684,23 @@ TEST(CsVisitor, ListsAndMapsOfMessagesReuseTheElementClass) {
         holder,
         "x.Add(new global::System.Collections.Generic.KeyValuePair<string, Player_Stats>("
         "k.GetString(j) ?? \"\", Player_Stats.FromArrow(e, j)));\n");
+}
+
+TEST(CsVisitor, AnOptionalMessageKeepsItsSlotAndItsValidityBit) {
+    // `optional Player.Stats maybe_best = 4` (column 3): its column is nullable, so an absent
+    // one keeps its slot as a default instance with a cleared validity bit, and reads back
+    // as null. The plain field beside it (column 0) has no bitmap at all (D-BIND-83).
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const std::string holder = ClassBody(CSharp(file), "Holder");
+    ExpectContains(holder,
+                   "            if (row.MaybeBest is { } x3) { r3.Add(x3); m3.Append(true); }\n");
+    ExpectContains(holder, "            else { r3.Add(new Player_Stats()); m3.Append(false); }\n");
+    ExpectContains(
+        holder, "row.MaybeBest = s.IsNull(index) ? null : Player_Stats.FromArrow(s, index); }\n");
+    ExpectContains(holder, "row.Best = Player_Stats.FromArrow(s, index); }\n");
+    EXPECT_EQ(holder.find("m0"), std::string::npos) << holder;
 }
 
 TEST(CsVisitor, TimestampAndDurationAreRecountedInTheColumnsUnitExactly) {
@@ -859,7 +890,7 @@ TEST(CsVisitorCrossFile, TypesFromAnotherPackageAreNamedInFull) {
         ClassBody(Emitted(GenerateWith(file, "csharp"), "track.fletcher.cs"), "Track");
     const std::string pos = "global::Fletcher.Gen.Geo.SharedTypes.Pos";
     const std::string quality = "global::Fletcher.Gen.Geo.SharedTypes.Quality";
-    ExpectContains(track, "    public " + pos + "? At { get; set; }\n");
+    ExpectContains(track, "    public " + pos + " At { get; set; } = new();\n");  // D-BIND-83
     ExpectContains(track, "    public global::System.Collections.Generic.List<" + pos +
                               "> Path { get; set; } = new();\n");
     ExpectContains(track,

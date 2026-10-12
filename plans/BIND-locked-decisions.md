@@ -2547,7 +2547,8 @@ accessors do, for capstone parity (Q18).
     trip. A lookup-by-key type of our own was declined: it would put a third thing in
     `Eiva.Fletcher.Model`, which D-BIND-74 limits to `Timestamp` and `Duration`.
   - **repeated T** is `List<T>`, never null, empty by default.
-  - **A message field** is the generated class, `?` when the field can be absent.
+  - **A message field** is the generated class, `?` when the field can be absent. *(Amended by
+    D-BIND-83: "can be absent" means `optional`; a plain message field is never null.)*
   - **Timestamp and Duration** are `global::Eiva.Fletcher.Model.Timestamp` / `Duration`, nullable
     exactly where the schema is: a plain field is always present (its Arrow column is non-nullable), an
     `optional` one is `?`. Wrappers stay nullable scalars. Named in full, so a message called
@@ -2687,3 +2688,24 @@ The next one was ruled on 2026-10-07 at the start of slice 6e, cross-file refere
   shares the TEXT prefix (`Fletcher.Generated`) is accepted. Without `csharp` nothing changes.
   **Declined:** a warning on stderr (protoc's output is easy to miss, and the failure would surface
   later as CS0101); documenting the reservation only.
+
+The next ones were ruled on 2026-10-08, from the BIND-6 review (`plans/reviews/BIND-6-codereview.md`,
+questions Q1 to Q10), and are numbered as their fixes land.
+
+- **D-BIND-83 - a plain message field is never null: the property defaults to `new()` and is always
+  written present, as C++ does; only an `optional` message field is `T?`. Amends D-BIND-75.**
+  *LOCKED BY THE MAINTAINER 2026-10-08 (review Q1), fixing review blocker B1.* The schema C++
+  generates makes a plain message field's struct column non-nullable, and C++'s row class writes it as
+  `value_or(Cls())`, never a null; its decoder reads such a field without consulting the null bit.
+  D-BIND-75 made the C# property `T?` and wrote `null` as a cleared validity bit, which the codec put
+  on the wire as a null with no payload: reproduced 2026-10-08, C#'s bytes for a `CompositeCoverage`
+  with `Scalars = null` made the C++ generated class throw `PositionalReader: buffer underrun`, while
+  `Scalars = new()` gave C++'s own bytes. So now: a plain message field's property is non-null with
+  `= new()`, its column carries no validity bitmap, `FromArrow` reads it unconditionally as C++'s
+  decoder does, and a null forced past the annotation makes `ToArrow` throw `ArgumentException`
+  naming the message, the field and the row before anything is published (review Q10a's rule for
+  this case). An `optional` message field keeps D-BIND-75's shape. The proof is a C++-written golden,
+  `coverage.CompositeCoverage.defaulted.v1.bin`, that C# must write byte for byte and read back.
+  **Declined:** keeping `T?` and writing a default only on the wire (the annotation would advertise a
+  null that can never arrive, and G-5 would stay unmet); a nullable column for C# only (the schema is
+  C++'s by construction).
