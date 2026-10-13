@@ -170,6 +170,34 @@ TEST(CsNames, TheGeneratedClassOwnMembersAreSuffixed) {
     EXPECT_EQ(cs::CsPropertyName("schema_version", m), "SchemaVersion");
 }
 
+TEST(CsNames, ALowerCaseOnlyTypeNameIsWrittenVerbatim) {
+    // BIND-6 review B2: a type name of lower-case ASCII letters only is `@name` in source, so a
+    // C# keyword compiles and no other such name draws CS8981. The compiled name has no `@`.
+    // Anything with a capital, a digit or `_` is left alone.
+    FileDescriptorProto fdp;
+    fdp.set_name("verbatim.proto");
+    fdp.set_package("v");
+    fdp.set_syntax("proto3");
+    for (const char* name : {"row", "class", "Row", "row2", "outer"}) {
+        auto* m = fdp.add_message_type();
+        m->set_name(name);
+    }
+    fdp.mutable_message_type(4)->add_nested_type()->set_name("inner");
+    auto* e = fdp.add_enum_type();
+    e->set_name("level");
+    e->add_value()->set_name("LEVEL_LOW");
+    DescriptorPool pool;
+    const FileDescriptor* file = pool.BuildFile(fdp);
+    ASSERT_NE(file, nullptr);
+    EXPECT_EQ(cs::CsTypeName(file->message_type(0)), "@row");
+    EXPECT_EQ(cs::CsTypeName(file->message_type(1)), "@class");
+    EXPECT_EQ(cs::CsTypeName(file->message_type(2)), "Row");
+    EXPECT_EQ(cs::CsTypeName(file->message_type(3)), "row2");
+    EXPECT_EQ(cs::CsTypeName(file->message_type(4)->nested_type(0)), "outer_inner");
+    EXPECT_EQ(cs::CsTypeName(file->enum_type(0)), "@level");
+    EXPECT_EQ(cs::CsTypeExpr(file->message_type(1)), "global::Fletcher.Gen.V.@class");
+}
+
 TEST(CsNames, NestedTypesAreFlattenedWithUnderscores) {
     FileDescriptorProto fdp;
     fdp.set_name("nested.proto");

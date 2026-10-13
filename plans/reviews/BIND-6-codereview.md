@@ -79,6 +79,12 @@ with". **The fix needs a ruling** (Q1), because it changes how D-BIND-75's "`?` 
 absent" reads.
 
 ### B2 — A class name in an expression binds to a member of the same name, and the C# does not compile
+
+> **FIXED 2026-10-13.** Method bodies name a class in full (`CsTypeExpr`). The golden
+> `protoc/tests/golden/csharp_names.proto` holds every shape below, plus a message named `array`
+> (FromArrow's parameter) and an `optional` field, and is compiled and run in `Fletcher.Tests`. Found
+> while fixing it: CS8981 for a lower-case type name such as `row`, and a `message class` that never
+> compiled. Such names are now written `@name` (the compiled name keeps no `@`).
 *Plugin reviewer P-B1. Reproduced.*
 
 A same-namespace class is named bare (`CsTypeRef`). In a TYPE position that is fine. In an

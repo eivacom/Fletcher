@@ -26,7 +26,7 @@ public sealed class Telemetry_ReportPublisher : global::System.IDisposable
     public const string TopicKey = Telemetry_ReportTopic.Key;
 
     /// <summary>The schema rows travel under: <see cref="Reading.Schema"/>.</summary>
-    public static global::Apache.Arrow.Schema Schema => Reading.Schema;
+    public static global::Apache.Arrow.Schema Schema => global::Fletcher.Gen.Golden.Pair.Reading.Schema;
 
     private readonly global::Eiva.Fletcher.Publisher _publisher;
     private readonly global::Eiva.Fletcher.FletcherCodec _codec;
@@ -37,13 +37,13 @@ public sealed class Telemetry_ReportPublisher : global::System.IDisposable
     public Telemetry_ReportPublisher(global::Eiva.Fletcher.PubSubProviderHandle provider, global::Eiva.Fletcher.TopicOptions? options = null)
     {
         global::System.ArgumentNullException.ThrowIfNull(provider);
-        _codec = new global::Eiva.Fletcher.FletcherCodec(Reading.Schema);
+        _codec = new global::Eiva.Fletcher.FletcherCodec(global::Fletcher.Gen.Golden.Pair.Reading.Schema);
         try
         {
             _publisher = new global::Eiva.Fletcher.Publisher(provider);
             try
             {
-                _publisher.CreateTopic(Topic, Reading.Schema, options);
+                _publisher.CreateTopic(Topic, global::Fletcher.Gen.Golden.Pair.Reading.Schema, options);
             }
             catch
             {
@@ -73,7 +73,7 @@ public sealed class Telemetry_ReportPublisher : global::System.IDisposable
     public void Publish(Reading row, global::Eiva.Fletcher.AttachmentsBuilder? attachments)
     {
         global::System.ArgumentNullException.ThrowIfNull(row);
-        using var batch = Reading.ToArrow(new[] { row });
+        using var batch = global::Fletcher.Gen.Golden.Pair.Reading.ToArrow(new[] { row });
         using var bound = _codec.Bind(batch);
         _publisher.Publish(Topic, bound, 0, attachments);
     }
@@ -83,7 +83,7 @@ public sealed class Telemetry_ReportPublisher : global::System.IDisposable
     public void Publish(global::System.Collections.Generic.IEnumerable<Reading> rows)
     {
         global::System.ArgumentNullException.ThrowIfNull(rows);
-        using var batch = Reading.ToArrow(rows);
+        using var batch = global::Fletcher.Gen.Golden.Pair.Reading.ToArrow(rows);
         if (batch.Length == 0) return;
         using var bound = _codec.Bind(batch);
         _publisher.Publish(Topic, bound);
@@ -112,7 +112,7 @@ public sealed class Telemetry_ReportSubscriber : global::System.IDisposable
     public const string TopicKey = Telemetry_ReportTopic.Key;
 
     /// <summary>The schema rows travel under: <see cref="Reading.Schema"/>.</summary>
-    public static global::Apache.Arrow.Schema Schema => Reading.Schema;
+    public static global::Apache.Arrow.Schema Schema => global::Fletcher.Gen.Golden.Pair.Reading.Schema;
 
     private readonly global::Eiva.Fletcher.Subscriber _subscriber;
     private readonly global::Eiva.Fletcher.FletcherCodec _codec;
@@ -122,7 +122,7 @@ public sealed class Telemetry_ReportSubscriber : global::System.IDisposable
     public Telemetry_ReportSubscriber(global::Eiva.Fletcher.PubSubProviderHandle provider)
     {
         global::System.ArgumentNullException.ThrowIfNull(provider);
-        _codec = new global::Eiva.Fletcher.FletcherCodec(Reading.Schema);
+        _codec = new global::Eiva.Fletcher.FletcherCodec(global::Fletcher.Gen.Golden.Pair.Reading.Schema);
         try
         {
             _subscriber = new global::Eiva.Fletcher.Subscriber(provider);
@@ -153,7 +153,7 @@ public sealed class Telemetry_ReportSubscriber : global::System.IDisposable
             var columns = new global::Apache.Arrow.StructArray(
                 new global::Apache.Arrow.Types.StructType(batch.Schema.FieldsList), batch.Length, batch.Arrays,
                 global::Apache.Arrow.ArrowBuffer.Empty, 0);
-            handler(Reading.FromArrow(columns, 0), attachments);
+            handler(global::Fletcher.Gen.Golden.Pair.Reading.FromArrow(columns, 0), attachments);
         }, options);
         result.Schema.Dispose();
         return result.Subscription;
@@ -202,7 +202,7 @@ public sealed class Telemetry_MarkPublisher : global::System.IDisposable
     public const string TopicKey = Telemetry_MarkTopic.Key;
 
     /// <summary>The schema rows travel under: <see cref="Marks.Schema"/>.</summary>
-    public static global::Apache.Arrow.Schema Schema => Marks.Schema;
+    public static global::Apache.Arrow.Schema Schema => global::Fletcher.Gen.Golden.Pair.Marks.Schema;
 
     private readonly global::Eiva.Fletcher.Publisher _publisher;
     private readonly global::Eiva.Fletcher.FletcherCodec _codec;
@@ -213,13 +213,13 @@ public sealed class Telemetry_MarkPublisher : global::System.IDisposable
     public Telemetry_MarkPublisher(global::Eiva.Fletcher.PubSubProviderHandle provider, global::Eiva.Fletcher.TopicOptions? options = null)
     {
         global::System.ArgumentNullException.ThrowIfNull(provider);
-        _codec = new global::Eiva.Fletcher.FletcherCodec(Marks.Schema);
+        _codec = new global::Eiva.Fletcher.FletcherCodec(global::Fletcher.Gen.Golden.Pair.Marks.Schema);
         try
         {
             _publisher = new global::Eiva.Fletcher.Publisher(provider);
             try
             {
-                _publisher.CreateTopic(Topic, Marks.Schema, options);
+                _publisher.CreateTopic(Topic, global::Fletcher.Gen.Golden.Pair.Marks.Schema, options);
             }
             catch
             {
@@ -249,7 +249,7 @@ public sealed class Telemetry_MarkPublisher : global::System.IDisposable
     public void Publish(Marks row, global::Eiva.Fletcher.AttachmentsBuilder? attachments)
     {
         global::System.ArgumentNullException.ThrowIfNull(row);
-        using var batch = Marks.ToArrow(new[] { row });
+        using var batch = global::Fletcher.Gen.Golden.Pair.Marks.ToArrow(new[] { row });
         using var bound = _codec.Bind(batch);
         _publisher.Publish(Topic, bound, 0, attachments);
     }
@@ -259,7 +259,7 @@ public sealed class Telemetry_MarkPublisher : global::System.IDisposable
     public void Publish(global::System.Collections.Generic.IEnumerable<Marks> rows)
     {
         global::System.ArgumentNullException.ThrowIfNull(rows);
-        using var batch = Marks.ToArrow(rows);
+        using var batch = global::Fletcher.Gen.Golden.Pair.Marks.ToArrow(rows);
         if (batch.Length == 0) return;
         using var bound = _codec.Bind(batch);
         _publisher.Publish(Topic, bound);
@@ -288,7 +288,7 @@ public sealed class Telemetry_MarkSubscriber : global::System.IDisposable
     public const string TopicKey = Telemetry_MarkTopic.Key;
 
     /// <summary>The schema rows travel under: <see cref="Marks.Schema"/>.</summary>
-    public static global::Apache.Arrow.Schema Schema => Marks.Schema;
+    public static global::Apache.Arrow.Schema Schema => global::Fletcher.Gen.Golden.Pair.Marks.Schema;
 
     private readonly global::Eiva.Fletcher.Subscriber _subscriber;
     private readonly global::Eiva.Fletcher.FletcherCodec _codec;
@@ -298,7 +298,7 @@ public sealed class Telemetry_MarkSubscriber : global::System.IDisposable
     public Telemetry_MarkSubscriber(global::Eiva.Fletcher.PubSubProviderHandle provider)
     {
         global::System.ArgumentNullException.ThrowIfNull(provider);
-        _codec = new global::Eiva.Fletcher.FletcherCodec(Marks.Schema);
+        _codec = new global::Eiva.Fletcher.FletcherCodec(global::Fletcher.Gen.Golden.Pair.Marks.Schema);
         try
         {
             _subscriber = new global::Eiva.Fletcher.Subscriber(provider);
@@ -329,7 +329,7 @@ public sealed class Telemetry_MarkSubscriber : global::System.IDisposable
             var columns = new global::Apache.Arrow.StructArray(
                 new global::Apache.Arrow.Types.StructType(batch.Schema.FieldsList), batch.Length, batch.Arrays,
                 global::Apache.Arrow.ArrowBuffer.Empty, 0);
-            handler(Marks.FromArrow(columns, 0), attachments);
+            handler(global::Fletcher.Gen.Golden.Pair.Marks.FromArrow(columns, 0), attachments);
         }, options);
         result.Schema.Dispose();
         return result.Subscription;

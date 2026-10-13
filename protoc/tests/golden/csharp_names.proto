@@ -1,0 +1,59 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// BIND-6 review B2: names that a bare class name in a code EXPRESSION would bind to instead of
+// the class. C# looks a simple name up among the enclosing class's members and the method's
+// locals and parameters before it looks at the namespace, so `Waypoint.FromArrow(..)` inside a
+// class with a property `Waypoint` of another type, or `row.FromArrow(..)` beside a local `row`,
+// did not compile (CS0120, CS0176, CS1061). The plugin now names the class in full there.
+//
+// test_csharp_visitor's TheCommittedGoldensAreThePluginsOutput holds csharp_names.fletcher.cs and
+// csharp_names.fletcher.native.cs to the plugin byte for byte, and dotnet/tests/Fletcher.Tests
+// compiles them and runs them (GeneratedNamesTests). Regenerate with FLETCHER_CAPTURE_GOLDENS=1.
+syntax = "proto3";
+
+package golden.names;
+
+import "google/protobuf/empty.proto";
+
+message Waypoint { double lat = 1; }
+
+// A field named after a message type of another shape: the property is not the class.
+message RouteList { repeated Waypoint waypoint = 1; }
+message RouteMap { map<string, Waypoint> waypoint = 1; }
+message RouteMixed {
+  Waypoint start = 1;
+  int32 waypoint = 2;
+}
+message RouteOptional { optional Waypoint waypoint = 1; }
+// The control: a field whose type IS the class compiled before too ("Color Color").
+message RouteSingle { Waypoint waypoint = 1; }
+
+// Message names equal to a generated local (`row`) and to FromArrow's parameter (`array`).
+message row { int32 a = 1; }
+message array { int32 b = 1; }
+message UsesLocals {
+  row r = 1;
+  repeated array items = 2;
+}
+
+// Type names of lower-case letters only are written `@name` in C#: a keyword (`class`), and any
+// other such name, which the compiler warns may become one (CS8981, an error under
+// warnings-as-errors). `row` and `array` above are the same case. The compiled name keeps no `@`.
+message class { int32 c = 1; }
+enum level {
+  LEVEL_LOW = 0;
+  LEVEL_HIGH = 1;
+}
+message UsesKeywords {
+  class k = 1;
+  level lv = 2;
+  repeated class ks = 3;
+}
+
+// A message named after a member of the generated pair (`Topic`), used as its input.
+message Topic { int32 a = 1; }
+
+service Feed {
+  rpc Send(stream Topic) returns (google.protobuf.Empty);
+}

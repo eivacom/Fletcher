@@ -646,7 +646,8 @@ TEST(CsVisitor, ListsStructsAndMapsConvertWithTheirSchemasOwnTypes) {
         "always present.\", nameof(rows)));\n");
     ExpectContains(player,
                    "        var c11 = new global::Apache.Arrow.StructArray(t11, rows.Count, "
-                   "Player_Stats.ToArrowColumns(r11), global::Apache.Arrow.ArrowBuffer.Empty, 0, "
+                   "global::Fletcher.Gen.Integration.Player_Stats.ToArrowColumns(r11), "
+                   "global::Apache.Arrow.ArrowBuffer.Empty, 0, "
                    "0);\n");
     EXPECT_EQ(player.find("m11"), std::string::npos) << player;
     // map<string, int32> tags = 13 (column 12): keys and values in entry order.
@@ -661,7 +662,7 @@ TEST(CsVisitor, ListsStructsAndMapsConvertWithTheirSchemasOwnTypes) {
     ExpectContains(
         player,
         "        { var s = (global::Apache.Arrow.StructArray)array.Fields[11]; row.Stats = "
-        "Player_Stats.FromArrow(s, index); }\n");
+        "global::Fletcher.Gen.Integration.Player_Stats.FromArrow(s, index); }\n");
     ExpectContains(player,
                    "    for (var j = start; j < end; j++) x.Add(new "
                    "global::System.Collections.Generic.KeyValuePair<string, int>(k.GetString(j) ?? "
@@ -674,16 +675,18 @@ TEST(CsVisitor, ListsAndMapsOfMessagesReuseTheElementClass) {
     ASSERT_NE(file, nullptr);
     const std::string holder = ClassBody(CSharp(file), "Holder");
     ExpectContains(holder, "            f1.AddRange(row.History);\n");
-    ExpectContains(
-        holder,
-        "        var e1 = new global::Apache.Arrow.StructArray("
-        "(global::Apache.Arrow.Types.StructType)t1.ValueDataType, f1.Count, "
-        "Player_Stats.ToArrowColumns(f1), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);\n");
+    ExpectContains(holder,
+                   "        var e1 = new global::Apache.Arrow.StructArray("
+                   "(global::Apache.Arrow.Types.StructType)t1.ValueDataType, f1.Count, "
+                   "global::Fletcher.Gen.Integration.Player_Stats.ToArrowColumns(f1), "
+                   "global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);\n");
     ExpectContains(holder, "                f2.Add(x2.Value);\n");
     ExpectContains(
         holder,
-        "x.Add(new global::System.Collections.Generic.KeyValuePair<string, Player_Stats>("
-        "k.GetString(j) ?? \"\", Player_Stats.FromArrow(e, j)));\n");
+        "x.Add(new global::System.Collections.Generic.KeyValuePair<string, "
+        "global::Fletcher.Gen.Integration.Player_Stats>("
+        "k.GetString(j) ?? \"\", global::Fletcher.Gen.Integration.Player_Stats.FromArrow(e, "
+        "j)));\n");
 }
 
 TEST(CsVisitor, AnOptionalMessageKeepsItsSlotAndItsValidityBit) {
@@ -696,10 +699,15 @@ TEST(CsVisitor, AnOptionalMessageKeepsItsSlotAndItsValidityBit) {
     const std::string holder = ClassBody(CSharp(file), "Holder");
     ExpectContains(holder,
                    "            if (row.MaybeBest is { } x3) { r3.Add(x3); m3.Append(true); }\n");
-    ExpectContains(holder, "            else { r3.Add(new Player_Stats()); m3.Append(false); }\n");
+    ExpectContains(holder,
+                   "            else { r3.Add(new "
+                   "global::Fletcher.Gen.Integration.Player_Stats()); m3.Append(false); }\n");
+    ExpectContains(holder,
+                   "row.MaybeBest = s.IsNull(index) ? null : "
+                   "global::Fletcher.Gen.Integration.Player_Stats.FromArrow(s, index); }\n");
     ExpectContains(
-        holder, "row.MaybeBest = s.IsNull(index) ? null : Player_Stats.FromArrow(s, index); }\n");
-    ExpectContains(holder, "row.Best = Player_Stats.FromArrow(s, index); }\n");
+        holder,
+        "row.Best = global::Fletcher.Gen.Integration.Player_Stats.FromArrow(s, index); }\n");
     EXPECT_EQ(holder.find("m0"), std::string::npos) << holder;
 }
 
@@ -761,7 +769,8 @@ TEST(CsVisitor, AMessageOfThisFileStillLendsItsInternalColumns) {
     const FileDescriptor* file = BuildFixture(pool);
     ASSERT_NE(file, nullptr);
     const std::string wraps = ClassBody(CSharp(file), "Wraps");
-    ExpectContains(wraps, "rows.Count, Timed.ToArrowColumns(r0), ");
+    ExpectContains(wraps,
+                   "rows.Count, global::Fletcher.Gen.Integration.Timed.ToArrowColumns(r0), ");
     EXPECT_EQ(wraps.find(".ToArrow(r0)"), std::string::npos) << wraps;
 }
 
@@ -991,9 +1000,9 @@ std::string ReadText(const std::filesystem::path& path) {
     return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 }
 
-// Parses tests/golden/csharp_pair.proto into `pool`, with the well-known files it
-// imports copied in first.
-const FileDescriptor* BuildPairFixture(DescriptorPool& pool) {
+// Parses tests/golden/<name> into `pool`, with the well-known files the goldens import
+// copied in first.
+const FileDescriptor* BuildGoldenFixture(DescriptorPool& pool, const std::string& name) {
     const FileDescriptor* wkt_files[] = {
         google::protobuf::Timestamp::GetDescriptor()->file(),
         google::protobuf::Empty::GetDescriptor()->file(),
@@ -1004,9 +1013,9 @@ const FileDescriptor* BuildPairFixture(DescriptorPool& pool) {
         wkt->CopyTo(&copy);
         if (pool.BuildFile(copy) == nullptr) return nullptr;
     }
-    const std::string source = ReadText(GoldenDir() / "csharp_pair.proto");
+    const std::string source = ReadText(GoldenDir() / name);
     if (source.empty()) {
-        ADD_FAILURE() << "cannot read " << (GoldenDir() / "csharp_pair.proto");
+        ADD_FAILURE() << "cannot read " << (GoldenDir() / name);
         return nullptr;
     }
     io::ArrayInputStream input(source.data(), static_cast<int>(source.size()));
@@ -1019,8 +1028,13 @@ const FileDescriptor* BuildPairFixture(DescriptorPool& pool) {
         ADD_FAILURE() << "parse failed:\n" << errors.text;
         return nullptr;
     }
-    fdp.set_name("csharp_pair.proto");
+    fdp.set_name(name);
     return pool.BuildFile(fdp);
+}
+
+// The pair fixture every CsVisitorPair case uses.
+const FileDescriptor* BuildPairFixture(DescriptorPool& pool) {
+    return BuildGoldenFixture(pool, "csharp_pair.proto");
 }
 
 std::string FileOf(const std::map<std::string, std::string>& files, const std::string& name) {
@@ -1091,10 +1105,13 @@ TEST(CsVisitorPair, ThePublisherDeclaresItsTopicAndPublishesPerRowAndInBatches) 
                    "global::Eiva.Fletcher.TopicPath.Of([.. Telemetry_ReportTopic.Segments]);\n");
     ExpectContains(pub, "    public const string TopicKey = Telemetry_ReportTopic.Key;\n");
     ExpectContains(pub,
-                   "                _publisher.CreateTopic(Topic, Reading.Schema, options);\n");
+                   "                _publisher.CreateTopic(Topic, "
+                   "global::Fletcher.Gen.Golden.Pair.Reading.Schema, options);\n");
     // D-BIND-78: per-row and synchronous, with the price where it is chosen.
     ExpectContains(pub, "about 3.8 microseconds a row, 19.6 times the generated C++ publisher");
-    ExpectContains(pub, "        using var batch = Reading.ToArrow(new[] { row });\n");
+    ExpectContains(pub,
+                   "        using var batch = "
+                   "global::Fletcher.Gen.Golden.Pair.Reading.ToArrow(new[] { row });\n");
     ExpectContains(pub, "        _publisher.Publish(Topic, bound, 0, attachments);\n");
     // The batch form: one ToArrow, one bind, one crossing.
     ExpectContains(
@@ -1118,7 +1135,10 @@ TEST(CsVisitorPair, TheSubscriberTakesAGeneratedDelegateNotAnAction) {
         native,
         "    public global::Eiva.Fletcher.Subscription Subscribe(Telemetry_ReportHandler "
         "handler, global::Eiva.Fletcher.TopicOptions? options = null)\n");
-    ExpectContains(native, "            handler(Reading.FromArrow(columns, 0), attachments);\n");
+    ExpectContains(
+        native,
+        "            handler(global::Fletcher.Gen.Golden.Pair.Reading.FromArrow(columns, 0), "
+        "attachments);\n");
     EXPECT_EQ(native.find("Action<"), std::string::npos) << native;
     // Q16: no such member (the doc comment names it, to say where to go instead).
     EXPECT_EQ(native.find(" SubscribeInPlace("), std::string::npos) << native;
@@ -1152,8 +1172,14 @@ TEST(CsVisitorPair, TheCommittedGoldensAreThePluginsOutput) {
     ASSERT_NE(timestamp, nullptr);
     for (auto& [name, content] : GenerateWith(timestamp, "csharp,csharp_model_only"))
         files.emplace(name, content);
+    // BIND-6 review B2: the names a bare class name in an expression would bind to.
+    DescriptorPool names_pool;
+    const FileDescriptor* names = BuildGoldenFixture(names_pool, "csharp_names.proto");
+    ASSERT_NE(names, nullptr);
+    for (auto& [name, content] : GenerateWith(names, "csharp")) files.emplace(name, content);
     for (const char* name : {"csharp_pair.fletcher.cs", "csharp_pair.fletcher.native.cs",
-                             "google/protobuf/timestamp.fletcher.cs"}) {
+                             "google/protobuf/timestamp.fletcher.cs", "csharp_names.fletcher.cs",
+                             "csharp_names.fletcher.native.cs"}) {
         const std::string generated = FileOf(files, name);
         const auto path = GoldenDir() / name;
         if (const char* capture = std::getenv("FLETCHER_CAPTURE_GOLDENS");
@@ -1164,6 +1190,40 @@ TEST(CsVisitorPair, TheCommittedGoldensAreThePluginsOutput) {
         }
         EXPECT_EQ(ReadText(path), generated) << name << " differs from the plugin's output";
     }
+}
+
+TEST(CsVisitorPair, AClassInACodeExpressionIsNamedInFull) {
+    // BIND-6 review B2: in `RouteList`, the property `Waypoint` is a List<Waypoint>, so a bare
+    // `Waypoint.ToArrowColumns(..)` bound to the property and did not compile (CS0120); in the
+    // pair for a message called `Topic`, `Topic.Schema` bound to the pair's own Topic (CS1061).
+    // Expressions now name the class from global::; declarations keep the short name, which a
+    // member cannot capture in a type position.
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildGoldenFixture(pool, "csharp_names.proto");
+    ASSERT_NE(file, nullptr);
+    const auto files = GenerateWith(file, "csharp");
+    const std::string route = ClassBody(FileOf(files, "csharp_names.fletcher.cs"), "RouteList");
+    const std::string waypoint = "global::Fletcher.Gen.Golden.Names.Waypoint";
+    ExpectContains(route, waypoint + ".ToArrowColumns(f0)");
+    ExpectContains(route, waypoint + ".FromArrow(e, j)");
+    ExpectContains(
+        route,
+        "    public global::System.Collections.Generic.List<Waypoint> Waypoint { get; set; } "
+        "= new();\n");
+    const std::string native = FileOf(files, "csharp_names.fletcher.native.cs");
+    ExpectContains(native, "Schema => global::Fletcher.Gen.Golden.Names.Topic.Schema;\n");
+    ExpectContains(native,
+                   "handler(global::Fletcher.Gen.Golden.Names.Topic.FromArrow(columns, 0), ");
+    ExpectContains(native, "    public void Publish(Topic row) => Publish(row, null);\n");
+    // A type named in lower-case letters only is written `@name`, everywhere it is named: a
+    // keyword (`class`) would not compile otherwise, and any other such name draws CS8981.
+    const std::string model = FileOf(files, "csharp_names.fletcher.cs");
+    ExpectContains(model, "public sealed class @row\n");
+    ExpectContains(model, "public sealed class @class\n");
+    ExpectContains(model, "public enum @level : int\n");
+    ExpectContains(model, "    public @class K { get; set; } = new();\n");
+    ExpectContains(model, "global::Fletcher.Gen.Golden.Names.@class.FromArrow(");
+    EXPECT_EQ(model.find("CS8981"), std::string::npos) << "no pragma: the names are escaped";
 }
 
 TEST(CsVisitorPair, TheTwoCsharpTokensFoldIntoThreeStates) {
@@ -1222,10 +1282,13 @@ TEST(CsVisitor, AListOfListsConvertsLevelByLevel) {
     ExpectContains(nested,
                    "        var t0 = (global::Apache.Arrow.Types.ListType)"
                    "Schema.GetFieldByIndex(0).DataType;\n");
-    ExpectContains(nested, "Player_Stats.ToArrowColumns(f0_)");
-    ExpectContains(nested, "Player_Stats.ToArrowColumns(f1__)");  // three levels deep
+    ExpectContains(nested, "global::Fletcher.Gen.Integration.Player_Stats.ToArrowColumns(f0_)");
+    ExpectContains(
+        nested,
+        "global::Fletcher.Gen.Integration.Player_Stats.ToArrowColumns(f1__)");  // three levels deep
     ExpectContains(nested, "        var c0 = a0;\n");
-    ExpectContains(nested, "x0.Add(Player_Stats.FromArrow(e0_, j0_));\n");
+    ExpectContains(nested,
+                   "x0.Add(global::Fletcher.Gen.Integration.Player_Stats.FromArrow(e0_, j0_));\n");
     ExpectContains(nested, "            x.Add(x0);\n");
     EXPECT_NE(nested.find(" ToArrow("), std::string::npos) << nested;
     EXPECT_NE(nested.find(" FromArrow("), std::string::npos) << nested;

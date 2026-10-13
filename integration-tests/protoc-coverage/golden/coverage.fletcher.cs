@@ -473,30 +473,30 @@ public sealed class Branch
     internal static global::Apache.Arrow.IArrowArray[] ToArrowColumns(global::System.Collections.Generic.IReadOnlyList<Branch> rows)
     {
         var t0 = (global::Apache.Arrow.Types.StructType)Schema.GetFieldByIndex(0).DataType;
-        var r0 = new global::System.Collections.Generic.List<Leaf>(rows.Count);
+        var r0 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>(rows.Count);
         for (var i = 0; i < rows.Count; i++)
             r0.Add(rows[i].Leaf ?? throw new global::System.ArgumentException($"Branch.Leaf is null in row {i}, but the field is not optional: it is always present.", nameof(rows)));
-        var c0 = new global::Apache.Arrow.StructArray(t0, rows.Count, Leaf.ToArrowColumns(r0), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var c0 = new global::Apache.Arrow.StructArray(t0, rows.Count, global::Fletcher.Gen.Integration.Coverage.Leaf.ToArrowColumns(r0), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         var t1 = (global::Apache.Arrow.Types.StructType)Schema.GetFieldByIndex(1).DataType;
-        var r1 = new global::System.Collections.Generic.List<Leaf>(rows.Count);
+        var r1 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>(rows.Count);
         var m1 = new global::Apache.Arrow.ArrowBuffer.BitmapBuilder(rows.Count);
         foreach (var row in rows)
         {
             if (row.OptionalLeaf is { } x1) { r1.Add(x1); m1.Append(true); }
-            else { r1.Add(new Leaf()); m1.Append(false); }
+            else { r1.Add(new global::Fletcher.Gen.Integration.Coverage.Leaf()); m1.Append(false); }
         }
         var z1 = m1.UnsetBitCount;
-        var c1 = new global::Apache.Arrow.StructArray(t1, rows.Count, Leaf.ToArrowColumns(r1), z1 > 0 ? m1.Build() : global::Apache.Arrow.ArrowBuffer.Empty, z1, 0);
+        var c1 = new global::Apache.Arrow.StructArray(t1, rows.Count, global::Fletcher.Gen.Integration.Coverage.Leaf.ToArrowColumns(r1), z1 > 0 ? m1.Build() : global::Apache.Arrow.ArrowBuffer.Empty, z1, 0);
         var t2 = (global::Apache.Arrow.Types.ListType)Schema.GetFieldByIndex(2).DataType;
         var o2 = new global::Apache.Arrow.ArrowBuffer.Builder<int>(rows.Count + 1);
         o2.Append(0);
-        var f2 = new global::System.Collections.Generic.List<Leaf>();
+        var f2 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>();
         foreach (var row in rows)
         {
             f2.AddRange(row.Leaves);
             o2.Append(f2.Count);
         }
-        var e2 = new global::Apache.Arrow.StructArray((global::Apache.Arrow.Types.StructType)t2.ValueDataType, f2.Count, Leaf.ToArrowColumns(f2), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var e2 = new global::Apache.Arrow.StructArray((global::Apache.Arrow.Types.StructType)t2.ValueDataType, f2.Count, global::Fletcher.Gen.Integration.Coverage.Leaf.ToArrowColumns(f2), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         var c2 = new global::Apache.Arrow.ListArray(t2, rows.Count, o2.Build(), e2, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         return new global::Apache.Arrow.IArrowArray[] { c0, c1, c2 };
     }
@@ -505,15 +505,15 @@ public sealed class Branch
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new Branch();
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[0]; row.Leaf = Leaf.FromArrow(s, index); }
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[1]; row.OptionalLeaf = s.IsNull(index) ? null : Leaf.FromArrow(s, index); }
+        { var s = (global::Apache.Arrow.StructArray)array.Fields[0]; row.Leaf = global::Fletcher.Gen.Integration.Coverage.Leaf.FromArrow(s, index); }
+        { var s = (global::Apache.Arrow.StructArray)array.Fields[1]; row.OptionalLeaf = s.IsNull(index) ? null : global::Fletcher.Gen.Integration.Coverage.Leaf.FromArrow(s, index); }
         {
             var l = (global::Apache.Arrow.ListArray)array.Fields[2];
             var e = (global::Apache.Arrow.StructArray)l.Values;
             var start = l.ValueOffsets[index];
             var end = l.ValueOffsets[index + 1];
-            var x = new global::System.Collections.Generic.List<Leaf>(end - start);
-            for (var j = start; j < end; j++) x.Add(Leaf.FromArrow(e, j));
+            var x = new global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>(end - start);
+            for (var j = start; j < end; j++) x.Add(global::Fletcher.Gen.Integration.Coverage.Leaf.FromArrow(e, j));
             row.Leaves = x;
         }
         return row;
@@ -677,35 +677,35 @@ public sealed class CompositeCoverage
     internal static global::Apache.Arrow.IArrowArray[] ToArrowColumns(global::System.Collections.Generic.IReadOnlyList<CompositeCoverage> rows)
     {
         var t0 = (global::Apache.Arrow.Types.StructType)Schema.GetFieldByIndex(0).DataType;
-        var r0 = new global::System.Collections.Generic.List<ScalarCoverage>(rows.Count);
+        var r0 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.ScalarCoverage>(rows.Count);
         for (var i = 0; i < rows.Count; i++)
             r0.Add(rows[i].Scalars ?? throw new global::System.ArgumentException($"CompositeCoverage.Scalars is null in row {i}, but the field is not optional: it is always present.", nameof(rows)));
-        var c0 = new global::Apache.Arrow.StructArray(t0, rows.Count, ScalarCoverage.ToArrowColumns(r0), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var c0 = new global::Apache.Arrow.StructArray(t0, rows.Count, global::Fletcher.Gen.Integration.Coverage.ScalarCoverage.ToArrowColumns(r0), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         var t1 = (global::Apache.Arrow.Types.StructType)Schema.GetFieldByIndex(1).DataType;
-        var r1 = new global::System.Collections.Generic.List<ScalarCoverage>(rows.Count);
+        var r1 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.ScalarCoverage>(rows.Count);
         var m1 = new global::Apache.Arrow.ArrowBuffer.BitmapBuilder(rows.Count);
         foreach (var row in rows)
         {
             if (row.OptionalScalars is { } x1) { r1.Add(x1); m1.Append(true); }
-            else { r1.Add(new ScalarCoverage()); m1.Append(false); }
+            else { r1.Add(new global::Fletcher.Gen.Integration.Coverage.ScalarCoverage()); m1.Append(false); }
         }
         var z1 = m1.UnsetBitCount;
-        var c1 = new global::Apache.Arrow.StructArray(t1, rows.Count, ScalarCoverage.ToArrowColumns(r1), z1 > 0 ? m1.Build() : global::Apache.Arrow.ArrowBuffer.Empty, z1, 0);
+        var c1 = new global::Apache.Arrow.StructArray(t1, rows.Count, global::Fletcher.Gen.Integration.Coverage.ScalarCoverage.ToArrowColumns(r1), z1 > 0 ? m1.Build() : global::Apache.Arrow.ArrowBuffer.Empty, z1, 0);
         var t2 = (global::Apache.Arrow.Types.StructType)Schema.GetFieldByIndex(2).DataType;
-        var r2 = new global::System.Collections.Generic.List<Branch>(rows.Count);
+        var r2 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Branch>(rows.Count);
         for (var i = 0; i < rows.Count; i++)
             r2.Add(rows[i].Branch ?? throw new global::System.ArgumentException($"CompositeCoverage.Branch is null in row {i}, but the field is not optional: it is always present.", nameof(rows)));
-        var c2 = new global::Apache.Arrow.StructArray(t2, rows.Count, Branch.ToArrowColumns(r2), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var c2 = new global::Apache.Arrow.StructArray(t2, rows.Count, global::Fletcher.Gen.Integration.Coverage.Branch.ToArrowColumns(r2), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         var t3 = (global::Apache.Arrow.Types.StructType)Schema.GetFieldByIndex(3).DataType;
-        var r3 = new global::System.Collections.Generic.List<Branch>(rows.Count);
+        var r3 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Branch>(rows.Count);
         var m3 = new global::Apache.Arrow.ArrowBuffer.BitmapBuilder(rows.Count);
         foreach (var row in rows)
         {
             if (row.OptionalBranch is { } x3) { r3.Add(x3); m3.Append(true); }
-            else { r3.Add(new Branch()); m3.Append(false); }
+            else { r3.Add(new global::Fletcher.Gen.Integration.Coverage.Branch()); m3.Append(false); }
         }
         var z3 = m3.UnsetBitCount;
-        var c3 = new global::Apache.Arrow.StructArray(t3, rows.Count, Branch.ToArrowColumns(r3), z3 > 0 ? m3.Build() : global::Apache.Arrow.ArrowBuffer.Empty, z3, 0);
+        var c3 = new global::Apache.Arrow.StructArray(t3, rows.Count, global::Fletcher.Gen.Integration.Coverage.Branch.ToArrowColumns(r3), z3 > 0 ? m3.Build() : global::Apache.Arrow.ArrowBuffer.Empty, z3, 0);
         var t4 = (global::Apache.Arrow.Types.ListType)Schema.GetFieldByIndex(4).DataType;
         var o4 = new global::Apache.Arrow.ArrowBuffer.Builder<int>(rows.Count + 1);
         o4.Append(0);
@@ -742,13 +742,13 @@ public sealed class CompositeCoverage
         var t7 = (global::Apache.Arrow.Types.ListType)Schema.GetFieldByIndex(7).DataType;
         var o7 = new global::Apache.Arrow.ArrowBuffer.Builder<int>(rows.Count + 1);
         o7.Append(0);
-        var f7 = new global::System.Collections.Generic.List<Leaf>();
+        var f7 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>();
         foreach (var row in rows)
         {
             f7.AddRange(row.RepeatedStruct);
             o7.Append(f7.Count);
         }
-        var e7 = new global::Apache.Arrow.StructArray((global::Apache.Arrow.Types.StructType)t7.ValueDataType, f7.Count, Leaf.ToArrowColumns(f7), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var e7 = new global::Apache.Arrow.StructArray((global::Apache.Arrow.Types.StructType)t7.ValueDataType, f7.Count, global::Fletcher.Gen.Integration.Coverage.Leaf.ToArrowColumns(f7), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         var c7 = new global::Apache.Arrow.ListArray(t7, rows.Count, o7.Build(), e7, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         var t8 = (global::Apache.Arrow.Types.MapType)Schema.GetFieldByIndex(8).DataType;
         var o8 = new global::Apache.Arrow.ArrowBuffer.Builder<int>(rows.Count + 1);
@@ -770,7 +770,7 @@ public sealed class CompositeCoverage
         var o9 = new global::Apache.Arrow.ArrowBuffer.Builder<int>(rows.Count + 1);
         o9.Append(0);
         var k9 = new global::Apache.Arrow.StringArray.Builder();
-        var f9 = new global::System.Collections.Generic.List<Leaf>();
+        var f9 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>();
         foreach (var row in rows)
         {
             foreach (var x9 in row.MapStruct)
@@ -780,25 +780,25 @@ public sealed class CompositeCoverage
             }
             o9.Append(k9.Length);
         }
-        var kv9 = new global::Apache.Arrow.StructArray(t9.KeyValueType, k9.Length, new global::Apache.Arrow.IArrowArray[] { k9.Build(), new global::Apache.Arrow.StructArray((global::Apache.Arrow.Types.StructType)t9.ValueField.DataType, f9.Count, Leaf.ToArrowColumns(f9), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0) }, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var kv9 = new global::Apache.Arrow.StructArray(t9.KeyValueType, k9.Length, new global::Apache.Arrow.IArrowArray[] { k9.Build(), new global::Apache.Arrow.StructArray((global::Apache.Arrow.Types.StructType)t9.ValueField.DataType, f9.Count, global::Fletcher.Gen.Integration.Coverage.Leaf.ToArrowColumns(f9), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0) }, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         var c9 = new global::Apache.Arrow.MapArray(t9, rows.Count, o9.Build(), kv9, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         var t10 = (global::Apache.Arrow.Types.ListType)Schema.GetFieldByIndex(10).DataType;
         var o10 = new global::Apache.Arrow.ArrowBuffer.Builder<int>(rows.Count + 1);
         o10.Append(0);
-        var f10 = new global::System.Collections.Generic.List<Leaf>();
+        var f10 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>();
         foreach (var row in rows)
         {
             f10.AddRange(row.FlattenedStructList);
             o10.Append(f10.Count);
         }
-        var e10 = new global::Apache.Arrow.StructArray((global::Apache.Arrow.Types.StructType)t10.ValueDataType, f10.Count, Leaf.ToArrowColumns(f10), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var e10 = new global::Apache.Arrow.StructArray((global::Apache.Arrow.Types.StructType)t10.ValueDataType, f10.Count, global::Fletcher.Gen.Integration.Coverage.Leaf.ToArrowColumns(f10), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         var c10 = new global::Apache.Arrow.ListArray(t10, rows.Count, o10.Build(), e10, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
-        var v11 = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<Leaf>>>(rows.Count);
+        var v11 = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>>>(rows.Count);
         foreach (var row in rows) v11.Add(row.NestedStructLists);
         var t11 = (global::Apache.Arrow.Types.ListType)Schema.GetFieldByIndex(11).DataType;
         var o11 = new global::Apache.Arrow.ArrowBuffer.Builder<int>(v11.Count + 1);
         o11.Append(0);
-        var f11 = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<Leaf>>();
+        var f11 = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>>();
         foreach (var x11 in v11)
         {
             f11.AddRange(x11);
@@ -807,22 +807,22 @@ public sealed class CompositeCoverage
         var t11_ = (global::Apache.Arrow.Types.ListType)t11.ValueDataType;
         var o11_ = new global::Apache.Arrow.ArrowBuffer.Builder<int>(f11.Count + 1);
         o11_.Append(0);
-        var f11_ = new global::System.Collections.Generic.List<Leaf>();
+        var f11_ = new global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>();
         foreach (var x11_ in f11)
         {
             f11_.AddRange(x11_);
             o11_.Append(f11_.Count);
         }
-        var a11__ = new global::Apache.Arrow.StructArray((global::Apache.Arrow.Types.StructType)t11_.ValueDataType, f11_.Count, Leaf.ToArrowColumns(f11_), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var a11__ = new global::Apache.Arrow.StructArray((global::Apache.Arrow.Types.StructType)t11_.ValueDataType, f11_.Count, global::Fletcher.Gen.Integration.Coverage.Leaf.ToArrowColumns(f11_), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         var a11_ = new global::Apache.Arrow.ListArray(t11_, f11.Count, o11_.Build(), a11__, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         var a11 = new global::Apache.Arrow.ListArray(t11, v11.Count, o11.Build(), a11_, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         var c11 = a11;
-        var v12 = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<Leaf>>>>(rows.Count);
+        var v12 = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>>>>(rows.Count);
         foreach (var row in rows) v12.Add(row.Depth3StructLists);
         var t12 = (global::Apache.Arrow.Types.ListType)Schema.GetFieldByIndex(12).DataType;
         var o12 = new global::Apache.Arrow.ArrowBuffer.Builder<int>(v12.Count + 1);
         o12.Append(0);
-        var f12 = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<Leaf>>>();
+        var f12 = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>>>();
         foreach (var x12 in v12)
         {
             f12.AddRange(x12);
@@ -831,7 +831,7 @@ public sealed class CompositeCoverage
         var t12_ = (global::Apache.Arrow.Types.ListType)t12.ValueDataType;
         var o12_ = new global::Apache.Arrow.ArrowBuffer.Builder<int>(f12.Count + 1);
         o12_.Append(0);
-        var f12_ = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<Leaf>>();
+        var f12_ = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>>();
         foreach (var x12_ in f12)
         {
             f12_.AddRange(x12_);
@@ -840,13 +840,13 @@ public sealed class CompositeCoverage
         var t12__ = (global::Apache.Arrow.Types.ListType)t12_.ValueDataType;
         var o12__ = new global::Apache.Arrow.ArrowBuffer.Builder<int>(f12_.Count + 1);
         o12__.Append(0);
-        var f12__ = new global::System.Collections.Generic.List<Leaf>();
+        var f12__ = new global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>();
         foreach (var x12__ in f12_)
         {
             f12__.AddRange(x12__);
             o12__.Append(f12__.Count);
         }
-        var a12___ = new global::Apache.Arrow.StructArray((global::Apache.Arrow.Types.StructType)t12__.ValueDataType, f12__.Count, Leaf.ToArrowColumns(f12__), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var a12___ = new global::Apache.Arrow.StructArray((global::Apache.Arrow.Types.StructType)t12__.ValueDataType, f12__.Count, global::Fletcher.Gen.Integration.Coverage.Leaf.ToArrowColumns(f12__), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         var a12__ = new global::Apache.Arrow.ListArray(t12__, f12_.Count, o12__.Build(), a12___, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         var a12_ = new global::Apache.Arrow.ListArray(t12_, f12.Count, o12_.Build(), a12__, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         var a12 = new global::Apache.Arrow.ListArray(t12, v12.Count, o12.Build(), a12_, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
@@ -854,24 +854,24 @@ public sealed class CompositeCoverage
         var t13 = (global::Apache.Arrow.Types.ListType)Schema.GetFieldByIndex(13).DataType;
         var o13 = new global::Apache.Arrow.ArrowBuffer.Builder<int>(rows.Count + 1);
         o13.Append(0);
-        var f13 = new global::System.Collections.Generic.List<Leaf>();
+        var f13 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>();
         foreach (var row in rows)
         {
             f13.AddRange(row.OptionalFlattenedStructList);
             o13.Append(f13.Count);
         }
-        var e13 = new global::Apache.Arrow.StructArray((global::Apache.Arrow.Types.StructType)t13.ValueDataType, f13.Count, Leaf.ToArrowColumns(f13), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var e13 = new global::Apache.Arrow.StructArray((global::Apache.Arrow.Types.StructType)t13.ValueDataType, f13.Count, global::Fletcher.Gen.Integration.Coverage.Leaf.ToArrowColumns(f13), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         var c13 = new global::Apache.Arrow.ListArray(t13, rows.Count, o13.Build(), e13, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         var t14 = (global::Apache.Arrow.Types.StructType)Schema.GetFieldByIndex(14).DataType;
-        var r14 = new global::System.Collections.Generic.List<FlattenedPoint>(rows.Count);
+        var r14 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.FlattenedPoint>(rows.Count);
         for (var i = 0; i < rows.Count; i++)
             r14.Add(rows[i].MessageFlattenedPoint ?? throw new global::System.ArgumentException($"CompositeCoverage.MessageFlattenedPoint is null in row {i}, but the field is not optional: it is always present.", nameof(rows)));
-        var c14 = new global::Apache.Arrow.StructArray(t14, rows.Count, FlattenedPoint.ToArrowColumns(r14), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var c14 = new global::Apache.Arrow.StructArray(t14, rows.Count, global::Fletcher.Gen.Integration.Coverage.FlattenedPoint.ToArrowColumns(r14), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         var t15 = (global::Apache.Arrow.Types.StructType)Schema.GetFieldByIndex(15).DataType;
-        var r15 = new global::System.Collections.Generic.List<FieldFlattenedPosition>(rows.Count);
+        var r15 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.FieldFlattenedPosition>(rows.Count);
         for (var i = 0; i < rows.Count; i++)
             r15.Add(rows[i].FieldFlattenedPosition ?? throw new global::System.ArgumentException($"CompositeCoverage.FieldFlattenedPosition is null in row {i}, but the field is not optional: it is always present.", nameof(rows)));
-        var c15 = new global::Apache.Arrow.StructArray(t15, rows.Count, FieldFlattenedPosition.ToArrowColumns(r15), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var c15 = new global::Apache.Arrow.StructArray(t15, rows.Count, global::Fletcher.Gen.Integration.Coverage.FieldFlattenedPosition.ToArrowColumns(r15), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         return new global::Apache.Arrow.IArrowArray[] { c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15 };
     }
 
@@ -879,10 +879,10 @@ public sealed class CompositeCoverage
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new CompositeCoverage();
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[0]; row.Scalars = ScalarCoverage.FromArrow(s, index); }
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[1]; row.OptionalScalars = s.IsNull(index) ? null : ScalarCoverage.FromArrow(s, index); }
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[2]; row.Branch = Branch.FromArrow(s, index); }
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[3]; row.OptionalBranch = s.IsNull(index) ? null : Branch.FromArrow(s, index); }
+        { var s = (global::Apache.Arrow.StructArray)array.Fields[0]; row.Scalars = global::Fletcher.Gen.Integration.Coverage.ScalarCoverage.FromArrow(s, index); }
+        { var s = (global::Apache.Arrow.StructArray)array.Fields[1]; row.OptionalScalars = s.IsNull(index) ? null : global::Fletcher.Gen.Integration.Coverage.ScalarCoverage.FromArrow(s, index); }
+        { var s = (global::Apache.Arrow.StructArray)array.Fields[2]; row.Branch = global::Fletcher.Gen.Integration.Coverage.Branch.FromArrow(s, index); }
+        { var s = (global::Apache.Arrow.StructArray)array.Fields[3]; row.OptionalBranch = s.IsNull(index) ? null : global::Fletcher.Gen.Integration.Coverage.Branch.FromArrow(s, index); }
         {
             var l = (global::Apache.Arrow.ListArray)array.Fields[4];
             var e = (global::Apache.Arrow.Int32Array)l.Values;
@@ -915,8 +915,8 @@ public sealed class CompositeCoverage
             var e = (global::Apache.Arrow.StructArray)l.Values;
             var start = l.ValueOffsets[index];
             var end = l.ValueOffsets[index + 1];
-            var x = new global::System.Collections.Generic.List<Leaf>(end - start);
-            for (var j = start; j < end; j++) x.Add(Leaf.FromArrow(e, j));
+            var x = new global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>(end - start);
+            for (var j = start; j < end; j++) x.Add(global::Fletcher.Gen.Integration.Coverage.Leaf.FromArrow(e, j));
             row.RepeatedStruct = x;
         }
         {
@@ -935,8 +935,8 @@ public sealed class CompositeCoverage
             var e = (global::Apache.Arrow.StructArray)m.Values;
             var start = m.ValueOffsets[index];
             var end = m.ValueOffsets[index + 1];
-            var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.KeyValuePair<string, Leaf>>(end - start);
-            for (var j = start; j < end; j++) x.Add(new global::System.Collections.Generic.KeyValuePair<string, Leaf>(k.GetString(j) ?? "", Leaf.FromArrow(e, j)));
+            var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.KeyValuePair<string, global::Fletcher.Gen.Integration.Coverage.Leaf>>(end - start);
+            for (var j = start; j < end; j++) x.Add(new global::System.Collections.Generic.KeyValuePair<string, global::Fletcher.Gen.Integration.Coverage.Leaf>(k.GetString(j) ?? "", global::Fletcher.Gen.Integration.Coverage.Leaf.FromArrow(e, j)));
             row.MapStruct = x;
         }
         {
@@ -944,21 +944,21 @@ public sealed class CompositeCoverage
             var e = (global::Apache.Arrow.StructArray)l.Values;
             var start = l.ValueOffsets[index];
             var end = l.ValueOffsets[index + 1];
-            var x = new global::System.Collections.Generic.List<Leaf>(end - start);
-            for (var j = start; j < end; j++) x.Add(Leaf.FromArrow(e, j));
+            var x = new global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>(end - start);
+            for (var j = start; j < end; j++) x.Add(global::Fletcher.Gen.Integration.Coverage.Leaf.FromArrow(e, j));
             row.FlattenedStructList = x;
         }
         {
             var l = (global::Apache.Arrow.ListArray)array.Fields[11];
-            var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<Leaf>>(l.ValueOffsets[index + 1] - l.ValueOffsets[index]);
+            var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>>(l.ValueOffsets[index + 1] - l.ValueOffsets[index]);
             var e0 = (global::Apache.Arrow.ListArray)l.Values;
             for (var j0 = l.ValueOffsets[index]; j0 < l.ValueOffsets[index + 1]; j0++)
             {
-                var x0 = new global::System.Collections.Generic.List<Leaf>(e0.ValueOffsets[j0 + 1] - e0.ValueOffsets[j0]);
+                var x0 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>(e0.ValueOffsets[j0 + 1] - e0.ValueOffsets[j0]);
                 var e0_ = (global::Apache.Arrow.StructArray)e0.Values;
                 for (var j0_ = e0.ValueOffsets[j0]; j0_ < e0.ValueOffsets[j0 + 1]; j0_++)
                 {
-                    x0.Add(Leaf.FromArrow(e0_, j0_));
+                    x0.Add(global::Fletcher.Gen.Integration.Coverage.Leaf.FromArrow(e0_, j0_));
                 }
                 x.Add(x0);
             }
@@ -966,19 +966,19 @@ public sealed class CompositeCoverage
         }
         {
             var l = (global::Apache.Arrow.ListArray)array.Fields[12];
-            var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<Leaf>>>(l.ValueOffsets[index + 1] - l.ValueOffsets[index]);
+            var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>>>(l.ValueOffsets[index + 1] - l.ValueOffsets[index]);
             var e0 = (global::Apache.Arrow.ListArray)l.Values;
             for (var j0 = l.ValueOffsets[index]; j0 < l.ValueOffsets[index + 1]; j0++)
             {
-                var x0 = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<Leaf>>(e0.ValueOffsets[j0 + 1] - e0.ValueOffsets[j0]);
+                var x0 = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>>(e0.ValueOffsets[j0 + 1] - e0.ValueOffsets[j0]);
                 var e0_ = (global::Apache.Arrow.ListArray)e0.Values;
                 for (var j0_ = e0.ValueOffsets[j0]; j0_ < e0.ValueOffsets[j0 + 1]; j0_++)
                 {
-                    var x0_ = new global::System.Collections.Generic.List<Leaf>(e0_.ValueOffsets[j0_ + 1] - e0_.ValueOffsets[j0_]);
+                    var x0_ = new global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>(e0_.ValueOffsets[j0_ + 1] - e0_.ValueOffsets[j0_]);
                     var e0__ = (global::Apache.Arrow.StructArray)e0_.Values;
                     for (var j0__ = e0_.ValueOffsets[j0_]; j0__ < e0_.ValueOffsets[j0_ + 1]; j0__++)
                     {
-                        x0_.Add(Leaf.FromArrow(e0__, j0__));
+                        x0_.Add(global::Fletcher.Gen.Integration.Coverage.Leaf.FromArrow(e0__, j0__));
                     }
                     x0.Add(x0_);
                 }
@@ -991,12 +991,12 @@ public sealed class CompositeCoverage
             var e = (global::Apache.Arrow.StructArray)l.Values;
             var start = l.ValueOffsets[index];
             var end = l.ValueOffsets[index + 1];
-            var x = new global::System.Collections.Generic.List<Leaf>(end - start);
-            for (var j = start; j < end; j++) x.Add(Leaf.FromArrow(e, j));
+            var x = new global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>(end - start);
+            for (var j = start; j < end; j++) x.Add(global::Fletcher.Gen.Integration.Coverage.Leaf.FromArrow(e, j));
             row.OptionalFlattenedStructList = x;
         }
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[14]; row.MessageFlattenedPoint = FlattenedPoint.FromArrow(s, index); }
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[15]; row.FieldFlattenedPosition = FieldFlattenedPosition.FromArrow(s, index); }
+        { var s = (global::Apache.Arrow.StructArray)array.Fields[14]; row.MessageFlattenedPoint = global::Fletcher.Gen.Integration.Coverage.FlattenedPoint.FromArrow(s, index); }
+        { var s = (global::Apache.Arrow.StructArray)array.Fields[15]; row.FieldFlattenedPosition = global::Fletcher.Gen.Integration.Coverage.FieldFlattenedPosition.FromArrow(s, index); }
         return row;
     }
 }
@@ -1022,10 +1022,10 @@ public sealed class ServiceRequest
     internal static global::Apache.Arrow.IArrowArray[] ToArrowColumns(global::System.Collections.Generic.IReadOnlyList<ServiceRequest> rows)
     {
         var t0 = (global::Apache.Arrow.Types.StructType)Schema.GetFieldByIndex(0).DataType;
-        var r0 = new global::System.Collections.Generic.List<CompositeCoverage>(rows.Count);
+        var r0 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.CompositeCoverage>(rows.Count);
         for (var i = 0; i < rows.Count; i++)
             r0.Add(rows[i].Payload ?? throw new global::System.ArgumentException($"ServiceRequest.Payload is null in row {i}, but the field is not optional: it is always present.", nameof(rows)));
-        var c0 = new global::Apache.Arrow.StructArray(t0, rows.Count, CompositeCoverage.ToArrowColumns(r0), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var c0 = new global::Apache.Arrow.StructArray(t0, rows.Count, global::Fletcher.Gen.Integration.Coverage.CompositeCoverage.ToArrowColumns(r0), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         return new global::Apache.Arrow.IArrowArray[] { c0 };
     }
 
@@ -1033,7 +1033,7 @@ public sealed class ServiceRequest
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new ServiceRequest();
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[0]; row.Payload = CompositeCoverage.FromArrow(s, index); }
+        { var s = (global::Apache.Arrow.StructArray)array.Fields[0]; row.Payload = global::Fletcher.Gen.Integration.Coverage.CompositeCoverage.FromArrow(s, index); }
         return row;
     }
 }

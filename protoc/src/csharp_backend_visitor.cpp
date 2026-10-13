@@ -104,7 +104,7 @@ std::optional<Elem> ElemOf(const IrNode& node, const FileDescriptor* file,
         if (!why.empty()) return std::nullopt;
         Elem e;
         e.is_struct = true;
-        e.cls = CsTypeRef(s.identity.descriptor, file);
+        e.cls = CsTypeExpr(s.identity.descriptor);  // B2: named in full in method bodies
         e.other_file = s.identity.descriptor->file() != file;
         return e;
     }
@@ -157,7 +157,7 @@ std::optional<Column> ClassifyColumn(const IrNode& node, const FileDescriptor* f
             c.kind = ColKind::STRUCT;
             // As its property and its column: nullable only for `optional` (D-BIND-83).
             c.nullable = node.facts.nullable;
-            c.cls = CsTypeRef(s.identity.descriptor, file);
+            c.cls = CsTypeExpr(s.identity.descriptor);  // B2: named in full in method bodies
             c.other_file = s.identity.descriptor->file() != file;
             return c;
         }
@@ -394,8 +394,8 @@ void EmitColumn(std::ostringstream& o, const Column& c, const std::string& owner
                   << in << "var r" << n << " = new " << ListOf(c.cls) << "(rows.Count);\n"
                   << in << "for (var i = 0; i < rows.Count; i++)\n"
                   << in << "    r" << n << ".Add(rows[i]." << c.property
-                  << " ?? throw new global::System.ArgumentException($\"" << owner << "."
-                  << c.property
+                  << " ?? throw new global::System.ArgumentException($\""
+                  << (owner.rfind('@', 0) == 0 ? owner.substr(1) : owner) << "." << c.property
                   << " is null in row {i}, but the field is not optional: it is always "
                      "present.\", nameof(rows)));\n"
                   << in << "var c" << n << " = new global::Apache.Arrow.StructArray(t" << n
@@ -724,7 +724,8 @@ std::string GenerateTopicClass(const FileDescriptor* file, const PubSubMethod& p
 constexpr const char* kNs = "global::Eiva.Fletcher.";
 
 // The members both halves of the pair share: the topic and the schema.
-std::string PairStatics(const PubSubMethod& p, const std::string& msg) {
+std::string PairStatics(const PubSubMethod& p, const std::string& msg,
+                        const std::string& msg_expr) {
     std::ostringstream o;
     o << "    /// <summary>The topic, from <see cref=\"" << p.Base() << "Topic\"/>.</summary>\n"
       << "    public static " << kNs << "TopicPath Topic { get; } = " << kNs << "TopicPath.Of([.. "
@@ -733,11 +734,12 @@ std::string PairStatics(const PubSubMethod& p, const std::string& msg) {
       << "    public const string TopicKey = " << p.Base() << "Topic.Key;\n\n"
       << "    /// <summary>The schema rows travel under: <see cref=\"" << msg
       << ".Schema\"/>.</summary>\n"
-      << "    public static global::Apache.Arrow.Schema Schema => " << msg << ".Schema;\n\n";
+      << "    public static global::Apache.Arrow.Schema Schema => " << msg_expr << ".Schema;\n\n";
     return o.str();
 }
 
-std::string GeneratePublisherPair(const PubSubMethod& p, const std::string& msg) {
+std::string GeneratePublisherPair(const PubSubMethod& p, const std::string& msg,
+                                  const std::string& msg_expr) {
     const std::string cls = p.Base() + "Publisher";
     std::ostringstream o;
     o << "/// <summary>Publishes <see cref=\"" << msg << "\"/> rows on " << p.service << "."
@@ -750,7 +752,8 @@ std::string GeneratePublisherPair(const PubSubMethod& p, const std::string& msg)
       << "/// dispose while publishing.\n"
       << "/// </remarks>\n"
       << "public sealed class " << cls << " : global::System.IDisposable\n{\n"
-      << PairStatics(p, msg) << "    private readonly " << kNs << "Publisher _publisher;\n"
+      << PairStatics(p, msg, msg_expr) << "    private readonly " << kNs
+      << "Publisher _publisher;\n"
       << "    private readonly " << kNs << "FletcherCodec _codec;\n\n"
       << "    /// <summary>Declares the topic on <paramref name=\"provider\"/> with the row "
          "schema.</summary>\n"
@@ -760,11 +763,11 @@ std::string GeneratePublisherPair(const PubSubMethod& p, const std::string& msg)
       << "    public " << cls << "(" << kNs << "PubSubProviderHandle provider, " << kNs
       << "TopicOptions? options = null)\n    {\n"
       << "        global::System.ArgumentNullException.ThrowIfNull(provider);\n"
-      << "        _codec = new " << kNs << "FletcherCodec(" << msg << ".Schema);\n"
+      << "        _codec = new " << kNs << "FletcherCodec(" << msg_expr << ".Schema);\n"
       << "        try\n        {\n"
       << "            _publisher = new " << kNs << "Publisher(provider);\n"
       << "            try\n            {\n"
-      << "                _publisher.CreateTopic(Topic, " << msg << ".Schema, options);\n"
+      << "                _publisher.CreateTopic(Topic, " << msg_expr << ".Schema, options);\n"
       << "            }\n            catch\n            {\n"
       << "                _publisher.Dispose();\n                throw;\n            }\n"
       << "        }\n        catch\n        {\n"
@@ -787,7 +790,7 @@ std::string GeneratePublisherPair(const PubSubMethod& p, const std::string& msg)
       << "    public void Publish(" << msg << " row, " << kNs
       << "AttachmentsBuilder? attachments)\n    {\n"
       << "        global::System.ArgumentNullException.ThrowIfNull(row);\n"
-      << "        using var batch = " << msg << ".ToArrow(new[] { row });\n"
+      << "        using var batch = " << msg_expr << ".ToArrow(new[] { row });\n"
       << "        using var bound = _codec.Bind(batch);\n"
       << "        _publisher.Publish(Topic, bound, 0, attachments);\n    }\n\n"
       << "    /// <summary>Publishes every row, building and binding them once: the fast "
@@ -797,7 +800,7 @@ std::string GeneratePublisherPair(const PubSubMethod& p, const std::string& msg)
       << "    public void Publish(global::System.Collections.Generic.IEnumerable<" << msg
       << "> rows)\n    {\n"
       << "        global::System.ArgumentNullException.ThrowIfNull(rows);\n"
-      << "        using var batch = " << msg << ".ToArrow(rows);\n"
+      << "        using var batch = " << msg_expr << ".ToArrow(rows);\n"
       << "        if (batch.Length == 0) return;\n"
       << "        using var bound = _codec.Bind(batch);\n"
       << "        _publisher.Publish(Topic, bound);\n    }\n\n"
@@ -808,7 +811,8 @@ std::string GeneratePublisherPair(const PubSubMethod& p, const std::string& msg)
     return o.str();
 }
 
-std::string GenerateSubscriberPair(const PubSubMethod& p, const std::string& msg) {
+std::string GenerateSubscriberPair(const PubSubMethod& p, const std::string& msg,
+                                   const std::string& msg_expr) {
     const std::string cls = p.Base() + "Subscriber";
     std::ostringstream o;
     o << "/// <summary>Receives <see cref=\"" << msg << "\"/> rows published on " << p.service
@@ -823,14 +827,15 @@ std::string GenerateSubscriberPair(const PubSubMethod& p, const std::string& msg
       << msg << ".FromArrow\"/>.\n"
       << "/// </remarks>\n"
       << "public sealed class " << cls << " : global::System.IDisposable\n{\n"
-      << PairStatics(p, msg) << "    private readonly " << kNs << "Subscriber _subscriber;\n"
+      << PairStatics(p, msg, msg_expr) << "    private readonly " << kNs
+      << "Subscriber _subscriber;\n"
       << "    private readonly " << kNs << "FletcherCodec _codec;\n\n"
       << "    /// <summary>Binds to <paramref name=\"provider\"/>; the topic is not declared "
          "here.</summary>\n"
       << "    /// <param name=\"provider\">Borrowed; it must outlive this subscriber.</param>\n"
       << "    public " << cls << "(" << kNs << "PubSubProviderHandle provider)\n    {\n"
       << "        global::System.ArgumentNullException.ThrowIfNull(provider);\n"
-      << "        _codec = new " << kNs << "FletcherCodec(" << msg << ".Schema);\n"
+      << "        _codec = new " << kNs << "FletcherCodec(" << msg_expr << ".Schema);\n"
       << "        try\n        {\n"
       << "            _subscriber = new " << kNs << "Subscriber(provider);\n"
       << "        }\n        catch\n        {\n"
@@ -859,7 +864,7 @@ std::string GenerateSubscriberPair(const PubSubMethod& p, const std::string& msg
       << "                new global::Apache.Arrow.Types.StructType(batch.Schema.FieldsList), "
          "batch.Length, batch.Arrays,\n"
       << "                global::Apache.Arrow.ArrowBuffer.Empty, 0);\n"
-      << "            handler(" << msg << ".FromArrow(columns, 0), attachments);\n"
+      << "            handler(" << msg_expr << ".FromArrow(columns, 0), attachments);\n"
       << "        }, options);\n"
       << "        result.Schema.Dispose();\n"
       << "        return result.Subscription;\n    }\n\n"
@@ -1030,6 +1035,9 @@ std::string CsVisitor::GenerateNativeFile() {
         std::set<const Descriptor*> visiting;
         const std::string blocker = ConversionBlocker(p.input, file_, visiting);
         const std::string msg = CsTypeName(p.input);
+        // B2: in a code expression the class is named in full, so a member of the pair that
+        // shares its name (a message called Topic or Schema) cannot capture it.
+        const std::string msg_expr = CsTypeExpr(p.input);
         if (!blocker.empty() || fletcher::IsFlattenedWrapper(p.input)) {
             o << "// Skipped: " << p.service << "." << p.method << " — " << msg
               << " has no ToArrow / FromArrow: "
@@ -1042,8 +1050,8 @@ std::string CsVisitor::GenerateNativeFile() {
           << "/// <param name=\"attachments\">BORROWED for this call only.</param>\n"
           << "public delegate void " << p.Base() << "Handler(" << msg << " row, " << kNs
           << "AttachmentsView attachments);\n\n"
-          << GeneratePublisherPair(p, msg) << "\n"
-          << GenerateSubscriberPair(p, msg);
+          << GeneratePublisherPair(p, msg, msg_expr) << "\n"
+          << GenerateSubscriberPair(p, msg, msg_expr);
     }
     return o.str();
 }

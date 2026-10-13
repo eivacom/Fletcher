@@ -138,20 +138,20 @@ public sealed class Reading
         var kv5 = new global::Apache.Arrow.StructArray(t5.KeyValueType, k5.Length, new global::Apache.Arrow.IArrowArray[] { k5.Build(), b5.Build() }, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         var c5 = new global::Apache.Arrow.MapArray(t5, rows.Count, o5.Build(), kv5, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         var t6 = (global::Apache.Arrow.Types.StructType)Schema.GetFieldByIndex(6).DataType;
-        var r6 = new global::System.Collections.Generic.List<Stamp>(rows.Count);
+        var r6 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Pair.Stamp>(rows.Count);
         for (var i = 0; i < rows.Count; i++)
             r6.Add(rows[i].Stamp ?? throw new global::System.ArgumentException($"Reading.Stamp is null in row {i}, but the field is not optional: it is always present.", nameof(rows)));
-        var c6 = new global::Apache.Arrow.StructArray(t6, rows.Count, Stamp.ToArrowColumns(r6), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var c6 = new global::Apache.Arrow.StructArray(t6, rows.Count, global::Fletcher.Gen.Golden.Pair.Stamp.ToArrowColumns(r6), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         var t7 = (global::Apache.Arrow.Types.ListType)Schema.GetFieldByIndex(7).DataType;
         var o7 = new global::Apache.Arrow.ArrowBuffer.Builder<int>(rows.Count + 1);
         o7.Append(0);
-        var f7 = new global::System.Collections.Generic.List<Stamp>();
+        var f7 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Pair.Stamp>();
         foreach (var row in rows)
         {
             f7.AddRange(row.History);
             o7.Append(f7.Count);
         }
-        var e7 = new global::Apache.Arrow.StructArray((global::Apache.Arrow.Types.StructType)t7.ValueDataType, f7.Count, Stamp.ToArrowColumns(f7), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var e7 = new global::Apache.Arrow.StructArray((global::Apache.Arrow.Types.StructType)t7.ValueDataType, f7.Count, global::Fletcher.Gen.Golden.Pair.Stamp.ToArrowColumns(f7), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         var c7 = new global::Apache.Arrow.ListArray(t7, rows.Count, o7.Build(), e7, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
         var t8 = (global::Apache.Arrow.Types.TimestampType)Schema.GetFieldByIndex(8).DataType;
         var v8 = new global::Apache.Arrow.ArrowBuffer.Builder<long>(rows.Count);
@@ -193,14 +193,14 @@ public sealed class Reading
             for (var j = start; j < end; j++) x.Add(new global::System.Collections.Generic.KeyValuePair<string, long>(k.GetString(j) ?? "", e.GetValue(j).GetValueOrDefault()));
             row.Tags = x;
         }
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[6]; row.Stamp = Stamp.FromArrow(s, index); }
+        { var s = (global::Apache.Arrow.StructArray)array.Fields[6]; row.Stamp = global::Fletcher.Gen.Golden.Pair.Stamp.FromArrow(s, index); }
         {
             var l = (global::Apache.Arrow.ListArray)array.Fields[7];
             var e = (global::Apache.Arrow.StructArray)l.Values;
             var start = l.ValueOffsets[index];
             var end = l.ValueOffsets[index + 1];
-            var x = new global::System.Collections.Generic.List<Stamp>(end - start);
-            for (var j = start; j < end; j++) x.Add(Stamp.FromArrow(e, j));
+            var x = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Pair.Stamp>(end - start);
+            for (var j = start; j < end; j++) x.Add(global::Fletcher.Gen.Golden.Pair.Stamp.FromArrow(e, j));
             row.History = x;
         }
         {

@@ -117,6 +117,13 @@ std::string CsTypeRef(const google::protobuf::Descriptor* msg,
 std::string CsTypeRef(const google::protobuf::EnumDescriptor* enm,
                       const google::protobuf::FileDescriptor* current_file);
 
+// A message's class named in full, `global::<CsNamespace>.<CsTypeName>`, for use in a code
+// EXPRESSION (`Cls.ToArrow(..)`, `Cls.FromArrow(..)`, `Cls.Schema`). There a bare name binds to a
+// member or local of the same name first (a property `Waypoint` of type List<Waypoint>, a local
+// `row`, a pair's `Topic`), which does not compile (BIND-6 review B2). A TYPE position cannot
+// bind to a member, so declarations keep CsTypeRef's shorter name.
+std::string CsTypeExpr(const google::protobuf::Descriptor* msg);
+
 // The property for proto field `field_name` of `owner`: protoc's GetPropertyName,
 // with the generated class's own members added to the reserved list (D-BIND-73).
 std::string CsPropertyName(std::string_view field_name, const google::protobuf::Descriptor* owner);
