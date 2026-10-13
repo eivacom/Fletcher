@@ -1648,6 +1648,34 @@ codec step.
   Plugin 162 in the suite (bucket 161, two new cases); Fletcher.Tests 369/369 on both TFMs;
   protoc-coverage 21/21; ProtocDotnet 28/28; Beside 4/4; C++ format clean over the whole repo.
   Mutants: bare names again fail nine plugin cases, the golden check among them; no `@` fails three.
+- **Review fix B5, 2026-10-13: C# registers C++'s topic, by test.** `test_topic_path.cpp`'s
+  `ExpectBackendsAgree` generated C++ and TypeScript only, and the C# topic was checked against
+  hand-written literals, so a change to C++'s form would have passed. It now also generates `csharp`
+  and requires `<Svc>_<Method>Topic.Segments` and `.Key` to equal C++'s `TopicSegments()` and
+  `TopicKey()`, for a single-segment and a dotted package. A mutant writing the package in its C#
+  namespace form (`Eiva.Nav`) fails both cases. No new case: the two existing ones now cover three
+  backends. Plugin 162/162; C++ format clean over the whole repo.
+- **Open note, requested by the maintainer 2026-10-13: cross-language pub/sub, end to end.** B5 proves
+  that C# and C++ GENERATE the same topic; nothing yet proves that a publisher in one language and a
+  subscriber in another actually exchange rows. Wanted: every pair of languages that has a pub/sub
+  surface, in both directions, through the generated pairs, over a real transport. The matrix today:
+
+  | Publisher → subscriber | Path | Covered today |
+  |---|---|---|
+  | C++ ↔ C++ | Fast DDS | ✅ `pubsub-arrow-fastdds` |
+  | C++ ↔ TypeScript | Fast DDS + gateway | ✅ both directions, `gateway-fastdds-ts` |
+  | TypeScript ↔ TypeScript | gateway | ✅ `gateway-end-to-end` |
+  | **C# (native) ↔ C++** | Fast DDS | ❌ |
+  | **C# (native) ↔ TypeScript** | Fast DDS + gateway | ❌ |
+  | **C# (native) ↔ C# (native)** | Fast DDS, two processes | ❌ (in-process `inprocess` only, `GeneratedPairTests`) |
+  | **C# gateway client ↔ C++ / TypeScript / C# native** | gateway | ❌ (the client is BIND-8's, not built yet) |
+
+  Rust has no pub/sub surface (its backend is the read-only accessor) and so no row. Each new row would
+  send rows of one shared `.proto` that reaches every mapped shape (scalars, lists, maps, nested and
+  `optional` messages, Timestamp/Duration), compare field by field on the receiving side, and run on
+  Linux and Windows. **Owner to be ruled.** Suggested: the C#-native rows as their own lane in BIND-9
+  (CI), the gateway-client rows inside BIND-8's acceptance, and the whole matrix named in BIND-10's
+  docs.
 
 ### BIND-7 — Arrow view + accessor emitters + capstone third arm
 

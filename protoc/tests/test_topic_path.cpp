@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-// Cross-backend guard: the C++ and TypeScript backends must derive the SAME topic
+// Cross-backend guard: the C++, TypeScript and C# backends must derive the SAME topic
 // for a service method. The seam's identity is the '/'-joined segment list
 // (docs/pubsub-interface-spec.md §3.5), and the gateway splits a client's topic
 // string back into segments on '/' (gateway/src/ws_session.cpp, SplitTopic). So
 // the TS constant, split on '/', must equal the C++ TopicSegments(), and must
-// equal the C++ TopicKey() byte for byte. A dotted proto package is the case
-// that can make the two disagree; a single-segment package is the control.
+// equal the C++ TopicKey() byte for byte. C#'s <Svc>_<Method>Topic class (D-BIND-77)
+// must carry C++'s segments and key exactly: a C# and a C++ publisher of one method
+// register the same topic (BIND-6's acceptance; review blocker B5). A dotted proto
+// package is the case that can make them disagree; a single-segment package is the
+// control.
 //
 // Runs the real ArrowRowGenerator over an in-memory descriptor pool and captures
 // its outputs through an in-memory GeneratorContext. Touches no golden.
@@ -45,6 +48,7 @@ class MemoryContext : public compiler::GeneratorContext {
 struct Outputs {
     std::string header;
     std::string ts;
+    std::string cs;
 };
 
 // `package`; message Fix { int32 id = 1; };
@@ -80,16 +84,40 @@ Outputs Generate(const std::string& package) {
 
     MemoryContext ctx;
     std::string error;
-    EXPECT_TRUE(fletcher::ArrowRowGenerator().Generate(file, "ts", &ctx, &error)) << error;
+    EXPECT_TRUE(fletcher::ArrowRowGenerator().Generate(file, "ts,csharp", &ctx, &error)) << error;
 
     Outputs out;
     for (const auto& [name, content] : ctx.files()) {
         if (name == "topic.fletcher.pb.h") out.header = content;
         if (name == "topic.fletcher.ts") out.ts = content;
+        if (name == "topic.fletcher.cs") out.cs = content;
     }
     EXPECT_FALSE(out.header.empty()) << "no C++ header emitted";
     EXPECT_FALSE(out.ts.empty()) << "no TypeScript file emitted";
+    EXPECT_FALSE(out.cs.empty()) << "no C# model file emitted";
     return out;
+}
+
+// The string literals of a C# `new[] { "...", ... }` initializer, as written by
+// <Svc>_<Method>Topic.Segments (D-BIND-77).
+std::vector<std::string> CsSegments(const std::string& cs) {
+    std::smatch body;
+    const std::regex list(R"(Segments \{ get; \} = new\[\] \{ ([^}]*) \};)");
+    if (!std::regex_search(cs, body, list)) return {};
+    std::vector<std::string> segs;
+    const std::regex lit("\"([^\"]*)\"");
+    const std::string inner = body[1].str();
+    for (auto it = std::sregex_iterator(inner.begin(), inner.end(), lit);
+         it != std::sregex_iterator(); ++it)
+        segs.push_back((*it)[1].str());
+    return segs;
+}
+
+std::string CsTopicKey(const std::string& cs) {
+    std::smatch m;
+    if (!std::regex_search(cs, m, std::regex(R"re(public const string Key = "([^"]*)";)re")))
+        return {};
+    return m[1].str();
 }
 
 // The first TopicSegments() initializer list in the header (publisher and
@@ -147,6 +175,17 @@ void ExpectBackendsAgree(const std::string& package) {
         << "the gateway would split the TS topic '" << ts
         << "' into a different segment list than C++ TopicSegments() for package '" << package
         << "'";
+
+    // C#: the topic class's Segments and Key are C++'s, so a C# and a C++ publisher of one
+    // method register one topic (review B5).
+    const auto cs_segments = CsSegments(out.cs);
+    const auto cs_key = CsTopicKey(out.cs);
+    ASSERT_FALSE(cs_segments.empty()) << out.cs;
+    EXPECT_EQ(cs_segments, segments)
+        << "C# Svc_MethodTopic.Segments and C++ TopicSegments() differ for package '" << package
+        << "'";
+    EXPECT_EQ(cs_key, key) << "C# Svc_MethodTopic.Key and C++ TopicKey() differ for package '"
+                           << package << "'";
 }
 
 }  // namespace

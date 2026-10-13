@@ -129,6 +129,12 @@ broken there too. **Needs a ruling** (Q3) on what such a map is: convert it (C# 
 conversions for wrappers) or refuse it.
 
 ### B5 — The acceptance's C#-against-C++ topic test does not exist
+
+> **FIXED 2026-10-13.** `ExpectBackendsAgree` now generates C# too and requires its topic class's
+> `Segments` and `Key` to equal C++'s. A mutant using the C# namespace form of the package fails it.
+> The maintainer asked, beyond this, for end-to-end cross-language pub/sub tests in every direction
+> and every language with a pub/sub surface: recorded as an open note in the tracker's BIND-6
+> section, with the coverage matrix and the owner to be ruled.
 *Tests reviewer T-B1. Confirmed by reading.*
 
 The tracker's D-BIND-72 bullet asks for "a test that a C# and a C++ publisher of one method register
