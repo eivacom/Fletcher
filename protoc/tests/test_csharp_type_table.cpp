@@ -198,6 +198,48 @@ TEST(CsNames, ALowerCaseOnlyTypeNameIsWrittenVerbatim) {
     EXPECT_EQ(cs::CsTypeExpr(file->message_type(1)), "global::Fletcher.Gen.V.@class");
 }
 
+TEST(CsNames, AMessageNamedAfterAGeneratedMemberIsSuffixed) {
+    // D-BIND-84: `message Schema` would declare a class with a static member `Schema` of its own
+    // name (CS0542), so the class is `Schema_`; likewise ToArrow, FromArrow and ToArrowColumns. An
+    // enum has no such members and keeps its name; a nested `Outer.Schema` is `Outer_Schema`,
+    // which cannot clash. A field `schema` of `Schema_` would become property `Schema_` (reserved,
+    // D-BIND-73) and so meet the class name: it steps past it, `Schema__`.
+    FileDescriptorProto fdp;
+    fdp.set_name("own.proto");
+    fdp.set_package("own");
+    fdp.set_syntax("proto3");
+    for (const char* name : {"Schema", "ToArrow", "FromArrow", "ToArrowColumns", "Outer"}) {
+        auto* m = fdp.add_message_type();
+        m->set_name(name);
+    }
+    auto* schema_field = fdp.mutable_message_type(0)->add_field();
+    schema_field->set_name("schema");
+    schema_field->set_number(1);
+    schema_field->set_type(FieldDescriptorProto::TYPE_INT32);
+    schema_field->set_label(FieldDescriptorProto::LABEL_OPTIONAL);
+    fdp.mutable_message_type(4)->add_nested_type()->set_name("Schema");
+    DescriptorPool pool;
+    const FileDescriptor* file = pool.BuildFile(fdp);
+    ASSERT_NE(file, nullptr);
+    FileDescriptorProto enums;
+    enums.set_name("own_enum.proto");
+    enums.set_package("own_enum");
+    enums.set_syntax("proto3");
+    auto* e = enums.add_enum_type();
+    e->set_name("Schema");
+    e->add_value()->set_name("SCHEMA_UNSPECIFIED");
+    const FileDescriptor* enum_file = pool.BuildFile(enums);
+    ASSERT_NE(enum_file, nullptr);
+    EXPECT_EQ(cs::CsTypeName(file->message_type(0)), "Schema_");
+    EXPECT_EQ(cs::CsTypeName(file->message_type(1)), "ToArrow_");
+    EXPECT_EQ(cs::CsTypeName(file->message_type(2)), "FromArrow_");
+    EXPECT_EQ(cs::CsTypeName(file->message_type(3)), "ToArrowColumns_");
+    EXPECT_EQ(cs::CsTypeName(file->message_type(4)->nested_type(0)), "Outer_Schema");
+    EXPECT_EQ(cs::CsTypeExpr(file->message_type(0)), "global::Fletcher.Gen.Own.Schema_");
+    EXPECT_EQ(cs::CsPropertyName("schema", file->message_type(0)), "Schema__");
+    EXPECT_EQ(cs::CsTypeName(enum_file->enum_type(0)), "Schema");
+}
+
 TEST(CsNames, NestedTypesAreFlattenedWithUnderscores) {
     FileDescriptorProto fdp;
     fdp.set_name("nested.proto");

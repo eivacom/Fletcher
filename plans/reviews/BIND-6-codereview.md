@@ -108,6 +108,10 @@ repeated field of a message type is common in real `.proto` files. **Fix, no rul
 expression positions always emit `global::<namespace>.<Name>`.
 
 ### B3 — A message named after one of the generated class's own members does not compile
+
+> **FIXED 2026-10-13 (D-BIND-84).** The class is suffixed (`Schema_`), and a property that a suffix
+> made equal to it steps past it (`Schema__`). The names golden holds both, compiled and run in
+> `Fletcher.Tests`; mutants removing either half fail.
 *Plugin reviewer P-B2, runtime reviewer G-Q2. Reproduced.*
 
 `message Schema { int32 x = 1; }` emits `public sealed class Schema { public static

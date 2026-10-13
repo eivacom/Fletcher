@@ -524,6 +524,141 @@ public sealed class UsesKeywords
     }
 }
 
+public sealed class Schema_
+{
+    public int Schema__ { get; set; }
+
+    public static global::Apache.Arrow.Schema Schema { get; } = new global::Apache.Arrow.Schema(
+        new global::Apache.Arrow.Field[]
+        {
+            new global::Apache.Arrow.Field("schema", global::Apache.Arrow.Types.Int32Type.Default, false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "1"), new("field_id", "1") }),
+        },
+        new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("proto_package", "golden.names"), new("proto_message", "Schema") });
+
+    public static global::Apache.Arrow.RecordBatch ToArrow(global::System.Collections.Generic.IEnumerable<Schema_> rows)
+    {
+        global::System.ArgumentNullException.ThrowIfNull(rows);
+        var all = rows as global::System.Collections.Generic.IReadOnlyList<Schema_> ?? new global::System.Collections.Generic.List<Schema_>(rows);
+        return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
+    }
+
+    internal static global::Apache.Arrow.IArrowArray[] ToArrowColumns(global::System.Collections.Generic.IReadOnlyList<Schema_> rows)
+    {
+        var b0 = new global::Apache.Arrow.Int32Array.Builder();
+        foreach (var row in rows)
+        {
+            b0.Append(row.Schema__);
+        }
+        var c0 = b0.Build();
+        return new global::Apache.Arrow.IArrowArray[] { c0 };
+    }
+
+    public static Schema_ FromArrow(global::Apache.Arrow.StructArray array, int index)
+    {
+        global::System.ArgumentNullException.ThrowIfNull(array);
+        var row = new Schema_();
+        row.Schema__ = ((global::Apache.Arrow.Int32Array)array.Fields[0]).GetValue(index).GetValueOrDefault();
+        return row;
+    }
+}
+
+public sealed class FromArrow_
+{
+    public int X { get; set; }
+
+    public static global::Apache.Arrow.Schema Schema { get; } = new global::Apache.Arrow.Schema(
+        new global::Apache.Arrow.Field[]
+        {
+            new global::Apache.Arrow.Field("x", global::Apache.Arrow.Types.Int32Type.Default, false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "1"), new("field_id", "1") }),
+        },
+        new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("proto_package", "golden.names"), new("proto_message", "FromArrow") });
+
+    public static global::Apache.Arrow.RecordBatch ToArrow(global::System.Collections.Generic.IEnumerable<FromArrow_> rows)
+    {
+        global::System.ArgumentNullException.ThrowIfNull(rows);
+        var all = rows as global::System.Collections.Generic.IReadOnlyList<FromArrow_> ?? new global::System.Collections.Generic.List<FromArrow_>(rows);
+        return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
+    }
+
+    internal static global::Apache.Arrow.IArrowArray[] ToArrowColumns(global::System.Collections.Generic.IReadOnlyList<FromArrow_> rows)
+    {
+        var b0 = new global::Apache.Arrow.Int32Array.Builder();
+        foreach (var row in rows)
+        {
+            b0.Append(row.X);
+        }
+        var c0 = b0.Build();
+        return new global::Apache.Arrow.IArrowArray[] { c0 };
+    }
+
+    public static FromArrow_ FromArrow(global::Apache.Arrow.StructArray array, int index)
+    {
+        global::System.ArgumentNullException.ThrowIfNull(array);
+        var row = new FromArrow_();
+        row.X = ((global::Apache.Arrow.Int32Array)array.Fields[0]).GetValue(index).GetValueOrDefault();
+        return row;
+    }
+}
+
+public sealed class UsesOwnNames
+{
+    public Schema_ S { get; set; } = new();
+    public global::System.Collections.Generic.List<FromArrow_> Fs { get; set; } = new();
+
+    public static global::Apache.Arrow.Schema Schema { get; } = new global::Apache.Arrow.Schema(
+        new global::Apache.Arrow.Field[]
+        {
+            new global::Apache.Arrow.Field("s", new global::Apache.Arrow.Types.StructType(new global::Apache.Arrow.Field[] { new global::Apache.Arrow.Field("schema", global::Apache.Arrow.Types.Int32Type.Default, false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "1"), new("field_id", "1") }) }), false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "1"), new("field_id", "1") }),
+            new global::Apache.Arrow.Field("fs", new global::Apache.Arrow.Types.ListType(new global::Apache.Arrow.Field("item", new global::Apache.Arrow.Types.StructType(new global::Apache.Arrow.Field[] { new global::Apache.Arrow.Field("x", global::Apache.Arrow.Types.Int32Type.Default, false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "1"), new("field_id", "1") }) }), true, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("proto_package", "golden.names"), new("proto_message", "FromArrow") })), false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "2"), new("field_id", "2") }),
+        },
+        new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("proto_package", "golden.names"), new("proto_message", "UsesOwnNames") });
+
+    public static global::Apache.Arrow.RecordBatch ToArrow(global::System.Collections.Generic.IEnumerable<UsesOwnNames> rows)
+    {
+        global::System.ArgumentNullException.ThrowIfNull(rows);
+        var all = rows as global::System.Collections.Generic.IReadOnlyList<UsesOwnNames> ?? new global::System.Collections.Generic.List<UsesOwnNames>(rows);
+        return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
+    }
+
+    internal static global::Apache.Arrow.IArrowArray[] ToArrowColumns(global::System.Collections.Generic.IReadOnlyList<UsesOwnNames> rows)
+    {
+        var t0 = (global::Apache.Arrow.Types.StructType)Schema.GetFieldByIndex(0).DataType;
+        var r0 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Names.Schema_>(rows.Count);
+        for (var i = 0; i < rows.Count; i++)
+            r0.Add(rows[i].S ?? throw new global::System.ArgumentException($"UsesOwnNames.S is null in row {i}, but the field is not optional: it is always present.", nameof(rows)));
+        var c0 = new global::Apache.Arrow.StructArray(t0, rows.Count, global::Fletcher.Gen.Golden.Names.Schema_.ToArrowColumns(r0), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var t1 = (global::Apache.Arrow.Types.ListType)Schema.GetFieldByIndex(1).DataType;
+        var o1 = new global::Apache.Arrow.ArrowBuffer.Builder<int>(rows.Count + 1);
+        o1.Append(0);
+        var f1 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Names.FromArrow_>();
+        foreach (var row in rows)
+        {
+            f1.AddRange(row.Fs);
+            o1.Append(f1.Count);
+        }
+        var e1 = new global::Apache.Arrow.StructArray((global::Apache.Arrow.Types.StructType)t1.ValueDataType, f1.Count, global::Fletcher.Gen.Golden.Names.FromArrow_.ToArrowColumns(f1), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var c1 = new global::Apache.Arrow.ListArray(t1, rows.Count, o1.Build(), e1, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        return new global::Apache.Arrow.IArrowArray[] { c0, c1 };
+    }
+
+    public static UsesOwnNames FromArrow(global::Apache.Arrow.StructArray array, int index)
+    {
+        global::System.ArgumentNullException.ThrowIfNull(array);
+        var row = new UsesOwnNames();
+        { var s = (global::Apache.Arrow.StructArray)array.Fields[0]; row.S = global::Fletcher.Gen.Golden.Names.Schema_.FromArrow(s, index); }
+        {
+            var l = (global::Apache.Arrow.ListArray)array.Fields[1];
+            var e = (global::Apache.Arrow.StructArray)l.Values;
+            var start = l.ValueOffsets[index];
+            var end = l.ValueOffsets[index + 1];
+            var x = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Names.FromArrow_>(end - start);
+            for (var j = start; j < end; j++) x.Add(global::Fletcher.Gen.Golden.Names.FromArrow_.FromArrow(e, j));
+            row.Fs = x;
+        }
+        return row;
+    }
+}
+
 public sealed class Topic
 {
     public int A { get; set; }
@@ -570,4 +705,14 @@ public static class Feed_SendTopic
 
     /// <summary>The segments joined with '/'.</summary>
     public const string Key = "golden.names/Feed/Send";
+}
+
+/// <summary>The topic of Feed.Describe: the segments a C++ publisher of the same method uses.</summary>
+public static class Feed_DescribeTopic
+{
+    /// <summary>The topic's segments, the package being one segment with its dots kept.</summary>
+    public static global::System.Collections.Generic.IReadOnlyList<string> Segments { get; } = new[] { "golden.names", "Feed", "Describe" };
+
+    /// <summary>The segments joined with '/'.</summary>
+    public const string Key = "golden.names/Feed/Describe";
 }

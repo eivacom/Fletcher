@@ -94,6 +94,26 @@ public sealed class GeneratedNamesTests : IDisposable
     }
 
     [Fact]
+    public void AMessageNamedAfterAGeneratedMemberIsSuffixedAndWorks()
+    {
+        // D-BIND-84: `message Schema` is class Schema_ (and its field `schema` the property
+        // Schema__), `message FromArrow` class FromArrow_; both convert, and the pair whose input
+        // is Schema publishes and delivers.
+        UsesOwnNames back = RoundTrip(
+            new UsesOwnNames { S = new Schema_ { Schema__ = 3 }, Fs = { new FromArrow_ { X = 4 } } },
+            UsesOwnNames.ToArrow, UsesOwnNames.FromArrow);
+        Assert.Equal((3, 4), (back.S.Schema__, back.Fs.Single().X));
+
+        using var subscriber = new Feed_DescribeSubscriber(_provider);
+        var seen = new List<int>();
+        using Subscription subscription = subscriber.Subscribe((received, attachments) => seen.Add(received.Schema__));
+        using var publisher = new Feed_DescribePublisher(_provider);
+        publisher.Publish(new Schema_ { Schema__ = 5 });
+        Assert.Equal(new[] { 5 }, seen);
+        Assert.Same(Schema_.Schema, Feed_DescribePublisher.Schema);
+    }
+
+    [Fact]
     public void ThePairForAMessageNamedTopicPublishesAndDelivers()
     {
         using var subscriber = new Feed_SendSubscriber(_provider);

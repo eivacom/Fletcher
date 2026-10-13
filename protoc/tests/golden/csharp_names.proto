@@ -51,9 +51,19 @@ message UsesKeywords {
   repeated class ks = 3;
 }
 
+// D-BIND-84: a message named after one of the generated class's own members is class `Schema_`
+// (its field `schema` the property `Schema__`); used as a field, a list element and a pair input.
+message Schema { int32 schema = 1; }
+message FromArrow { int32 x = 1; }
+message UsesOwnNames {
+  Schema s = 1;
+  repeated FromArrow fs = 2;
+}
+
 // A message named after a member of the generated pair (`Topic`), used as its input.
 message Topic { int32 a = 1; }
 
 service Feed {
   rpc Send(stream Topic) returns (google.protobuf.Empty);
+  rpc Describe(stream Schema) returns (google.protobuf.Empty);
 }

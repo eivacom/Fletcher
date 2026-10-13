@@ -2482,7 +2482,8 @@ accessors do, for capstone parity (Q18).
   2. one of protoc's reserved member names: `Types`, `Descriptor`, `Equals`, `ToString`,
      `GetHashCode`, `WriteTo`, `Clone`, `CalculateSize`, `MergeFrom`, `OnConstruction`, `Parser`;
   3. one of the generated class's own members: `Schema`, `ToArrow`, `FromArrow`, and any member a
-     later slice adds, which joins this list in the same commit.
+     later slice adds, which joins this list in the same commit. *(Extended by D-BIND-84: a MESSAGE
+     with one of these names is suffixed too, and a property steps past the class's own name.)*
 
   Every property is therefore named exactly as protoc's output names it, which helps an
   application that maps between the two, and no field can collide with a member of ours.
@@ -2709,3 +2710,19 @@ questions Q1 to Q10), and are numbered as their fixes land.
   **Declined:** keeping `T?` and writing a default only on the wire (the annotation would advertise a
   null that can never arrive, and G-5 would stay unmet); a nullable column for C# only (the schema is
   C++'s by construction).
+
+- **D-BIND-84 - a message named after one of the generated class's own members is suffixed `_`
+  (`message Schema` is class `Schema_`); a property steps past the class's name in the same way.
+  Extends D-BIND-73.** *LOCKED BY THE MAINTAINER 2026-10-08 (review Q2), fixing review blocker B3.*
+  The generated class has its own static members: `Schema`, `ToArrow`, `FromArrow` and
+  `ToArrowColumns`. D-BIND-73 keeps a PROPERTY from those names; nothing kept the CLASS from them, so
+  `message Schema` declared `class Schema { static Schema Schema }`, which is CS0542 (reproduced
+  2026-10-08). Now a message whose flat name is one of them is suffixed `_` everywhere it is named, as
+  protoc suffixes a clash; the compiled name carries the `_`, so for these four names alone the C# type
+  differs from the message name. An enum has no such members and keeps its name, and a nested
+  `Outer.Schema` is `Outer_Schema`, which cannot clash. One list, `OwnMemberNames()`, feeds both rules,
+  so a member a later slice adds is reserved for properties and types at once. Found while fixing it: a
+  field `schema` of `message Schema` becomes property `Schema_` under D-BIND-73 and so meets the
+  class's new name; the property now steps past the class name as well, `Schema__`. **Declined:**
+  refusing such a file with an error, as D-BIND-82 does (a consumer with an existing `message Schema`
+  would have to rename it for C++, TypeScript and protobuf users too).

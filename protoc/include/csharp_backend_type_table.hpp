@@ -105,7 +105,9 @@ std::string CsNamespace(const google::protobuf::FileDescriptor* file);
 std::optional<std::string> CsProtocNamespaceConflict(const google::protobuf::FileDescriptor* file);
 
 // A message's or enum's C# type name: nested types flattened with '_'
-// (Outer.Inner -> Outer_Inner), as every Fletcher backend does (D-BIND-69).
+// (Outer.Inner -> Outer_Inner), as every Fletcher backend does (D-BIND-69). A message named
+// after one of the generated class's own members (Schema, ToArrow, FromArrow, ToArrowColumns)
+// is suffixed '_' (D-BIND-84); a name of lower-case letters only is written `@name`.
 std::string CsTypeName(const google::protobuf::Descriptor* msg);
 std::string CsTypeName(const google::protobuf::EnumDescriptor* enm);
 
@@ -125,7 +127,9 @@ std::string CsTypeRef(const google::protobuf::EnumDescriptor* enm,
 std::string CsTypeExpr(const google::protobuf::Descriptor* msg);
 
 // The property for proto field `field_name` of `owner`: protoc's GetPropertyName,
-// with the generated class's own members added to the reserved list (D-BIND-73).
+// with the generated class's own members added to the reserved list (D-BIND-73), and
+// suffixed further while it equals the class's C# name (D-BIND-84: `message Schema` with a
+// field `schema` is class `Schema_` with property `Schema__`).
 std::string CsPropertyName(std::string_view field_name, const google::protobuf::Descriptor* owner);
 
 // An enum's members in declaration order, named as protoc's enum generator names

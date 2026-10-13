@@ -9,6 +9,7 @@
 #include <functional>
 #include <set>
 #include <string>
+#include <type_traits>
 
 namespace fletcher::csharp_backend {
 
@@ -21,16 +22,26 @@ bool IsAlnum(char c) { return IsLower(c) || IsUpper(c) || IsDigit(c); }
 char ToUpper(char c) { return IsLower(c) ? static_cast<char>(c - ('a' - 'A')) : c; }
 char ToLower(char c) { return IsUpper(c) ? static_cast<char>(c + ('a' - 'A')) : c; }
 
+// The generated class's own members. Neither a property (D-BIND-73) nor, since D-BIND-84, the
+// class itself may share one of these names. A slice that adds a member to the generated class
+// adds it here, and both rules follow.
+const std::set<std::string, std::less<>>& OwnMemberNames() {
+    static const std::set<std::string, std::less<>> kNames = {"Schema", "ToArrow", "FromArrow",
+                                                              "ToArrowColumns"};
+    return kNames;
+}
+
 // Members a property must not share a name with (D-BIND-73): protoc's reserved
-// list from GetPropertyName (csharp_helpers.cc), then the generated class's own
-// members. A slice that adds a member to the generated class adds it here.
+// list from GetPropertyName (csharp_helpers.cc), then the generated class's own.
 const std::set<std::string, std::less<>>& ReservedMemberNames() {
-    static const std::set<std::string, std::less<>> kNames = {
-        // protoc's list, verbatim.
-        "Types", "Descriptor", "Equals", "ToString", "GetHashCode", "WriteTo", "Clone",
-        "CalculateSize", "MergeFrom", "OnConstruction", "Parser",
-        // The generated class's own members.
-        "Schema", "ToArrow", "FromArrow", "ToArrowColumns"};
+    static const std::set<std::string, std::less<>> kNames = [] {
+        std::set<std::string, std::less<>> names = {
+            // protoc's list, verbatim.
+            "Types", "Descriptor",    "Equals",    "ToString",       "GetHashCode", "WriteTo",
+            "Clone", "CalculateSize", "MergeFrom", "OnConstruction", "Parser"};
+        names.insert(OwnMemberNames().begin(), OwnMemberNames().end());
+        return names;
+    }();
     return kNames;
 }
 
@@ -388,6 +399,12 @@ std::string FlatName(const D* d) {
     for (const auto* parent = d->containing_type(); parent != nullptr;
          parent = parent->containing_type())
         name = parent->name() + "_" + name;
+    // D-BIND-84: a MESSAGE named after one of its own generated members (`message Schema`)
+    // would declare `class Schema { static Schema Schema }`, which is CS0542, so the class is
+    // suffixed `_`, as protoc suffixes a clash. An enum has no such members and keeps its name.
+    if constexpr (std::is_same_v<D, google::protobuf::Descriptor>) {
+        if (OwnMemberNames().count(name) != 0) name += '_';
+    }
     return Verbatim(std::move(name));
 }
 
@@ -427,6 +444,10 @@ std::string CsPropertyName(std::string_view field_name, const google::protobuf::
     // protoc compares with the message's own (unflattened) name. A flat name such
     // as Outer_Inner can never collide: PascalCase drops every underscore.
     if (property == owner->name() || ReservedMemberNames().count(property) != 0) property += '_';
+    // D-BIND-84: the class itself may now carry a suffix (`message Schema` is class `Schema_`),
+    // so a property that a suffix made equal to it (`schema` -> `Schema_`) steps past it again,
+    // as protoc appends `_` until a name is free.
+    while (property == CsTypeName(owner)) property += '_';
     return property;
 }
 
