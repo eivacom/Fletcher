@@ -2743,3 +2743,19 @@ questions Q1 to Q10), and are numbered as their fixes land.
   wrong.)* A flatten message with more than one field is not a wrapper, is ignored as flatten, and
   stays a working struct map value. **Declined:** mapping it as `map<K, list<Leaf>>` (a new feature:
   every backend, the wire spec and the goldens; it may be taken up separately).
+
+- **D-BIND-86 - G-5 ("nullability annotations match the Arrow schema's") covers FIELDS, not
+  children.** *LOCKED BY THE MAINTAINER 2026-10-08 (review Q4); the exception below ruled
+  2026-10-14.* Each property of a generated class is nullable exactly when its top-level field in the
+  class's own `Schema` is. List items, map keys and map values follow the C++ row class's storage
+  instead, which cannot hold a null (`std::vector<int32_t>`), so they are non-null in C# although
+  nanoarrow's default marks a child nullable in the schema. One field is a named exception: an
+  `optional` flatten-wrapper list (`optional StructListWrapper x`) has a nullable field, but C++
+  stores it as `std::vector<Leaf>` (measured 2026-10-14), so C# keeps a non-null `List<Leaf>` and a
+  null reads as empty. That is the review's accepted debt G-Q4; C# follows C++ rather than the
+  schema. `Fletcher.Tests` `GeneratedNullabilityTests` pins both halves by reflection
+  (`NullabilityInfoContext`) over every generated row class compiled into it, found by reflection so
+  a later golden is covered unlisted; the exception is listed by name and must still be met.
+  **Declined:** `List<Leaf>?` for that one shape (C# would then differ from C++'s row class, and null
+  versus empty would round-trip in C# only); leaving the test red until every backend can hold the
+  null.

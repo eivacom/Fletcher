@@ -180,7 +180,7 @@ four places.
 | Q1 → D-BIND-83 | **Mirror C++ fully.** A non-`optional` message field is a non-null property defaulting to `new()`, always written present; `optional` stays `T?`. Amends D-BIND-75's "`?` when the field can be absent": absent now means `optional` | B1's reproduction |
 | Q2 → D-BIND-84 | **Suffix the TYPE** with `_` (`Schema_`) when a message is named `Schema`, `ToArrow`, `FromArrow` or `ToArrowColumns`, everywhere the type is named, as protoc does for a clash | B3's CS0542 |
 | Q3 → D-BIND-85 | **A map whose value is a flatten wrapper is UNSUPPORTED in the IR**, with a reason, so every backend drops it consistently *(corrected 2026-10-14: every backend REFUSES the file with that reason, as for a oneof; see D-BIND-85)* | Measured: **C++ fails too** (`'W' was not declared`); it never compiled in any backend |
-| Q4 → D-BIND-86 | **G-5 covers fields, not children.** List items and map values follow the C++ row class's storage (non-null). A reflection test pins each property against its field's `IsNullable` | C++ stores `std::vector<int32_t>`; the schema's child nullability is nanoarrow's default |
+| Q4 → D-BIND-86 | **G-5 covers fields, not children.** List items and map values follow the C++ row class's storage (non-null). A reflection test pins each property against its field's `IsNullable`. *DONE 2026-10-14: `GeneratedNullabilityTests`; one named exception, the `optional` flatten-wrapper list of G-Q4 (ruled 2026-10-14)* | C++ stores `std::vector<int32_t>`; the schema's child nullability is nanoarrow's default |
 | Q5 → D-BIND-87 | **Require reuse.** C#'s cross-file qualification goes through `CollectCrossFileIncludes`, or a shared helper both backends derive from it, so dependencies are found in one place. C++ and C# output stay byte-identical | The 6e-1 deviation |
 | Q6 → D-BIND-88 | **Park both AOT notes to BIND-9**, with an owner: a win-x64 AotSmoke publish and run with the RID matrix, and an AotSmoke run over `fastdds` for the foreign-thread callback | D-BIND-81 put the step on Linux only |
 | Q7 → D-BIND-89 | **(a) proto2 `foo_bar` + `fooBar`:** C# suffixes the later field's property with `_` until unique, in field order; C++ is unaffected. **(b) A flattened field that inlines an existing name:** refused for EVERY backend, with an error naming both fields | Measured: proto3 cases are rejected by protoc 3.21.12 itself (case-insensitively). Proto2 is accepted, with C++ fine and C# CS0102. The flatten case breaks C++ too (`set_x` redeclared) and puts two columns named `x` in the schema |
@@ -215,7 +215,8 @@ four places.
 - G-D4: decode failures surface through `HandlerFaulted` as if the handler had thrown; document them
   or tell them apart. *(reported)*
 - G-Q4, accepted as DEBT: an `optional` flatten-wrapper list loses null versus empty, only for a
-  non-generated Arrow publisher. This matches C++'s storage.
+  non-generated Arrow publisher. This matches C++'s storage. *(2026-10-14: the one named exception
+  in D-BIND-86.s nullability test.)*
 
 **Tests, CI, documents**
 - **T-D1:** the public-surface note is stale.

@@ -756,6 +756,9 @@ steps past the class name; one list of the class's own members feeds both rules.
 **Map values, ruled 2026-10-08 from the review (D-BIND-85, shared IR):** a map whose value is a
 flatten wrapper is UNSUPPORTED, so the plugin refuses the file for every backend with that reason;
 before it, every backend named a wrapper class that is never generated.
+**Nullability, ruled 2026-10-08 from the review (D-BIND-86):** G-5 covers fields; list items and
+map keys and values are non-null as C++ stores them; the `optional` flatten-wrapper list is a named
+exception (G-Q4). A reflection test over every generated row class pins it.
 **Slices:** 6a plumbing,
 type table, visitor, classes and enums with scalar fields; 6b `Schema`, `ToArrow`/`FromArrow` and
 `integration-tests/protoc-dotnet`; 6c composite and temporal types; 6d topics and the native
@@ -1173,7 +1176,9 @@ blocking or architectural, **S** = inherited from the seam, **N** = .NET interop
   wrapper WKTs map to nullable C#; scalars do not. Nullable reference type
   annotations must be emitted so consumers get warnings, and the descriptor's
   nullability must match the Arrow schema's, or the capstone fails on the
-  nullable-flag-tolerant read. *BIND-6.*
+  nullable-flag-tolerant read. *BIND-6.* **Ruled since:** a plain message field is non-null
+  (D-BIND-83); G-5 covers fields, not list items or map keys and values, with one named exception,
+  the `optional` flatten-wrapper list (D-BIND-86).
 
 - **G-6 — Multi-file and namespace.** Reuse `CollectCrossFileIncludes` read-only
   for namespace qualification; shared helper emitted exactly once from

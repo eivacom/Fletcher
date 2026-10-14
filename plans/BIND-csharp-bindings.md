@@ -1459,7 +1459,9 @@ codec step.
   `Dictionary` option was refused, and a settable `List` rather than an
   `IReadOnlyList` matches the other collection properties).
 - Nullability annotations match the Arrow schema's nullability, or the capstone
-  fails (G-5).
+  fails (G-5). **Scoped by D-BIND-86 (2026-10-14):** fields only; children non-null as C++
+  stores them; one named exception (the `optional` flatten-wrapper list, G-Q4). Pinned by
+  `GeneratedNullabilityTests`.
 - Reflection-free: a NativeAOT publish of a consumer app succeeds with **zero**
   trim warnings. **Met by 6e-2 (2026-10-08, D-BIND-81):** `dotnet/tests/Fletcher.AotSmoke`,
   published for net8.0 and net10.0 with warnings as errors and run against the shim in
@@ -1668,6 +1670,15 @@ codec step.
   fails against the plugin built before the fix. No golden moved. Plugin 163/163; protoc-coverage
   22/22; Fletcher.Tests 370/370 on both TFMs; ProtocDotnet 28/28; Beside 4/4; C++ format clean over
   the whole repo.
+- **Review ruling Q4, 2026-10-14 (D-BIND-86): G-5 covers fields, by test.** New
+  `Fletcher.Tests` `GeneratedNullabilityTests` finds every generated row class compiled into the
+  assembly by reflection, pairs each property with its schema field in declaration order (the counts
+  must agree), and requires the property to be nullable exactly when the field is; a second case
+  requires every list item, map key and map value to be non-null. Measured first: one mismatch only,
+  the `optional` flatten-wrapper list (G-Q4); the maintainer ruled it a named exception, which the
+  test requires still to be met. No generator change. Fletcher.Tests 372/372 on both TFMs. Mutants:
+  a flipped field flag, a nullable list element, and the exception's field made non-nullable each
+  fail their case, and each compiles.
 - **Review fix B5, 2026-10-13: C# registers C++'s topic, by test.** `test_topic_path.cpp`'s
   `ExpectBackendsAgree` generated C++ and TypeScript only, and the C# topic was checked against
   hand-written literals, so a change to C++'s form would have passed. It now also generates `csharp`
