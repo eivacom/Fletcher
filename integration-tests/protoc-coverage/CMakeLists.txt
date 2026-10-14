@@ -525,15 +525,18 @@ gtest_discover_tests(coverage_scalar_nested_ts_visitor_tests DISCOVERY_MODE PRE_
 # ---------------------------------------------------------------------------
 # Singular, repeated, and map google.protobuf.Any (review 4b) each in their own
 # single-message fixture so one protoc invocation isolates one shape and the
-# error must name that shape's field. All three carry the same Any reason.
+# error must name that shape's field. All three carry the same Any reason. The
+# fourth, a map whose value is a flatten wrapper (D-BIND-85), carries its own.
 foreach(_variant
-        "UnsupportedTypeFailsBuild|coverage_unsupported.proto|payload"
-        "RepeatedUnsupportedTypeFailsBuild|coverage_unsupported_repeated.proto|payloads"
-        "MapUnsupportedTypeFailsBuild|coverage_unsupported_map.proto|payload_map")
+        "UnsupportedTypeFailsBuild|coverage_unsupported.proto|payload|google.protobuf.Any is dynamically typed"
+        "RepeatedUnsupportedTypeFailsBuild|coverage_unsupported_repeated.proto|payloads|google.protobuf.Any is dynamically typed"
+        "MapUnsupportedTypeFailsBuild|coverage_unsupported_map.proto|payload_map|google.protobuf.Any is dynamically typed"
+        "MapFlattenWrapperFailsBuild|coverage_unsupported_map_wrapper.proto|wrapper_map|is a flatten wrapper")
     string(REPLACE "|" ";" _parts "${_variant}")
     list(GET _parts 0 _test_name)
     list(GET _parts 1 _proto_file)
     list(GET _parts 2 _expect_field)
+    list(GET _parts 3 _expect_reason)
     add_test(NAME GenErrors.${_test_name}
         COMMAND "${CMAKE_COMMAND}"
             -DPROTOC=$<TARGET_FILE:protobuf::protoc>
@@ -541,7 +544,7 @@ foreach(_variant
             -DPROTO_DIR=${PROTO_DIR}
             -DPROTO_FILE=${_proto_file}
             -DEXPECT_FIELD=${_expect_field}
-            "-DEXPECT_REASON=google.protobuf.Any is dynamically typed"
+            "-DEXPECT_REASON=${_expect_reason}"
             -DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/unsupported-generated
             -DFLETCHER_PROTO_INCLUDE_DIR=${FLETCHER_PROTO_INCLUDE_DIR}
             -DPROTOBUF_WKT_INCLUDE_DIR=${PROTOBUF_WKT_INCLUDE_DIR}

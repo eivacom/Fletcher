@@ -2726,3 +2726,20 @@ questions Q1 to Q10), and are numbered as their fixes land.
   class's new name; the property now steps past the class name as well, `Schema__`. **Declined:**
   refusing such a file with an error, as D-BIND-82 does (a consumer with an existing `message Schema`
   would have to rename it for C++, TypeScript and protobuf users too).
+
+- **D-BIND-85 - a map whose value is a flatten wrapper is UNSUPPORTED in the shared IR, with a
+  reason, like a oneof or a map of `Any`.** *LOCKED BY THE MAINTAINER 2026-10-08 (review Q3), fixing
+  review blocker B4.* A flatten wrapper (`option (fletcher.flatten) = true` and exactly one field) is
+  always inlined where it is used, so no backend generates a class for it. `BuildMapNode` nevertheless
+  built such a map value as a STRUCT node naming the wrapper, so every backend emitted code that
+  names a class that does not exist: C# `W.ToArrowColumns`/`W.FromArrow` (CS0117), C++ `'W' was not
+  declared` and `'WSchema' was not declared` (both measured 2026-10-08). The shape never compiled in
+  any backend, so no working consumer depended on it. `BuildMapNode` now returns UNSUPPORTED ("map
+  value '<W>' is a flatten wrapper, which has no Arrow mapping as a map value"). The consequence is
+  the one every UNSUPPORTED node has: `ValidateNoUnsupportedIr` refuses the file before any backend
+  writes anything, naming the field and the reason, for C++, TypeScript, Rust and C# alike.
+  *(Correction 2026-10-14: the review's ruling table said such a field would be "dropped
+  consistently". It is refused, as a oneof is; the ruling is the same, the stated consequence was
+  wrong.)* A flatten message with more than one field is not a wrapper, is ignored as flatten, and
+  stays a working struct map value. **Declined:** mapping it as `map<K, list<Leaf>>` (a new feature:
+  every backend, the wire spec and the goldens; it may be taken up separately).

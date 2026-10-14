@@ -753,6 +753,9 @@ plain message field is never null, `= new()` and always written present, as C++ 
 **Type names, ruled 2026-10-08 from the review (D-BIND-84, extends D-BIND-73):** a message named
 `Schema`, `ToArrow`, `FromArrow` or `ToArrowColumns` is class `Schema_` (and so on), and a property
 steps past the class name; one list of the class's own members feeds both rules.
+**Map values, ruled 2026-10-08 from the review (D-BIND-85, shared IR):** a map whose value is a
+flatten wrapper is UNSUPPORTED, so the plugin refuses the file for every backend with that reason;
+before it, every backend named a wrapper class that is never generated.
 **Slices:** 6a plumbing,
 type table, visitor, classes and enums with scalar fields; 6b `Schema`, `ToArrow`/`FromArrow` and
 `integration-tests/protoc-dotnet`; 6c composite and temporal types; 6d topics and the native

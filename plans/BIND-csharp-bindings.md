@@ -1657,6 +1657,17 @@ codec step.
   163 in the suite (bucket 162, one new case); Fletcher.Tests 370/370 on both TFMs; protoc-coverage
   21/21; ProtocDotnet 28/28; Beside 4/4; C++ format clean over the whole repo. Mutants: no type suffix,
   and no step-past for the property, each fail the new case and the golden check.
+- **Review fix B4, 2026-10-14 (D-BIND-85): a map whose value is a flatten wrapper is UNSUPPORTED.**
+  The shared IR built such a value as a struct naming the wrapper, which no backend generates, so C#
+  (CS0117) and C++ (`'W' was not declared`) both emitted code that did not compile. `BuildMapNode`
+  now returns UNSUPPORTED with a reason, and `ValidateNoUnsupportedIr` refuses the file for every
+  backend, naming the field, as for a map of `Any`. The ruling table had said the field would be
+  dropped; it is refused (D-BIND-85 records the correction). `test_ir` gains the shape inside its
+  existing case (no new `TEST`, counts unchanged); protoc-coverage gains
+  `GenErrors.MapFlattenWrapperFailsBuild` (real protoc and plugin on a new unwired fixture), which
+  fails against the plugin built before the fix. No golden moved. Plugin 163/163; protoc-coverage
+  22/22; Fletcher.Tests 370/370 on both TFMs; ProtocDotnet 28/28; Beside 4/4; C++ format clean over
+  the whole repo.
 - **Review fix B5, 2026-10-13: C# registers C++'s topic, by test.** `test_topic_path.cpp`'s
   `ExpectBackendsAgree` generated C++ and TypeScript only, and the C# topic was checked against
   hand-written literals, so a change to C++'s form would have passed. It now also generates `csharp`

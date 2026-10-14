@@ -121,6 +121,11 @@ PROPERTIES only. **Needs a ruling** (Q2): rename the type (`Schema_`), or refuse
 does.
 
 ### B4 — A map whose value is a flatten wrapper names conversions the wrapper never gets
+
+> **FIXED 2026-10-14 (D-BIND-85).** `BuildMapNode` classifies the map value as UNSUPPORTED, so the
+> plugin refuses the file for every backend, naming the field and the reason, as for a map of `Any`.
+> C++ was broken too (measured). Held by `test_ir` and by `GenErrors.MapFlattenWrapperFailsBuild`
+> (real protoc and plugin) in protoc-coverage, which fails against the plugin before the fix.
 *Plugin reviewer P-B4. Reproduced in C#.*
 
 `map<string, W>`, where `W` has `(fletcher.flatten)`, is a STRUCT node pointing at the wrapper
@@ -174,7 +179,7 @@ four places.
 |---|---|---|
 | Q1 → D-BIND-83 | **Mirror C++ fully.** A non-`optional` message field is a non-null property defaulting to `new()`, always written present; `optional` stays `T?`. Amends D-BIND-75's "`?` when the field can be absent": absent now means `optional` | B1's reproduction |
 | Q2 → D-BIND-84 | **Suffix the TYPE** with `_` (`Schema_`) when a message is named `Schema`, `ToArrow`, `FromArrow` or `ToArrowColumns`, everywhere the type is named, as protoc does for a clash | B3's CS0542 |
-| Q3 → D-BIND-85 | **A map whose value is a flatten wrapper is UNSUPPORTED in the IR**, with a reason, so every backend drops it consistently | Measured: **C++ fails too** (`'W' was not declared`); it never compiled in any backend |
+| Q3 → D-BIND-85 | **A map whose value is a flatten wrapper is UNSUPPORTED in the IR**, with a reason, so every backend drops it consistently *(corrected 2026-10-14: every backend REFUSES the file with that reason, as for a oneof; see D-BIND-85)* | Measured: **C++ fails too** (`'W' was not declared`); it never compiled in any backend |
 | Q4 → D-BIND-86 | **G-5 covers fields, not children.** List items and map values follow the C++ row class's storage (non-null). A reflection test pins each property against its field's `IsNullable` | C++ stores `std::vector<int32_t>`; the schema's child nullability is nanoarrow's default |
 | Q5 → D-BIND-87 | **Require reuse.** C#'s cross-file qualification goes through `CollectCrossFileIncludes`, or a shared helper both backends derive from it, so dependencies are found in one place. C++ and C# output stay byte-identical | The 6e-1 deviation |
 | Q6 → D-BIND-88 | **Park both AOT notes to BIND-9**, with an owner: a win-x64 AotSmoke publish and run with the RID matrix, and an AotSmoke run over `fastdds` for the foreign-thread callback | D-BIND-81 put the step on Linux only |
