@@ -31,6 +31,7 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <set>
 #include <string>
 
 #include "generator.hpp"
@@ -947,6 +948,66 @@ TEST(CsVisitorCrossFile, APairCarriesAnotherFilesMessageAndAFlattenWrapperGetsNo
                    "flatten wrapper.\n");
     EXPECT_EQ(native.find("Feed_PushPublisher"), std::string::npos) << native;
     ExpectContains(Emitted(files, "track.fletcher.cs"), "public static class Feed_PushTopic\n");
+}
+
+// D-BIND-87: C# decides "from another file" through CollectCrossFileMessages, the walk C++
+// derives its includes from. A field-level flatten inlines the flattened message's own fields
+// into the host, so a message THOSE fields name is a column of the host too:
+//   parts.proto: package geo.parts;  message Leaf { int32 id = 1; }
+//   spot.proto:  package geo.spots;  message Spot { geo.parts.Leaf leaf = 1; double x = 2; }
+//   host.proto:  package app;        message Host { geo.spots.Spot spot = 1
+//   [(fletcher.flatten_field) = true]; }
+TEST(CsVisitorCrossFile, AMessageInlinedByAFieldFlattenFromAnotherFileIsFoundByTheSharedWalk) {
+    DescriptorPool pool;
+    FileDescriptorProto parts;
+    parts.set_name("parts.proto");
+    parts.set_package("geo.parts");
+    parts.set_syntax("proto3");
+    auto* leaf = parts.add_message_type();
+    leaf->set_name("Leaf");
+    AddField(leaf, "id", 1, FieldDescriptorProto::TYPE_INT32);
+    ASSERT_NE(pool.BuildFile(parts), nullptr);
+
+    FileDescriptorProto spots;
+    spots.set_name("spot.proto");
+    spots.set_package("geo.spots");
+    spots.set_syntax("proto3");
+    spots.add_dependency("parts.proto");
+    auto* spot = spots.add_message_type();
+    spot->set_name("Spot");
+    AddField(spot, "leaf", 1, FieldDescriptorProto::TYPE_MESSAGE)->set_type_name(".geo.parts.Leaf");
+    AddField(spot, "x", 2, FieldDescriptorProto::TYPE_DOUBLE);
+    ASSERT_NE(pool.BuildFile(spots), nullptr);
+
+    FileDescriptorProto hosts;
+    hosts.set_name("host.proto");
+    hosts.set_package("app");
+    hosts.set_syntax("proto3");
+    hosts.add_dependency("spot.proto");
+    auto* host = hosts.add_message_type();
+    host->set_name("Host");
+    auto* flat = AddField(host, "spot", 1, FieldDescriptorProto::TYPE_MESSAGE);
+    flat->set_type_name(".geo.spots.Spot");
+    flat->mutable_options()
+        ->GetReflection()
+        ->MutableUnknownFields(flat->mutable_options())
+        ->AddVarint(50000, 1);  // (fletcher.flatten_field) = true
+    const FileDescriptor* file = pool.BuildFile(hosts);
+    ASSERT_NE(file, nullptr);
+
+    const Descriptor* leaf_desc = pool.FindMessageTypeByName("geo.parts.Leaf");
+    ASSERT_NE(leaf_desc, nullptr);
+    EXPECT_EQ(fletcher::CollectCrossFileMessages(file).count(leaf_desc), 1u);
+    // C++ derives its includes from the same set: the host names Leaf, so it includes Leaf's header
+    // itself rather than through Spot's.
+    EXPECT_EQ(fletcher::CollectCrossFileIncludes(file),
+              (std::set<std::string>{"parts.fletcher.pb.h", "spot.fletcher.pb.h"}));
+
+    const std::string body =
+        ClassBody(Emitted(GenerateWith(file, "csharp"), "host.fletcher.cs"), "Host");
+    const std::string leaf_cls = "global::Fletcher.Gen.Geo.Parts.Leaf";
+    ExpectContains(body, leaf_cls + ".ToArrow(");
+    EXPECT_EQ(body.find(leaf_cls + ".ToArrowColumns("), std::string::npos) << body;
 }
 
 TEST(CsVisitorCrossFile, AFileWhoseProtocNamespaceIsInsideFletcherGenIsRefusedBeforeAnyOutput) {

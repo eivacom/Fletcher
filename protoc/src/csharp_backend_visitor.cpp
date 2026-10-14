@@ -84,28 +84,28 @@ struct Column {
 };
 
 std::string ConversionBlocker(const Descriptor* msg, const FileDescriptor* file,
-                              std::set<const Descriptor*>& visiting);
+                              const CrossFile& cross, std::set<const Descriptor*>& visiting);
 
 // The reason a message-typed element or field cannot convert, or empty when it can. A
 // message from another file converts when its own class does (BIND-6e): that class is
 // generated from its own file, by the same rules.
 std::string StructBlocker(const ir::StructNode& s, const FileDescriptor* file,
-                          std::set<const Descriptor*>& visiting) {
+                          const CrossFile& cross, std::set<const Descriptor*>& visiting) {
     if (s.identity.descriptor == nullptr) return "a message the IR does not identify";
-    if (ConversionBlocker(s.identity.descriptor, file, visiting).empty()) return {};
+    if (ConversionBlocker(s.identity.descriptor, file, cross, visiting).empty()) return {};
     return "a message whose own conversion waits";
 }
 
-std::optional<Elem> ElemOf(const IrNode& node, const FileDescriptor* file,
+std::optional<Elem> ElemOf(const IrNode& node, const FileDescriptor* file, const CrossFile& cross,
                            std::set<const Descriptor*>& visiting, std::string& why) {
     if (node.kind == NodeKind::STRUCT) {
         const auto& s = std::get<ir::StructNode>(node.node);
-        why = StructBlocker(s, file, visiting);
+        why = StructBlocker(s, file, cross, visiting);
         if (!why.empty()) return std::nullopt;
         Elem e;
         e.is_struct = true;
         e.cls = CsTypeExpr(s.identity.descriptor);  // B2: named in full in method bodies
-        e.other_file = s.identity.descriptor->file() != file;
+        e.other_file = cross.count(s.identity.descriptor) != 0;  // D-BIND-87
         return e;
     }
     if (node.kind == NodeKind::SCALAR) {
@@ -117,7 +117,7 @@ std::optional<Elem> ElemOf(const IrNode& node, const FileDescriptor* file,
         }
     }
     if (node.kind == NodeKind::LIST) {
-        auto inner = ElemOf(*std::get<ir::ListNode>(node.node).element, file, visiting, why);
+        auto inner = ElemOf(*std::get<ir::ListNode>(node.node).element, file, cross, visiting, why);
         if (!inner) return std::nullopt;
         Elem e;
         e.is_list = true;
@@ -130,7 +130,8 @@ std::optional<Elem> ElemOf(const IrNode& node, const FileDescriptor* file,
 
 // The column for `node`, or nullopt with `why` set.
 std::optional<Column> ClassifyColumn(const IrNode& node, const FileDescriptor* file,
-                                     std::set<const Descriptor*>& visiting, std::string& why) {
+                                     const CrossFile& cross, std::set<const Descriptor*>& visiting,
+                                     std::string& why) {
     Column c;
     c.nullable = node.facts.nullable;
     switch (node.kind) {
@@ -152,17 +153,17 @@ std::optional<Column> ClassifyColumn(const IrNode& node, const FileDescriptor* f
         }
         case NodeKind::STRUCT: {
             const auto& s = std::get<ir::StructNode>(node.node);
-            why = StructBlocker(s, file, visiting);
+            why = StructBlocker(s, file, cross, visiting);
             if (!why.empty()) return std::nullopt;
             c.kind = ColKind::STRUCT;
             // As its property and its column: nullable only for `optional` (D-BIND-83).
             c.nullable = node.facts.nullable;
             c.cls = CsTypeExpr(s.identity.descriptor);  // B2: named in full in method bodies
-            c.other_file = s.identity.descriptor->file() != file;
+            c.other_file = cross.count(s.identity.descriptor) != 0;  // D-BIND-87
             return c;
         }
         case NodeKind::LIST: {
-            auto e = ElemOf(*std::get<ir::ListNode>(node.node).element, file, visiting, why);
+            auto e = ElemOf(*std::get<ir::ListNode>(node.node).element, file, cross, visiting, why);
             if (!e) return std::nullopt;
             c.kind = ColKind::LIST;
             c.elem = *e;
@@ -170,9 +171,9 @@ std::optional<Column> ClassifyColumn(const IrNode& node, const FileDescriptor* f
         }
         case NodeKind::MAP: {
             const auto& m = std::get<ir::MapNode>(node.node);
-            auto k = ElemOf(*m.key, file, visiting, why);
+            auto k = ElemOf(*m.key, file, cross, visiting, why);
             if (!k) return std::nullopt;
-            auto v = ElemOf(*m.value, file, visiting, why);
+            auto v = ElemOf(*m.value, file, cross, visiting, why);
             if (!v) return std::nullopt;
             c.kind = ColKind::MAP;
             c.key = *k;
@@ -191,12 +192,12 @@ std::optional<Column> ClassifyColumn(const IrNode& node, const FileDescriptor* f
 // converts. A message already being walked counts as converting: recursive messages
 // are skipped whole by GenerateFile, so the cycle never reaches emission.
 std::string ConversionBlocker(const Descriptor* msg, const FileDescriptor* file,
-                              std::set<const Descriptor*>& visiting) {
+                              const CrossFile& cross, std::set<const Descriptor*>& visiting) {
     if (!visiting.insert(msg).second) return {};
     std::string blocker;
     for (const auto& rec : cpp_backend::BuildFlattenedFieldList(msg)) {
         std::string why;
-        if (!ClassifyColumn(*rec.node, file, visiting, why)) {
+        if (!ClassifyColumn(*rec.node, file, cross, visiting, why)) {
             blocker = "field '" + rec.name + "' is " + why + ".";
             break;
         }
@@ -904,7 +905,7 @@ std::string FileHeader(const FileDescriptor* file) {
 
 CsVisitor::CsVisitor(const google::protobuf::FileDescriptor* file,
                      const OptionMetadataResolver* resolver)
-    : file_(file), resolver_(resolver) {}
+    : file_(file), cross_file_(CollectCrossFileMessages(file)), resolver_(resolver) {}
 
 std::string CsVisitor::GenerateEnum(const EnumDescriptor* enm) {
     std::ostringstream o;
@@ -936,7 +937,7 @@ std::string CsVisitor::GenerateMessage(const Descriptor* msg) {
             // the table does not map yet.
             std::string why;
             std::set<const Descriptor*> seen{msg};
-            ClassifyColumn(node, file_, seen, why);
+            ClassifyColumn(node, file_, cross_file_, seen, why);
             o << "    // Not generated yet: field '" << rec.name << "' (" << PendingKind(node)
               << ") has no C# type here: " << why << ".\n";
             if (pending.empty()) pending = "field '" + rec.name + "' is " + why + ".";
@@ -959,7 +960,7 @@ std::string CsVisitor::GenerateMessage(const Descriptor* msg) {
         // Conversion is generated only when every column converts, so no ToArrow can
         // build a batch its own Schema disagrees with.
         std::string why;
-        auto column = ClassifyColumn(node, file_, visiting, why);
+        auto column = ClassifyColumn(node, file_, cross_file_, visiting, why);
         if (!column) {
             if (pending.empty()) pending = "field '" + rec.name + "' is " + why + ".";
             continue;
@@ -1033,7 +1034,7 @@ std::string CsVisitor::GenerateNativeFile() {
         // The pair publishes through ToArrow and reads through FromArrow, so a message
         // whose conversion waits, or a flatten wrapper, which has neither, gets no pair.
         std::set<const Descriptor*> visiting;
-        const std::string blocker = ConversionBlocker(p.input, file_, visiting);
+        const std::string blocker = ConversionBlocker(p.input, file_, cross_file_, visiting);
         const std::string msg = CsTypeName(p.input);
         // B2: in a code expression the class is named in full, so a member of the pair that
         // shares its name (a message called Topic or Schema) cannot capture it.

@@ -93,19 +93,42 @@ bool WriteToStream(google::protobuf::io::ZeroCopyOutputStream* out, const std::s
 // Cross-file include collection
 // -----------------------------------------------------------------------
 
-// Scan all supported field mappings in a message (and its nested types) and
-// accumulate the include paths of any cross-file generated headers needed.
-void CollectCrossFileIncludesFromMessage(const google::protobuf::Descriptor* msg,
-                                         std::set<std::string>& headers) {
+// Accumulate the messages that `msg`'s fields name from files other than `file`:
+// as a field, a list element at any depth, a map value (where the type mapper
+// sets nested_msg / map_value_msg). A field-level flatten inlines the flattened
+// message's own fields into `msg` (see GatherFieldsImpl), so a message THOSE
+// fields name is named here too: descend exactly as the field walk does, as
+// CollectCrossFileEnumIncludesFromMessage does for enums (D-BIND-87).
+void CollectCrossFileMessagesFromFields(const google::protobuf::Descriptor* msg,
+                                        const google::protobuf::FileDescriptor* file,
+                                        std::set<const google::protobuf::Descriptor*>& out,
+                                        std::set<const google::protobuf::Descriptor*>& flattening) {
+    // A message that flattens itself would never end; it is recursive, and no
+    // backend generates it.
+    if (!flattening.insert(msg).second) return;
     for (int fi = 0; fi < msg->field_count(); ++fi) {
         const auto* fd = msg->field(fi);
         if (auto m = MapField(fd)) {
-            if (!m->nested_header.empty()) headers.insert(m->nested_header);
-            if (!m->map_value_header.empty()) headers.insert(m->map_value_header);
+            if (m->nested_msg != nullptr && m->nested_msg->file() != file)
+                out.insert(m->nested_msg);
+            if (m->map_value_msg != nullptr && m->map_value_msg->file() != file)
+                out.insert(m->map_value_msg);
         }
+        if (fd->type() == google::protobuf::FieldDescriptor::TYPE_MESSAGE && !fd->is_repeated() &&
+            HasFieldFlatten(fd))
+            CollectCrossFileMessagesFromFields(fd->message_type(), file, out, flattening);
     }
+    flattening.erase(msg);
+}
+
+// The same, for a message of `file` and every message nested in it.
+void CollectCrossFileMessagesFromMessage(const google::protobuf::Descriptor* msg,
+                                         const google::protobuf::FileDescriptor* file,
+                                         std::set<const google::protobuf::Descriptor*>& out) {
+    std::set<const google::protobuf::Descriptor*> flattening;
+    CollectCrossFileMessagesFromFields(msg, file, out, flattening);
     for (int ni = 0; ni < msg->nested_type_count(); ++ni)
-        CollectCrossFileIncludesFromMessage(msg->nested_type(ni), headers);
+        CollectCrossFileMessagesFromMessage(msg->nested_type(ni), file, out);
 }
 
 // GIR-9 (#75): the EnumDescriptor a field's generated C++ typed accessors
@@ -245,13 +268,24 @@ std::vector<const google::protobuf::Descriptor*> OrderedMessages(
 // Relocated out of the anonymous namespace (declaration in
 // generator_internal.hpp) so the accessor emitter reuses the SAME cross-file
 // include discovery (D-RBA-10 single source of truth). The recursive walk helper
-// (CollectCrossFileIncludesFromMessage) stays file-local above; only this public
+// (CollectCrossFileMessagesFromMessage) stays file-local above; only this public
 // entry point gains external linkage. Pure linkage move — emitted bytes are
 // unchanged, guarded by the RBA-1 no-drift test.
+//
+// D-BIND-87: the walk itself is CollectCrossFileMessages, which the C# backend
+// reads too; the C++ header path is derived from each message it finds.
+std::set<const google::protobuf::Descriptor*> CollectCrossFileMessages(
+    const google::protobuf::FileDescriptor* file) {
+    std::set<const google::protobuf::Descriptor*> messages;
+    for (int mi = 0; mi < file->message_type_count(); ++mi)
+        CollectCrossFileMessagesFromMessage(file->message_type(mi), file, messages);
+    return messages;
+}
+
 std::set<std::string> CollectCrossFileIncludes(const google::protobuf::FileDescriptor* file) {
     std::set<std::string> headers;
-    for (int mi = 0; mi < file->message_type_count(); ++mi)
-        CollectCrossFileIncludesFromMessage(file->message_type(mi), headers);
+    for (const auto* msg : CollectCrossFileMessages(file))
+        headers.insert(cpp_backend::CppCrossFileHeader(msg, file));
     return headers;
 }
 

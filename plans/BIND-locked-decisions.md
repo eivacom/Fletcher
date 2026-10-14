@@ -2759,3 +2759,27 @@ questions Q1 to Q10), and are numbered as their fixes land.
   **Declined:** `List<Leaf>?` for that one shape (C# would then differ from C++'s row class, and null
   versus empty would round-trip in C# only); leaving the test red until every backend can hold the
   null.
+
+- **D-BIND-87 - C# and C++ find a file's cross-file types through ONE walk,
+  `CollectCrossFileMessages`, from which `CollectCrossFileIncludes` is derived.** *LOCKED BY THE
+  MAINTAINER 2026-10-08 (review Q5, against the author's recommendation to keep the 6e-1
+  deviation); the field-flatten consequence ruled 2026-10-14.* 6e-1 left `CollectCrossFileIncludes`
+  (the D-RBA-10 single source of truth for C++ includes) uncalled, and C# decided "this message is
+  from another file" (D-BIND-80: build its column through the class's public `ToArrow`) by comparing
+  descriptors itself. Now the walk is `CollectCrossFileMessages(file)`, the set of messages from
+  other files that `file`'s fields name; C++ maps each to its header (`CollectCrossFileIncludes`),
+  and the C# visitor computes the set once per file and decides by membership. Namespace SPELLING
+  (`CsTypeRef`) stays read from each type's own file; a set of dependencies cannot give a namespace.
+  **Found while doing it (measured 2026-10-14):** the C++ walk did not look inside a field-level
+  flatten, which inlines the flattened message's own fields into the host. For `host.proto`
+  flattening `Spot` (spot.proto), whose field is a `Leaf` (parts.proto), the walk found `Spot` but
+  not `Leaf`; C# through it would have called `Leaf.ToArrowColumns`, internal and so absent in
+  another assembly (CS0117), where it had correctly called `Leaf.ToArrow`. C++ compiled only
+  because `spot.fletcher.pb.h` includes `parts.fletcher.pb.h`. The walk now descends a field-level
+  flatten exactly as `GatherFieldsImpl` and the enum-include walk do (with a guard against a
+  self-flattening message). **Consequence for C++, ruled 2026-10-14:** for that shape the header
+  now includes every header for the types it names directly, one more `#include` than before; the
+  Q5 ruling had said C++ output stays byte-identical, and it does for every other input (no golden
+  or corpus moved). **Declined:** a switch on the walk keeping C++ byte-identical for that shape
+  too (the two backends would get different answers from the one function, which is what the
+  ruling removes).

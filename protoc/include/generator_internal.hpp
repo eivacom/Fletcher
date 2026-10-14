@@ -121,4 +121,14 @@ std::vector<FieldInfo> GatherFields(const google::protobuf::Descriptor* msg,
 // RBA-1 no-drift test.
 std::set<std::string> CollectCrossFileIncludes(const google::protobuf::FileDescriptor* file);
 
+// The walk CollectCrossFileIncludes derives its paths from (D-BIND-87): the
+// messages from OTHER .proto files that `file`'s fields name, as a field, a list
+// element at any depth or a map value, recursively through nested types. Each
+// backend derives its own cross-file dependency from this one set: C++ an include
+// path per message, C# whether a struct column is built through the other
+// class's public ToArrow (D-BIND-80), so the two cannot disagree on which types
+// come from elsewhere.
+std::set<const google::protobuf::Descriptor*> CollectCrossFileMessages(
+    const google::protobuf::FileDescriptor* file);
+
 }  // namespace fletcher

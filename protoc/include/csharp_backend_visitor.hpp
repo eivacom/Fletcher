@@ -14,11 +14,18 @@
 
 #include <google/protobuf/descriptor.h>
 
+#include <set>
 #include <string>
 
 #include "option_metadata.hpp"
 
 namespace fletcher::csharp_backend {
+
+// The messages from other .proto files that the file being generated names, from the
+// one walk the C++ backend derives its includes from (CollectCrossFileMessages,
+// D-BIND-87). A struct column of such a message is built through its class's public
+// ToArrow (D-BIND-80).
+using CrossFile = std::set<const google::protobuf::Descriptor*>;
 
 class CsVisitor {
    public:
@@ -41,6 +48,7 @@ class CsVisitor {
     std::string GenerateMessage(const google::protobuf::Descriptor* msg);
 
     const google::protobuf::FileDescriptor* file_;
+    CrossFile cross_file_;
     const OptionMetadataResolver* resolver_ = nullptr;
 };
 
