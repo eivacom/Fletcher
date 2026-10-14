@@ -23,6 +23,8 @@ public sealed class Timestamp
     {
         global::System.ArgumentNullException.ThrowIfNull(rows);
         var all = rows as global::System.Collections.Generic.IReadOnlyList<Timestamp> ?? new global::System.Collections.Generic.List<Timestamp>(rows);
+        for (var i = 0; i < all.Count; i++)
+            if (all[i] is null) throw new global::System.ArgumentException($"Timestamp row {i} is null.", nameof(rows));
         return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
     }
 

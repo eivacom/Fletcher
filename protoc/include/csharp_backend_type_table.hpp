@@ -52,6 +52,9 @@ struct CsFieldType {
     bool is_reference =
         false;  // a scalar reference type (string, byte[]) defaulted when not nullable
     bool is_message = false;  // a generated class: `new()` when not nullable (D-BIND-83)
+    // D-BIND-93: a non-nullable Timestamp or Duration starts in its column's unit, so a fresh
+    // row and the same row read back compare equal; empty otherwise.
+    std::string temporal_default;
 };
 
 // The C# property type for an IR field node, or nullopt for a node this backend has

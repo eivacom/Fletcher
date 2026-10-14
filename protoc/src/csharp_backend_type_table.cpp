@@ -133,6 +133,29 @@ std::optional<CsFieldType> CsFieldTypeOf(const ir::IrNode& node,
             out.nullable = node.facts.nullable;
             if (const auto info = CsLookupScalar(s.logical_type, s.enum_identity, current_file))
                 out.is_reference = info->is_reference;
+            const auto& lt = s.logical_type;
+            if (!out.nullable && lt.time_unit.has_value() &&
+                (lt.kind == ir::LogicalKind::WKT_TIMESTAMP ||
+                 lt.kind == ir::LogicalKind::WKT_DURATION)) {
+                const char* unit = "Nanosecond";
+                switch (*lt.time_unit) {
+                    case ir::TimeUnit::SECOND:
+                        unit = "Second";
+                        break;
+                    case ir::TimeUnit::MILLI:
+                        unit = "Millisecond";
+                        break;
+                    case ir::TimeUnit::MICRO:
+                        unit = "Microsecond";
+                        break;
+                    case ir::TimeUnit::NANO:
+                        unit = "Nanosecond";
+                        break;
+                }
+                out.temporal_default =
+                    "new " + out.type_text + "(0, global::Apache.Arrow.Types.TimeUnit." + unit +
+                    (lt.timezone ? ", " + CsStringLiteral(*lt.timezone) : "") + ")";
+            }
             return out;
         }
         case ir::NodeKind::STRUCT: {

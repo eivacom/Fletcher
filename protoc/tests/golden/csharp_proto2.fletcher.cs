@@ -25,6 +25,8 @@ public sealed class Clash
     {
         global::System.ArgumentNullException.ThrowIfNull(rows);
         var all = rows as global::System.Collections.Generic.IReadOnlyList<Clash> ?? new global::System.Collections.Generic.List<Clash>(rows);
+        for (var i = 0; i < all.Count; i++)
+            if (all[i] is null) throw new global::System.ArgumentException($"Clash row {i} is null.", nameof(rows));
         return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
     }
 

@@ -2850,3 +2850,32 @@ questions Q1 to Q10), and are numbered as their fixes land.
   protoc's C#, inside its outer class. **Declined:** refusing any type named `Fletcher` or `Gen`
   wherever it lives (`Eiva.Fletcher` collides with nothing: our code names its types from
   `global::`).
+
+- **D-BIND-92 - the generated `ToArrow` refuses a null the caller forced past a non-nullable
+  annotation, with an `ArgumentException` naming the class, the property and the row.** *LOCKED BY
+  THE MAINTAINER 2026-10-08 (review Q10a); its scope widened by the maintainer 2026-10-14.* The ruling
+  named a string or bytes field, a map key and a list element. Reading the generated code found the
+  other places the annotations promise non-null (D-BIND-86) and that misbehaved the same way: a map
+  value, a null collection property, an inner list of a nested list, and a null row; ruled
+  2026-10-14 to refuse them all alike. Before: a null string was written as a null in a non-nullable
+  column (or key, or element), a null `byte[]` silently as empty bytes, and a null message element,
+  collection or row failed with a NullReferenceException inside the generated code. C++'s row class
+  cannot hold any of these (`std::string`, `std::vector`), so C++ never throws, and its decoder would
+  read a value that is not there. `ToArrowColumns` now opens with one pass over the rows that checks
+  each such column; the public `ToArrow` refuses a null row; a plain message field keeps its own
+  check (D-BIND-83). `row {i}` counts the rows the class converts, so for a nested message it is that
+  message's place in the column being built. **Separately parked to BIND-9 (acceptance there), BIND-10
+  documents it:** a RecordBatch built by hand at the Arrow tier is encoded as given in both
+  languages, because no codec path checks a column's nullability. **Declined:** coercing a null to
+  `""` or empty bytes (silently writes a value the caller never gave).
+
+- **D-BIND-93 - a non-nullable Timestamp or Duration property starts at zero in its column's unit
+  (`new Timestamp(0, TimeUnit.Nanosecond)`), so a fresh row and the same row read back compare
+  equal; `Eiva.Fletcher.Model` is unchanged.** *LOCKED BY THE MAINTAINER 2026-10-08 (review Q10b).*
+  `default(Timestamp)` is `(0, Second)`, and FromArrow returns the column's unit, `(0, Nanosecond)`:
+  the same instant, but a record struct that compares unequal, so a fresh row did not survive a round
+  trip equal. The unit (and a time zone, when one is set) comes from the IR's logical type, which is
+  what the schema writes (nanoseconds, no zone, today). `Fletcher.Tests` checks it for every
+  generated row class by reflection: a fresh instance read back has equal temporal values.
+  **Declined:** changing the Model's default (a `record struct` cannot have one other than all-zero
+  fields).

@@ -510,6 +510,79 @@ void EmitColumn(std::ostringstream& o, const Column& c, const std::string& owner
     }
 }
 
+// D-BIND-92: a null the caller forced past a non-nullable annotation (`Name = null!`, a null
+// list element, map key or value, a null collection) is refused with an ArgumentException that
+// names the class, the property and the row, never written: C++'s row class cannot hold such a
+// null, so its decoder would read a value that is not there, and Arrow would otherwise get a null
+// in a column, key or element its Schema says cannot be one, or (for bytes) an empty value. A
+// plain message field is refused where its column is built (D-BIND-83). `row {i}` counts the rows
+// this class converts; for a nested message, its place in the column being built.
+std::string Refuse(const std::string& owner, const std::string& property, const std::string& what) {
+    return "throw new global::System.ArgumentException($\"" +
+           (owner.rfind('@', 0) == 0 ? owner.substr(1) : owner) + "." + property + " " + what +
+           "\", nameof(rows))";
+}
+
+bool NeedsNullCheck(const Elem& e) { return e.is_list || e.is_struct || e.scalar.is_reference; }
+
+// Statements that refuse a null in `x`, an element of `property`, and in every element below it.
+void EmitElemCheck(std::ostringstream& o, const Elem& e, const std::string& x,
+                   const std::string& owner, const std::string& property, const std::string& in,
+                   int depth) {
+    o << in << "if (" << x << " is null) "
+      << Refuse(owner, property, "holds a null element in row {i}; an element is never null.")
+      << ";\n";
+    if (e.is_list && NeedsNullCheck(*e.inner)) {
+        const std::string y = x + "_" + std::to_string(depth);
+        o << in << "foreach (var " << y << " in " << x << ")\n" << in << "{\n";
+        EmitElemCheck(o, *e.inner, y, owner, property, in + "    ", depth + 1);
+        o << in << "}\n";
+    }
+}
+
+// The check pass ToArrowColumns opens with, or nothing when no column can hold such a null.
+void EmitNullChecks(std::ostringstream& o, const std::vector<Column>& columns,
+                    const std::string& owner) {
+    std::ostringstream body;
+    const std::string in = "            ";
+    for (const auto& c : columns) {
+        const std::string n = std::to_string(c.index);
+        const std::string prop = "row." + c.property;
+        if (c.kind == ColKind::SCALAR && !c.nullable && c.scalar.is_reference) {
+            body << in << "if (" << prop << " is null) "
+                 << Refuse(owner, c.property, "is null in row {i}, but the field is not optional.")
+                 << ";\n";
+        } else if (c.kind == ColKind::LIST || c.kind == ColKind::MAP) {
+            body << in << "if (" << prop << " is null) "
+                 << Refuse(owner, c.property,
+                           "is null in row {i}; use an empty collection instead.")
+                 << ";\n";
+            const bool key = c.kind == ColKind::MAP && c.key.scalar.is_reference;
+            const bool value = NeedsNullCheck(c.elem);
+            if (!key && !value) continue;
+            const std::string x = "x" + n;
+            body << in << "foreach (var " << x << " in " << prop << ")\n" << in << "{\n";
+            if (c.kind == ColKind::LIST) {
+                EmitElemCheck(body, c.elem, x, owner, c.property, in + "    ", 1);
+            } else {
+                if (key)
+                    body << in << "    if (" << x << ".Key is null) "
+                         << Refuse(owner, c.property, "holds a null map key in row {i}.") << ";\n";
+                if (value)
+                    body << in << "    if (" << x << ".Value is null) "
+                         << Refuse(owner, c.property,
+                                   "holds a null map value in row {i}; a value is never null.")
+                         << ";\n";
+            }
+            body << in << "}\n";
+        }
+    }
+    if (body.str().empty()) return;
+    o << "        for (var i = 0; i < rows.Count; i++)\n        {\n"
+      << "            var row = rows[i];\n"
+      << body.str() << "        }\n";
+}
+
 // static RecordBatch ToArrow(IEnumerable<T>), and the columns it is built from,
 // which a message embedding this one as a struct reuses.
 std::string GenerateToArrow(const std::string& cls, const std::vector<Column>& columns) {
@@ -518,12 +591,18 @@ std::string GenerateToArrow(const std::string& cls, const std::vector<Column>& c
       << "global::System.Collections.Generic.IEnumerable<" << cls << "> rows)\n    {\n"
       << "        global::System.ArgumentNullException.ThrowIfNull(rows);\n"
       << "        var all = rows as global::System.Collections.Generic.IReadOnlyList<" << cls
-      << "> ?? new " << ListOf(cls) << "(rows);\n"
+      << "> ?? new " << ListOf(cls)
+      << "(rows);\n"
+      // D-BIND-92: a null row too; ToArrowColumns is only ever handed rows its caller checked.
+      << "        for (var i = 0; i < all.Count; i++)\n"
+      << "            if (all[i] is null) throw new global::System.ArgumentException($\""
+      << (cls.rfind('@', 0) == 0 ? cls.substr(1) : cls) << " row {i} is null.\", nameof(rows));\n"
       << "        return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), "
          "all.Count);\n"
       << "    }\n\n"
       << "    internal static global::Apache.Arrow.IArrowArray[] ToArrowColumns("
       << "global::System.Collections.Generic.IReadOnlyList<" << cls << "> rows)\n    {\n";
+    EmitNullChecks(o, columns, cls);
     for (const auto& c : columns) EmitColumn(o, c, cls);
     o << "        return new global::Apache.Arrow.IArrowArray[] { ";
     for (size_t i = 0; i < columns.size(); ++i) o << (i > 0 ? ", " : "") << "c" << columns[i].index;
@@ -953,12 +1032,15 @@ std::string CsVisitor::GenerateMessage(const Descriptor* msg) {
           << " { get; set; }";
         // A collection starts empty, a plain message field as a default instance (D-BIND-83)
         // and a non-nullable reference as the proto default, never null, so the property
-        // honours its own annotation.
+        // honours its own annotation. A non-nullable Timestamp or Duration starts at zero in its
+        // column's unit, so a fresh row compares equal to itself read back (D-BIND-93).
         if (field_type->is_collection || (field_type->is_message && !nullable))
             o << " = new();";
         else if (field_type->is_reference && !nullable)
             o << (field_type->type_text == "string" ? " = \"\";"
                                                     : " = global::System.Array.Empty<byte>();");
+        else if (!field_type->temporal_default.empty())
+            o << " = " << field_type->temporal_default << ";";  // D-BIND-93
         o << "\n";
 
         // Conversion is generated only when every column converts, so no ToArrow can

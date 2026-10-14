@@ -137,8 +137,9 @@ public sealed class GeneratedModelTests
         Assert.NotNull(player.Stats);
         Assert.Equal(0, player.Stats.Goals);
         // A Timestamp field is always present, as its non-nullable Arrow column says: the
-        // default is the epoch in seconds, not null.
-        Assert.Equal(default(Timestamp), new Timed().At);
+        // default is the epoch, not null, in the column's unit (D-BIND-93), so a fresh row reads
+        // back equal.
+        Assert.Equal(new Timestamp(0, TimeUnit.Nanosecond), new Timed().At);
     }
 
     [Fact]

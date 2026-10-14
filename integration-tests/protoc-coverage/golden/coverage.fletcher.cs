@@ -36,6 +36,8 @@ public sealed class NestedEnums
     {
         global::System.ArgumentNullException.ThrowIfNull(rows);
         var all = rows as global::System.Collections.Generic.IReadOnlyList<NestedEnums> ?? new global::System.Collections.Generic.List<NestedEnums>(rows);
+        for (var i = 0; i < all.Count; i++)
+            if (all[i] is null) throw new global::System.ArgumentException($"NestedEnums row {i} is null.", nameof(rows));
         return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
     }
 
@@ -89,8 +91,8 @@ public sealed class ScalarCoverage
     public double? WrappedDouble { get; set; }
     public string? WrappedString { get; set; }
     public byte[]? WrappedBytes { get; set; }
-    public global::Eiva.Fletcher.Model.Timestamp TimestampValue { get; set; }
-    public global::Eiva.Fletcher.Model.Duration DurationValue { get; set; }
+    public global::Eiva.Fletcher.Model.Timestamp TimestampValue { get; set; } = new global::Eiva.Fletcher.Model.Timestamp(0, global::Apache.Arrow.Types.TimeUnit.Nanosecond);
+    public global::Eiva.Fletcher.Model.Duration DurationValue { get; set; } = new global::Eiva.Fletcher.Model.Duration(0, global::Apache.Arrow.Types.TimeUnit.Nanosecond);
     public TopLevelStatus Status { get; set; }
     public NestedEnums_InnerStatus NestedStatus { get; set; }
 
@@ -136,11 +138,19 @@ public sealed class ScalarCoverage
     {
         global::System.ArgumentNullException.ThrowIfNull(rows);
         var all = rows as global::System.Collections.Generic.IReadOnlyList<ScalarCoverage> ?? new global::System.Collections.Generic.List<ScalarCoverage>(rows);
+        for (var i = 0; i < all.Count; i++)
+            if (all[i] is null) throw new global::System.ArgumentException($"ScalarCoverage row {i} is null.", nameof(rows));
         return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
     }
 
     internal static global::Apache.Arrow.IArrowArray[] ToArrowColumns(global::System.Collections.Generic.IReadOnlyList<ScalarCoverage> rows)
     {
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var row = rows[i];
+            if (row.StringValue is null) throw new global::System.ArgumentException($"ScalarCoverage.StringValue is null in row {i}, but the field is not optional.", nameof(rows));
+            if (row.BytesValue is null) throw new global::System.ArgumentException($"ScalarCoverage.BytesValue is null in row {i}, but the field is not optional.", nameof(rows));
+        }
         var b0 = new global::Apache.Arrow.BooleanArray.Builder();
         foreach (var row in rows)
         {
@@ -411,11 +421,18 @@ public sealed class Leaf
     {
         global::System.ArgumentNullException.ThrowIfNull(rows);
         var all = rows as global::System.Collections.Generic.IReadOnlyList<Leaf> ?? new global::System.Collections.Generic.List<Leaf>(rows);
+        for (var i = 0; i < all.Count; i++)
+            if (all[i] is null) throw new global::System.ArgumentException($"Leaf row {i} is null.", nameof(rows));
         return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
     }
 
     internal static global::Apache.Arrow.IArrowArray[] ToArrowColumns(global::System.Collections.Generic.IReadOnlyList<Leaf> rows)
     {
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var row = rows[i];
+            if (row.Label is null) throw new global::System.ArgumentException($"Leaf.Label is null in row {i}, but the field is not optional.", nameof(rows));
+        }
         var b0 = new global::Apache.Arrow.Int32Array.Builder();
         foreach (var row in rows)
         {
@@ -467,11 +484,22 @@ public sealed class Branch
     {
         global::System.ArgumentNullException.ThrowIfNull(rows);
         var all = rows as global::System.Collections.Generic.IReadOnlyList<Branch> ?? new global::System.Collections.Generic.List<Branch>(rows);
+        for (var i = 0; i < all.Count; i++)
+            if (all[i] is null) throw new global::System.ArgumentException($"Branch row {i} is null.", nameof(rows));
         return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
     }
 
     internal static global::Apache.Arrow.IArrowArray[] ToArrowColumns(global::System.Collections.Generic.IReadOnlyList<Branch> rows)
     {
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var row = rows[i];
+            if (row.Leaves is null) throw new global::System.ArgumentException($"Branch.Leaves is null in row {i}; use an empty collection instead.", nameof(rows));
+            foreach (var x2 in row.Leaves)
+            {
+                if (x2 is null) throw new global::System.ArgumentException($"Branch.Leaves holds a null element in row {i}; an element is never null.", nameof(rows));
+            }
+        }
         var t0 = (global::Apache.Arrow.Types.StructType)Schema.GetFieldByIndex(0).DataType;
         var r0 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>(rows.Count);
         for (var i = 0; i < rows.Count; i++)
@@ -549,6 +577,8 @@ public sealed class FlattenedPoint
     {
         global::System.ArgumentNullException.ThrowIfNull(rows);
         var all = rows as global::System.Collections.Generic.IReadOnlyList<FlattenedPoint> ?? new global::System.Collections.Generic.List<FlattenedPoint>(rows);
+        for (var i = 0; i < all.Count; i++)
+            if (all[i] is null) throw new global::System.ArgumentException($"FlattenedPoint row {i} is null.", nameof(rows));
         return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
     }
 
@@ -596,6 +626,8 @@ public sealed class FieldFlattenedPosition
     {
         global::System.ArgumentNullException.ThrowIfNull(rows);
         var all = rows as global::System.Collections.Generic.IReadOnlyList<FieldFlattenedPosition> ?? new global::System.Collections.Generic.List<FieldFlattenedPosition>(rows);
+        for (var i = 0; i < all.Count; i++)
+            if (all[i] is null) throw new global::System.ArgumentException($"FieldFlattenedPosition row {i} is null.", nameof(rows));
         return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
     }
 
@@ -671,11 +703,76 @@ public sealed class CompositeCoverage
     {
         global::System.ArgumentNullException.ThrowIfNull(rows);
         var all = rows as global::System.Collections.Generic.IReadOnlyList<CompositeCoverage> ?? new global::System.Collections.Generic.List<CompositeCoverage>(rows);
+        for (var i = 0; i < all.Count; i++)
+            if (all[i] is null) throw new global::System.ArgumentException($"CompositeCoverage row {i} is null.", nameof(rows));
         return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
     }
 
     internal static global::Apache.Arrow.IArrowArray[] ToArrowColumns(global::System.Collections.Generic.IReadOnlyList<CompositeCoverage> rows)
     {
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var row = rows[i];
+            if (row.RepeatedScalar is null) throw new global::System.ArgumentException($"CompositeCoverage.RepeatedScalar is null in row {i}; use an empty collection instead.", nameof(rows));
+            if (row.RepeatedString is null) throw new global::System.ArgumentException($"CompositeCoverage.RepeatedString is null in row {i}; use an empty collection instead.", nameof(rows));
+            foreach (var x5 in row.RepeatedString)
+            {
+                if (x5 is null) throw new global::System.ArgumentException($"CompositeCoverage.RepeatedString holds a null element in row {i}; an element is never null.", nameof(rows));
+            }
+            if (row.RepeatedBytes is null) throw new global::System.ArgumentException($"CompositeCoverage.RepeatedBytes is null in row {i}; use an empty collection instead.", nameof(rows));
+            foreach (var x6 in row.RepeatedBytes)
+            {
+                if (x6 is null) throw new global::System.ArgumentException($"CompositeCoverage.RepeatedBytes holds a null element in row {i}; an element is never null.", nameof(rows));
+            }
+            if (row.RepeatedStruct is null) throw new global::System.ArgumentException($"CompositeCoverage.RepeatedStruct is null in row {i}; use an empty collection instead.", nameof(rows));
+            foreach (var x7 in row.RepeatedStruct)
+            {
+                if (x7 is null) throw new global::System.ArgumentException($"CompositeCoverage.RepeatedStruct holds a null element in row {i}; an element is never null.", nameof(rows));
+            }
+            if (row.MapScalar is null) throw new global::System.ArgumentException($"CompositeCoverage.MapScalar is null in row {i}; use an empty collection instead.", nameof(rows));
+            foreach (var x8 in row.MapScalar)
+            {
+                if (x8.Key is null) throw new global::System.ArgumentException($"CompositeCoverage.MapScalar holds a null map key in row {i}.", nameof(rows));
+            }
+            if (row.MapStruct is null) throw new global::System.ArgumentException($"CompositeCoverage.MapStruct is null in row {i}; use an empty collection instead.", nameof(rows));
+            foreach (var x9 in row.MapStruct)
+            {
+                if (x9.Key is null) throw new global::System.ArgumentException($"CompositeCoverage.MapStruct holds a null map key in row {i}.", nameof(rows));
+                if (x9.Value is null) throw new global::System.ArgumentException($"CompositeCoverage.MapStruct holds a null map value in row {i}; a value is never null.", nameof(rows));
+            }
+            if (row.FlattenedStructList is null) throw new global::System.ArgumentException($"CompositeCoverage.FlattenedStructList is null in row {i}; use an empty collection instead.", nameof(rows));
+            foreach (var x10 in row.FlattenedStructList)
+            {
+                if (x10 is null) throw new global::System.ArgumentException($"CompositeCoverage.FlattenedStructList holds a null element in row {i}; an element is never null.", nameof(rows));
+            }
+            if (row.NestedStructLists is null) throw new global::System.ArgumentException($"CompositeCoverage.NestedStructLists is null in row {i}; use an empty collection instead.", nameof(rows));
+            foreach (var x11 in row.NestedStructLists)
+            {
+                if (x11 is null) throw new global::System.ArgumentException($"CompositeCoverage.NestedStructLists holds a null element in row {i}; an element is never null.", nameof(rows));
+                foreach (var x11_1 in x11)
+                {
+                    if (x11_1 is null) throw new global::System.ArgumentException($"CompositeCoverage.NestedStructLists holds a null element in row {i}; an element is never null.", nameof(rows));
+                }
+            }
+            if (row.Depth3StructLists is null) throw new global::System.ArgumentException($"CompositeCoverage.Depth3StructLists is null in row {i}; use an empty collection instead.", nameof(rows));
+            foreach (var x12 in row.Depth3StructLists)
+            {
+                if (x12 is null) throw new global::System.ArgumentException($"CompositeCoverage.Depth3StructLists holds a null element in row {i}; an element is never null.", nameof(rows));
+                foreach (var x12_1 in x12)
+                {
+                    if (x12_1 is null) throw new global::System.ArgumentException($"CompositeCoverage.Depth3StructLists holds a null element in row {i}; an element is never null.", nameof(rows));
+                    foreach (var x12_1_2 in x12_1)
+                    {
+                        if (x12_1_2 is null) throw new global::System.ArgumentException($"CompositeCoverage.Depth3StructLists holds a null element in row {i}; an element is never null.", nameof(rows));
+                    }
+                }
+            }
+            if (row.OptionalFlattenedStructList is null) throw new global::System.ArgumentException($"CompositeCoverage.OptionalFlattenedStructList is null in row {i}; use an empty collection instead.", nameof(rows));
+            foreach (var x13 in row.OptionalFlattenedStructList)
+            {
+                if (x13 is null) throw new global::System.ArgumentException($"CompositeCoverage.OptionalFlattenedStructList holds a null element in row {i}; an element is never null.", nameof(rows));
+            }
+        }
         var t0 = (global::Apache.Arrow.Types.StructType)Schema.GetFieldByIndex(0).DataType;
         var r0 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.ScalarCoverage>(rows.Count);
         for (var i = 0; i < rows.Count; i++)
@@ -1016,6 +1113,8 @@ public sealed class ServiceRequest
     {
         global::System.ArgumentNullException.ThrowIfNull(rows);
         var all = rows as global::System.Collections.Generic.IReadOnlyList<ServiceRequest> ?? new global::System.Collections.Generic.List<ServiceRequest>(rows);
+        for (var i = 0; i < all.Count; i++)
+            if (all[i] is null) throw new global::System.ArgumentException($"ServiceRequest row {i} is null.", nameof(rows));
         return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
     }
 
@@ -1055,11 +1154,18 @@ public sealed class ServiceReply
     {
         global::System.ArgumentNullException.ThrowIfNull(rows);
         var all = rows as global::System.Collections.Generic.IReadOnlyList<ServiceReply> ?? new global::System.Collections.Generic.List<ServiceReply>(rows);
+        for (var i = 0; i < all.Count; i++)
+            if (all[i] is null) throw new global::System.ArgumentException($"ServiceReply row {i} is null.", nameof(rows));
         return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
     }
 
     internal static global::Apache.Arrow.IArrowArray[] ToArrowColumns(global::System.Collections.Generic.IReadOnlyList<ServiceReply> rows)
     {
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var row = rows[i];
+            if (row.Message is null) throw new global::System.ArgumentException($"ServiceReply.Message is null in row {i}, but the field is not optional.", nameof(rows));
+        }
         var b0 = new global::Apache.Arrow.BooleanArray.Builder();
         foreach (var row in rows)
         {

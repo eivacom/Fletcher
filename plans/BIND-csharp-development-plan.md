@@ -770,6 +770,11 @@ flatten wrapper gets no topic class and no pair in C#, with C++'s skip line; Typ
 constant for it is BIND-T's debt.
 **Reserved names, ruled 2026-10-08 from the review (D-BIND-91, extends D-BIND-82):** a file is also
 refused when protoc's C# would declare a top-level type named `Fletcher` or `Fletcher.Gen`.
+**Forced nulls and temporal defaults, ruled 2026-10-08 from the review (D-BIND-92, D-BIND-93):**
+`ToArrow` refuses a null the caller forced into any non-nullable place (field, element, key, value,
+collection, row) with an `ArgumentException` naming class, property and row; a non-nullable
+Timestamp or Duration starts in its column's unit. The Arrow-tier gap (a hand-built batch with such a
+null is encoded in both languages) is BIND-9's to rule.
 **Slices:** 6a plumbing,
 type table, visitor, classes and enums with scalar fields; 6b `Schema`, `ToArrow`/`FromArrow` and
 `integration-tests/protoc-dotnet`; 6c composite and temporal types; 6d topics and the native

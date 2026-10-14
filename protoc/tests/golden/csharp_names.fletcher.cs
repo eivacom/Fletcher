@@ -27,6 +27,8 @@ public sealed class Waypoint
     {
         global::System.ArgumentNullException.ThrowIfNull(rows);
         var all = rows as global::System.Collections.Generic.IReadOnlyList<Waypoint> ?? new global::System.Collections.Generic.List<Waypoint>(rows);
+        for (var i = 0; i < all.Count; i++)
+            if (all[i] is null) throw new global::System.ArgumentException($"Waypoint row {i} is null.", nameof(rows));
         return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
     }
 
@@ -65,11 +67,22 @@ public sealed class RouteList
     {
         global::System.ArgumentNullException.ThrowIfNull(rows);
         var all = rows as global::System.Collections.Generic.IReadOnlyList<RouteList> ?? new global::System.Collections.Generic.List<RouteList>(rows);
+        for (var i = 0; i < all.Count; i++)
+            if (all[i] is null) throw new global::System.ArgumentException($"RouteList row {i} is null.", nameof(rows));
         return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
     }
 
     internal static global::Apache.Arrow.IArrowArray[] ToArrowColumns(global::System.Collections.Generic.IReadOnlyList<RouteList> rows)
     {
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var row = rows[i];
+            if (row.Waypoint is null) throw new global::System.ArgumentException($"RouteList.Waypoint is null in row {i}; use an empty collection instead.", nameof(rows));
+            foreach (var x0 in row.Waypoint)
+            {
+                if (x0 is null) throw new global::System.ArgumentException($"RouteList.Waypoint holds a null element in row {i}; an element is never null.", nameof(rows));
+            }
+        }
         var t0 = (global::Apache.Arrow.Types.ListType)Schema.GetFieldByIndex(0).DataType;
         var o0 = new global::Apache.Arrow.ArrowBuffer.Builder<int>(rows.Count + 1);
         o0.Append(0);
@@ -116,11 +129,23 @@ public sealed class RouteMap
     {
         global::System.ArgumentNullException.ThrowIfNull(rows);
         var all = rows as global::System.Collections.Generic.IReadOnlyList<RouteMap> ?? new global::System.Collections.Generic.List<RouteMap>(rows);
+        for (var i = 0; i < all.Count; i++)
+            if (all[i] is null) throw new global::System.ArgumentException($"RouteMap row {i} is null.", nameof(rows));
         return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
     }
 
     internal static global::Apache.Arrow.IArrowArray[] ToArrowColumns(global::System.Collections.Generic.IReadOnlyList<RouteMap> rows)
     {
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var row = rows[i];
+            if (row.Waypoint is null) throw new global::System.ArgumentException($"RouteMap.Waypoint is null in row {i}; use an empty collection instead.", nameof(rows));
+            foreach (var x0 in row.Waypoint)
+            {
+                if (x0.Key is null) throw new global::System.ArgumentException($"RouteMap.Waypoint holds a null map key in row {i}.", nameof(rows));
+                if (x0.Value is null) throw new global::System.ArgumentException($"RouteMap.Waypoint holds a null map value in row {i}; a value is never null.", nameof(rows));
+            }
+        }
         var t0 = (global::Apache.Arrow.Types.MapType)Schema.GetFieldByIndex(0).DataType;
         var o0 = new global::Apache.Arrow.ArrowBuffer.Builder<int>(rows.Count + 1);
         o0.Append(0);
@@ -175,6 +200,8 @@ public sealed class RouteMixed
     {
         global::System.ArgumentNullException.ThrowIfNull(rows);
         var all = rows as global::System.Collections.Generic.IReadOnlyList<RouteMixed> ?? new global::System.Collections.Generic.List<RouteMixed>(rows);
+        for (var i = 0; i < all.Count; i++)
+            if (all[i] is null) throw new global::System.ArgumentException($"RouteMixed row {i} is null.", nameof(rows));
         return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
     }
 
@@ -219,6 +246,8 @@ public sealed class RouteOptional
     {
         global::System.ArgumentNullException.ThrowIfNull(rows);
         var all = rows as global::System.Collections.Generic.IReadOnlyList<RouteOptional> ?? new global::System.Collections.Generic.List<RouteOptional>(rows);
+        for (var i = 0; i < all.Count; i++)
+            if (all[i] is null) throw new global::System.ArgumentException($"RouteOptional row {i} is null.", nameof(rows));
         return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
     }
 
@@ -261,6 +290,8 @@ public sealed class RouteSingle
     {
         global::System.ArgumentNullException.ThrowIfNull(rows);
         var all = rows as global::System.Collections.Generic.IReadOnlyList<RouteSingle> ?? new global::System.Collections.Generic.List<RouteSingle>(rows);
+        for (var i = 0; i < all.Count; i++)
+            if (all[i] is null) throw new global::System.ArgumentException($"RouteSingle row {i} is null.", nameof(rows));
         return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
     }
 
@@ -298,6 +329,8 @@ public sealed class @row
     {
         global::System.ArgumentNullException.ThrowIfNull(rows);
         var all = rows as global::System.Collections.Generic.IReadOnlyList<@row> ?? new global::System.Collections.Generic.List<@row>(rows);
+        for (var i = 0; i < all.Count; i++)
+            if (all[i] is null) throw new global::System.ArgumentException($"row row {i} is null.", nameof(rows));
         return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
     }
 
@@ -336,6 +369,8 @@ public sealed class @array
     {
         global::System.ArgumentNullException.ThrowIfNull(rows);
         var all = rows as global::System.Collections.Generic.IReadOnlyList<@array> ?? new global::System.Collections.Generic.List<@array>(rows);
+        for (var i = 0; i < all.Count; i++)
+            if (all[i] is null) throw new global::System.ArgumentException($"array row {i} is null.", nameof(rows));
         return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
     }
 
@@ -376,11 +411,22 @@ public sealed class UsesLocals
     {
         global::System.ArgumentNullException.ThrowIfNull(rows);
         var all = rows as global::System.Collections.Generic.IReadOnlyList<UsesLocals> ?? new global::System.Collections.Generic.List<UsesLocals>(rows);
+        for (var i = 0; i < all.Count; i++)
+            if (all[i] is null) throw new global::System.ArgumentException($"UsesLocals row {i} is null.", nameof(rows));
         return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
     }
 
     internal static global::Apache.Arrow.IArrowArray[] ToArrowColumns(global::System.Collections.Generic.IReadOnlyList<UsesLocals> rows)
     {
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var row = rows[i];
+            if (row.Items is null) throw new global::System.ArgumentException($"UsesLocals.Items is null in row {i}; use an empty collection instead.", nameof(rows));
+            foreach (var x1 in row.Items)
+            {
+                if (x1 is null) throw new global::System.ArgumentException($"UsesLocals.Items holds a null element in row {i}; an element is never null.", nameof(rows));
+            }
+        }
         var t0 = (global::Apache.Arrow.Types.StructType)Schema.GetFieldByIndex(0).DataType;
         var r0 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Names.@row>(rows.Count);
         for (var i = 0; i < rows.Count; i++)
@@ -433,6 +479,8 @@ public sealed class @class
     {
         global::System.ArgumentNullException.ThrowIfNull(rows);
         var all = rows as global::System.Collections.Generic.IReadOnlyList<@class> ?? new global::System.Collections.Generic.List<@class>(rows);
+        for (var i = 0; i < all.Count; i++)
+            if (all[i] is null) throw new global::System.ArgumentException($"class row {i} is null.", nameof(rows));
         return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
     }
 
@@ -475,11 +523,22 @@ public sealed class UsesKeywords
     {
         global::System.ArgumentNullException.ThrowIfNull(rows);
         var all = rows as global::System.Collections.Generic.IReadOnlyList<UsesKeywords> ?? new global::System.Collections.Generic.List<UsesKeywords>(rows);
+        for (var i = 0; i < all.Count; i++)
+            if (all[i] is null) throw new global::System.ArgumentException($"UsesKeywords row {i} is null.", nameof(rows));
         return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
     }
 
     internal static global::Apache.Arrow.IArrowArray[] ToArrowColumns(global::System.Collections.Generic.IReadOnlyList<UsesKeywords> rows)
     {
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var row = rows[i];
+            if (row.Ks is null) throw new global::System.ArgumentException($"UsesKeywords.Ks is null in row {i}; use an empty collection instead.", nameof(rows));
+            foreach (var x2 in row.Ks)
+            {
+                if (x2 is null) throw new global::System.ArgumentException($"UsesKeywords.Ks holds a null element in row {i}; an element is never null.", nameof(rows));
+            }
+        }
         var t0 = (global::Apache.Arrow.Types.StructType)Schema.GetFieldByIndex(0).DataType;
         var r0 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Names.@class>(rows.Count);
         for (var i = 0; i < rows.Count; i++)
@@ -539,6 +598,8 @@ public sealed class Schema_
     {
         global::System.ArgumentNullException.ThrowIfNull(rows);
         var all = rows as global::System.Collections.Generic.IReadOnlyList<Schema_> ?? new global::System.Collections.Generic.List<Schema_>(rows);
+        for (var i = 0; i < all.Count; i++)
+            if (all[i] is null) throw new global::System.ArgumentException($"Schema_ row {i} is null.", nameof(rows));
         return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
     }
 
@@ -577,6 +638,8 @@ public sealed class FromArrow_
     {
         global::System.ArgumentNullException.ThrowIfNull(rows);
         var all = rows as global::System.Collections.Generic.IReadOnlyList<FromArrow_> ?? new global::System.Collections.Generic.List<FromArrow_>(rows);
+        for (var i = 0; i < all.Count; i++)
+            if (all[i] is null) throw new global::System.ArgumentException($"FromArrow_ row {i} is null.", nameof(rows));
         return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
     }
 
@@ -617,11 +680,22 @@ public sealed class UsesOwnNames
     {
         global::System.ArgumentNullException.ThrowIfNull(rows);
         var all = rows as global::System.Collections.Generic.IReadOnlyList<UsesOwnNames> ?? new global::System.Collections.Generic.List<UsesOwnNames>(rows);
+        for (var i = 0; i < all.Count; i++)
+            if (all[i] is null) throw new global::System.ArgumentException($"UsesOwnNames row {i} is null.", nameof(rows));
         return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
     }
 
     internal static global::Apache.Arrow.IArrowArray[] ToArrowColumns(global::System.Collections.Generic.IReadOnlyList<UsesOwnNames> rows)
     {
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var row = rows[i];
+            if (row.Fs is null) throw new global::System.ArgumentException($"UsesOwnNames.Fs is null in row {i}; use an empty collection instead.", nameof(rows));
+            foreach (var x1 in row.Fs)
+            {
+                if (x1 is null) throw new global::System.ArgumentException($"UsesOwnNames.Fs holds a null element in row {i}; an element is never null.", nameof(rows));
+            }
+        }
         var t0 = (global::Apache.Arrow.Types.StructType)Schema.GetFieldByIndex(0).DataType;
         var r0 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Names.Schema_>(rows.Count);
         for (var i = 0; i < rows.Count; i++)
@@ -674,6 +748,8 @@ public sealed class Topic
     {
         global::System.ArgumentNullException.ThrowIfNull(rows);
         var all = rows as global::System.Collections.Generic.IReadOnlyList<Topic> ?? new global::System.Collections.Generic.List<Topic>(rows);
+        for (var i = 0; i < all.Count; i++)
+            if (all[i] is null) throw new global::System.ArgumentException($"Topic row {i} is null.", nameof(rows));
         return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
     }
 

@@ -1723,6 +1723,20 @@ codec step.
   and enums, near misses included). No golden moved. Plugin 167/167 (bucket 166); protoc-coverage
   23/23; Fletcher.Tests 373/373 on both TFMs; ProtocDotnet 28/28; Beside 4/4; C++ format clean over
   the whole repo.
+- **Review ruling Q10, 2026-10-14 (D-BIND-92, D-BIND-93): forced nulls and temporal defaults.**
+  `ToArrowColumns` opens with one pass that refuses, with an `ArgumentException` naming class,
+  property and row, a null forced into a non-nullable string or bytes field, a list element at any
+  depth, a map key or value, or a collection; the public `ToArrow` refuses a null row (scope widened
+  by the maintainer from the ruling's field, key and element). Before, such a null was written into
+  a non-nullable column, became empty bytes, or failed with a NullReferenceException in generated
+  code. A non-nullable Timestamp or Duration now starts at zero in its column's unit, so a fresh row
+  reads back equal. The C# goldens move by design (every class's ToArrow; the check pass; the two
+  initialisers). New `Fletcher.Tests` `GeneratedNullRefusalTests` (13 refusal cases over the
+  coverage golden, the unit default, and a reflection round trip of a fresh row of EVERY generated
+  class): all 15 fail against the goldens of `2ece077`, which compile. Two plugin cases updated to
+  pin the new text; `ProtocDotnet`'s default-Timestamp assertion updated. The Arrow-tier gap is a new
+  BIND-9 acceptance bullet. Plugin 167/167; protoc-coverage 23/23; Fletcher.Tests 388/388 on both
+  TFMs; ProtocDotnet 28/28; Beside 4/4; C++ and C# format clean.
 - **Review fix B5, 2026-10-13: C# registers C++'s topic, by test.** `test_topic_path.cpp`'s
   `ExpectBackendsAgree` generated C++ and TypeScript only, and the C# topic was checked against
   hand-written literals, so a change to C++'s form would have passed. It now also generates `csharp`
@@ -1890,6 +1904,13 @@ same machinery as everything else, **so that** it cannot rot.
      enters AOT-compiled managed code on a Fast DDS thread, which until now has run
      only under the JIT. The test-body rules for Fast DDS apply (wait with a
      deadline, republish until the first row arrives, GUID topics).
+- **A null in a non-nullable column, at the Arrow tier (parked here with D-BIND-92,
+  review Q10a).** The generated `ToArrow` now refuses a caller-forced null, but a
+  RecordBatch a caller builds by hand (the Arrow tier: `PublisherArrow`, the codec)
+  is encoded as given in BOTH languages: no codec path checks a column's nullability,
+  and C++'s generated decoder then reads a value that is not there. Decide here
+  whether the codec refuses such a batch (in C++, for every binding) or the contract
+  is documented as the caller's; BIND-10 documents whichever is ruled.
 - The **self-hosted runner** registered, labelled, documented (what it runs, what it
   must have installed), and used by no other job than the NuGet publish jobs:
   `cd.dotnet.yml`'s and, since D-BIND-71, `cd.protoc.yml`'s. Both are tag-triggered

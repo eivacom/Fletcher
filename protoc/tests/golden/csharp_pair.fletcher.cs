@@ -27,11 +27,18 @@ public sealed class Stamp
     {
         global::System.ArgumentNullException.ThrowIfNull(rows);
         var all = rows as global::System.Collections.Generic.IReadOnlyList<Stamp> ?? new global::System.Collections.Generic.List<Stamp>(rows);
+        for (var i = 0; i < all.Count; i++)
+            if (all[i] is null) throw new global::System.ArgumentException($"Stamp row {i} is null.", nameof(rows));
         return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
     }
 
     internal static global::Apache.Arrow.IArrowArray[] ToArrowColumns(global::System.Collections.Generic.IReadOnlyList<Stamp> rows)
     {
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var row = rows[i];
+            if (row.By is null) throw new global::System.ArgumentException($"Stamp.By is null in row {i}, but the field is not optional.", nameof(rows));
+        }
         var b0 = new global::Apache.Arrow.StringArray.Builder();
         foreach (var row in rows)
         {
@@ -60,7 +67,7 @@ public sealed class Reading
     public global::System.Collections.Generic.List<global::System.Collections.Generic.KeyValuePair<string, long>> Tags { get; set; } = new();
     public Stamp Stamp { get; set; } = new();
     public global::System.Collections.Generic.List<Stamp> History { get; set; } = new();
-    public global::Eiva.Fletcher.Model.Timestamp At { get; set; }
+    public global::Eiva.Fletcher.Model.Timestamp At { get; set; } = new global::Eiva.Fletcher.Model.Timestamp(0, global::Apache.Arrow.Types.TimeUnit.Nanosecond);
 
     public static global::Apache.Arrow.Schema Schema { get; } = new global::Apache.Arrow.Schema(
         new global::Apache.Arrow.Field[]
@@ -81,11 +88,29 @@ public sealed class Reading
     {
         global::System.ArgumentNullException.ThrowIfNull(rows);
         var all = rows as global::System.Collections.Generic.IReadOnlyList<Reading> ?? new global::System.Collections.Generic.List<Reading>(rows);
+        for (var i = 0; i < all.Count; i++)
+            if (all[i] is null) throw new global::System.ArgumentException($"Reading row {i} is null.", nameof(rows));
         return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
     }
 
     internal static global::Apache.Arrow.IArrowArray[] ToArrowColumns(global::System.Collections.Generic.IReadOnlyList<Reading> rows)
     {
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var row = rows[i];
+            if (row.Name is null) throw new global::System.ArgumentException($"Reading.Name is null in row {i}, but the field is not optional.", nameof(rows));
+            if (row.Samples is null) throw new global::System.ArgumentException($"Reading.Samples is null in row {i}; use an empty collection instead.", nameof(rows));
+            if (row.Tags is null) throw new global::System.ArgumentException($"Reading.Tags is null in row {i}; use an empty collection instead.", nameof(rows));
+            foreach (var x5 in row.Tags)
+            {
+                if (x5.Key is null) throw new global::System.ArgumentException($"Reading.Tags holds a null map key in row {i}.", nameof(rows));
+            }
+            if (row.History is null) throw new global::System.ArgumentException($"Reading.History is null in row {i}; use an empty collection instead.", nameof(rows));
+            foreach (var x7 in row.History)
+            {
+                if (x7 is null) throw new global::System.ArgumentException($"Reading.History holds a null element in row {i}; an element is never null.", nameof(rows));
+            }
+        }
         var b0 = new global::Apache.Arrow.Int32Array.Builder();
         foreach (var row in rows)
         {
@@ -227,11 +252,22 @@ public sealed class Marks
     {
         global::System.ArgumentNullException.ThrowIfNull(rows);
         var all = rows as global::System.Collections.Generic.IReadOnlyList<Marks> ?? new global::System.Collections.Generic.List<Marks>(rows);
+        for (var i = 0; i < all.Count; i++)
+            if (all[i] is null) throw new global::System.ArgumentException($"Marks row {i} is null.", nameof(rows));
         return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
     }
 
     internal static global::Apache.Arrow.IArrowArray[] ToArrowColumns(global::System.Collections.Generic.IReadOnlyList<Marks> rows)
     {
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var row = rows[i];
+            if (row.At is null) throw new global::System.ArgumentException($"Marks.At is null in row {i}; use an empty collection instead.", nameof(rows));
+            foreach (var x0 in row.At)
+            {
+                if (x0 is null) throw new global::System.ArgumentException($"Marks.At holds a null element in row {i}; an element is never null.", nameof(rows));
+            }
+        }
         var t0 = (global::Apache.Arrow.Types.ListType)Schema.GetFieldByIndex(0).DataType;
         var o0 = new global::Apache.Arrow.ArrowBuffer.Builder<int>(rows.Count + 1);
         o0.Append(0);

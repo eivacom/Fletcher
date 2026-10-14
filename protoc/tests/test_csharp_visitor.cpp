@@ -439,8 +439,15 @@ TEST(CsVisitor, TimestampAndDurationUseTheModelPackageNotDateTime) {
     const FileDescriptor* file = BuildFixture(pool);
     ASSERT_NE(file, nullptr);
     const std::string cs = CSharp(file);
-    ExpectContains(cs, "    public global::Eiva.Fletcher.Model.Timestamp At { get; set; }\n");
-    ExpectContains(cs, "    public global::Eiva.Fletcher.Model.Duration Took { get; set; }\n");
+    // D-BIND-93: a plain one starts at zero in its column's unit, so it reads back equal.
+    ExpectContains(cs,
+                   "    public global::Eiva.Fletcher.Model.Timestamp At { get; set; } = new "
+                   "global::Eiva.Fletcher.Model.Timestamp(0, global::Apache.Arrow.Types.TimeUnit."
+                   "Nanosecond);\n");
+    ExpectContains(cs,
+                   "    public global::Eiva.Fletcher.Model.Duration Took { get; set; } = new "
+                   "global::Eiva.Fletcher.Model.Duration(0, global::Apache.Arrow.Types.TimeUnit."
+                   "Nanosecond);\n");
     ExpectContains(cs, "    public global::Eiva.Fletcher.Model.Timestamp? MaybeAt { get; set; }\n");
     EXPECT_EQ(cs.find("DateTime"), std::string::npos) << cs;
     EXPECT_EQ(cs.find("TimeSpan"), std::string::npos) << cs;
@@ -567,6 +574,10 @@ TEST(CsVisitor, ScalarOnlyMessageGetsToArrow) {
         "        global::System.ArgumentNullException.ThrowIfNull(rows);\n"
         "        var all = rows as global::System.Collections.Generic.IReadOnlyList<Sample>"
         " ?? new global::System.Collections.Generic.List<Sample>(rows);\n"
+        "        for (var i = 0; i < all.Count; i++)\n"
+        "            if (all[i] is null) throw new global::System.ArgumentException($\"Sample row "
+        "{i} "
+        "is null.\", nameof(rows));\n"
         "        return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), "
         "all.Count);\n    }\n");
     ExpectContains(sample,
@@ -577,6 +588,11 @@ TEST(CsVisitor, ScalarOnlyMessageGetsToArrow) {
     ExpectContains(sample,
                    "            if (row.Note is { } x7) b7.Append(x7); else b7.AppendNull();\n");
     ExpectContains(sample, "            b8.Append((global::System.ReadOnlySpan<byte>)row.Blob);\n");
+    // D-BIND-92: a null forced into the non-optional bytes field is refused, never written empty.
+    ExpectContains(
+        sample,
+        "            if (row.Blob is null) throw new global::System.ArgumentException($\"Sample."
+        "Blob is null in row {i}, but the field is not optional.\", nameof(rows));\n");
     ExpectContains(sample, "            b9.Append((int)row.Color);\n");
     ExpectContains(
         sample,
