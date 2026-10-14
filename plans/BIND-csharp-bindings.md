@@ -1755,6 +1755,12 @@ codec step.
   process: the single-copy marker refuses it). Mutants: without the suppression the Interop build
   fails (IL3000 ×4); probing the application alone fails the case. Fletcher.Tests 389/389 on both
   TFMs; AotSmoke published and run OK (warnings as errors); C# format clean.
+- **Review debt P-D3, 2026-10-14: closed as unreachable, by measurement.** C++ notes a field "with
+  no Arrow mapping, absent from the schema" only when the IR cannot represent it yet does not mark it
+  UNSUPPORTED, and the IR builds no such node; every UNSUPPORTED field refuses the whole file for all
+  backends first (GIR-8, D-BIND-85). Probed through real protoc (flatten wrappers around a map and a
+  repeated scalar, singular and repeated; a recursive message): both backends map or omit the same
+  fields, with no note in either. Closed without a code change by the maintainer's choice.
 - **Review fix B5, 2026-10-13: C# registers C++'s topic, by test.** `test_topic_path.cpp`'s
   `ExpectBackendsAgree` generated C++ and TypeScript only, and the C# topic was checked against
   hand-written literals, so a change to C++'s form would have passed. It now also generates `csharp`

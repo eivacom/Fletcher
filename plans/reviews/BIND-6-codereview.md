@@ -201,7 +201,14 @@ four places.
   `CsTypeTable.StringLiteralsEscapeWhatCannotAppearRaw`, which a mutant without the escapes fails.
 - P-D2: `ConversionBlocker` has no memo; it re-walks shared sub-messages. *(reported)*
 - **P-D3:** fields the IR drops (oneof members and the like) vanish from the C# class without the
-  note C++ writes. *(reported)*
+  note C++ writes. *(reported)* **CLOSED AS UNREACHABLE 2026-10-14 (maintainer's choice), measured:**
+  C++'s note needs a field the IR cannot represent that is not UNSUPPORTED, and the IR builds none;
+  every UNSUPPORTED field (a oneof member, `Any`, a map of flatten wrappers) refuses the whole file
+  for every backend before any output (GIR-8 `ValidateNoUnsupportedIr`, D-BIND-85). Probed through
+  real protoc: a flatten wrapper around a map (singular and repeated) and around a repeated scalar
+  are mapped by both backends with no note, and a recursive message is omitted by both without a
+  comment (C++'s "Skipped: recursive" line is unreachable too). C# and C++ therefore drop the same
+  nothing. If a future IR kind reaches that path, it gets its own fix and test.
 - P-D4: an exception from the schema sink would crash the plugin rather than return `*error`;
   unreachable today. *(reported)*
 
