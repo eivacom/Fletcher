@@ -1775,6 +1775,13 @@ codec step.
   generated into `gen/google/protobuf/`. §5.3's diagram draws the topic class, the handler delegate
   and those members, and marks the view and accessor as BIND-7's (parse and render checked under
   mermaid@11).
+- **Review debt T-D2, 2026-10-14: the architecture diagrams draw BIND-6 as built.** Diagram 2 of
+  `BIND-architecture-diagrams.md`: the native pair is `<<built>>` and emitted by default
+  (`csharp_model_only` leaves it out, D-BIND-76), replacing "emitted only when asked for"; a topic
+  box in the model file is shared by the native and gateway pairs (D-BIND-77); the model box adds
+  cross-file types (D-BIND-80), nullability (D-BIND-83, 86) and the forced-null refusal (D-BIND-92);
+  the Model box and the prose below it say built. Diagram 9 was already current. Parses and renders
+  under mermaid@11.
 - **Review fix B5, 2026-10-13: C# registers C++'s topic, by test.** `test_topic_path.cpp`'s
   `ExpectBackendsAgree` generated C++ and TypeScript only, and the C# topic was checked against
   hand-written literals, so a change to C++'s form would have passed. It now also generates `csharp`

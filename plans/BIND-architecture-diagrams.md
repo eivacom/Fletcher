@@ -352,11 +352,22 @@ classDiagram
         ToArrow, FromArrow - 6b scalars, 6c-2 composites and temporal
         writes no wire bytes - D-BIND-1
         namespace Fletcher.Gen.PascalPkg - D-BIND-69
+        types from other files by their own class - 6e-1, D-BIND-80
+        nullable exactly as the schema - D-BIND-83 and 86
+        refuses a forced null in ToArrow - D-BIND-92
+    }
+    class Generated_topic_cs {
+        <<built>>
+        Svc_MethodTopic in the model file, BIND-6d
+        Segments and Key in C++ form - D-BIND-77 and 72
+        shared by the native pair and the gateway pair
     }
     class Generated_native_pair_cs {
-        <<planned>>
-        Svc_MethodPublisher and Subscriber
-        BIND-6d
+        <<built>>
+        .fletcher.native.cs, BIND-6d
+        Svc_MethodPublisher and Subscriber and Handler
+        emitted by default - D-BIND-76
+        csharp_model_only leaves it out
     }
     class Generated_gateway_pair_cs {
         <<planned>>
@@ -365,16 +376,16 @@ classDiagram
     }
     class Fletcher_Model_cs {
         <<built>>
-        Eiva.Fletcher.Model, scaffolded in BIND-6c
+        Eiva.Fletcher.Model, BIND-6c
         lossless Timestamp and Duration - D-BIND-74
         Apache.Arrow only
-        nothing references it until the 6c generator
+        the generated model names it for temporal fields
     }
     class Apache_Arrow {
         <<NuGet>>
         Apache.Arrow
     }
-    note for Fletcher_Generated_cs "D-BIND-72: the model layer compiles against Apache.Arrow ONLY, so a gateway or WASM app never pulls in native assets. Each pair references its own runtime package and is emitted only when asked for."
+    note for Fletcher_Generated_cs "D-BIND-72: the model layer compiles against Apache.Arrow ONLY, so a gateway or WASM app never pulls in native assets. Each pair references its own runtime package. The native pair is emitted by default and csharp_model_only leaves it out (D-BIND-76)."
     class Fletcher_GatewayClient_cs {
         <<planned>>
         Eiva.Fletcher.GatewayClient, BIND-8
@@ -391,8 +402,11 @@ classDiagram
     Fletcher_Generated_cs --> Apache_Arrow : model layer
     Fletcher_Generated_cs --> Fletcher_Model_cs : temporal types
     Fletcher_Model_cs --> Apache_Arrow
+    Generated_topic_cs --> Fletcher_Generated_cs : model layer
     Generated_native_pair_cs --> Fletcher_Generated_cs
+    Generated_native_pair_cs --> Generated_topic_cs
     Generated_native_pair_cs --> Fletcher_PubSub_cs
+    Generated_gateway_pair_cs --> Generated_topic_cs
     Generated_gateway_pair_cs --> Fletcher_Generated_cs
     Generated_gateway_pair_cs --> Fletcher_GatewayClient_cs
     Fletcher_GatewayClient_cs --> Apache_Arrow
@@ -404,7 +418,7 @@ The four C# packages are D-BIND-14′'s, amended by D-BIND-74: `Eiva.Fletcher.In
 `Eiva.Fletcher` (every managed tier above the interop, in ONE namespace today —
 the component-named namespaces D-BIND-14′ allows were not needed),
 `Eiva.Fletcher.GatewayClient` and `Eiva.Fletcher.Model` (`Apache.Arrow` only, the lossless
-`Timestamp` and `Duration`, planned for 6c). Generated C# is in none of them: it lives in the
+`Timestamp` and `Duration`, built in 6c). Generated C# is in none of them: it lives in the
 consumer's assembly, in namespace `Fletcher.Gen.<PascalPkg>` (D-BIND-69), with
 nested messages flat as `Outer_Inner`. Until 2026-09-25 this diagram drew six boxes from
 the pre-ruling design, including a managed `IPubSubProvider` that D-BIND-24

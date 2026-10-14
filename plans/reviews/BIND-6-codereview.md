@@ -248,6 +248,11 @@ four places.
   - "Emitted only when asked for" contradicts D-BIND-76.
   - There is no topic class (D-BIND-77).
   - Model box text predates 6c.
+  - **FIXED 2026-10-14:** in diagram 2 the native pair is `<<built>>` (`.fletcher.native.cs`,
+    emitted by default, `csharp_model_only` leaves it out), the note says so (D-BIND-76), a
+    `Generated_topic_cs` box shares the topic between the native and gateway pairs (D-BIND-77), the
+    model box names 6e-1, D-BIND-83/86 and D-BIND-92, and the Model box and the prose below say
+    built. Parses and renders under mermaid@11.
 - **T-D3:** the no-drift test covers `""`, `ts`, `ts,ipc` and `schema_only`, not `accessor` or
   `rust`.
 - **T-D4:** `ci.pr`'s `integration-protoc-dotnet` filter lacks `dotnet/Directory.Build.targets`.
