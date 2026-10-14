@@ -1766,6 +1766,15 @@ codec step.
   toolchain packs from that file (D-BIND-81), so a change to it alone did not run the lane. The
   sparse checkout already took all of `dotnet/`; every other filter takes `dotnet/**`. actionlint
   clean (its one finding, `queue: max` in `ci.setup-devcontainer-image.yml`, is pre-existing).
+- **Review debt T-D1, 2026-10-14: the public-surface note matches what BIND-6 generates.**
+  `BIND-csharp-public-surface.md` §2.7 now names the model file and the native file,
+  `csharp_model_only`, the `<Svc>_<Method>Topic` class, the naming and nullability rulings since
+  6a (D-BIND-80, 83, 84, 86, 89, 92, 93) and the skip rule (D-BIND-90), and gives the pair's real
+  members (options, `Unsubscribe`, `HandlerFaulted`, `AbsorbedCallbackFailures`, `const TopicKey`);
+  the consumer recipe's glob is `gen/**/*.fletcher*.cs`, which takes the native file and a model
+  generated into `gen/google/protobuf/`. §5.3's diagram draws the topic class, the handler delegate
+  and those members, and marks the view and accessor as BIND-7's (parse and render checked under
+  mermaid@11).
 - **Review fix B5, 2026-10-13: C# registers C++'s topic, by test.** `test_topic_path.cpp`'s
   `ExpectBackendsAgree` generated C++ and TypeScript only, and the C# topic was checked against
   hand-written literals, so a change to C++'s form would have passed. It now also generates `csharp`

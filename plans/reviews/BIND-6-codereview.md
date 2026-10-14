@@ -238,6 +238,11 @@ four places.
   - §2.7 omits `.fletcher.native.cs`, `csharp_model_only` and the topic class.
   - Its recipe glob misses `*.fletcher.native.cs` and `google/protobuf/*.fletcher.cs`.
   - §5.3 still shows `Subscribe(Action<..>)`.
+  - **FIXED 2026-10-14:** §2.7 names both files, `csharp_model_only`, the topic class, the
+    naming and nullability rulings since (D-BIND-80, 83, 84, 86, 89, 92, 93) and the skip rule
+    (D-BIND-90), with the pair's real members; the recipe glob is `gen/**/*.fletcher*.cs`; §5.3
+    draws the topic class, the handler delegate and the pair's members, and marks the view and
+    accessor as BIND-7's. The diagram parses and renders under mermaid@11.
 - **T-D2:** the architecture diagrams are stale.
   - The native pair is still drawn `<<planned>>`.
   - "Emitted only when asked for" contradicts D-BIND-76.

@@ -128,8 +128,18 @@ managed exception is rethrown (D-BIND-19).
 
 ### 2.7 Generated code (ADO 18789)
 
-Per `.proto` file, `--fletcher_opt=csharp` emits `<stem>.fletcher.cs` and
-`csharp_accessor` emits `<stem>.fletcher.accessor.cs` + `<stem>.fletcher.arrow.cs`.
+Per `.proto` file, `--fletcher_opt=csharp` emits two files *(updated 2026-10-14, review T-D1)*:
+
+- `<stem>.fletcher.cs`, the **model**, which compiles against `Apache.Arrow` and
+  `Eiva.Fletcher.Model` only: a `sealed class` per message, an `enum` per enum, and a
+  `public static class <Svc>_<Method>Topic` per pub/sub method (D-BIND-77);
+- `<stem>.fletcher.native.cs`, the **native pair** over `Eiva.Fletcher`: per pub/sub method a
+  `<Svc>_<Method>Handler` delegate and the `<Svc>_<Method>Publisher` / `Subscriber` classes
+  (D-BIND-76, D-BIND-79).
+
+`--fletcher_opt=csharp,csharp_model_only` writes the model alone, for an Arrow-only consumer, as
+C++'s `schema_only` does. `csharp_accessor` (BIND-7, not yet built) is to emit
+`<stem>.fletcher.accessor.cs` + `<stem>.fletcher.arrow.cs`.
 
 **Names (D-BIND-69, 2026-09-29).** Every generated type is in namespace
 `Fletcher.Gen.<PascalPkg>`, the C# spelling of C++'s `fletcher_gen::<pkg>`;
@@ -138,7 +148,18 @@ C# output. `<Msg>` below is the flat Fletcher class name, `Outer_Inner` for a ne
 message, as in C++. Properties are PascalCase, with a `_` suffix when one would
 share its class's name (`Player.Player_`), one of protoc's reserved member names
 (`Clone_`, `ToString_`, …) or one of the class's own members (`Schema_`, `ToArrow_`,
-`FromArrow_`), so every property is named as protoc's own C# names it (D-BIND-73).
+`FromArrow_`), so every property is named as protoc's own C# names it (D-BIND-73). A message
+named after one of those members is class `Schema_` and so on (D-BIND-84); two fields that
+PascalCase alike are `FooBar` and `FooBar_` in field order (D-BIND-89). A type from another
+`.proto` file is named from `global::`, and its class is generated from its own file
+(D-BIND-80).
+
+**Nullability (D-BIND-83, 86, 92, 93).** A property is nullable exactly where its schema field
+is: an `optional` field or a wrapper type. A plain message field is never null (`= new()`,
+always written present, as C++ writes it), a collection starts empty, and a non-nullable
+Timestamp or Duration starts at zero in its column's unit. List items and map keys and values
+are never null. `ToArrow` refuses a null forced past these annotations with an
+`ArgumentException` naming the class, the property and the row.
 
 **Running the generator (D-BIND-71).** A consumer references
 `Eiva.Fletcher.Protoc` (`PrivateAssets="all"`), which sets
@@ -147,9 +168,15 @@ share its class's name (`Player.Player_`), one of protoc's reserved member names
 ```xml
 <Target Name="FletcherGen" BeforeTargets="BeforeCompile">
   <Exec Command="protoc --plugin=protoc-gen-fletcher=&quot;$(FletcherProtocPlugin)&quot; --fletcher_opt=csharp --fletcher_out=$(IntermediateOutputPath)gen -I proto proto/player.proto" />
-  <ItemGroup><Compile Include="$(IntermediateOutputPath)gen/*.fletcher.cs" /></ItemGroup>
+  <ItemGroup><Compile Include="$(IntermediateOutputPath)gen/**/*.fletcher*.cs" /></ItemGroup>
 </Target>
 ```
+
+The glob is recursive and takes `*.fletcher*.cs`, so it picks up the native pair
+(`*.fletcher.native.cs`) and a model generated into a subfolder: a `repeated
+google.protobuf.Timestamp` field names the class generated from `timestamp.proto` itself, which a
+consumer generates too, into `gen/google/protobuf/timestamp.fletcher.cs` (BIND-6e, as C++
+includes its header).
 
 This is the same shape as C++ (`fletcher-protoc::plugin`) and TypeScript
 (`@eiva/protoc-gen-fletcher`). How protoc itself is located is BIND-9's to settle.
@@ -161,8 +188,10 @@ This is the same shape as C++ (`fletcher-protoc::plugin`) and TypeScript
 | `<Msg>Schema()` → `OwnedSchema` | `<Msg>.Schema` → `Apache.Arrow.Schema`, metadata preserved |
 | `class <Msg>View` (row-oriented, over a Scalar) | `readonly struct <Msg>View` over `(StructArray, int)` |
 | `class <Msg>Accessor` — `Make(RecordBatch)`, `Make(StructArray)`, column getters, `RowView` | `sealed class <Msg>Accessor` — `TryMake(RecordBatch, out)`, `TryMake(StructArray, out)`, column getters, `readonly struct RowView`. `TryMake` is the documented deviation from C++ `Make`-throws and Rust `Result` |
-| `<Svc>_<Method>Publisher` — `TopicSegments()`, `TopicKey()`, `Schema()`, `Publish(row)`, `Publish(row, attachments)` | same names — `static TopicPath Topic`, `static string TopicKey`, `static Schema Schema`, `Publish(<Msg>)` (one-row batch, bind, publish row 0), `Publish(<Msg>, AttachmentsBuilder)`, `Publish(IEnumerable<<Msg>>)` (binds once, publishes N: the fast path, development plan B-2) |
-| `<Svc>_<Method>Subscriber` — `Subscribe(cb)`, `SubscribeInPlace(cb)`, `Unsubscribe(id)` | `Subscribe(<Svc>_<Method>Handler)` → `Subscription`, where `delegate void <Svc>_<Method>Handler(<Msg> row, AttachmentsView attachments)` is generated beside the pair. **Amended 2026-10-07 (D-BIND-79):** this read `Action<<Msg>, AttachmentsView>`, which a net8.0 consumer cannot compile (`AttachmentsView` is a ref struct; CS9244). **No `SubscribeInPlace`**: it exists in C++ to avoid a per-sample allocation, and the C# equivalent is batch delivery. See Q16 |
+| the pair's `TopicSegments()`, `TopicKey()` | `static class <Svc>_<Method>Topic` in the MODEL file — `static IReadOnlyList<string> Segments`, `const string Key` — so the native pair and BIND-8's gateway pair share one topic (D-BIND-77). Segments in C++'s form: the package is ONE segment, dots kept (D-BIND-72), so a C# and a C++ publisher of one method register the same topic (B5, by test) |
+| `<Svc>_<Method>Publisher` — `TopicSegments()`, `TopicKey()`, `Schema()`, `Publish(row)`, `Publish(row, attachments)` | same names — `static TopicPath Topic`, `const string TopicKey`, `static Schema Schema`, ctor `(PubSubProviderHandle provider, TopicOptions? options = null)`, `Publish(<Msg>)` (one-row batch, bind, publish row 0; its price documented, D-BIND-78), `Publish(<Msg>, AttachmentsBuilder?)`, `Publish(IEnumerable<<Msg>>)` (binds once, publishes N: the fast path, development plan B-2), `Dispose()` |
+| `<Svc>_<Method>Subscriber` — `Subscribe(cb)`, `SubscribeInPlace(cb)`, `Unsubscribe(id)` | `static TopicPath Topic`, `const string TopicKey`, `static Schema Schema`, ctor `(PubSubProviderHandle provider)`, `Subscribe(<Svc>_<Method>Handler handler, TopicOptions? options = null)` → `Subscription`, `Unsubscribe(Subscription)`, `event HandlerFaulted`, `AbsorbedCallbackFailures`, `Dispose()`, where `delegate void <Svc>_<Method>Handler(<Msg> row, AttachmentsView attachments)` is generated beside the pair. **Amended 2026-10-07 (D-BIND-79):** this read `Action<<Msg>, AttachmentsView>`, which a net8.0 consumer cannot compile (`AttachmentsView` is a ref struct; CS9244). **No `SubscribeInPlace`**: it exists in C++ to avoid a per-sample allocation, and the C# equivalent is batch delivery. See Q16 |
+| a method C++ does not pair (`ValidateServiceMethod`: a request that is not `stream`, a streamed reply, a reply that is not `google.protobuf.Empty`, or an input that is not a message generated in this file, such as a flatten wrapper) | no topic class and no pair, and C++'s own `// Skipped: <Svc>.<Method> — <reason>` line in both files (D-BIND-90) |
 
 **One shape (D-BIND-72, 2026-09-29).** The row type, `Schema`, `ToArrow`,
 `FromArrow` and the topics form the model layer and compile against `Apache.Arrow`
@@ -487,38 +516,51 @@ classDiagram
         +FromArrow(StructArray source, int row) Msg$
     }
     class MsgView {
-        <<generated readonly struct>>
+        <<planned BIND-7 readonly struct>>
         +MsgView(StructArray source, int row)
         +ToRow() Msg
     }
     class MsgAccessor {
-        <<generated>>
+        <<planned BIND-7>>
         +TryMake(RecordBatch batch, out MsgAccessor accessor) bool$
         +TryMake(StructArray source, out MsgAccessor accessor) bool$
         +At(int row) RowView
         +Metadata(string key) string
     }
     class RowView {
-        <<generated readonly struct>>
+        <<planned BIND-7 readonly struct>>
         +borrows the accessor
     }
+    class SvcMethodTopic {
+        <<generated static, model file>>
+        +IReadOnlyList~string~ Segments$
+        +string Key$
+    }
+    class SvcMethodHandler {
+        <<generated delegate>>
+        +Invoke(Msg row, AttachmentsView attachments) void
+    }
     class SvcMethodPublisher {
-        <<generated>>
+        <<generated, native file>>
         +TopicPath Topic$
         +string TopicKey$
         +Schema Schema$
-        +SvcMethodPublisher(PubSubProviderHandle provider)
+        +SvcMethodPublisher(PubSubProviderHandle provider, TopicOptions options)
         +Publish(Msg row) void
         +Publish(Msg row, AttachmentsBuilder attachments) void
         +Publish(IEnumerable~Msg~ rows) void
         +Dispose() void
     }
     class SvcMethodSubscriber {
-        <<generated>>
+        <<generated, native file>>
         +TopicPath Topic$
+        +string TopicKey$
         +Schema Schema$
         +SvcMethodSubscriber(PubSubProviderHandle provider)
-        +Subscribe(Action~Msg, AttachmentsView~ handler) Subscription
+        +Subscribe(SvcMethodHandler handler, TopicOptions options) Subscription
+        +Unsubscribe(Subscription subscription) void
+        +HandlerFaulted event
+        +ulong AbsorbedCallbackFailures
         +Dispose() void
     }
     MsgAccessor *-- RowView : yields
@@ -528,6 +570,9 @@ classDiagram
     SvcMethodSubscriber *-- Subscriber : wraps
     SvcMethodPublisher ..> Msg : publishes
     SvcMethodSubscriber ..> Msg : delivers
+    SvcMethodPublisher ..> SvcMethodTopic : registers
+    SvcMethodSubscriber ..> SvcMethodTopic : subscribes to
+    SvcMethodSubscriber ..> SvcMethodHandler : calls
     FletcherCodec ..> BoundRows : binds, once per batch
     Publisher ..> BoundRows : publishes row i of
     Subscriber ..> FletcherCodec : decodes through
