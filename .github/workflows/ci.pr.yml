@@ -358,6 +358,7 @@ jobs:
               - 'integration-tests/protoc-dotnet/**'
               - 'dotnet/global.json'
               - 'dotnet/Directory.Build.props'
+              - 'dotnet/Directory.Build.targets'
               - 'dotnet/.editorconfig'
               - 'dotnet/src/Fletcher.Model/**'
               - '.github/workflows/ci.pr.yml'

@@ -246,7 +246,9 @@ four places.
 - **T-D3:** the no-drift test covers `""`, `ts`, `ts,ipc` and `schema_only`, not `accessor` or
   `rust`.
 - **T-D4:** `ci.pr`'s `integration-protoc-dotnet` filter lacks `dotnet/Directory.Build.targets`.
-  *(verified by reading)*
+  *(verified by reading)* **FIXED 2026-10-14:** added; the lane's sparse checkout already took all of
+  `dotnet/`, and its header comment now names the file (the D-BIND-81 AOT pack pin that
+  `Fletcher.Model` builds with). The other filters take `dotnet/**`. actionlint clean.
 - **T-D5:** stale text.
   - The tracker's D-BIND-72 bullet says "emitted only when requested".
   - The 6b-2 slice note overclaims the topic test.

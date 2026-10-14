@@ -1761,6 +1761,11 @@ codec step.
   backends first (GIR-8, D-BIND-85). Probed through real protoc (flatten wrappers around a map and a
   repeated scalar, singular and repeated; a recursive message): both backends map or omit the same
   fields, with no note in either. Closed without a code change by the maintainer's choice.
+- **Review debt T-D4, 2026-10-14: the protoc-dotnet lane's change filter names
+  `dotnet/Directory.Build.targets`.** `Fletcher.Model`, which the lane builds, takes its pinned AOT
+  toolchain packs from that file (D-BIND-81), so a change to it alone did not run the lane. The
+  sparse checkout already took all of `dotnet/`; every other filter takes `dotnet/**`. actionlint
+  clean (its one finding, `queue: max` in `ci.setup-devcontainer-image.yml`, is pre-existing).
 - **Review fix B5, 2026-10-13: C# registers C++'s topic, by test.** `test_topic_path.cpp`'s
   `ExpectBackendsAgree` generated C++ and TypeScript only, and the C# topic was checked against
   hand-written literals, so a change to C++'s form would have passed. It now also generates `csharp`

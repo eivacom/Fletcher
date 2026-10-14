@@ -37,7 +37,8 @@ on:
 # setup-dotnet reads the SDK pin from it. And, since D-BIND-74, the project references
 # dotnet/src/Fletcher.Model (the lossless Timestamp and Duration), which takes its
 # framework targets and analyser settings from dotnet/Directory.Build.props and
-# dotnet/.editorconfig. A new consumer of a path outside this lane's checkout adds it
+# dotnet/.editorconfig, and its pinned AOT toolchain packs from dotnet/Directory.Build.targets
+# (D-BIND-81; ci.pr.yml's filter lacked it until review T-D4). A new consumer of a path outside this lane's checkout adds it
 # HERE and to ci.pr.yml's filter, in the same commit.
 jobs:
   linux:
