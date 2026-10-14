@@ -790,6 +790,14 @@ MSBuild `Exec`.
 `StructArray.Fields` windowing question settled empirically first and recorded in
 `BIND-locked-decisions.md`; accessor depth cap decided (match 2/3 recommended,
 see §6 G-4); C# joins `accessor-capstone` against the shared fixture and oracle.
+**Ruled 2026-10-14 at its start (D-BIND-94 to 97):** `TryMake(…, out accessor, out error)`,
+never throwing on bad input (C++ returns a status, it does not throw); `SchemaMetadata`,
+`FieldMetadata(int | string)` and the shortcut `Metadata(key)`; a message the accessor cannot
+support keeps its class, whose `TryMake` refuses with the reason, as in C++; `<Msg>View` is
+(accessor, row), the accessor's `RowView`, because `StructArray.Fields` allocates 64 bytes per
+read (measured), so a view over `(StructArray, int)` would allocate on every getter. Slices: 7a
+accessor scalars, structs, `TryMake`, metadata and D-BIND-10's record; 7b collections; 7c the
+view; 7d the capstone's C# arm; 7e review.
 
 **One generated shape, two C# runtimes (D-BIND-72, 2026-09-29).** Per `.proto`,
 one file: a row type per message, one schema bound to it, the topics. The C# model

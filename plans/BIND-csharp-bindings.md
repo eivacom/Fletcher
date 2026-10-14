@@ -459,8 +459,8 @@ backend pair**, mirroring the TS pair exactly:
 |---|---|---|
 | `protoc/include/csharp_backend_type_table.hpp` + `.cpp` | `ts_backend_type_table.*` | The **only** place a C# type string may live. Keyed on `ir::LogicalType` + optional `ir::EnumIdentity` → `{cs_type_text, arrow_builder, …}`. Temporal types map **losslessly** (D-BIND-26). |
 | `protoc/include/csharp_backend_visitor.hpp` + `.cpp` | `ts_backend_visitor.*` | Recursive IR visitor emitting the row POCO, a static `Apache.Arrow.Schema`, `ToArrow(IEnumerable<T>)` / `FromArrow(StructArray, int)`, and the typed `<Service>_<Method>Publisher`/`Subscriber` pair. **No wire bytes**: no `WriteTo`/`ReadFrom`. |
-| `protoc/include/csharp_backend_view_visitor.hpp` + `.cpp` | `cpp_backend_view_visitor.*` | `<stem>.fletcher.arrow.cs` — typed row view over `(StructArray, int)` (BIND-7). |
-| `protoc/include/csharp_backend_accessor_visitor.hpp` + `.cpp` | the IR, not `FieldKind` | `<stem>.fletcher.accessor.cs` — column-oriented `<Class>Accessor` with `TryMake` (BIND-7). |
+| `protoc/include/csharp_backend_view_visitor.hpp` + `.cpp` | `cpp_backend_view_visitor.*` | `<stem>.fletcher.arrow.cs` — `<Msg>View`, a `readonly struct` of (accessor, row) that is also the accessor's `RowView`, with `ToRow()` (BIND-7, D-BIND-97; was "over `(StructArray, int)`"). |
+| `protoc/include/csharp_backend_accessor_visitor.hpp` + `.cpp` | the IR, not `FieldKind` | `<stem>.fletcher.accessor.cs` — column-oriented `<Class>Accessor` with `TryMake(…, out accessor, out error)` (BIND-7, D-BIND-94). |
 
 Hard rules, straight from GIR and the rulings:
 
@@ -1857,6 +1857,10 @@ codec step.
   - **The NITs** of `plans/reviews/BIND-6-codereview.md` (P-N1 to P-N5, four runtime, T-N1 to T-N4),
     except "a null element in `Publish(IEnumerable<T>)` throws an NRE", which D-BIND-92 resolved: the
     pair publishes through `ToArrow`, which now refuses a null row with an `ArgumentException`.
+  - **Found 2026-10-14, at BIND-7's start (D-BIND-97's measurement):** the generated
+    `FromArrow(StructArray, int)` reads `array.Fields[n]` per column, and Apache.Arrow 23's
+    `StructArray.Fields` allocates 64 bytes on every read, so `FromArrow` allocates 64 bytes per
+    column per row. Fix: read `Fields` once per call. Known debt, not yet scheduled.
 
 ### BIND-7 — Arrow view + accessor emitters + capstone third arm
 
@@ -1872,20 +1876,44 @@ allocation.
 - **The `StructArray.Fields` windowing question is resolved empirically first**
   and the finding recorded in `BIND-locked-decisions.md` (D-BIND-10), with a nested
   fixture at a **non-zero offset** as the forcing test.
-- `<Class>View`: a `readonly struct` over `(StructArray, int)` with typed getters
-  and `ToRow()`.
+- `<Class>View`: a `readonly struct` of (the accessor, a row), with typed getters
+  that read the accessor's cast-once columns in place, and `ToRow()`; it is also the
+  accessor's `RowView`. A string field has a `string` getter and a zero-copy UTF-8
+  `ReadOnlySpan<byte>` getter. *(Ruled 2026-10-14, D-BIND-97, replacing "a `readonly
+  struct` over `(StructArray, int)`": measured, `StructArray.Fields` allocates 64 bytes
+  per read, so such a view's every getter would allocate.)*
 - `<Class>Accessor`: **validate-once / cast-once**, positional type-only validation
   (name- and nullable-flag-tolerant), no per-cell materialisation, cached columns
-  own their buffers; `TryMake(RecordBatch, out)` and `TryMake(StructArray, out)`
-  (the documented deviation from C++ `Make`-throws and Rust `Result`); row-bound
-  `RowView` for struct fields; `Metadata(key)` (Q18); **nesting capped at RBA's
-  2/3** (Q6).
+  own their buffers; `TryMake(RecordBatch, out accessor, out error)` and
+  `TryMake(StructArray, out accessor, out error)`, never throwing on bad input
+  (D-BIND-94; this read "the documented deviation from C++ `Make`-throws and Rust
+  `Result`", but C++ returns a status, never throwing, D-RBA-4); row-bound `RowView`
+  for struct fields; `SchemaMetadata`, `FieldMetadata(int)`, `FieldMetadata(string)`
+  and the shortcut `Metadata(key)` (D-BIND-95, amending Q18); a message it cannot
+  support keeps its class, with a `TryMake` that refuses and says why (D-BIND-96);
+  **nesting capped at RBA's 2/3** (Q6).
 - Full type parity: scalar, nullable scalar, struct, repeated scalar, repeated
   struct, map (scalar + message value), nested list to the cap, metadata.
 - **C# joins `accessor-capstone` as the third language**, consuming the same
   `accessor_capstone.proto`, `accessor_capstone_fixture.json` and
   `accessor_capstone_expected.json`, asserting `observed == expected`. No
   expected values transcribed into the C# test.
+
+**Plan, agreed 2026-10-14 at the start.** A read-only map of the C++ and Rust accessors and the
+capstone came first; four questions were ruled before any code (D-BIND-94 to 97, above). Slices:
+
+- **7a:** the `csharp_accessor` token and its two files; the accessor's scalars, nullable scalars and
+  structs (with the view as its row type), both `TryMake`s, the metadata API, and D-BIND-10 recorded
+  with its forcing test (a nested `StructArray` at a non-zero offset; 6c-2 already measured that
+  `Fields` returns children sliced to the parent). Golden, plugin cases, runtime cases, no-drift.
+- **7b:** collections: repeated scalars and messages, maps with scalar and message values, lists of
+  lists to the 2/3 cap, and D-BIND-96's refusal beyond it.
+- **7c:** the view's `ToRow()` and the UTF-8 span getters.
+- **7d:** the capstone's C# arm, in the protoc-dotnet lane (its sparse checkout and `ci.pr`'s filter
+  gain `integration-tests/accessor-capstone/**`), and the README's third arm. **Also found by the
+  map:** the C++ (`integration-protoc-arrow`) and Rust lanes' filters do not list that directory
+  either, so a change to the capstone files alone runs neither; 7d adds it to all three.
+- **7e:** fresh-context review and close.
 
 ### BIND-T — TypeScript `Publisher` / `Subscriber`
 

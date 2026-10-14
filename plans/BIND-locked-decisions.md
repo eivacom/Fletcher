@@ -556,7 +556,9 @@ its purpose in C++ is avoiding a per-sample allocation and the C# answer is batc
 same rules as native, in **UTF-8 bytes**, and native re-validates; the duplication is accepted
 because a managed refusal carries a stack trace, and both sides are tested against one table
 (Q17). The C# accessor exposes generic metadata access (`Metadata(key)`) as the C++ and Rust
-accessors do, for capstone parity (Q18).
+accessors do, for capstone parity (Q18). *(Amended by D-BIND-95, 2026-10-14: C++ and Rust in fact
+expose the schema metadata and per-field metadata by position, not `Metadata(key)`; C# mirrors them
+and keeps `Metadata(key)` as a shortcut.)*
 
 - **D-BIND-28 — NuGet packages are published to EIVA's internal feed first; NuGet.org is a
   later, separate step.** *LOCKED BY THE MAINTAINER 2026-09-14.* `cd.dotnet.yml` pushes the
@@ -2891,3 +2893,57 @@ questions Q1 to Q10), and are numbered as their fixes land.
   generated row class by reflection: a fresh instance read back has equal temporal values.
   **Declined:** changing the Model's default (a `record struct` cannot have one other than all-zero
   fields).
+
+The next ones were ruled on 2026-10-14, at the start of BIND-7 (the C# Arrow view and RecordBatch
+accessor), after a read-only map of the C++ and Rust accessors and the capstone harness.
+
+- **D-BIND-94 - the C# accessor's factories are `TryMake(RecordBatch, out <Msg>Accessor?, out
+  string? error)` and `TryMake(StructArray, out <Msg>Accessor?, out string? error)`: never thrown on
+  bad input, and the reason returned.** *LOCKED BY THE MAINTAINER 2026-10-14 (BIND-7 Q1).* The plans
+  called `TryMake` "the documented deviation from C++ `Make`-throws". That was wrong: C++'s `Make`
+  returns `arrow::Result` with an `Invalid` status and its message and never throws (D-RBA-4), and
+  Rust's `try_new` / `from_struct` return `Result<_, ArrowError>`. So the C# form keeps what both
+  carry, the reason, in the shape .NET uses for a fallible factory. A null argument is a refusal like
+  any other. **Declined:** `TryMake(batch, out accessor)` alone, as first drawn (the reason is lost);
+  a throwing `Make` beside it (two ways to do one thing).
+
+- **D-BIND-95 - the C# accessor's metadata mirrors C++ and Rust: `SchemaMetadata`,
+  `FieldMetadata(int)` and `FieldMetadata(string)`, each an `IReadOnlyDictionary<string, string>` that
+  is empty, never null, when absent; `Metadata(key)` stays as a shortcut into the schema metadata,
+  null when the key is absent. Amends Q18.** *LOCKED BY THE MAINTAINER 2026-10-14 (BIND-7 Q2).* Q18
+  ruled `Metadata(key)` "as the C++ and Rust accessors do". Read from the emitters, they do not: C++
+  has `schema_metadata()`, `field_metadata(int)` and `field_metadata(name)` (nullptr when absent);
+  Rust `schema_metadata()` and `field_metadata(i)` (an empty map when absent). The capstone compares
+  the whole schema map and a positional array of field maps, which `Metadata(key)` alone could not
+  produce. Empty-not-null follows Rust, so a consumer never null-checks a map. **Declined:** dropping
+  `Metadata(key)` (Q18's convenience costs nothing); positional field access only, as Rust.
+
+- **D-BIND-96 - a message the C# accessor cannot support still gets its `<Msg>Accessor`, as in C++:
+  the unsupported field has a comment instead of a getter, and `TryMake` returns false with the
+  reason.** *LOCKED BY THE MAINTAINER 2026-10-14 (BIND-7 Q3).* "Cannot support" means what it means
+  for C++'s accessor: a list of lists deeper than the 2/3 cap (D-BIND-9), and a message whose
+  conversion reaches one. C++ generates the class with a `Make` that always fails; Rust generates no
+  struct at all, transitively, with a comment saying why (D-RBA-8). C# follows C++, as BIND-6 did
+  throughout: code that names the class still compiles, and the refusal names the field.
+  **Declined:** Rust's form (the class disappears, and with it every class that reaches it).
+
+- **D-BIND-97 - `<Msg>View` is a `readonly struct` of (the accessor, a row), in
+  `<stem>.fletcher.arrow.cs`, and the accessor's `RowView` IS that view; its getters read the
+  accessor's cast-once columns in place, and `ToRow()` materialises the generated row class.
+  Replaces the planned view over `(StructArray, int)`.** *LOCKED BY THE MAINTAINER 2026-10-14 (BIND-7
+  Q4), after a measurement the maintainer asked for ("what about performance and zero copy?").*
+  Measured on Apache.Arrow 23.0.0, one million calls each: reading `StructArray.Fields` allocates
+  64 bytes on EVERY property read although it returns the same cached list, so a view over
+  `(StructArray, int)` whose getters go through `Fields[i]` allocates 64 bytes per getter call (an
+  `int`, a UTF-8 span, a byte span, a list), while the same reads from typed arrays cast once allocate
+  0. So the efficient view is the accessor's columns plus a row, which is what the accessor's
+  `RowView` already is; one type serves both. A view of a bare `StructArray` goes through `TryMake`
+  once. Nothing is copied except where .NET requires it: a `string` getter decodes UTF-8 into UTF-16
+  (40 bytes for a short string, measured), so a string field also gets a getter returning its UTF-8
+  bytes as a `ReadOnlySpan<byte>`, which copies nothing; `ToRow()` builds the row class by design.
+  C++'s view, for comparison, materialises an Arrow `Scalar` per column per row and has no `ToRow()`
+  (its inverse is the free function `ToArrowRow`); it is emitted on every run, where C#'s comes with
+  `csharp_accessor` alone. **Found while measuring:** BIND-6's generated `FromArrow(StructArray, int)`
+  reads `array.Fields[n]` per column, so it allocates 64 bytes per column per row; recorded as debt.
+  **Declined:** the view over `(StructArray, int)` with `Fields` fetched once at construction (64
+  bytes per view, a cast per getter, and a second type beside `RowView`); no view at all.
