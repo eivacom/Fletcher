@@ -280,6 +280,12 @@ four places.
 - **T-D9:** digest entries amended later are not annotated.
   - D-BIND-75's "a comment naming BIND-6e" was superseded by D-BIND-80.
   - D-BIND-72 point 3 was amended by D-BIND-76.
+  - **FIXED 2026-10-14:** both marked, and the digest swept for every "amends / extends /
+    supersedes / reverses" relation, checking each target names its amender. Two more were
+    unmarked and are now: D-BIND-72 point 3 by D-BIND-74 (the model also references
+    `Eiva.Fletcher.Model`), and D-BIND-14's three packages by D-BIND-74 (four). The rest already
+    point back (18←51, 69←70, 73←84/89, 75←83, 81←88, 82←91); D-BIND-72's mention of D-BIND-69 is a
+    declined option, not an amendment.
 
 ## NITs
 

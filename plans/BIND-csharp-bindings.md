@@ -1800,6 +1800,11 @@ codec step.
   suite is called (`CsVisitor`, `CsVisitorPair`, `CsVisitorCrossFile`, `CsNames`, `CsTypeTable`);
   and the protoc-dotnet README's "no conversion until BIND-6c" and "wire comparison with 6d". Each
   correction is marked where it stands.
+- **Review debt T-D9, 2026-10-14: every amended decision points to its amender.** Swept the digest
+  for every amends / extends / supersedes / reverses relation and checked each target. Four were
+  unmarked and now carry a dated note: D-BIND-75's cross-file bullet (superseded by D-BIND-80),
+  D-BIND-72 point 3 (by D-BIND-76, native pair by default, and by D-BIND-74, the Model reference),
+  and D-BIND-14's three packages (four, by D-BIND-74).
 - **Review fix B5, 2026-10-13: C# registers C++'s topic, by test.** `test_topic_path.cpp`'s
   `ExpectBackendsAgree` generated C++ and TypeScript only, and the C# topic was checked against
   hand-written literals, so a change to C++'s form would have passed. It now also generates `csharp`
