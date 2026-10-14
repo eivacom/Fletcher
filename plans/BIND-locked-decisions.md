@@ -2284,7 +2284,7 @@ accessors do, for capstone parity (Q18).
   **Left to BIND-6, not ruled here:** how a dotted or snake_case package is PascalCased segment by
   segment, and what an empty package yields; a property colliding with a GENERATED member
   (`Schema`, `ToArrow`, `FromArrow`) or with another field after PascalCasing. Each is raised as a
-  question if protoc's rule does not answer it. **Separate questions at the same boundary:** enum
+  question if protoc's rule does not answer it. *(Another field after PascalCasing: ruled by D-BIND-89.)* **Separate questions at the same boundary:** enum
   member naming, and whether BIND-6 ships an MSBuild `.targets`.
 
   **Declined:** honouring `csharp_namespace` (CS0101 beside protoc's output); following protoc
@@ -2487,6 +2487,8 @@ accessors do, for capstone parity (Q18).
 
   Every property is therefore named exactly as protoc's output names it, which helps an
   application that maps between the two, and no field can collide with a member of ours.
+  *(D-BIND-89: two fields that PascalCase alike are told apart by a further `_`, in field order,
+  where protoc would declare the property twice.)*
 
   **Declined:** only the names our class actually has (some properties would differ from
   protoc's: a field `clone` stays `Clone` here and is `Clone_` there); protoc's list alone (a field
@@ -2795,3 +2797,24 @@ questions Q1 to Q10), and are numbered as their fixes land.
   bullets in BIND-9's acceptance, so BIND-9 cannot close without them. **Declined:** doing them in
   BIND-6 (the Windows leg needs the RID matrix BIND-9 builds; the transport run is test work for a
   shipped package).
+
+- **D-BIND-89 - (a) two fields that PascalCase to one C# property are told apart by `_`, in field
+  order; (b) a field-level flatten that inlines a name its host already has is refused for every
+  backend.** *LOCKED BY THE MAINTAINER 2026-10-08 (review Q7); answers what D-BIND-69 left open.*
+  Measured 2026-10-08: protoc 3.21.12 rejects such a pair in proto3 itself (the JSON names clash,
+  case-insensitively), but accepts proto2 `foo_bar` + `fooBar`, for which C++ is fine and C#
+  declared the property twice (CS0102); and a flatten that inlines a field named like a host field
+  gave two schema columns of one name and broke C++ too (`set_x` declared twice).
+  (a) `CsUniquePropertyName` names each property by D-BIND-73/84, then appends `_` while the name is
+  already taken by an earlier property of the class or equals the class's name: proto2 `foo_bar`,
+  `fooBar`, `FooBar` are `FooBar`, `FooBar_`, `FooBar__`. It covers a host field and an inlined one
+  that PascalCase alike too (proto3 accepts that pair, the fields being in different messages).
+  Column names and C++ are unchanged. (b) `ValidateFlattenedNamesUnique` runs beside
+  `ValidateNoUnsupportedIr`, before any output, over every generated message's flattened field
+  list, and refuses the first column name that occurs twice: "fields '<A>' and '<B>' (inlined by the
+  field-level flatten '<F>') both become column 'x' of '<Host>'; rename one of them". Tests: golden
+  `csharp_proto2.proto` compiled and run in `Fletcher.Tests`; `CsNames` and `CsVisitor` cases; and
+  `GenErrors.FlattenedNameClashFailsBuild` (real protoc and plugin) in protoc-coverage. Both halves
+  failed against the plugin built before the fix (three properties `FooBar`; the clash generated).
+  **Declined:** for (a), refusing the file (protoc accepts it, and C++ works); for (b), renaming one
+  column (the schema is C++'s, and a silent rename would surprise every consumer).

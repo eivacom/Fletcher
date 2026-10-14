@@ -1579,6 +1579,37 @@ bool ValidateNoUnsupportedIr(const google::protobuf::FileDescriptor* file, std::
     return true;
 }
 
+// D-BIND-89 (b): a field-level flatten inlines the flattened message's fields into
+// the host, so an inlined field can carry the name of a host field, or of a field
+// another flatten inlines. Every backend then breaks (two schema columns of one
+// name; C++ `set_x` declared twice), so the file is refused before any output,
+// naming both fields. Same message set as ValidateNoUnsupportedIr.
+std::string FlattenOrigin(const cpp_backend::SchemaFieldRecord& rec) {
+    std::string where = "'" + rec.source_field->full_name() + "'";
+    if (!rec.flatten_chain.empty())
+        where += " (inlined by the field-level flatten '" + rec.flatten_chain.front()->full_name() +
+                 "')";
+    return where;
+}
+
+bool ValidateFlattenedNamesUnique(const google::protobuf::FileDescriptor* file,
+                                  std::string* error) {
+    for (const auto* msg : OrderedMessages(file)) {
+        if (IsRecursive(msg) || IsFlattenedWrapper(msg)) continue;
+        const auto records = cpp_backend::BuildFlattenedFieldList(msg);
+        for (size_t i = 0; i < records.size(); ++i) {
+            for (size_t j = 0; j < i; ++j) {
+                if (records[j].name != records[i].name) continue;
+                *error = "fields " + FlattenOrigin(records[j]) + " and " +
+                         FlattenOrigin(records[i]) + " both become column '" + records[i].name +
+                         "' of '" + msg->full_name() + "'; rename one of them";
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 // GIR-10: locate the first scalar-leaf nested list (List<List<...<Scalar>>>,
 // i.e. a LIST whose element chain is ≥1 more LIST bottoming out in a SCALAR)
 // reachable from `node`, returning its proto field name. Single-level
@@ -1730,6 +1761,8 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
     // GIR-8 (#55): fail fatally on genuinely-unsupported types before writing any
     // artifact (C++ header / view / TS / IPC / RBA). Recursion stays skipped.
     if (!ValidateNoUnsupportedIr(file, error)) return false;
+    // D-BIND-89 (b): no two columns of one message may share a name.
+    if (!ValidateFlattenedNamesUnique(file, error)) return false;
 
     // Parse comma-separated options from --fletcher_opt=... through the ONE
     // tokenizer GenerateAll() also uses.

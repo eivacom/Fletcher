@@ -451,6 +451,15 @@ std::string CsPropertyName(std::string_view field_name, const google::protobuf::
     return property;
 }
 
+std::string CsUniquePropertyName(std::string_view field_name,
+                                 const google::protobuf::Descriptor* owner,
+                                 std::set<std::string>& taken) {
+    std::string property = CsPropertyName(field_name, owner);
+    while (taken.count(property) != 0 || property == CsTypeName(owner)) property += '_';
+    taken.insert(property);
+    return property;
+}
+
 std::vector<CsEnumMember> CsEnumMembers(const google::protobuf::EnumDescriptor* enm) {
     std::vector<CsEnumMember> members;
     std::set<std::string> used;

@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// D-BIND-89 (b) negative fixture. COMMITTED BUT NOT WIRED into the coverage
+// generation set: invoked ONLY by GenErrors.FlattenedNameClashFailsBuild.
+//
+// A field-level flatten inlines Position's fields into the host, so Position.x
+// lands beside the host's own `x`: two schema columns named `x`, and in C++ the
+// setter `set_x` declared twice. ValidateFlattenedNamesUnique() refuses the file
+// for every backend, naming both fields.
+syntax = "proto3";
+package integration.coverage.unsupported;
+
+import "fletcher/options.proto";
+
+message Position {
+  double x = 1;
+  double y = 2;
+}
+
+message FlattenNameCoverage {
+  double x = 1;
+  Position position = 2 [(fletcher.flatten_field) = true];
+}

@@ -15,6 +15,7 @@
 #include <gtest/gtest.h>
 
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -168,6 +169,26 @@ TEST(CsNames, TheGeneratedClassOwnMembersAreSuffixed) {
     EXPECT_EQ(cs::CsPropertyName("to_arrow_columns", m), "ToArrowColumns_");
     // A name merely CONTAINING a reserved word is left alone.
     EXPECT_EQ(cs::CsPropertyName("schema_version", m), "SchemaVersion");
+}
+
+TEST(CsNames, PropertiesOfOneClassAreMadeUniqueInFieldOrder) {
+    // D-BIND-89 (a): names that PascalCase alike are suffixed `_` until unique, the earlier field
+    // keeping the plain name; a suffix never lands on the class's own name (`Player_` is taken by
+    // the field `player`'s property here, so `player_` steps past it). The names are passed as
+    // strings, as proto3 itself would refuse such a message.
+    DescriptorPool pool;
+    const FileDescriptor* f = BuildFile(pool, "p", {"a"});
+    ASSERT_NE(f, nullptr);
+    const Descriptor* m = f->message_type(0);
+    std::set<std::string> taken;
+    EXPECT_EQ(cs::CsUniquePropertyName("foo_bar", m, taken), "FooBar");
+    EXPECT_EQ(cs::CsUniquePropertyName("fooBar", m, taken), "FooBar_");
+    EXPECT_EQ(cs::CsUniquePropertyName("FooBar", m, taken), "FooBar__");
+    EXPECT_EQ(cs::CsUniquePropertyName("player", m, taken), "Player_");
+    EXPECT_EQ(cs::CsUniquePropertyName("player_", m, taken), "Player__");
+    EXPECT_EQ(cs::CsUniquePropertyName("other", m, taken), "Other");
+    EXPECT_EQ(taken, (std::set<std::string>{"FooBar", "FooBar_", "FooBar__", "Player_", "Player__",
+                                            "Other"}));
 }
 
 TEST(CsNames, ALowerCaseOnlyTypeNameIsWrittenVerbatim) {

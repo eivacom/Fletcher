@@ -526,12 +526,14 @@ gtest_discover_tests(coverage_scalar_nested_ts_visitor_tests DISCOVERY_MODE PRE_
 # Singular, repeated, and map google.protobuf.Any (review 4b) each in their own
 # single-message fixture so one protoc invocation isolates one shape and the
 # error must name that shape's field. All three carry the same Any reason. The
-# fourth, a map whose value is a flatten wrapper (D-BIND-85), carries its own.
+# fourth, a map whose value is a flatten wrapper (D-BIND-85), carries its own, and
+# so does the fifth, a field-level flatten inlining a host field's name (D-BIND-89).
 foreach(_variant
         "UnsupportedTypeFailsBuild|coverage_unsupported.proto|payload|google.protobuf.Any is dynamically typed"
         "RepeatedUnsupportedTypeFailsBuild|coverage_unsupported_repeated.proto|payloads|google.protobuf.Any is dynamically typed"
         "MapUnsupportedTypeFailsBuild|coverage_unsupported_map.proto|payload_map|google.protobuf.Any is dynamically typed"
-        "MapFlattenWrapperFailsBuild|coverage_unsupported_map_wrapper.proto|wrapper_map|is a flatten wrapper")
+        "MapFlattenWrapperFailsBuild|coverage_unsupported_map_wrapper.proto|wrapper_map|is a flatten wrapper"
+        "FlattenedNameClashFailsBuild|coverage_unsupported_flatten_name.proto|FlattenNameCoverage.x|and .integration.coverage.unsupported.Position.x. .inlined by the field-level flatten")
     string(REPLACE "|" ";" _parts "${_variant}")
     list(GET _parts 0 _test_name)
     list(GET _parts 1 _proto_file)

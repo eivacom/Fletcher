@@ -1010,6 +1010,41 @@ TEST(CsVisitorCrossFile, AMessageInlinedByAFieldFlattenFromAnotherFileIsFoundByT
     EXPECT_EQ(body.find(leaf_cls + ".ToArrowColumns("), std::string::npos) << body;
 }
 
+// D-BIND-89 (a): a host field and a field a field-level flatten inlines may PascalCase alike, which
+// protoc accepts in proto3 too (they are in different messages). The later property is suffixed:
+//   message Inner { int32 fooBar = 1; }
+//   message Host  { int32 foo_bar = 1; Inner inner = 2 [(fletcher.flatten_field) = true]; }
+TEST(CsVisitor, AnInlinedFieldThatPascalCasesLikeAHostFieldGetsTheNextFreeName) {
+    DescriptorPool pool;
+    FileDescriptorProto fdp;
+    fdp.set_name("inline_names.proto");
+    fdp.set_package("app");
+    fdp.set_syntax("proto3");
+    auto* inner = fdp.add_message_type();
+    inner->set_name("Inner");
+    AddField(inner, "fooBar", 1, FieldDescriptorProto::TYPE_INT32);
+    auto* host = fdp.add_message_type();
+    host->set_name("Host");
+    AddField(host, "foo_bar", 1, FieldDescriptorProto::TYPE_INT32);
+    auto* flat = AddField(host, "inner", 2, FieldDescriptorProto::TYPE_MESSAGE);
+    flat->set_type_name(".app.Inner");
+    flat->mutable_options()
+        ->GetReflection()
+        ->MutableUnknownFields(flat->mutable_options())
+        ->AddVarint(50000, 1);  // (fletcher.flatten_field) = true
+    const FileDescriptor* file = pool.BuildFile(fdp);
+    ASSERT_NE(file, nullptr);
+
+    const std::string body =
+        ClassBody(Emitted(GenerateWith(file, "csharp"), "inline_names.fletcher.cs"), "Host");
+    ExpectContains(body, "    public int FooBar { get; set; }\n");
+    ExpectContains(body, "    public int FooBar_ { get; set; }\n");
+    // Each column is read from and written to its own property.
+    ExpectContains(body, "row.FooBar)");
+    ExpectContains(body, "row.FooBar_)");
+    ExpectContains(body, "row.FooBar_ = ");
+}
+
 TEST(CsVisitorCrossFile, AFileWhoseProtocNamespaceIsInsideFletcherGenIsRefusedBeforeAnyOutput) {
     // BIND-6e: with `csharp`, a file whose protoc C# would land in Fletcher.Gen fails the whole
     // file before anything is written, so no half-generated set is left behind. Without
@@ -1238,9 +1273,14 @@ TEST(CsVisitorPair, TheCommittedGoldensAreThePluginsOutput) {
     const FileDescriptor* names = BuildGoldenFixture(names_pool, "csharp_names.proto");
     ASSERT_NE(names, nullptr);
     for (auto& [name, content] : GenerateWith(names, "csharp")) files.emplace(name, content);
+    // D-BIND-89 (a): proto2 fields that PascalCase to one property.
+    DescriptorPool proto2_pool;
+    const FileDescriptor* proto2 = BuildGoldenFixture(proto2_pool, "csharp_proto2.proto");
+    ASSERT_NE(proto2, nullptr);
+    for (auto& [name, content] : GenerateWith(proto2, "csharp")) files.emplace(name, content);
     for (const char* name : {"csharp_pair.fletcher.cs", "csharp_pair.fletcher.native.cs",
                              "google/protobuf/timestamp.fletcher.cs", "csharp_names.fletcher.cs",
-                             "csharp_names.fletcher.native.cs"}) {
+                             "csharp_names.fletcher.native.cs", "csharp_proto2.fletcher.cs"}) {
         const std::string generated = FileOf(files, name);
         const auto path = GoldenDir() / name;
         if (const char* capture = std::getenv("FLETCHER_CAPTURE_GOLDENS");

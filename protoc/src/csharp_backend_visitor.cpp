@@ -927,6 +927,7 @@ std::string CsVisitor::GenerateMessage(const Descriptor* msg) {
     std::vector<Column> columns;
     std::string pending;  // the first field ToArrow / FromArrow cannot convert
     std::set<const Descriptor*> visiting{msg};
+    std::set<std::string> taken;  // property names so far, in field order (D-BIND-89)
     for (size_t i = 0; i < records.size(); ++i) {
         const auto& rec = records[i];
         const IrNode& node = *rec.node;
@@ -944,7 +945,7 @@ std::string CsVisitor::GenerateMessage(const Descriptor* msg) {
             continue;
         }
         const bool nullable = field_type->nullable;
-        const std::string property = CsPropertyName(rec.name, msg);
+        const std::string property = CsUniquePropertyName(rec.name, msg, taken);
         o << "    public " << field_type->type_text << (nullable ? "?" : "") << " " << property
           << " { get; set; }";
         // A collection starts empty, a plain message field as a default instance (D-BIND-83)

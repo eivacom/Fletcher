@@ -19,6 +19,7 @@
 #include <nanoarrow/nanoarrow.h>
 
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -131,6 +132,14 @@ std::string CsTypeExpr(const google::protobuf::Descriptor* msg);
 // suffixed further while it equals the class's C# name (D-BIND-84: `message Schema` with a
 // field `schema` is class `Schema_` with property `Schema__`).
 std::string CsPropertyName(std::string_view field_name, const google::protobuf::Descriptor* owner);
+
+// D-BIND-89: CsPropertyName, then `_` appended while the name is already in `taken` (the class's
+// properties so far, in field order) or equals the class's C# name; the result joins `taken`.
+// Two fields that PascalCase alike (proto2 `foo_bar` and `fooBar`, which protoc accepts, or a
+// host field and one a field-level flatten inlines) are then `FooBar` and `FooBar_`, not CS0102.
+std::string CsUniquePropertyName(std::string_view field_name,
+                                 const google::protobuf::Descriptor* owner,
+                                 std::set<std::string>& taken);
 
 // An enum's members in declaration order, named as protoc's enum generator names
 // them: prefix removed, ShoutyToPascalCase, a leading '_' before a digit, and '_'

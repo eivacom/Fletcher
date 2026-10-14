@@ -560,7 +560,7 @@ tests between two implementations.
 | 2 gateway client | `test_schema_codec` 11, `test_publish_frame` 9, TS 36 | **56** | Port (BIND-8), true parity: managed code both sides. |
 | 3 pub/sub semantics | `test_publisher_subscriber` 44, `test_segments` 5, `test_pubsub_arrow` 33 | **82** | Port over `inprocess`. **Split confirmed 2026-09-24: the `pubsub` cases are BIND-4's; `test_pubsub_arrow`'s are BIND-5's, whose acceptance row claims them and whose `SubscriberArrow` did not exist before it.** **#128 added 26 `pubsub` cases and 18 `pubsub-arrow` ones (D-BIND-57)**; of the 49 `pubsub` cases, **44 are mapped** - 12 of #128's over `inprocess`, 11 over real Fast DDS in the transport lane, because only a provider that knows options or has a schema channel can answer them - **and 5 are EXCLUDED**, 2 by D-BIND-47 and 3 by D-BIND-57. D-BIND-47's two: `UnsubscribeLastSubscriberUnsubscribesFromProvider` and `UnsubscribeWithRemainingSubscribersKeepsProviderSubscription` assert `mock->unsubscribe_count`, the fan-out's provider-level bookkeeping, which lives in the C++ `Subscriber` the binding WRAPS and does not reimplement - porting them would run that C++ a second time and call it a test of the binding, and the managed surface has no view of provider-level subscriptions by design (D-BIND-24). Reasoning and the full case-by-case mapping: `dotnet/tests/Fletcher.Tests/BucketThreeConformanceTests.cs`. |
 | 4 native providers | Fast DDS: `test_fast_dds_pubsub_provider` 71, `test_profile_document` 33; XRCE: `test_xrce_provider` 7, `test_xrce_document` 11 — **port as driver-selection tests (122)**; `test_fletcher_sample_pub_sub_type` 28 — **excluded**, provider-internal (the Fast DDS `TypeSupport`, a C++ type no managed code touches) | **150** | 122 by driver selection - ONE body over every transport (`integration-tests/pubsub-transport-conformance`), not a port per case; 28 excluded, documented. #128 added 45 of these. |
-| 5 generator | `test_type_mapper` 36, `test_option_metadata` 33, `test_schema_builder` 9, `test_schema_visitor` 9, `test_ir` 8, `test_schema_codec_lockstep` 2, `test_topic_path` 2, `test_ts_visitor` 1, `test_csharp_type_table` 24, `test_csharp_visitor` 39 | **163** | **Stay in C++** — they test a C++ generator; **extended** with `test_csharp_visitor`, `test_csharp_type_table` and the TS pub/sub emitter cases. |
+| 5 generator | `test_type_mapper` 36, `test_option_metadata` 33, `test_schema_builder` 9, `test_schema_visitor` 9, `test_ir` 8, `test_schema_codec_lockstep` 2, `test_topic_path` 2, `test_ts_visitor` 1, `test_csharp_type_table` 25, `test_csharp_visitor` 40 | **165** | **Stay in C++** — they test a C++ generator; **extended** with `test_csharp_visitor`, `test_csharp_type_table` and the TS pub/sub emitter cases. |
 | 6 no managed analogue | `test_owned_schema` 1 | **1** | Excluded, documented (an `ArrowSchemaDeepCopy` ENOMEM path). |
 | Conformance (inherited, not a port target) | `integration-tests/pubsub-conformance` 95 cases; `CallerTier` 22 of them | — | The **oracle** seam §9 hands BIND. BIND writes a C# arm of `CallerTier` and adds cases to the C++ suite (§12.1 expects it); each C# case names the C++ case it mirrors and a script checks the mapping is total. |
 
@@ -1693,6 +1693,16 @@ codec step.
   `CsVisitorCrossFile.AMessageInlinedByAFieldFlattenFromAnotherFileIsFoundByTheSharedWalk` (also
   pins the C++ include set). Plugin 164/164 (bucket 163); protoc-coverage 22/22; Fletcher.Tests
   372/372 on both TFMs; ProtocDotnet 28/28; Beside 4/4; C++ format clean over the whole repo.
+- **Review ruling Q7, 2026-10-14 (D-BIND-89): names that collide.** (a) C# properties that
+  PascalCase alike (proto2 `foo_bar` + `fooBar`, or a host field and an inlined one) are suffixed
+  `_` in field order by `CsUniquePropertyName`; new golden `csharp_proto2.proto` (`FooBar`,
+  `FooBar_`, `FooBar__`) compiled and round-tripped in `Fletcher.Tests`. (b) A field-level flatten
+  inlining a name the host already has is refused for every backend by
+  `ValidateFlattenedNamesUnique`, naming both fields; `GenErrors.FlattenedNameClashFailsBuild` in
+  protoc-coverage. Both failed first against the plugin before the fix. No existing golden moved.
+  Plugin 166/166 (bucket 165, one case each in `test_csharp_type_table` and `test_csharp_visitor`);
+  protoc-coverage 23/23; Fletcher.Tests 373/373 on both TFMs; ProtocDotnet 28/28; Beside 4/4; C++
+  and C# format clean.
 - **Review fix B5, 2026-10-13: C# registers C++'s topic, by test.** `test_topic_path.cpp`'s
   `ExpectBackendsAgree` generated C++ and TypeScript only, and the C# topic was checked against
   hand-written literals, so a change to C++'s form would have passed. It now also generates `csharp`

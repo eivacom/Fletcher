@@ -762,6 +762,9 @@ exception (G-Q4). A reflection test over every generated row class pins it.
 **Cross-file, ruled 2026-10-08 from the review (D-BIND-87):** C# and C++ read one walk,
 `CollectCrossFileMessages`; the walk looks inside a field-level flatten, so for that shape C++
 includes every header it names directly.
+**Colliding names, ruled 2026-10-08 from the review (D-BIND-89):** C# properties that PascalCase
+alike are suffixed `_` in field order; a field-level flatten that inlines a name its host already has
+is refused for every backend, naming both fields.
 **Slices:** 6a plumbing,
 type table, visitor, classes and enums with scalar fields; 6b `Schema`, `ToArrow`/`FromArrow` and
 `integration-tests/protoc-dotnet`; 6c composite and temporal types; 6d topics and the native
@@ -848,7 +851,7 @@ for f in core/tests/*.cpp pubsub/tests/*.cpp arrow-bridge/tests/*.cpp pubsub-arr
 | 2 gateway client | `test_schema_codec` 11, `test_publish_frame` 9, TS 36 | **56** | Port (BIND-8), true parity: managed code both sides. |
 | 3 pub/sub semantics | `test_publisher_subscriber` 44, `test_segments` 5, `test_pubsub_arrow` 33 | **82** | Port over `inprocess` (BIND-4/5); #128's option and schema-watch cases over real Fast DDS where only a provider that knows them can answer (D-BIND-57). 5 excluded. |
 | 4 native providers | Fast DDS: `test_fast_dds_pubsub_provider` 71, `test_profile_document` 33, `test_fletcher_sample_pub_sub_type` 28; XRCE: `test_xrce_provider` 7, `test_xrce_document` 11 | **150** | Port as driver-selection tests where the assertion is seam-visible (122); `test_fletcher_sample_pub_sub_type` (28) excluded as internal to the provider (Q10). |
-| 5 generator | `test_type_mapper` 36, `test_option_metadata` 33, `test_schema_builder` 9, `test_schema_visitor` 9, `test_ir` 8, `test_schema_codec_lockstep` 2, `test_topic_path` 2, `test_ts_visitor` 1, `test_csharp_type_table` 24, `test_csharp_visitor` 39 | **163** | Stay C++; extended with `test_csharp_*`. Needs the Feature owner. |
+| 5 generator | `test_type_mapper` 36, `test_option_metadata` 33, `test_schema_builder` 9, `test_schema_visitor` 9, `test_ir` 8, `test_schema_codec_lockstep` 2, `test_topic_path` 2, `test_ts_visitor` 1, `test_csharp_type_table` 25, `test_csharp_visitor` 40 | **165** | Stay C++; extended with `test_csharp_*`. Needs the Feature owner. |
 | 6 no managed analogue | `test_owned_schema` 1 | **1** | Excluded, documented. |
 | Conformance (new since plan) | `integration-tests/pubsub-conformance` 95 cases; `CallerTier` 22 of them | — | Inherited **oracle**, not a port target. BIND writes a C# arm of `CallerTier` and adds cases to the C++ suite. |
 
@@ -857,7 +860,7 @@ Non-generator total is **302** (was 178). The two exclusion classes were **ruled
 provider-internal cases, and nothing else. The generator cases stay in C++ and are
 extended: 98 at the ruling, 100 since `test_topic_path` (2026-10-02), 125 since BIND-6a's
 `test_csharp_type_table` and `test_csharp_visitor` (2026-10-03), 132 since BIND-6b-1 extended
-both (2026-10-05), 138 since BIND-6c-1 added six to `test_csharp_visitor` (2026-10-07), 143 since BIND-6c-2 added five more (2026-10-07), 150 since BIND-6d added seven for the native pair, its goldens and its two tokens, 152 since BIND-6c-3 added two for lists of lists, 156 since BIND-6e added four for types from another file (one name rule, three cross-package cases; the four cases that pinned the old refusal were rewritten in place, not added), 158 since BIND-6e-3 added two for the reserved Fletcher.Gen namespace, 159 since the review fix for B1 (D-BIND-83) added the optional-message case, 161 since the fix for B2 added the full-name case and the verbatim-name case, 162 since D-BIND-84 added the suffixed-type case, 163 since D-BIND-87 added the case for a message inlined by a field-level flatten from another file.
+both (2026-10-05), 138 since BIND-6c-1 added six to `test_csharp_visitor` (2026-10-07), 143 since BIND-6c-2 added five more (2026-10-07), 150 since BIND-6d added seven for the native pair, its goldens and its two tokens, 152 since BIND-6c-3 added two for lists of lists, 156 since BIND-6e added four for types from another file (one name rule, three cross-package cases; the four cases that pinned the old refusal were rewritten in place, not added), 158 since BIND-6e-3 added two for the reserved Fletcher.Gen namespace, 159 since the review fix for B1 (D-BIND-83) added the optional-message case, 161 since the fix for B2 added the full-name case and the verbatim-name case, 162 since D-BIND-84 added the suffixed-type case, 163 since D-BIND-87 added the case for a message inlined by a field-level flatten from another file, 165 since D-BIND-89 added the unique-property case to each suite.
 
 **Corrected 2026-09-18, denominator ruled by the maintainer.** This read *"275 of 300
 (300 less the 24 provider-internal cases **and `test_owned_schema`**)"*, which is wrong

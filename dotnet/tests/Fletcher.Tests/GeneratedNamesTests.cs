@@ -6,7 +6,8 @@
 // bare class name in a code expression would bind to instead of the class (a property of another
 // type, a local `row`, FromArrow's parameter `array`, the pair's own `Topic`), and before the fix
 // each was CS0120, CS0176 or CS1061. These cases add that every shape still converts, and that the
-// pair for a message called Topic publishes and delivers over the shim.
+// pair for a message called Topic publishes and delivers over the shim. D-BIND-89 adds
+// csharp_proto2.proto: proto2 fields that PascalCase alike keep their own columns.
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -17,6 +18,8 @@ using Apache.Arrow.Types;
 using Fletcher.Gen.Golden.Names;
 
 using Xunit;
+
+using Clash = Fletcher.Gen.Golden.Proto2.Clash;
 
 namespace Eiva.Fletcher.Tests;
 
@@ -126,5 +129,19 @@ public sealed class GeneratedNamesTests : IDisposable
 
         Assert.Equal(new[] { 11, 12, 13 }, seen);
         Assert.Same(Topic.Schema, Feed_SendPublisher.Schema);
+    }
+
+    [Fact]
+    public void FieldsThatPascalCaseAlikeKeepTheirOwnColumns()
+    {
+        // D-BIND-89 (a), csharp_proto2.proto: proto2 `foo_bar`, `fooBar` and `FooBar` are properties
+        // FooBar, FooBar_ and FooBar__, in field order, each bound to its own column.
+        var sent = new Clash { FooBar = 1, FooBar_ = 2, FooBar__ = 3 };
+        using RecordBatch batch = Clash.ToArrow(new[] { sent });
+        Assert.Equal(new[] { "foo_bar", "fooBar", "FooBar" }, batch.Schema.FieldsList.Select(f => f.Name));
+        Assert.Equal(new int?[] { 1, 2, 3 }, batch.Arrays.Select(a => ((Int32Array)a).GetValue(0)));
+
+        Clash back = RoundTrip(sent, Clash.ToArrow, Clash.FromArrow);
+        Assert.Equal(new int?[] { 1, 2, 3 }, new[] { back.FooBar, back.FooBar_, back.FooBar__ });
     }
 }
