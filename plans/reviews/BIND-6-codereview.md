@@ -209,7 +209,13 @@ four places.
 - **G-D1:** `NativeLoader` (6e-2) no longer probes `runtimes/<rid>/native/` beside the ASSEMBLY.
   In a plugin-style host (a PowerShell module, an MSBuild task, a custom AssemblyLoadContext) that is
   not the app directory. Probe both: `Assembly.Location` when non-empty, IL3000 suppressed under that
-  guard, and `AppContext.BaseDirectory`. *(reported; the author agrees)*
+  guard, and `AppContext.BaseDirectory`. *(reported; the author agrees)* **FIXED 2026-10-14:**
+  `CandidatePaths(assemblyDirectory, appDirectory, rid)` probes beside the assembly first (when
+  `Assembly.Location` is non-empty, IL3000 suppressed on that guarded read), then the app directory,
+  once if they are the same. Pinned by
+  `NativeLoaderTests.TheShimIsLookedForBesideTheAssemblyThenBesideTheApplication`; mutants: no
+  suppression fails the Interop build (IL3000 ×4), app-only probing fails the case. NativeAOT
+  publish and run still green.
 - G-D2: D-BIND-81 pins ILCompiler but not the runtime pack it is used with. On an SDK other than
   10.0.400 an AOT publish mixes 10.0.11 and 10.0.12. CI is unaffected. *(reported)*
 - G-D3: the generated subscriber allocates a `StructType` per delivery; build it once. *(verified by

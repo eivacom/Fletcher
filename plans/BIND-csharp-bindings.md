@@ -1590,7 +1590,7 @@ codec step.
 - **6e-2, 2026-10-08 (D-BIND-81): NativeAOT.** Measured first: a consumer of the generated pair
   published with NativeAOT raised one warning, IL3000, from `NativeLoader`'s `Assembly.Location`
   (empty in an AOT app), and none from the generated code or Apache.Arrow 23; the loader now probes
-  `AppContext.BaseDirectory`. `Eiva.Fletcher`, `.Interop` and `.Model` declare `IsAotCompatible`, so
+  `AppContext.BaseDirectory`. *(Review G-D1, 2026-10-14: beside the assembly too, for plugin hosts.)* `Eiva.Fletcher`, `.Interop` and `.Model` declare `IsAotCompatible`, so
   the analysers run in every build: the old line put back fails the Interop build (IL3000 ×4).
   `dotnet/tests/Fletcher.AotSmoke` (in `Fletcher.slnx`) publishes and receives a `Reading` and a
   cross-file `Marks` and exits non-zero unless exactly those rows return; `ci.dotnet`'s Linux job
@@ -1744,6 +1744,17 @@ codec step.
   are now written `\u0085`, `\u2028`, `\u2029`; their neighbours (U+00A9, U+2026) still pass
   through. The existing case gains five assertions (counts unchanged); a mutant without the escapes
   fails it. No golden moved. Plugin 167/167; C++ format clean over the whole repo.
+- **Review debt G-D1, 2026-10-14: the shim is looked for beside the assembly too.** Since 6e-2
+  `NativeLoader` probed only `AppContext.BaseDirectory`, which in a plugin-style host (a PowerShell
+  module, an MSBuild task, a custom AssemblyLoadContext) is the HOST's directory, not the one holding
+  the package's `runtimes/<rid>/native/`. It now probes beside the assembly first, when
+  `Assembly.Location` is non-empty (IL3000 suppressed on that one guarded read), then beside the
+  application, once when they are the same; a NativeAOT or single-file app has no assembly directory
+  and probes the application's alone. New case
+  `NativeLoaderTests.TheShimIsLookedForBesideTheAssemblyThenBesideTheApplication` on the pure candidate list (a second shim copy cannot be loaded in one
+  process: the single-copy marker refuses it). Mutants: without the suppression the Interop build
+  fails (IL3000 ×4); probing the application alone fails the case. Fletcher.Tests 389/389 on both
+  TFMs; AotSmoke published and run OK (warnings as errors); C# format clean.
 - **Review fix B5, 2026-10-13: C# registers C++'s topic, by test.** `test_topic_path.cpp`'s
   `ExpectBackendsAgree` generated C++ and TypeScript only, and the C# topic was checked against
   hand-written literals, so a change to C++'s form would have passed. It now also generates `csharp`

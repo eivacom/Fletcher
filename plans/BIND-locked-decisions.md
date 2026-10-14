@@ -2654,7 +2654,8 @@ The next one was ruled on 2026-10-07 at the start of slice 6e, cross-file refere
   `Eiva.Fletcher` published with NativeAOT with ONE warning, IL3000, from `NativeLoader`'s use of
   `Assembly.Location`, which is empty in an AOT or single-file app; the generated code and Apache.Arrow
   23 raised none. `NativeLoader` now probes `AppContext.BaseDirectory`, the same directory in an
-  ordinary build. Then:
+  ordinary build. *(Review G-D1, 2026-10-14: it probes beside the assembly first when the assembly
+  has a file, then `AppContext.BaseDirectory`; IL3000 is suppressed on that one guarded read.)* Then:
   - **The claim.** The three libraries set `IsAotCompatible`, which turns the trim and AOT analysers on
     in every build (the IL3000 line put back fails the Interop build itself, 4 errors) and stamps each
     assembly `IsTrimmable`. `Eiva.Fletcher.GatewayClient` was not asked about and does not yet carry it.

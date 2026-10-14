@@ -14,6 +14,7 @@
 // message it produces when it fails.
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -79,7 +80,7 @@ internal static class NativeLoader
         // by the build; probing both keeps `dotnet test` working from a plain
         // checkout without a packaging step.
         List<string> probed = [];
-        foreach (string candidate in CandidatePaths())
+        foreach (string candidate in CandidatePaths(AssemblyDirectory(assembly), AppContext.BaseDirectory, RuntimeInformation.RuntimeIdentifier))
         {
             probed.Add(candidate);
             if (File.Exists(candidate) && NativeLibrary.TryLoad(candidate, out handle))
@@ -101,27 +102,50 @@ internal static class NativeLoader
             (probed.Count == 0 ? string.Empty : " Also probed: " + string.Join("; ", probed) + "."));
     }
 
-    /// <summary>Where a source build might have staged the shim.</summary>
+    /// <summary>
+    /// The directory of <paramref name="assembly"/>'s file, or <see langword="null"/> when it
+    /// has none.
+    /// </summary>
     /// <remarks>
-    /// Beside the APPLICATION, not beside this assembly's file: in a NativeAOT or
-    /// single-file app an assembly has no file, so <c>Assembly.Location</c> is empty
-    /// (trim warning IL3000, found by BIND-6e's NativeAOT publish), while
-    /// <see cref="AppContext.BaseDirectory"/> is the directory the app runs from. In an
-    /// ordinary build the two are the same directory.
+    /// In a NativeAOT or single-file app an assembly has no file and <c>Assembly.Location</c>
+    /// is empty, which is what trim warning IL3000 warns of (found by BIND-6e's NativeAOT
+    /// publish). That case is handled here, by answering null, and the application's directory
+    /// is probed instead, so the warning is suppressed for this one read.
     /// </remarks>
-    private static IEnumerable<string> CandidatePaths()
+    [UnconditionalSuppressMessage("SingleFile", "IL3000:Avoid accessing Assembly file path when publishing as a single file",
+        Justification = "An empty Location (NativeAOT, single-file) is answered with null; AppContext.BaseDirectory is probed as well.")]
+    private static string? AssemblyDirectory(Assembly assembly)
     {
-        string beside = AppContext.BaseDirectory;
-        if (string.IsNullOrEmpty(beside))
-        {
-            yield break;
-        }
+        string location = assembly.Location;
+        return string.IsNullOrEmpty(location) ? null : Path.GetDirectoryName(location);
+    }
 
-        string rid = RuntimeInformation.RuntimeIdentifier;
-        foreach (string name in NativeFileNames())
+    /// <summary>Where a source build, or a host that loads this assembly as a plugin, might
+    /// have put the shim, in the order probed.</summary>
+    /// <remarks>
+    /// Beside this ASSEMBLY first, then beside the APPLICATION (review G-D1). In an ordinary
+    /// app the two are one directory, probed once. In a plugin-style host (a PowerShell module,
+    /// an MSBuild task, a custom <c>AssemblyLoadContext</c>) the package's
+    /// <c>runtimes/&lt;rid&gt;/native/</c> sits beside the assembly, not the host, so only the
+    /// first finds it; in a NativeAOT or single-file app the assembly has no directory and only
+    /// the second applies. Internal and pure so the order can be asserted without loading.
+    /// </remarks>
+    internal static IEnumerable<string> CandidatePaths(string? assemblyDirectory, string? appDirectory, string rid)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (string? directory in new[] { assemblyDirectory, appDirectory })
         {
-            yield return Path.Combine(beside, name);
-            yield return Path.Combine(beside, "runtimes", rid, "native", name);
+            if (string.IsNullOrEmpty(directory)
+                || !seen.Add(Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory))))
+            {
+                continue;
+            }
+
+            foreach (string name in NativeFileNames())
+            {
+                yield return Path.Combine(directory, name);
+                yield return Path.Combine(directory, "runtimes", rid, "native", name);
+            }
         }
     }
 

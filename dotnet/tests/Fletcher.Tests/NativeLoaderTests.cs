@@ -18,6 +18,8 @@
 // looks identical to a healthy process. The failure carries the resolver's
 // diagnostic, which names the RID and says to run `conan create c-abi`.
 using System;
+using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 
 using Eiva.Fletcher.Interop;
@@ -138,5 +140,40 @@ public sealed class NativeLoaderTests
             searchPath: null);
 
         Assert.Equal(0, handle);
+    }
+
+    /// <summary>
+    /// Review G-D1: the shim is looked for beside this ASSEMBLY first, then beside the
+    /// application, each both flat and under <c>runtimes/&lt;rid&gt;/native/</c>.
+    /// </summary>
+    /// <remarks>
+    /// A plugin-style host (a PowerShell module, an MSBuild task, a custom
+    /// AssemblyLoadContext) loads this assembly from its own folder, where the package's
+    /// <c>runtimes</c> tree sits, while the application directory is the host's. A NativeAOT
+    /// or single-file app has no assembly directory, so only the application's is probed.
+    /// One directory reached both ways (an ordinary app; a trailing separator) is probed once.
+    /// Asserted on the pure candidate list: a second copy of the shim cannot be loaded into
+    /// this process to prove it end to end, because the single-copy marker refuses it.
+    /// </remarks>
+    [Fact]
+    public void TheShimIsLookedForBesideTheAssemblyThenBesideTheApplication()
+    {
+        string plugin = Path.Combine(Path.GetTempPath(), "host", "plugins", "fletcher");
+        string app = Path.Combine(Path.GetTempPath(), "host");
+        const string Rid = "test-x64";
+
+        string[] both = NativeLoader.CandidatePaths(plugin, app, Rid).ToArray();
+        Assert.Equal(4, both.Length);
+        Assert.Equal(plugin, Path.GetDirectoryName(both[0]));
+        Assert.Equal(Path.Combine(plugin, "runtimes", Rid, "native"), Path.GetDirectoryName(both[1]));
+        Assert.Equal(app, Path.GetDirectoryName(both[2]));
+        Assert.Equal(Path.Combine(app, "runtimes", Rid, "native"), Path.GetDirectoryName(both[3]));
+
+        // An ordinary app: one directory, probed once, however it is spelled.
+        Assert.Equal(2, NativeLoader.CandidatePaths(app, app + Path.DirectorySeparatorChar, Rid).Count());
+        // NativeAOT or single-file: no assembly directory, so the application's alone.
+        string[] aot = NativeLoader.CandidatePaths(null, app, Rid).ToArray();
+        Assert.Equal(2, aot.Length);
+        Assert.All(aot, p => Assert.StartsWith(app, p, StringComparison.Ordinal));
     }
 }
