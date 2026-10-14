@@ -15,6 +15,16 @@ four of them by running something. Three are generated C# that does not compile 
 `.proto` files. One is a wire-format disagreement with C++ for the most common message field. One is
 a missing test the acceptance asks for. BIND-6 does not close.
 
+> **CLOSED 2026-10-14, on CI at `63ab057` (`ci.pr` 38575041994).** All five blockers fixed, all ten
+> questions ruled and implemented (D-BIND-83 to 93), and every DEBT marked important done: P-D1, G-D1,
+> T-D1 to T-D5 and T-D9 fixed, P-D3 closed as unreachable by measurement. The remaining DEBT (P-D2,
+> P-D4, G-D2 to G-D4, T-D6, T-D8) and the NITs are carried out as KNOWN debt by the maintainer's
+> choice, listed with their natural homes in the tracker's BIND-6 section; one NIT (a null element in
+> the batch `Publish`) was resolved by D-BIND-92. Four findings changed a ruling's stated consequence
+> or scope, each recorded with the ruling: D-BIND-85 refuses rather than drops; D-BIND-86 has one
+> named exception (G-Q4); D-BIND-87's walk had to look inside a field-level flatten; D-BIND-92 was
+> widened to every non-null place.
+
 ## How this review was done, and its limit
 
 The method of BIND-4 and BIND-5. Three reviewers with **fresh context** each took one area:

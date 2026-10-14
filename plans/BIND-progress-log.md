@@ -571,7 +571,7 @@ the container is now the local build route until the Windows toolchain is reinst
 skips the build, and with it the tests: the first run on this branch reported only test_package's 3.
 Force the component with `--build="fletcher-protoc/*"` when the point is to run its tests.
 
-## BIND-6 — the C# generator (2026-10-03, IN PROGRESS)
+## BIND-6 — the C# generator (2026-10-03 to 2026-10-14, CLOSED)
 
 **Slices:** 6a plumbing, type table, visitor, classes and enums with scalar fields; 6b `Schema`,
 `ToArrow`/`FromArrow` and `integration-tests/protoc-dotnet`; 6c composite and temporal types; 6d topics
@@ -880,4 +880,65 @@ writes them, and the in-process test agreed with them on the first run.
 
 **Tooling now.** The machine lost Python, Conan, CMake and Node in a crash on 2026-10-02. The plugin is
 built and tested in the Linux devcontainer (`eivaorg/fletcher-devcontainer:main`); the image has no
-.NET SDK, so generated C# is compiled on Windows, where the SDK survived.
+.NET SDK, so generated C# is compiled on Windows, where the SDK survived. *(Since 6d the devcontainer
+runs a .NET 10.0.400 SDK from a mounted volume, so generated C# and every .NET suite run there too.)*
+
+**The review (2026-10-08).** Three fresh-context reviewers (the plugin's C++, the generated C# and its
+runtime, the tests and acceptance) at `c8ae231`, with every BLOCKER verified before it was reported:
+five BLOCKERs, ten questions, seventeen debts and the nits (`plans/reviews/BIND-6-codereview.md`).
+Four of the blockers were found by running something: generated C# that did not compile for ordinary
+`.proto` files (B2, B3, B4), and a non-optional message field that C# wrote as a null C++ could not
+decode (B1). The fifth was a test the acceptance asked for and nobody had written (B5).
+
+**The fixes (2026-10-12 to 2026-10-14).** One commit per blocker, ruling or debt, each measured first,
+each with a test that failed before it, most with mutants, and each recorded in the digest, the
+tracker, the development plan and, where a shape changed, the diagrams:
+
+- **Blockers:** B1 a plain message field is never null (D-BIND-83); B2 class names in method bodies
+  from `global::`, lower-case names verbatim; B3 a message named after our members is suffixed
+  (D-BIND-84); B4 a map of flatten wrappers is UNSUPPORTED in the shared IR (D-BIND-85); B5 C#
+  generates the same topic as C++, by test.
+- **Rulings:** nullability covers fields, not children (D-BIND-86); one cross-file walk for C++ and C#
+  (D-BIND-87); the AOT notes parked to BIND-9 (D-BIND-88); colliding names suffixed or refused
+  (D-BIND-89); a wrapper pub/sub input skipped as C++ skips it (D-BIND-90); a protoc type named like
+  our namespace refused (D-BIND-91); forced nulls refused (D-BIND-92) and temporal defaults in the
+  column's unit (D-BIND-93).
+- **Debts:** C# literal escapes for NEL, LS and PS (P-D1); the loader looks beside the assembly too
+  (G-D1); the surface note, the diagrams, a CI filter, the no-drift test's coverage, stale texts and
+  amendment back-references (T-D1 to T-D5, T-D9); P-D3 closed as unreachable by measurement.
+
+**What the fixes found that the review had not.** Measuring each ruling before implementing it
+changed four of them, and each was put back to the maintainer before it was built:
+
+- **Q3's consequence was wrong as ruled.** "Every backend drops the field" assumed an UNSUPPORTED
+  field is dropped. It is not: since GIR-8 any UNSUPPORTED field refuses the whole file for every
+  backend. The ruling stood; the record says "refused".
+- **Q4 met a debt the review had accepted.** A reflection test of "nullable exactly where the schema
+  is" found one field that is not: an `optional` flatten-wrapper list, which C++ stores as a vector
+  (G-Q4). Ruled a named exception the test still requires to be met.
+- **Q5's shared walk was incomplete.** Making C# read C++'s include walk exposed that the walk never
+  looked inside a field-level flatten: C# would have called an internal member across assemblies
+  (CS0117), and C++ compiled only by a transitive include. The walk was fixed for both; the
+  maintainer accepted one redundant C++ include for that shape.
+- **Q10's scope was too narrow.** The ruling named fields, keys and elements; reading the generated
+  code found map values, null collections, inner lists and null rows failing the same way, and the
+  maintainer widened the ruling to all of them.
+
+**What was carried out.** The minor debts and the nits, as known debt by the maintainer's choice,
+listed in the tracker with where each would naturally be picked up. The cross-language pub/sub tests
+the maintainer asked for on 2026-10-13 were given owners at the close: the C#-native rows to BIND-9,
+the gateway-client rows to BIND-8, the matrix to BIND-10.
+
+**Closed on CI** at `63ab057`, `ci.pr` 38575041994, the review's last fix.
+
+**Lessons for BIND-7.**
+
+- **Measure the ruling's consequence, not just the bug.** Three of the four changed rulings above
+  were found only by running the shape through every backend, or by reading what the code really
+  does for the cases next to the one named.
+- **A mutant must be checked for "changed nothing".** The CI rehearsal's IL3000 mutant from 6e-2 had
+  silently stopped matching the code it mutated; it was only noticed because its output looked wrong.
+- **Pushes cancel each other's CI.** Pushing commit after commit left no `ci.pr` run finished for seven
+  commits. Wait for a run to finish before the next push, or batch.
+- **The Windows edit tools change text.** The Edit tool turned `\u2028` into the raw character in a
+  plan file, and a Perl replacement turned `\u0085` into `0085`; both were caught by checking bytes.

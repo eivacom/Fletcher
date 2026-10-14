@@ -856,7 +856,7 @@ Kind: 🟪 spec · 🟦 impl · 🔬 proof · ⚙ pipelines · 📓 docs
 | BIND-3 | `Eiva.Fletcher.Interop` + codec/Arrow tier in `Eiva.Fletcher` | A | 🟦 | BIND-2 | Every PROTO-MAPPING type round-trips through the binding (D-BIND-39, was "Bucket 1 green"); `ErrorTests.EveryHardCaseKeepsItsMessage` | 🟢 |
 | BIND-4 | Pub/sub in `Eiva.Fletcher`: registry, `Publisher`, `Subscriber`, `SchemaArrival`, thunk discipline, error handling | A | 🟦 | BIND-3 | Bucket 3 over `inprocess`; Bucket 4 over `fastdds`/`xrce` by selector; C# arm of `CallerTier`; per-row publish benchmark recorded (D-BIND-37) | 🟢 (reopened twice on 2026-09-25 and re-closed on CI: D-BIND-56 at `78ac363`, bucket 4 over `xrce`; D-BIND-57 at `bdd4fba`, bucket 3's 49-case file set mapped and the matrix checked) |
 | BIND-5 | `SubscriberArrow` batch-first + the copy oracle end-to-end from C# | A | 🔬 | BIND-4 | `pubsub-arrow` cases; copy oracle green with the **C#** producer (D-BIND-58) | 🟢 (closed on CI at `a43c384`, `ci.pr` run 36563607601, 50/50, after a fresh-context review whose 9 BLOCKERs were fixed; D-BIND-58 to 68; conformance 11 of 11) |
-| BIND-6 | C# backend on the IR: type table + visitor → `<stem>.fletcher.cs` | B | 🟦 | — (GIR) | `CsVisitor.*`, `CsVisitorPair.*`, `CsVisitorCrossFile.*`, `CsNames.*` and `CsTypeTable.*` in `protoc/tests` (named `CsharpVisitor.*` until review T-D5 corrected it, 2026-10-14); no-drift test unchanged | 🔴 (6a to 6d-2 on CI; 6e-1 cross-file pushed; 6e-2 NativeAOT pushed; 6e-3 beside protoc's C# built; the review to do) |
+| BIND-6 | C# backend on the IR: type table + visitor → `<stem>.fletcher.cs` | B | 🟦 | — (GIR) | `CsVisitor.*`, `CsVisitorPair.*`, `CsVisitorCrossFile.*`, `CsNames.*` and `CsTypeTable.*` in `protoc/tests` (named `CsharpVisitor.*` until review T-D5 corrected it, 2026-10-14); no-drift test unchanged | 🟢 (closed on CI at `63ab057`, `ci.pr` 38575041994, after a fresh-context review whose 5 BLOCKERs were fixed and 10 questions ruled, D-BIND-83 to 93; the minor debt carried as known, listed in BIND-6's section) |
 | BIND-7 | Arrow view + accessor emitters (`csharp_accessor`) + capstone third arm | B | 🟦 | BIND-6, BIND-3 | `accessor-capstone` C# arm `observed == expected`; `StructArray` windowing fixture at non-zero offset | ⚪ |
 | BIND-T | TS `Publisher`/`Subscriber` emitter | C | 🟦 | — | `TsVisitor.DescriptorByteIdentical` still green + new emitter cases | ⚪ |
 | BIND-8 | `Eiva.Fletcher.GatewayClient` (managed port; the codec exception) | C | 🟦 | — | Bucket 2 green (the Part 4 file set, not a count); `Package.GatewayClientHasNoRuntimesFolder` | ⚪ |
@@ -1832,7 +1832,31 @@ codec step.
   `optional` messages, Timestamp/Duration), compare field by field on the receiving side, and run on
   Linux and Windows. **Owner to be ruled.** Suggested: the C#-native rows as their own lane in BIND-9
   (CI), the gateway-client rows inside BIND-8's acceptance, and the whole matrix named in BIND-10's
-  docs.
+  docs. **Owner RULED by the maintainer 2026-10-14, at BIND-6's close: split by readiness, as
+  suggested.** The three C#-native rows are an acceptance bullet of BIND-9 (their own CI lane, Linux
+  and Windows), the gateway-client rows one of BIND-8, and BIND-10 documents the whole matrix; neither
+  BIND-8 nor BIND-9 closes without its rows.
+- **BIND-6 CLOSED 2026-10-14, with this debt carried out as KNOWN (the maintainer's choice: record,
+  not fix).** Every review BLOCKER (B1 to B5), all ten rulings (D-BIND-83 to 93) and every debt the
+  review marked important (P-D1, P-D3, G-D1, T-D1 to T-D5, T-D9) are done; the rest stays open, each
+  with the item where it would naturally be picked up, none of them an acceptance bullet:
+  - **P-D2** `ConversionBlocker` re-walks shared sub-messages (no memo): a plugin speed matter, not
+    seen to matter at today's sizes.
+  - **P-D4** an exception from the schema sink would crash the plugin instead of returning `*error`;
+    unreachable today.
+  - **G-D2** D-BIND-81 pins the ILCompiler pack, not the runtime pack it is used with; an AOT publish
+    on an SDK other than 10.0.400 mixes 10.0.11 and 10.0.12. CI is unaffected. BIND-9, with the SDK
+    pin.
+  - **G-D3** the generated subscriber builds a `StructType` per delivery; build it once. BIND-7 or a
+    performance pass.
+  - **G-D4** decode failures reach `HandlerFaulted` as if the handler had thrown; document them or
+    tell them apart. BIND-10, or the next runtime change.
+  - **T-D6** the Arrow-only model is proven on net10.0 only (protoc-dotnet's TFM). BIND-9's matrix.
+  - **T-D8** the generated subscriber's schema handling (S-9) has never run over a transport without
+    a schema channel. BIND-9's cross-language lane.
+  - **The NITs** of `plans/reviews/BIND-6-codereview.md` (P-N1 to P-N5, four runtime, T-N1 to T-N4),
+    except "a null element in `Publish(IEnumerable<T>)` throws an NRE", which D-BIND-92 resolved: the
+    pair publishes through `ToArrow`, which now refuses a null row with an `ArgumentException`.
 
 ### BIND-7 — Arrow view + accessor emitters + capstone third arm
 
@@ -1920,6 +1944,10 @@ client, **so that** I need no native assets at all.
   gateway C++ ones (`test_schema_codec`, `test_publish_frame`).
 - Arrow IPC schema parse of the gateway's base64 `schemaIpc` payload via
   `Apache.Arrow.Ipc`, schema metadata preserved.
+- **Cross-language pub/sub, the gateway-client rows (ruled 2026-10-14, at BIND-6's close).** The C#
+  gateway client exchanges rows, in both directions and through the generated gateway pair, with C++
+  and TypeScript over the gateway, and with the C# native pair. Same shared `.proto` and field-by-field
+  comparison as BIND-9's C#-native rows; the matrix is in BIND-6's open note.
 
 ### BIND-9 — CI/CD pipelines and packaging
 
@@ -1979,6 +2007,13 @@ same machinery as everything else, **so that** it cannot rot.
   and C++'s generated decoder then reads a value that is not there. Decide here
   whether the codec refuses such a batch (in C++, for every binding) or the contract
   is documented as the caller's; BIND-10 documents whichever is ruled.
+- **Cross-language pub/sub, the C#-native rows (ruled 2026-10-14, at BIND-6's close).** A lane of
+  its own, on Linux and Windows, in which the GENERATED native pairs exchange rows over Fast DDS
+  across processes: C# → C++ and C++ → C#; C# → TypeScript and TypeScript → C# through the gateway;
+  C# → C# between two processes. One shared `.proto` reaching every mapped shape (scalars, lists,
+  maps, nested and `optional` messages, Timestamp/Duration), compared field by field on the receiving
+  side. The test-body rules for Fast DDS apply. The matrix and the reason for it are in BIND-6's open
+  note (requested by the maintainer 2026-10-13).
 - The **self-hosted runner** registered, labelled, documented (what it runs, what it
   must have installed), and used by no other job than the NuGet publish jobs:
   `cd.dotnet.yml`'s and, since D-BIND-71, `cd.protoc.yml`'s. Both are tag-triggered
@@ -2034,6 +2069,9 @@ same machinery as everything else, **so that** it cannot rot.
   seam), recording Part 1's rationale.
 - `integration-tests/pubsub-conformance/README.md`: the client half's "stand-in"
   caveat retired.
+- **The cross-language pub/sub matrix (ruled 2026-10-14):** every publisher → subscriber pair of
+  languages with a pub/sub surface, the lane that proves each, documented beside the language
+  support table.
 - Round archived to `docs/archive/BIND/`.
 
 ---
