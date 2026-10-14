@@ -1703,6 +1703,16 @@ codec step.
   Plugin 166/166 (bucket 165, one case each in `test_csharp_type_table` and `test_csharp_visitor`);
   protoc-coverage 23/23; Fletcher.Tests 373/373 on both TFMs; ProtocDotnet 28/28; Beside 4/4; C++
   and C# format clean.
+- **Review ruling Q8, 2026-10-14 (D-BIND-90): a flatten-wrapper pub/sub input follows C++.**
+  `PubSubMethods` now leaves flatten wrappers out of the generated set as C++ does, so such a method
+  gets no topic class and no pair, and both C# files write C++'s line (`// Skipped: Feed.Push —
+  input message 'Batch' has no generated Arrow mapping in this file`); the native file's own wrapper
+  branch is removed. Measured before and after on a probe `.proto` through real protoc: before, C#
+  emitted `Feed_PushTopic` and its own reason; after, its lines equal C++'s. TypeScript still emits
+  the topic constant: recorded as debt in BIND-T. The existing case was rewritten in place
+  (`...AndAFlattenWrapperIsSkippedAsInCpp`, counts unchanged) to take the line from the C++ header
+  for the same file. No golden moved. Plugin 166/166; protoc-coverage 23/23; Fletcher.Tests 373/373
+  on both TFMs; ProtocDotnet 28/28; Beside 4/4; C++ format clean over the whole repo.
 - **Review fix B5, 2026-10-13: C# registers C++'s topic, by test.** `test_topic_path.cpp`'s
   `ExpectBackendsAgree` generated C++ and TypeScript only, and the C# topic was checked against
   hand-written literals, so a change to C++'s form would have passed. It now also generates `csharp`
@@ -1779,6 +1789,13 @@ allocation.
 - End-to-end coverage against a live gateway in the extended
   `integration-tests/protoc-gateway-client-ts`.
 - Attachments and `Subscription`/unsubscribe are exposed, not hidden.
+- **A flatten-wrapper input, debt from D-BIND-90 (2026-10-14).** For a method whose
+  input is a flatten wrapper, C++ writes no pair and the line `// Skipped: Svc.Method
+  — input message 'W' has no generated Arrow mapping in this file`, and C# now does
+  the same in both its files, with no topic class. TypeScript still emits the topic
+  constant (`export const Feed_PushTopic = 'q8/Feed/Push';`, measured). BIND-T's pair
+  follows C++ (no pair, C++'s line); whether the constant goes too is BIND-T's to
+  rule, since removing it changes existing TS output.
 
 ### BIND-8 — `Eiva.Fletcher.GatewayClient`
 

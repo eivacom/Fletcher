@@ -933,21 +933,28 @@ TEST(CsVisitorCrossFile, EveryStructColumnOfAnotherFileIsBuiltByItsPublicToArrow
     EXPECT_EQ(cs.find("enum Quality"), std::string::npos) << cs;
 }
 
-TEST(CsVisitorCrossFile, APairCarriesAnotherFilesMessageAndAFlattenWrapperGetsNone) {
-    // Track converts, so Feed.Send gets its pair. Batch is a flatten wrapper: inlined where
-    // it is used, it has no Schema, ToArrow or FromArrow, so Feed.Push gets its topic and
-    // the reason it has no pair. Since BIND-6e this is the one such reason a .proto reaches.
+TEST(CsVisitorCrossFile, APairCarriesAnotherFilesMessageAndAFlattenWrapperIsSkippedAsInCpp) {
+    // Track converts, so Feed.Send gets its pair. Batch is a flatten wrapper: inlined where it is
+    // used, it has no class of its own in C++, so C++ skips Feed.Push with its reason. D-BIND-90:
+    // C# follows C++, with C++'s own line in both files and no topic class.
     DescriptorPool pool;
     const FileDescriptor* file = BuildCrossFileFixture(pool);
     ASSERT_NE(file, nullptr);
+    const std::string skipped =
+        "// Skipped: Feed.Push \xE2\x80\x94 input message 'Batch' has no generated Arrow mapping "
+        "in "
+        "this file\n";
+    ExpectContains(Emitted(GenerateWith(file, ""), "track.fletcher.pb.h"), skipped);
+
     const auto files = GenerateWith(file, "csharp");
+    const std::string model = Emitted(files, "track.fletcher.cs");
     const std::string native = Emitted(files, "track.fletcher.native.cs");
     ExpectContains(native, "public sealed class Feed_SendPublisher");
-    ExpectContains(native,
-                   "// Skipped: Feed.Push \xE2\x80\x94 Batch has no ToArrow / FromArrow: it is a "
-                   "flatten wrapper.\n");
+    ExpectContains(model, "public static class Feed_SendTopic\n");
+    ExpectContains(native, skipped);
+    ExpectContains(model, skipped);
     EXPECT_EQ(native.find("Feed_PushPublisher"), std::string::npos) << native;
-    ExpectContains(Emitted(files, "track.fletcher.cs"), "public static class Feed_PushTopic\n");
+    EXPECT_EQ(model.find("Feed_PushTopic"), std::string::npos) << model;
 }
 
 // D-BIND-87: C# decides "from another file" through CollectCrossFileMessages, the walk C++

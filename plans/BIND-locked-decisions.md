@@ -2818,3 +2818,17 @@ questions Q1 to Q10), and are numbered as their fixes land.
   failed against the plugin built before the fix (three properties `FooBar`; the clash generated).
   **Declined:** for (a), refusing the file (protoc accepts it, and C++ works); for (b), renaming one
   column (the schema is C++'s, and a silent rename would surprise every consumer).
+
+- **D-BIND-90 - a pub/sub method whose input is a flatten wrapper follows C++: no topic class and
+  no pair, and C++'s skip line and reason.** *LOCKED BY THE MAINTAINER 2026-10-08 (review Q8).* A
+  flatten wrapper has no class in C++, so C++ leaves it out of the messages it generates and skips the
+  method: `// Skipped: Feed.Push — input message 'Batch' has no generated Arrow mapping in this
+  file`. C# built the same set from `OrderedMessages` but kept wrappers in it, so it emitted
+  `Feed_PushTopic` and, in the native file, a skip line of its own ("Batch has no ToArrow /
+  FromArrow: it is a flatten wrapper."), measured 2026-10-14. `PubSubMethods` now leaves wrappers out
+  as C++ does, so `ValidateServiceMethod` gives C++'s reason and both C# files write C++'s line; the
+  native file's own wrapper branch is gone. TypeScript still emits the topic constant (measured); its
+  divergence is recorded as debt in BIND-T. Test:
+  `CsVisitorCrossFile.APairCarriesAnotherFilesMessageAndAFlattenWrapperIsSkippedAsInCpp` takes the
+  line from the C++ header generated for the same file and requires it in both C# files.
+  **Declined:** keeping the topic class (C# would name a topic no C++ publisher ever registers).

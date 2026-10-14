@@ -765,6 +765,9 @@ includes every header it names directly.
 **Colliding names, ruled 2026-10-08 from the review (D-BIND-89):** C# properties that PascalCase
 alike are suffixed `_` in field order; a field-level flatten that inlines a name its host already has
 is refused for every backend, naming both fields.
+**Wrapper inputs, ruled 2026-10-08 from the review (D-BIND-90):** a pub/sub method whose input is a
+flatten wrapper gets no topic class and no pair in C#, with C++'s skip line; TypeScript's topic
+constant for it is BIND-T's debt.
 **Slices:** 6a plumbing,
 type table, visitor, classes and enums with scalar fields; 6b `Schema`, `ToArrow`/`FromArrow` and
 `integration-tests/protoc-dotnet`; 6c composite and temporal types; 6d topics and the native

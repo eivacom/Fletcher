@@ -670,9 +670,12 @@ struct PubSubMethod {
 };
 
 std::vector<PubSubMethod> PubSubMethods(const FileDescriptor* file) {
+    // The set C++ generates classes for: no recursive message, and no flatten wrapper, which
+    // is inlined where it is used (D-BIND-90: a wrapper input is skipped as C++ skips it).
     std::set<const Descriptor*> generated;
     for (const auto* msg : fletcher::OrderedMessages(file))
-        if (!fletcher::IsRecursive(msg)) generated.insert(msg);
+        if (!fletcher::IsRecursive(msg) && !fletcher::IsFlattenedWrapper(msg))
+            generated.insert(msg);
     std::vector<PubSubMethod> out;
     for (int si = 0; si < file->service_count(); ++si) {
         const auto* svc = file->service(si);
@@ -1033,17 +1036,17 @@ std::string CsVisitor::GenerateNativeFile() {
             continue;
         }
         // The pair publishes through ToArrow and reads through FromArrow, so a message
-        // whose conversion waits, or a flatten wrapper, which has neither, gets no pair.
+        // whose conversion waits gets no pair. A flatten wrapper never gets here: it is
+        // skipped above with C++'s reason (D-BIND-90).
         std::set<const Descriptor*> visiting;
         const std::string blocker = ConversionBlocker(p.input, file_, cross_file_, visiting);
         const std::string msg = CsTypeName(p.input);
         // B2: in a code expression the class is named in full, so a member of the pair that
         // shares its name (a message called Topic or Schema) cannot capture it.
         const std::string msg_expr = CsTypeExpr(p.input);
-        if (!blocker.empty() || fletcher::IsFlattenedWrapper(p.input)) {
+        if (!blocker.empty()) {
             o << "// Skipped: " << p.service << "." << p.method << " — " << msg
-              << " has no ToArrow / FromArrow: "
-              << (blocker.empty() ? "it is a flatten wrapper." : blocker) << "\n";
+              << " has no ToArrow / FromArrow: " << blocker << "\n";
             continue;
         }
         o << "/// <summary>Receives one <see cref=\"" << msg << "\"/> published on " << p.service
