@@ -267,6 +267,11 @@ four places.
   - The 6b-2 slice note overclaims the topic test.
   - The exit gate names `CsharpVisitor.*`.
   - The protoc-dotnet README still says "until BIND-6c" and that the wire comparison arrives with 6d.
+  - **FIXED 2026-10-14:** the D-BIND-72 bullet says the native pair is left out with
+    `csharp_model_only` (correction noted); the 6b-2 note says it met the model-layer half, with the
+    topic test from B5 and the wire comparison from 6d-2; the exit gate in the tracker and the dev
+    plan names the real suites (`CsVisitor*`, `CsNames`, `CsTypeTable`); the README lists what
+    `ConversionTests` covers now and points to `CoverageWireBytesTests` for the wire bytes.
 - T-D6: the Arrow-only model is proven on net10.0 only.
 - **T-D7: answered.** A NativeAOT publish with warnings as errors was shown to fail, on IL3000, in
   6e-2's probe (`aot_probe2`). AotSmoke inherits `TreatWarningsAsErrors` from

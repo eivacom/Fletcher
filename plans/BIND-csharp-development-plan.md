@@ -543,7 +543,7 @@ pole.
 | BIND-3 | `Eiva.Fletcher.Interop` + codec/Arrow tier in `Eiva.Fletcher` | A | 🟦 | BIND-2 | Every PROTO-MAPPING type round-trips through the binding (D-BIND-39, was "Bucket 1 green"); `ErrorTests.EveryHardCaseKeepsItsMessage` |
 | BIND-4 | Pub/sub in `Eiva.Fletcher`: registry, Publisher, Subscriber, SchemaArrival, thunk discipline | A | 🟦 | BIND-3 | Bucket 3 over `inprocess`; Bucket 4 over `fastdds`/`xrce` by selector; C# arm of `CallerTier`; per-row publish benchmark (D-BIND-37) |
 | BIND-5 | `SubscriberArrow` batching + the oracle run end-to-end from C# | A | 🔬 | BIND-4 | `pubsub-arrow` cases; copy oracle green with the **C#** producer |
-| BIND-6 | C# backend on the IR: type table + visitor → `<stem>.fletcher.cs` | B | 🟦 | — (GIR) | `CsharpVisitor.*` in `protoc/tests`; no-drift test unchanged |
+| BIND-6 | C# backend on the IR: type table + visitor → `<stem>.fletcher.cs` | B | 🟦 | — (GIR) | `CsVisitor.*`, `CsVisitorPair.*`, `CsVisitorCrossFile.*`, `CsNames.*` and `CsTypeTable.*` in `protoc/tests` (named `CsharpVisitor.*` until review T-D5 corrected it, 2026-10-14); no-drift test unchanged |
 | BIND-7 | Arrow view + accessor emitters (`csharp_accessor`) + capstone third arm | B | 🟦 | BIND-6, BIND-3 | `accessor-capstone` C# arm `observed == expected`; StructArray windowing fixture at non-zero offset |
 | BIND-T | TS `Publisher`/`Subscriber` emitter | C | 🟦 | — | `TsVisitor.DescriptorByteIdentical` still green + new emitter cases |
 | BIND-8 | `Eiva.Fletcher.GatewayClient` (managed port; the codec exception) | C | 🟦 | — | Bucket 2 green (the Part 4 file set, not a count); `Package.GatewayClientHasNoRuntimesFolder` |

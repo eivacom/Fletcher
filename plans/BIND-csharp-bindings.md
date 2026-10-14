@@ -856,7 +856,7 @@ Kind: 🟪 spec · 🟦 impl · 🔬 proof · ⚙ pipelines · 📓 docs
 | BIND-3 | `Eiva.Fletcher.Interop` + codec/Arrow tier in `Eiva.Fletcher` | A | 🟦 | BIND-2 | Every PROTO-MAPPING type round-trips through the binding (D-BIND-39, was "Bucket 1 green"); `ErrorTests.EveryHardCaseKeepsItsMessage` | 🟢 |
 | BIND-4 | Pub/sub in `Eiva.Fletcher`: registry, `Publisher`, `Subscriber`, `SchemaArrival`, thunk discipline, error handling | A | 🟦 | BIND-3 | Bucket 3 over `inprocess`; Bucket 4 over `fastdds`/`xrce` by selector; C# arm of `CallerTier`; per-row publish benchmark recorded (D-BIND-37) | 🟢 (reopened twice on 2026-09-25 and re-closed on CI: D-BIND-56 at `78ac363`, bucket 4 over `xrce`; D-BIND-57 at `bdd4fba`, bucket 3's 49-case file set mapped and the matrix checked) |
 | BIND-5 | `SubscriberArrow` batch-first + the copy oracle end-to-end from C# | A | 🔬 | BIND-4 | `pubsub-arrow` cases; copy oracle green with the **C#** producer (D-BIND-58) | 🟢 (closed on CI at `a43c384`, `ci.pr` run 36563607601, 50/50, after a fresh-context review whose 9 BLOCKERs were fixed; D-BIND-58 to 68; conformance 11 of 11) |
-| BIND-6 | C# backend on the IR: type table + visitor → `<stem>.fletcher.cs` | B | 🟦 | — (GIR) | `CsharpVisitor.*` in `protoc/tests`; no-drift test unchanged | 🔴 (6a to 6d-2 on CI; 6e-1 cross-file pushed; 6e-2 NativeAOT pushed; 6e-3 beside protoc's C# built; the review to do) |
+| BIND-6 | C# backend on the IR: type table + visitor → `<stem>.fletcher.cs` | B | 🟦 | — (GIR) | `CsVisitor.*`, `CsVisitorPair.*`, `CsVisitorCrossFile.*`, `CsNames.*` and `CsTypeTable.*` in `protoc/tests` (named `CsharpVisitor.*` until review T-D5 corrected it, 2026-10-14); no-drift test unchanged | 🔴 (6a to 6d-2 on CI; 6e-1 cross-file pushed; 6e-2 NativeAOT pushed; 6e-3 beside protoc's C# built; the review to do) |
 | BIND-7 | Arrow view + accessor emitters (`csharp_accessor`) + capstone third arm | B | 🟦 | BIND-6, BIND-3 | `accessor-capstone` C# arm `observed == expected`; `StructArray` windowing fixture at non-zero offset | ⚪ |
 | BIND-T | TS `Publisher`/`Subscriber` emitter | C | 🟦 | — | `TsVisitor.DescriptorByteIdentical` still green + new emitter cases | ⚪ |
 | BIND-8 | `Eiva.Fletcher.GatewayClient` (managed port; the codec exception) | C | 🟦 | — | Bucket 2 green (the Part 4 file set, not a count); `Package.GatewayClientHasNoRuntimesFolder` | ⚪ |
@@ -1427,7 +1427,9 @@ codec step.
 - **The model layer per D-BIND-72:** the row type, `Schema`, `ToArrow`, `FromArrow`
   and the topics compile against `Apache.Arrow` alone. A test project that references
   neither `Eiva.Fletcher` nor `Eiva.Fletcher.Interop` builds the generated model, and
-  the native pair is emitted only when requested. Topic segments follow C++'s form,
+  the native pair is left out with `csharp_model_only`. *(This read "emitted only when
+  requested"; D-BIND-76 made the native file the default and the model-only file the opt-out,
+  as C++'s `schema_only` is. Corrected 2026-10-14, review T-D5.)* Topic segments follow C++'s form,
   `{"eiva.nav", "Svc", "Method"}` for a dotted package (D-BIND-72 point 6), with a test
   that a C# and a C++ publisher of one method register the same topic.
 - **Build integration per D-BIND-71:** `integration-tests/protoc-dotnet` runs protoc
@@ -1515,6 +1517,10 @@ codec step.
   with a map key rendered nullable makes exactly the `Player` schema case fail, naming
   the field. **This meets the D-BIND-71 bullet above and D-BIND-72's model-layer
   bullet**; the wire-bytes comparison with C++ waits for the native pair (6d).
+  *(Corrected 2026-10-14, review T-D5: it met the model-layer HALF of that bullet. The bullet's
+  test that a C# and a C++ publisher register the same topic did not exist until review fix B5,
+  2026-10-13, which made `test_topic_path.cpp`'s `ExpectBackendsAgree` generate C# too. The wire
+  comparison came with 6d-2's `CoverageWireBytesTests`.)*
 - **6c, first step, 2026-10-06 (D-BIND-74):** `Eiva.Fletcher.Model` is scaffolded at
   `dotnet/src/Fletcher.Model` with its tests in `tests/Fletcher.Model.Tests`: the lossless
   `Timestamp` and `Duration` over Arrow's `TimeUnit`, `Apache.Arrow` only. 47 cases per
@@ -1787,6 +1793,13 @@ codec step.
   `ts,ipc,accessor,rust`, and requires those bases to write their `.accessor.pb.h` and `.rs` files.
   No drift found; mutants making `csharp` alter the accessor header or the Rust module each fail
   it. No new case (counts unchanged). Plugin 167/167; C++ format clean over the whole repo.
+- **Review debt T-D5, 2026-10-14: four stale texts corrected.** The D-BIND-72 bullet's "native pair
+  emitted only when requested" (D-BIND-76 made it the default; `csharp_model_only` opts out); the 6b-2
+  note's claim to meet the whole D-BIND-72 bullet (the topic test came with B5, the wire comparison
+  with 6d-2); the BIND-6 exit gate's `CsharpVisitor.*`, in this tracker and the dev plan, which no
+  suite is called (`CsVisitor`, `CsVisitorPair`, `CsVisitorCrossFile`, `CsNames`, `CsTypeTable`);
+  and the protoc-dotnet README's "no conversion until BIND-6c" and "wire comparison with 6d". Each
+  correction is marked where it stands.
 - **Review fix B5, 2026-10-13: C# registers C++'s topic, by test.** `test_topic_path.cpp`'s
   `ExpectBackendsAgree` generated C++ and TypeScript only, and the C# topic was checked against
   hand-written literals, so a change to C++'s form would have passed. It now also generates `csharp`
