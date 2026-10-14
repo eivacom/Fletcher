@@ -1605,7 +1605,8 @@ codec step.
   break, but no Windows AOT binary has been built or run. (2) **The smoke app reaches only the
   `inprocess` transport.** Fast DDS and XRCE live inside the shim, so AOT does not touch them, but
   their deliveries enter managed code on foreign transport threads, which has run only under the JIT;
-  the AOT analysers cover that code statically, at compile time.
+  the AOT analysers cover that code statically, at compile time. **Both parked to BIND-9 by D-BIND-88
+  (review Q6, 2026-10-14), as acceptance bullets there.**
 - **6e-3, 2026-10-08 (D-BIND-82): beside protoc's own C#.** `ProtocDotnetBeside` runs protoc's
   `--csharp_out` and Fletcher's `csharp` in ONE protoc call over `beside.proto` (sets
   `csharp_namespace`) and `shared.proto` (sets none) into one directory, compiles both into one
@@ -1843,6 +1844,15 @@ same machinery as everything else, **so that** it cannot rot.
   reshipping rather than flowing through Windows Update. It also reintroduces the
   two-heaps hazard between the shim and other native modules that BIND-2's B1
   found. Dynamic is the status quo and needs no work.
+- **NativeAOT where BIND-6 did not reach (D-BIND-88, parked here from the BIND-6
+  review, Q6).** D-BIND-81 publishes and runs `Fletcher.AotSmoke` on Linux over
+  `inprocess` only. BIND-9 owns the two open notes 6e-2 left:
+  1. **`win-x64`:** publish AotSmoke with NativeAOT (MSVC links) and run it against
+     the Windows shim, in the RID matrix's Windows leg, for net8.0 and net10.0.
+  2. **A real transport:** run AotSmoke (or a sibling) over `fastdds`, so a delivery
+     enters AOT-compiled managed code on a Fast DDS thread, which until now has run
+     only under the JIT. The test-body rules for Fast DDS apply (wait with a
+     deadline, republish until the first row arrives, GUID topics).
 - The **self-hosted runner** registered, labelled, documented (what it runs, what it
   must have installed), and used by no other job than the NuGet publish jobs:
   `cd.dotnet.yml`'s and, since D-BIND-71, `cd.protoc.yml`'s. Both are tag-triggered

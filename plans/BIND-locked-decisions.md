@@ -2672,6 +2672,7 @@ The next one was ruled on 2026-10-07 at the start of slice 6e, cross-file refere
     restores locked against them, and without the pin fails with 8 x NU1004. **Declined:** `global.json`
     `rollForward: disable` (every machine on exactly one SDK patch); dropping the claim and keeping the
     smoke app out of the solution with no lock file (the guarantee would then be one Linux step).
+  *(D-BIND-88: a `win-x64` AotSmoke publish and run, and a run over `fastdds`, are BIND-9's.)*
   The NativeAOT static-linking caveat for the LGPL (N-8) is unchanged: this publish loads the shim as a
   shared library beside the binary.
 
@@ -2783,3 +2784,14 @@ questions Q1 to Q10), and are numbered as their fixes land.
   or corpus moved). **Declined:** a switch on the walk keeping C++ byte-identical for that shape
   too (the two backends would get different answers from the one function, which is what the
   ruling removes).
+
+- **D-BIND-88 - the two NativeAOT notes 6e-2 left are BIND-9's, as acceptance there, and do not
+  block BIND-6.** *LOCKED BY THE MAINTAINER 2026-10-08 (review Q6), as the tests reviewer
+  recommended.* D-BIND-81 publishes and runs `Fletcher.AotSmoke` on Linux over `inprocess` only. Not
+  yet shown: (1) a `win-x64` NativeAOT publish (MSVC links) and run against the Windows shim, which
+  belongs with BIND-9's RID matrix; (2) an AOT-compiled delivery entering managed code on a Fast DDS
+  thread, which has run only under the JIT, so a run over `fastdds`. Neither is a known defect: the
+  AOT analysers cover the code statically, and nothing is known to break on Windows. Both are now
+  bullets in BIND-9's acceptance, so BIND-9 cannot close without them. **Declined:** doing them in
+  BIND-6 (the Windows leg needs the RID matrix BIND-9 builds; the transport run is test work for a
+  shipped package).

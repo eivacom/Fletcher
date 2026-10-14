@@ -788,6 +788,8 @@ had generated the gateway client's input.
 **BIND-T, BIND-8, BIND-9, BIND-10** — as in the 2026-08-31 plan, with BIND-9
 carrying the LGPL notice text and the packaging statement (§6 P-1), and BIND-10
 adding **TD-009** (TD-008 is now taken by the seam).
+BIND-9 also owns, by D-BIND-88 (2026-10-14), the two NativeAOT notes BIND-6 left:
+an AotSmoke publish and run on `win-x64`, and a run over `fastdds`.
 
 **BIND-9, the plugin's C# locator (D-BIND-71, 2026-09-29).** `Eiva.Fletcher.Protoc`
 bundles the `linux-x64` and `win-x64` plugin binaries and sets
