@@ -1737,6 +1737,13 @@ codec step.
   pin the new text; `ProtocDotnet`'s default-Timestamp assertion updated. The Arrow-tier gap is a new
   BIND-9 acceptance bullet. Plugin 167/167; protoc-coverage 23/23; Fletcher.Tests 388/388 on both
   TFMs; ProtocDotnet 28/28; Beside 4/4; C++ and C# format clean.
+- **Review debt P-D1, 2026-10-14: three more line breaks escaped in C# string literals.** C# ends a
+  line at U+0085, U+2028 and U+2029 as well as at CR and LF, so an option-metadata value (or a time
+  zone) holding one, passed through raw by `CsStringLiteral`, made the generated C# fail with CS1010.
+  Measured first in a one-file project (raw: CS1010 "Newline in constant"; escaped: compiles). They
+  are now written `\u0085`, `\u2028`, `\u2029`; their neighbours (U+00A9, U+2026) still pass
+  through. The existing case gains five assertions (counts unchanged); a mutant without the escapes
+  fails it. No golden moved. Plugin 167/167; C++ format clean over the whole repo.
 - **Review fix B5, 2026-10-13: C# registers C++'s topic, by test.** `test_topic_path.cpp`'s
   `ExpectBackendsAgree` generated C++ and TypeScript only, and the C# topic was checked against
   hand-written literals, so a change to C++'s form would have passed. It now also generates `csharp`

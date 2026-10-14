@@ -569,6 +569,15 @@ TEST(CsTypeTable, StringLiteralsEscapeWhatCannotAppearRaw) {
     EXPECT_EQ(cs::CsStringLiteral(std::string("x\x01y", 3)), "\"x\\u0001y\"");
     // UTF-8 passes through: the generated file is UTF-8.
     EXPECT_EQ(cs::CsStringLiteral("h\xc3\xa9"), "\"h\xc3\xa9\"");
+    // Review P-D1: C# ends a line at NEL, LINE SEPARATOR and PARAGRAPH SEPARATOR too, so raw in
+    // a literal each is CS1010; they are escaped. Their neighbours (U+00A9, U+2026) are not.
+    EXPECT_EQ(cs::CsStringLiteral("a\xc2\x85"
+                                  "b"),
+              "\"a\\u0085b\"");
+    EXPECT_EQ(cs::CsStringLiteral("a\xe2\x80\xa8"
+                                  "b\xe2\x80\xa9"),
+              "\"a\\u2028b\\u2029\"");
+    EXPECT_EQ(cs::CsStringLiteral("\xc2\xa9\xe2\x80\xa6"), "\"\xc2\xa9\xe2\x80\xa6\"");
 }
 
 TEST(CsTypeTable, KindsNotYetMappedReturnNothing) {

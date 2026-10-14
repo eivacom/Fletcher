@@ -196,7 +196,9 @@ four places.
 **Plugin**
 - **P-D1, a compile failure for a legal input:** `CsStringLiteral` passes U+0085, U+2028 and U+2029
   through raw. C# treats them as line breaks, so an option-metadata value containing one is CS1010.
-  Escape them. *(reported)*
+  Escape them. *(reported)* **FIXED 2026-10-14:** written as `\u0085`, `\u2028`, `\u2029`;
+  measured first (raw: CS1010 "Newline in constant"; escaped: compiles), pinned in
+  `CsTypeTable.StringLiteralsEscapeWhatCannotAppearRaw`, which a mutant without the escapes fails.
 - P-D2: `ConversionBlocker` has no memo; it re-walks shared sub-messages. *(reported)*
 - **P-D3:** fields the IR drops (oneof members and the like) vanish from the C# class without the
   note C++ writes. *(reported)*

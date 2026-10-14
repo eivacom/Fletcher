@@ -270,7 +270,23 @@ std::optional<std::string> CsArrowDateTimeTypeExpr(ArrowType type, ArrowTimeUnit
 std::string CsStringLiteral(std::string_view text) {
     static const char kHex[] = "0123456789abcdef";
     std::string out = "\"";
-    for (const char c : text) {
+    for (size_t i = 0; i < text.size(); ++i) {
+        const char c = text[i];
+        // Review P-D1: C# also ends a line at U+0085, U+2028 and U+2029 (NEL, LINE SEPARATOR,
+        // PARAGRAPH SEPARATOR), so raw in a regular literal each is CS1010. Their UTF-8 forms
+        // are C2 85, E2 80 A8 and E2 80 A9; they are written as \u escapes instead.
+        const auto at = [&](size_t k) { return static_cast<unsigned char>(text[k]); };
+        if (at(i) == 0xC2 && i + 1 < text.size() && at(i + 1) == 0x85) {
+            out += "\\u0085";
+            i += 1;
+            continue;
+        }
+        if (at(i) == 0xE2 && i + 2 < text.size() && at(i + 1) == 0x80 &&
+            (at(i + 2) == 0xA8 || at(i + 2) == 0xA9)) {
+            out += at(i + 2) == 0xA8 ? "\\u2028" : "\\u2029";
+            i += 2;
+            continue;
+        }
         switch (c) {
             case '"':
                 out += "\\\"";
