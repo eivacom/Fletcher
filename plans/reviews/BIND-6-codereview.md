@@ -254,7 +254,10 @@ four places.
     model box names 6e-1, D-BIND-83/86 and D-BIND-92, and the Model box and the prose below say
     built. Parses and renders under mermaid@11.
 - **T-D3:** the no-drift test covers `""`, `ts`, `ts,ipc` and `schema_only`, not `accessor` or
-  `rust`.
+  `rust`. **FIXED 2026-10-14:** `CsVisitor.CsharpTokenChangesNoExistingOutputAndAddsOnlyItsOwnFiles`
+  also runs over `accessor`, `rust` and `ts,ipc,accessor,rust`, and requires those bases to write
+  their `.accessor.pb.h` and `.rs` files, so it cannot pass vacuously. No drift found. Mutants making
+  `csharp` add a byte to the accessor header, or to the Rust module, each fail it.
 - **T-D4:** `ci.pr`'s `integration-protoc-dotnet` filter lacks `dotnet/Directory.Build.targets`.
   *(verified by reading)* **FIXED 2026-10-14:** added; the lane's sparse checkout already took all of
   `dotnet/`, and its header comment now names the file (the D-BIND-81 AOT pack pin that

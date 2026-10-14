@@ -487,12 +487,27 @@ TEST(CsVisitor, EveryFieldTheMappingProducesGetsAProperty) {
 
 TEST(CsVisitor, CsharpTokenChangesNoExistingOutputAndAddsOnlyItsOwnFiles) {
     // `csharp` adds the model and the native pair's file (D-BIND-76), and
-    // `csharp,csharp_model_only` the model alone; neither changes another output.
+    // `csharp,csharp_model_only` the model alone; neither changes another output. Review T-D3:
+    // over every other output the plugin has, the RBA accessor and Rust ones included.
     DescriptorPool pool;
     const FileDescriptor* file = BuildFixture(pool);
     ASSERT_NE(file, nullptr);
-    for (const std::string base : {"", "ts", "ts,ipc", "schema_only"}) {
+    for (const std::string base :
+         {"", "ts", "ts,ipc", "schema_only", "accessor", "rust", "ts,ipc,accessor,rust"}) {
         const auto without = GenerateWith(file, base);
+        // Not vacuous: a base that names a backend really writes its files.
+        const auto writes = [&](const std::string& suffix) {
+            for (const auto& entry : without)
+                if (entry.first.size() >= suffix.size() &&
+                    entry.first.compare(entry.first.size() - suffix.size(), suffix.size(),
+                                        suffix) == 0)
+                    return true;
+            return false;
+        };
+        if (base.find("accessor") != std::string::npos)
+            EXPECT_TRUE(writes(".accessor.pb.h")) << "'" << base << "' wrote no accessor";
+        if (base.find("rust") != std::string::npos)
+            EXPECT_TRUE(writes(".rs")) << "'" << base << "' wrote no Rust";
         const std::string prefix = base.empty() ? "" : base + ",";
         for (const std::string token : {"csharp", "csharp,csharp_model_only"}) {
             const auto with = GenerateWith(file, prefix + token);

@@ -1782,6 +1782,11 @@ codec step.
   cross-file types (D-BIND-80), nullability (D-BIND-83, 86) and the forced-null refusal (D-BIND-92);
   the Model box and the prose below it say built. Diagram 9 was already current. Parses and renders
   under mermaid@11.
+- **Review debt T-D3, 2026-10-14: the no-drift case covers every output.** The case proving
+  `csharp` changes no other output by a byte now also runs over `accessor`, `rust` and
+  `ts,ipc,accessor,rust`, and requires those bases to write their `.accessor.pb.h` and `.rs` files.
+  No drift found; mutants making `csharp` alter the accessor header or the Rust module each fail
+  it. No new case (counts unchanged). Plugin 167/167; C++ format clean over the whole repo.
 - **Review fix B5, 2026-10-13: C# registers C++'s topic, by test.** `test_topic_path.cpp`'s
   `ExpectBackendsAgree` generated C++ and TypeScript only, and the C# topic was checked against
   hand-written literals, so a change to C++'s form would have passed. It now also generates `csharp`
