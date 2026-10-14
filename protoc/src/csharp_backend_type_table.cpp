@@ -362,15 +362,37 @@ std::optional<std::string> CsProtocNamespaceConflict(const google::protobuf::Fil
     const std::string protoc_ns = explicit_ns ? file->options().csharp_namespace()
                                               : UnderscoresToCamelCase(file->package(), true, true);
     constexpr std::string_view kReserved = "Fletcher.Gen";
+    const std::string from = explicit_ns ? std::string("from option csharp_namespace")
+                                         : "from package '" + file->package() + "'";
     const bool inside =
         protoc_ns == kReserved || (protoc_ns.size() > kReserved.size() &&
                                    protoc_ns.compare(0, kReserved.size(), kReserved) == 0 &&
                                    protoc_ns[kReserved.size()] == '.');
-    if (!inside) return std::nullopt;
+    if (!inside) {
+        // D-BIND-91, the other direction: protoc declares each top-level message and enum as
+        // <namespace>.<Name>, so a type whose full name IS one of our namespaces, `Fletcher` or
+        // `Fletcher.Gen`, takes that name from them (CS0101, measured 2026-10-14).
+        auto clash = [&](const std::string& name) -> std::optional<std::string> {
+            const std::string full = protoc_ns.empty() ? name : protoc_ns + "." + name;
+            if (full != "Fletcher" && full != kReserved) return std::nullopt;
+            const std::string where =
+                protoc_ns.empty()
+                    ? std::string("the global namespace: no package and no csharp_namespace")
+                    : "namespace '" + protoc_ns + "', " + from;
+            return file->name() + ": protoc's C# for this file would declare a type '" + full +
+                   "' (" + where +
+                   "), the name of a namespace reserved for Fletcher's generated C# (D-BIND-69). "
+                   "The two would collide, which is CS0101 in a project that compiles both. Rename "
+                   "the type, or set option csharp_namespace to another namespace.";
+        };
+        for (int i = 0; i < file->message_type_count(); ++i)
+            if (auto c = clash(file->message_type(i)->name())) return c;
+        for (int i = 0; i < file->enum_type_count(); ++i)
+            if (auto c = clash(file->enum_type(i)->name())) return c;
+        return std::nullopt;
+    }
     return file->name() + ": protoc's C# for this file would be in namespace '" + protoc_ns +
-           "' (" +
-           (explicit_ns ? std::string("from option csharp_namespace")
-                        : "from package '" + file->package() + "'") +
+           "' (" + from +
            "), inside Fletcher.Gen, which is reserved for Fletcher's generated C# (D-BIND-69). "
            "Its types and Fletcher's could then share a namespace, which is CS0101 in a project "
            "that compiles both. Set option csharp_namespace to a namespace outside Fletcher.Gen.";

@@ -560,7 +560,7 @@ tests between two implementations.
 | 2 gateway client | `test_schema_codec` 11, `test_publish_frame` 9, TS 36 | **56** | Port (BIND-8), true parity: managed code both sides. |
 | 3 pub/sub semantics | `test_publisher_subscriber` 44, `test_segments` 5, `test_pubsub_arrow` 33 | **82** | Port over `inprocess`. **Split confirmed 2026-09-24: the `pubsub` cases are BIND-4's; `test_pubsub_arrow`'s are BIND-5's, whose acceptance row claims them and whose `SubscriberArrow` did not exist before it.** **#128 added 26 `pubsub` cases and 18 `pubsub-arrow` ones (D-BIND-57)**; of the 49 `pubsub` cases, **44 are mapped** - 12 of #128's over `inprocess`, 11 over real Fast DDS in the transport lane, because only a provider that knows options or has a schema channel can answer them - **and 5 are EXCLUDED**, 2 by D-BIND-47 and 3 by D-BIND-57. D-BIND-47's two: `UnsubscribeLastSubscriberUnsubscribesFromProvider` and `UnsubscribeWithRemainingSubscribersKeepsProviderSubscription` assert `mock->unsubscribe_count`, the fan-out's provider-level bookkeeping, which lives in the C++ `Subscriber` the binding WRAPS and does not reimplement - porting them would run that C++ a second time and call it a test of the binding, and the managed surface has no view of provider-level subscriptions by design (D-BIND-24). Reasoning and the full case-by-case mapping: `dotnet/tests/Fletcher.Tests/BucketThreeConformanceTests.cs`. |
 | 4 native providers | Fast DDS: `test_fast_dds_pubsub_provider` 71, `test_profile_document` 33; XRCE: `test_xrce_provider` 7, `test_xrce_document` 11 — **port as driver-selection tests (122)**; `test_fletcher_sample_pub_sub_type` 28 — **excluded**, provider-internal (the Fast DDS `TypeSupport`, a C++ type no managed code touches) | **150** | 122 by driver selection - ONE body over every transport (`integration-tests/pubsub-transport-conformance`), not a port per case; 28 excluded, documented. #128 added 45 of these. |
-| 5 generator | `test_type_mapper` 36, `test_option_metadata` 33, `test_schema_builder` 9, `test_schema_visitor` 9, `test_ir` 8, `test_schema_codec_lockstep` 2, `test_topic_path` 2, `test_ts_visitor` 1, `test_csharp_type_table` 25, `test_csharp_visitor` 40 | **165** | **Stay in C++** — they test a C++ generator; **extended** with `test_csharp_visitor`, `test_csharp_type_table` and the TS pub/sub emitter cases. |
+| 5 generator | `test_type_mapper` 36, `test_option_metadata` 33, `test_schema_builder` 9, `test_schema_visitor` 9, `test_ir` 8, `test_schema_codec_lockstep` 2, `test_topic_path` 2, `test_ts_visitor` 1, `test_csharp_type_table` 26, `test_csharp_visitor` 40 | **166** | **Stay in C++** — they test a C++ generator; **extended** with `test_csharp_visitor`, `test_csharp_type_table` and the TS pub/sub emitter cases. |
 | 6 no managed analogue | `test_owned_schema` 1 | **1** | Excluded, documented (an `ArrowSchemaDeepCopy` ENOMEM path). |
 | Conformance (inherited, not a port target) | `integration-tests/pubsub-conformance` 95 cases; `CallerTier` 22 of them | — | The **oracle** seam §9 hands BIND. BIND writes a C# arm of `CallerTier` and adds cases to the C++ suite (§12.1 expects it); each C# case names the C++ case it mirrors and a script checks the mapping is total. |
 
@@ -1713,6 +1713,16 @@ codec step.
   (`...AndAFlattenWrapperIsSkippedAsInCpp`, counts unchanged) to take the line from the C++ header
   for the same file. No golden moved. Plugin 166/166; protoc-coverage 23/23; Fletcher.Tests 373/373
   on both TFMs; ProtocDotnet 28/28; Beside 4/4; C++ format clean over the whole repo.
+- **Review ruling Q9, 2026-10-14 (D-BIND-91): a protoc type named like our namespace.** Measured
+  first, protoc's C# and ours compiled into one assembly: `package fletcher; message Gen`, the same
+  through `csharp_namespace = "Fletcher"`, and `message Fletcher` with no package each give CS0101;
+  the control `package nav; message Gen` compiles. `CsProtocNamespaceConflict` (D-BIND-82) now also
+  refuses a file whose top-level message or enum protoc would declare as `Fletcher` or
+  `Fletcher.Gen`. After the fix the same probe refuses the three shapes in the plugin and the control
+  still compiles. New case `CsNames.AProtocTypeNamedLikeOurNamespaceIsRefused` (10 shapes, messages
+  and enums, near misses included). No golden moved. Plugin 167/167 (bucket 166); protoc-coverage
+  23/23; Fletcher.Tests 373/373 on both TFMs; ProtocDotnet 28/28; Beside 4/4; C++ format clean over
+  the whole repo.
 - **Review fix B5, 2026-10-13: C# registers C++'s topic, by test.** `test_topic_path.cpp`'s
   `ExpectBackendsAgree` generated C++ and TypeScript only, and the C# topic was checked against
   hand-written literals, so a change to C++'s form would have passed. It now also generates `csharp`

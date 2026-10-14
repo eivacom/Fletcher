@@ -2692,6 +2692,8 @@ The next one was ruled on 2026-10-07 at the start of slice 6e, cross-file refere
   shares the TEXT prefix (`Fletcher.Generated`) is accepted. Without `csharp` nothing changes.
   **Declined:** a warning on stderr (protoc's output is easy to miss, and the failure would surface
   later as CS0101); documenting the reservation only.
+  *(Extended by D-BIND-91: a protoc TYPE whose full name is `Fletcher` or `Fletcher.Gen` is refused
+  too.)*
 
 The next ones were ruled on 2026-10-08, from the BIND-6 review (`plans/reviews/BIND-6-codereview.md`,
 questions Q1 to Q10), and are numbered as their fixes land.
@@ -2832,3 +2834,19 @@ questions Q1 to Q10), and are numbered as their fixes land.
   `CsVisitorCrossFile.APairCarriesAnotherFilesMessageAndAFlattenWrapperIsSkippedAsInCpp` takes the
   line from the C++ header generated for the same file and requires it in both C# files.
   **Declined:** keeping the topic class (C# would name a topic no C++ publisher ever registers).
+
+- **D-BIND-91 - with `csharp`, a file is also refused when protoc's C# would declare a TYPE whose
+  full name is `Fletcher` or `Fletcher.Gen`. Extends D-BIND-82.** *LOCKED BY THE MAINTAINER
+  2026-10-08 (review Q9).* D-BIND-82 refuses protoc's namespace inside `Fletcher.Gen`. The other
+  direction: protoc declares each top-level message and enum as `<its namespace>.<Name>`, and when
+  that is exactly one of our namespaces the type takes its name. Measured 2026-10-14, protoc's
+  `--csharp_out` and our `csharp` compiled into one assembly: `package fletcher; message Gen`, and
+  `option csharp_namespace = "Fletcher"; message Gen`, give CS0101 "The namespace 'Fletcher' already
+  contains a definition for 'Gen'"; no package with `message Fletcher` gives CS0101 in the global
+  namespace; the control `package nav; message Gen` compiles. `CsProtocNamespaceConflict` now
+  checks each top-level message and enum of the file against both names, case-sensitively as C# is,
+  and returns a reason naming the type, the namespace and where it came from; the generator already
+  calls it before any output. Only top-level types: a nested one is `<Outer>.Types.<Name>` in
+  protoc's C#, inside its outer class. **Declined:** refusing any type named `Fletcher` or `Gen`
+  wherever it lives (`Eiva.Fletcher` collides with nothing: our code names its types from
+  `global::`).

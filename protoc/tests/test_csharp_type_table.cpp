@@ -327,6 +327,61 @@ TEST(CsNames, ProtocsNamespaceInsideFletcherGenIsRefused) {
     }
 }
 
+TEST(CsNames, AProtocTypeNamedLikeOurNamespaceIsRefused) {
+    // D-BIND-91, the other direction of D-BIND-82: protoc declares each top-level message and enum
+    // as <its namespace>.<Name>. When that IS `Fletcher` or `Fletcher.Gen`, the type takes the
+    // name of our namespace: CS0101 in a project compiling both (measured 2026-10-14 for the first
+    // three shapes below, against a control that compiles).
+    struct Case {
+        const char* package;
+        const char* csharp_namespace;  // nullptr: not set
+        const char* message;           // nullptr: none
+        const char* enumeration;       // nullptr: none
+        bool refused;
+    };
+    const Case cases[] = {
+        {"fletcher", nullptr, "Gen", nullptr, true},  // Fletcher.Gen
+        {"nav", "Fletcher", "Gen", nullptr, true},    // the option, as protoc reads it
+        {"", nullptr, "Fletcher", nullptr, true},     // no namespace at all: Fletcher
+        {"fletcher", nullptr, nullptr, "Gen", true},  // an enum is a type too
+        {"", nullptr, nullptr, "Fletcher", true},
+        {"nav", nullptr, "Gen", nullptr, false},  // Nav.Gen
+        {"fletcher", nullptr, "Generator", nullptr, false},
+        {"fletcher", nullptr, "gen", nullptr, false},  // C# names are case-sensitive
+        {"nav", "Eiva", "Fletcher", nullptr, false},   // Eiva.Fletcher
+        {"fletcher.gen", "Eiva.Nav", "Gen", nullptr, false},
+    };
+    int n = 0;
+    for (const auto& c : cases) {
+        FileDescriptorProto fdp;
+        fdp.set_name("type" + std::to_string(n++) + ".proto");
+        fdp.set_package(c.package);
+        fdp.set_syntax("proto3");
+        if (c.csharp_namespace != nullptr)
+            fdp.mutable_options()->set_csharp_namespace(c.csharp_namespace);
+        if (c.message != nullptr) fdp.add_message_type()->set_name(c.message);
+        if (c.enumeration != nullptr) {
+            auto* e = fdp.add_enum_type();
+            e->set_name(c.enumeration);
+            e->add_value()->set_name(std::string(c.enumeration) + "_UNSPECIFIED");
+        }
+        DescriptorPool pool;
+        const FileDescriptor* file = pool.BuildFile(fdp);
+        ASSERT_NE(file, nullptr) << fdp.name();
+        const auto conflict = cs::CsProtocNamespaceConflict(file);
+        EXPECT_EQ(conflict.has_value(), c.refused)
+            << "package '" << c.package << "', csharp_namespace '"
+            << (c.csharp_namespace ? c.csharp_namespace : "<unset>") << "', type '"
+            << (c.message ? c.message : c.enumeration) << "'";
+        if (conflict) {
+            EXPECT_NE(conflict->find("would declare a type"), std::string::npos) << *conflict;
+            EXPECT_NE(conflict->find("reserved for Fletcher's generated C#"), std::string::npos)
+                << *conflict;
+            EXPECT_NE(conflict->find(file->name()), std::string::npos) << *conflict;
+        }
+    }
+}
+
 TEST(CsNames, ATypeFromAnotherPackageIsQualifiedFromTheGlobalNamespace) {
     // BIND-6e: a field's type may be declared in another file. In the same package it shares
     // the namespace, so the flat name resolves; in another one it is named in full, from
