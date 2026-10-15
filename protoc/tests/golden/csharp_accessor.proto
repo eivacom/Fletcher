@@ -102,3 +102,11 @@ message Hyper {
   int32 id = 1;
   repeated PositionCube cells = 2;
 }
+
+// A message that reaches Hyper refuses too, up front, naming Hyper's reason, and its view has a
+// comment where those properties would be (D-BIND-96, review T-D1).
+message HyperHolder {
+  int32 id = 1;
+  Hyper hyper = 2;
+  repeated Hyper hypers = 3;
+}

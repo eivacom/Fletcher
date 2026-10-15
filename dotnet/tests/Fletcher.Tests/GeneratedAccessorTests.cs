@@ -258,6 +258,55 @@ public sealed class GeneratedAccessorTests
     }
 
     [Fact]
+    public void ANullStructsChildrenMayHoldNullsAndAValidOnesMayNot()
+    {
+        // D-BIND-106: under a StructArray source only the rows where the struct is valid count for
+        // the non-null gate, as Arrow lets a null struct's children hold anything.
+        using RecordBatch model = Sample.ToArrow(new[] { Full(1), Full(2), Full(3) });
+        var ids = new Int32Array.Builder().Append(1).AppendNull().Append(3).Build();
+        RecordBatch withNullId = Replace(model, 0, ids);
+        var rowOneNull = new ArrowBuffer.BitmapBuilder().Append(true).Append(false).Append(true).Build();
+
+        Assert.True(SampleAccessor.TryMake(AsStruct(withNullId, rowOneNull, 1), out var accessor, out var error), error);
+        Assert.True(accessor.IsNull(1));
+        Assert.Equal(3, accessor.At(2).Id);
+        // The same null under a valid row, or in a batch (no parent), is refused.
+        Assert.Equal("Sample column 0 'id': non-nullable, found 1 nulls.", Refusal(withNullId));
+        Assert.False(SampleAccessor.TryMake(AsStruct(withNullId), out _, out error));
+        Assert.Equal("Sample column 0 'id': non-nullable, found 1 nulls.", error);
+
+        // Nested: a null maybe_position whose non-nullable `lat` holds a null is accepted.
+        var positions = (StructArray)model.Column(18);
+        var lat = new DoubleArray.Builder().AppendNull().Append(2).Append(3).Build();
+        var firstNull = new ArrowBuffer.BitmapBuilder().Append(false).Append(true).Append(true).Build();
+        var nested = new StructArray(positions.Data.DataType, 3,
+            new IArrowArray[] { lat }.Concat(positions.Fields.Skip(1)), firstNull, 1);
+        var read = Make(Replace(model, 18, nested));
+        Assert.Null(read.At(0).MaybePosition);
+        Assert.Equal(2, read.At(1).MaybePosition!.Value.Lat);
+    }
+
+    [Fact]
+    public void MalformedInputIsRefusedNotThrown()
+    {
+        // R-D1 of BIND-7's review, D-BIND-94: a null array in a batch is a refusal.
+        using RecordBatch model = Sample.ToArrow(new[] { Full(1) });
+        var withNull = new RecordBatch(model.Schema, model.Arrays.Select((a, i) => i == 3 ? null! : a), model.Length);
+        Assert.Equal("Sample column 3: the array is null.", Refusal(withNull));
+    }
+
+    [Fact]
+    public void AMessageReachingOneThatRefusesRefusesNamingIt()
+    {
+        // T-D1 of BIND-7's review, D-BIND-96: HyperHolder reaches Hyper, beyond the depth cap.
+        using RecordBatch batch = HyperHolder.ToArrow(new[] { new HyperHolder { Id = 1 } });
+        Assert.False(HyperHolderAccessor.TryMake(batch, out var accessor, out var error));
+        Assert.Null(accessor);
+        Assert.Equal("HyperHolder column 1 'hyper': a message whose accessor refuses (Hyper column 1 'cells': "
+            + "a list nested 4 deep, beyond the accessor's cap of 3).", error);
+    }
+
+    [Fact]
     public void MetadataIsTheBatchsAndEmptyNeverNullWhenAbsent()
     {
         // D-BIND-95: SchemaMetadata, FieldMetadata by position and by live name, Metadata(key).

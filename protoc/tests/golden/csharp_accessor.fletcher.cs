@@ -1029,3 +1029,83 @@ public sealed class Hyper
         return row;
     }
 }
+
+public sealed class HyperHolder
+{
+    public int Id { get; set; }
+    public Hyper Hyper { get; set; } = new();
+    public global::System.Collections.Generic.List<Hyper> Hypers { get; set; } = new();
+
+    public static global::Apache.Arrow.Schema Schema { get; } = new global::Apache.Arrow.Schema(
+        new global::Apache.Arrow.Field[]
+        {
+            new global::Apache.Arrow.Field("id", global::Apache.Arrow.Types.Int32Type.Default, false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "1"), new("field_id", "1") }),
+            new global::Apache.Arrow.Field("hyper", new global::Apache.Arrow.Types.StructType(new global::Apache.Arrow.Field[] { new global::Apache.Arrow.Field("id", global::Apache.Arrow.Types.Int32Type.Default, false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "1"), new("field_id", "1") }), new global::Apache.Arrow.Field("cells", new global::Apache.Arrow.Types.ListType(new global::Apache.Arrow.Field("item", new global::Apache.Arrow.Types.ListType(new global::Apache.Arrow.Field("item", new global::Apache.Arrow.Types.ListType(new global::Apache.Arrow.Field("item", new global::Apache.Arrow.Types.ListType(new global::Apache.Arrow.Field("item", new global::Apache.Arrow.Types.StructType(new global::Apache.Arrow.Field[] { new global::Apache.Arrow.Field("lat", global::Apache.Arrow.Types.DoubleType.Default, false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "1"), new("field_id", "1") }), new global::Apache.Arrow.Field("lon", global::Apache.Arrow.Types.DoubleType.Default, false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "2"), new("field_id", "2") }), new global::Apache.Arrow.Field("depth", global::Apache.Arrow.Types.FloatType.Default, true, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "3"), new("field_id", "3") }) }), true, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("proto_package", "golden.accessor"), new("proto_message", "Position") })), true)), true)), true)), false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "2"), new("field_id", "2") }) }), false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "2"), new("field_id", "2") }),
+            new global::Apache.Arrow.Field("hypers", new global::Apache.Arrow.Types.ListType(new global::Apache.Arrow.Field("item", new global::Apache.Arrow.Types.StructType(new global::Apache.Arrow.Field[] { new global::Apache.Arrow.Field("id", global::Apache.Arrow.Types.Int32Type.Default, false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "1"), new("field_id", "1") }), new global::Apache.Arrow.Field("cells", new global::Apache.Arrow.Types.ListType(new global::Apache.Arrow.Field("item", new global::Apache.Arrow.Types.ListType(new global::Apache.Arrow.Field("item", new global::Apache.Arrow.Types.ListType(new global::Apache.Arrow.Field("item", new global::Apache.Arrow.Types.ListType(new global::Apache.Arrow.Field("item", new global::Apache.Arrow.Types.StructType(new global::Apache.Arrow.Field[] { new global::Apache.Arrow.Field("lat", global::Apache.Arrow.Types.DoubleType.Default, false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "1"), new("field_id", "1") }), new global::Apache.Arrow.Field("lon", global::Apache.Arrow.Types.DoubleType.Default, false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "2"), new("field_id", "2") }), new global::Apache.Arrow.Field("depth", global::Apache.Arrow.Types.FloatType.Default, true, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "3"), new("field_id", "3") }) }), true, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("proto_package", "golden.accessor"), new("proto_message", "Position") })), true)), true)), true)), false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "2"), new("field_id", "2") }) }), true, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("proto_package", "golden.accessor"), new("proto_message", "Hyper") })), false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "3"), new("field_id", "3") }),
+        },
+        new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("proto_package", "golden.accessor"), new("proto_message", "HyperHolder") });
+
+    public static global::Apache.Arrow.RecordBatch ToArrow(global::System.Collections.Generic.IEnumerable<HyperHolder> rows)
+    {
+        global::System.ArgumentNullException.ThrowIfNull(rows);
+        var all = rows as global::System.Collections.Generic.IReadOnlyList<HyperHolder> ?? new global::System.Collections.Generic.List<HyperHolder>(rows);
+        for (var i = 0; i < all.Count; i++)
+            if (all[i] is null) throw new global::System.ArgumentException($"HyperHolder row {i} is null.", nameof(rows));
+        return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
+    }
+
+    internal static global::Apache.Arrow.IArrowArray[] ToArrowColumns(global::System.Collections.Generic.IReadOnlyList<HyperHolder> rows)
+    {
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var row = rows[i];
+            if (row.Hypers is null) throw new global::System.ArgumentException($"HyperHolder.Hypers is null in row {i}; use an empty collection instead.", nameof(rows));
+            foreach (var x2 in row.Hypers)
+            {
+                if (x2 is null) throw new global::System.ArgumentException($"HyperHolder.Hypers holds a null element in row {i}; an element is never null.", nameof(rows));
+            }
+        }
+        var b0 = new global::Apache.Arrow.Int32Array.Builder();
+        foreach (var row in rows)
+        {
+            b0.Append(row.Id);
+        }
+        var c0 = b0.Build();
+        var t1 = (global::Apache.Arrow.Types.StructType)Schema.GetFieldByIndex(1).DataType;
+        var r1 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Hyper>(rows.Count);
+        for (var i = 0; i < rows.Count; i++)
+            r1.Add(rows[i].Hyper ?? throw new global::System.ArgumentException($"HyperHolder.Hyper is null in row {i}, but the field is not optional: it is always present.", nameof(rows)));
+        var c1 = new global::Apache.Arrow.StructArray(t1, rows.Count, global::Fletcher.Gen.Golden.Accessor.Hyper.ToArrowColumns(r1), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var t2 = (global::Apache.Arrow.Types.ListType)Schema.GetFieldByIndex(2).DataType;
+        var o2 = new global::Apache.Arrow.ArrowBuffer.Builder<int>(rows.Count + 1);
+        o2.Append(0);
+        var f2 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Hyper>();
+        foreach (var row in rows)
+        {
+            f2.AddRange(row.Hypers);
+            o2.Append(f2.Count);
+        }
+        var e2 = new global::Apache.Arrow.StructArray((global::Apache.Arrow.Types.StructType)t2.ValueDataType, f2.Count, global::Fletcher.Gen.Golden.Accessor.Hyper.ToArrowColumns(f2), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var c2 = new global::Apache.Arrow.ListArray(t2, rows.Count, o2.Build(), e2, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        return new global::Apache.Arrow.IArrowArray[] { c0, c1, c2 };
+    }
+
+    public static HyperHolder FromArrow(global::Apache.Arrow.StructArray array, int index)
+    {
+        global::System.ArgumentNullException.ThrowIfNull(array);
+        var row = new HyperHolder();
+        var fields = array.Fields;
+        row.Id = ((global::Apache.Arrow.Int32Array)fields[0]).GetValue(index).GetValueOrDefault();
+        { var s = (global::Apache.Arrow.StructArray)fields[1]; row.Hyper = global::Fletcher.Gen.Golden.Accessor.Hyper.FromArrow(s, index); }
+        {
+            var l = (global::Apache.Arrow.ListArray)fields[2];
+            var e = (global::Apache.Arrow.StructArray)l.Values;
+            var start = l.ValueOffsets[index];
+            var end = l.IsNull(index) ? start : l.ValueOffsets[index + 1];
+            var x = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Hyper>(end - start);
+            for (var j = start; j < end; j++) x.Add(global::Fletcher.Gen.Golden.Accessor.Hyper.FromArrow(e, j));
+            row.Hypers = x;
+        }
+        return row;
+    }
+}

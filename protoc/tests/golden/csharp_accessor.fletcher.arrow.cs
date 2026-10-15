@@ -172,3 +172,24 @@ public readonly struct HyperView
 
     // Not read: field 'cells' is a list nested 4 deep, beyond the accessor's cap of 3.
 }
+
+/// <summary>One row of a <see cref="HyperHolderAccessor"/>, read in place: its properties are <see cref="HyperHolder"/>'s,
+/// with the same names and types.</summary>
+/// <remarks>Borrows its accessor; a string property decodes UTF-8 on every read.</remarks>
+public readonly struct HyperHolderView
+{
+    private readonly HyperHolderAccessor _accessor;
+    private readonly int _row;
+
+    internal HyperHolderView(HyperHolderAccessor accessor, int row)
+    {
+        _accessor = accessor;
+        _row = row;
+    }
+
+    public int Id => _accessor._c0.GetValue(_row).GetValueOrDefault();
+
+    // Not read: field 'hyper' is a message whose accessor refuses (Hyper column 1 'cells': a list nested 4 deep, beyond the accessor's cap of 3).
+
+    // Not read: field 'hypers' is a message whose accessor refuses (Hyper column 1 'cells': a list nested 4 deep, beyond the accessor's cap of 3).
+}

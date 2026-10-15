@@ -1682,8 +1682,7 @@ TEST(CsAccessor, AColumnIsValidatedAgainstTheModelsSchema) {
                    "!SameType(c0.Data.DataType, "
                    "global::Fletcher.Gen.Golden.Accessor.Sample.Schema.GetFieldByIndex(0)."
                    "DataType))");
-    ExpectContains(body,
-                   "error = $\"Sample column 0 'id': non-nullable, found {c0.NullCount} nulls.\";");
+    ExpectContains(body, "error = $\"Sample column 0 'id': non-nullable, found {n0} nulls.\";");
     EXPECT_EQ(body.find("'maybe_id': non-nullable"), std::string::npos) << body;
     ExpectContains(body,
                    "if (!global::Fletcher.Gen.Golden.Accessor.PositionAccessor.TryMake(c12, out "
@@ -1891,4 +1890,35 @@ TEST(CsAccessor, AFieldWithoutAGetterIsNotRefusedForItsName) {
     const std::string view =
         StructBody(FileOf(files, "accessor_case.fletcher.arrow.cs"), "TrackView");
     ExpectContains(view, "    // Not read: field 'track_view' is a list nested 4 deep");
+}
+
+TEST(CsAccessor, AMessageReachingOneThatRefusesRefusesUpFront) {
+    // T-D1 of BIND-7's review, D-BIND-96: HyperHolder reaches Hyper, whose accessor always
+    // refuses, so HyperHolder's refuses before reading anything, naming Hyper's reason, and its
+    // view has a comment, not a property, for each such field.
+    const auto files = AccessorGolden();
+    const std::string body =
+        AccessorBody(FileOf(files, "csharp_accessor.fletcher.accessor.cs"), "HyperHolder");
+    ExpectContains(body,
+                   "Refusal = \"HyperHolder column 1 'hyper': a message whose accessor refuses "
+                   "(Hyper column 1 'cells': a list nested 4 deep, beyond the accessor's cap of "
+                   "3).\";");
+    const std::string view =
+        StructBody(FileOf(files, "csharp_accessor.fletcher.arrow.cs"), "HyperHolderView");
+    ExpectContains(view, "    // Not read: field 'hyper' is a message whose accessor refuses");
+    ExpectContains(view, "    // Not read: field 'hypers' is a message whose accessor refuses");
+    EXPECT_EQ(view.find("HyperView"), std::string::npos) << view;
+}
+
+TEST(CsAccessor, TheNonNullGateCountsOnlyUnderValidParentsAndMalformedInputIsRefused) {
+    // D-BIND-106 and R-D1 of BIND-7's review, in the emitted code.
+    const auto files = AccessorGolden();
+    const std::string body =
+        AccessorBody(FileOf(files, "csharp_accessor.fletcher.accessor.cs"), "Sample");
+    ExpectContains(body, "var n0 = NullsUnderValidRows(c0, validity);");
+    ExpectContains(body, "if (column.IsNull(i) && !parent.IsNull(i)) nulls++;");
+    ExpectContains(body,
+                   "catch (global::System.Exception exception) when "
+                   "(IsMalformedInput(exception))");
+    ExpectContains(body, "column {i}: the array is null.");
 }

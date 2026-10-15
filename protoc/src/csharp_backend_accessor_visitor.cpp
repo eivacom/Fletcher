@@ -60,10 +60,26 @@ struct AccessorField {
     std::string span;              // a string or bytes field: its ReadOnlySpan<byte> getter
 };
 
+std::string AccessorRefusalOf(const Descriptor* msg, std::set<const Descriptor*>& walking);
+
+// The messages a column reads through their own accessors: a struct's, and the struct leaf of a
+// list or a map value.
+std::vector<const Descriptor*> ReachedMessages(const Column& c) {
+    std::vector<const Descriptor*> out;
+    if (c.kind == ColKind::STRUCT) out.push_back(c.msg);
+    if (c.kind == ColKind::LIST || c.kind == ColKind::MAP) {
+        const Elem* e = &c.elem;
+        while (e->is_list) e = e->inner.get();
+        if (e->is_struct) out.push_back(e->msg);
+    }
+    return out;
+}
+
 // The fields of `msg`, walked as CsVisitor::GenerateMessage walks them, so every property
-// here carries the model's name (the same D-BIND-89 taken set, in the same order).
+// here carries the model's name (the same D-BIND-89 taken set, in the same order). `walking`
+// holds the messages whose accessors are being asked whether they refuse (T-D1).
 std::vector<AccessorField> FieldsOf(const Descriptor* msg, const FileDescriptor* file,
-                                    const CrossFile& cross) {
+                                    const CrossFile& cross, std::set<const Descriptor*>& walking) {
     std::vector<AccessorField> out;
     const auto records = cpp_backend::BuildFlattenedFieldList(msg);
     std::set<const Descriptor*> visiting{msg};
@@ -92,6 +108,19 @@ std::vector<AccessorField> FieldsOf(const Descriptor* msg, const FileDescriptor*
             // keeps the class and refuses, as C++ does (D-BIND-96).
             f.why = "a list nested " + std::to_string(ListDepth(*column)) +
                     " deep, beyond the accessor's cap of " + std::to_string(kMaxListDepth);
+        } else if (std::string refused =
+                       [&] {
+                           for (const auto* reached : ReachedMessages(*column)) {
+                               std::string why = AccessorRefusalOf(reached, walking);
+                               if (!why.empty()) return why;
+                           }
+                           return std::string();
+                       }();
+                   !refused.empty()) {
+            // T-D1 of BIND-7's review, D-BIND-96: a message whose conversion reaches one this
+            // accessor cannot read refuses up front, naming the inner reason, and its view has a
+            // comment where the property would be.
+            f.why = "a message whose accessor refuses (" + refused + ")";
         } else {
             column->index = i;
             column->property = f.property;
@@ -110,6 +139,27 @@ std::vector<AccessorField> FieldsOf(const Descriptor* msg, const FileDescriptor*
         taken.insert(f.span);
     }
     return out;
+}
+
+std::vector<AccessorField> FieldsOf(const Descriptor* msg, const FileDescriptor* file,
+                                    const CrossFile& cross) {
+    std::set<const Descriptor*> walking{msg};
+    return FieldsOf(msg, file, cross, walking);
+}
+
+// T-D1: the first reason `msg`'s accessor always refuses, as its TryMake words it, or empty. A
+// message already being asked does not refuse: a cycle is a recursive message, never generated.
+std::string AccessorRefusalOf(const Descriptor* msg, std::set<const Descriptor*>& walking) {
+    if (!walking.insert(msg).second) return {};
+    std::string refusal;
+    for (const auto& f :
+         FieldsOf(msg, msg->file(), CollectCrossFileMessages(msg->file()), walking)) {
+        if (f.column) continue;
+        refusal = Label(msg) + " column " + std::to_string(f.index) + " '" + f.name + "': " + f.why;
+        break;
+    }
+    walking.erase(msg);
+    return refusal;
 }
 
 // The opening every generated C# file shares, as CsVisitor writes it.
@@ -240,11 +290,13 @@ void EmitValidate(std::ostringstream& o, const Column& c, const std::string& whe
       << in << "}\n";
     // As C++: the nullable FLAG is tolerated, but a column the proto says is never null must
     // hold no nulls, so its getter can return a plain value (D-RBA-4).
+    // D-BIND-106: under a StructArray source only the rows where the struct itself is valid count;
+    // a null struct's children may hold anything, nulls included.
     if (!c.nullable) {
-        o << in << "if (c" << n << ".NullCount != 0)\n"
+        o << in << "var n" << n << " = NullsUnderValidRows(c" << n << ", validity);\n"
+          << in << "if (n" << n << " != 0)\n"
           << in << "{\n"
-          << in << "    error = $\"" << where << ": non-nullable, found {c" << n
-          << ".NullCount} nulls.\";\n"
+          << in << "    error = $\"" << where << ": non-nullable, found {n" << n << "} nulls.\";\n"
           << in << "    return false;\n"
           << in << "}\n";
     }
@@ -429,10 +481,19 @@ std::string GenerateAccessor(const Descriptor* msg, const FileDescriptor* file,
       << "            error = " << CsStringLiteral(label + ": the batch is null.") << ";\n"
       << "            return false;\n"
       << "        }\n"
-      << "        return FromColumns(batch.Length, [.. batch.Arrays], [.. "
-         "batch.Schema.FieldsList], "
-         "batch.Schema.Metadata,\n"
-      << "            null, out accessor, out error);\n"
+      << "        try\n"
+      << "        {\n"
+      << "            return FromColumns(batch.Length, [.. batch.Arrays], [.. "
+         "batch.Schema.FieldsList],\n"
+      << "                batch.Schema.Metadata, null, out accessor, out error);\n"
+      << "        }\n"
+      << "        catch (global::System.Exception exception) when (IsMalformedInput(exception))\n"
+      << "        {\n"
+      << "            accessor = null;\n"
+      << "            error = $\"" << label
+      << ": the batch is malformed ({exception.GetType().Name}: {exception.Message})\";\n"
+      << "            return false;\n"
+      << "        }\n"
       << "    }\n\n"
       << "    /// <summary>Validates the children of <paramref name=\"array\"/>, a column of "
          "this message, and\n"
@@ -449,11 +510,22 @@ std::string GenerateAccessor(const Descriptor* msg, const FileDescriptor* file,
       << "            error = " << CsStringLiteral(label + ": the array is null.") << ";\n"
       << "            return false;\n"
       << "        }\n"
-      << "        // Fields is read once: Apache.Arrow 23 allocates on every read of it.\n"
-      << "        return FromColumns(array.Length, [.. array.Fields],\n"
-      << "            [.. ((global::Apache.Arrow.Types.StructType)array.Data.DataType).Fields], "
+      << "        try\n"
+      << "        {\n"
+      << "            // Fields is read once: Apache.Arrow 23 allocates on every read of it.\n"
+      << "            return FromColumns(array.Length, [.. array.Fields],\n"
+      << "                [.. "
+         "((global::Apache.Arrow.Types.StructType)array.Data.DataType).Fields], "
          "null, array,\n"
-      << "            out accessor, out error);\n"
+      << "                out accessor, out error);\n"
+      << "        }\n"
+      << "        catch (global::System.Exception exception) when (IsMalformedInput(exception))\n"
+      << "        {\n"
+      << "            accessor = null;\n"
+      << "            error = $\"" << label
+      << ": the array is malformed ({exception.GetType().Name}: {exception.Message})\";\n"
+      << "            return false;\n"
+      << "        }\n"
       << "    }\n\n"
       << "    private static bool FromColumns(int length, global::Apache.Arrow.IArrowArray[] "
          "columns,\n"
@@ -479,6 +551,11 @@ std::string GenerateAccessor(const Descriptor* msg, const FileDescriptor* file,
       << "        }\n"
       << "        for (var i = 0; i < columns.Length; i++)\n"
       << "        {\n"
+      << "            if (columns[i] is null)\n"
+      << "            {\n"
+      << "                error = $\"" << label << " column {i}: the array is null.\";\n"
+      << "                return false;\n"
+      << "            }\n"
       << "            if (columns[i].Length != length)\n"
       << "            {\n"
       << "                error = $\"" << label
@@ -522,6 +599,28 @@ std::string GenerateAccessor(const Descriptor* msg, const FileDescriptor* file,
       << "            throw new global::System.ArgumentOutOfRangeException(nameof(row), row, "
          "null);\n"
       << "    }\n\n"
+      // D-BIND-106: the nulls of `column` in the rows where `parent`, the StructArray source, is
+      // valid; every null when there is no parent (a batch) or it has no nulls.
+      << "    private static int NullsUnderValidRows(global::Apache.Arrow.IArrowArray column, "
+         "global::Apache.Arrow.StructArray? parent)\n"
+      << "    {\n"
+      << "        if (column.NullCount == 0 || parent is null || parent.NullCount == 0) return "
+         "column.NullCount;\n"
+      << "        var nulls = 0;\n"
+      << "        for (var i = 0; i < column.Length; i++)\n"
+      << "            if (column.IsNull(i) && !parent.IsNull(i)) nulls++;\n"
+      << "        return nulls;\n"
+      << "    }\n\n"
+      // R-D1 of BIND-7's review: what Apache.Arrow throws on a malformed array (a null column,
+      // a child it cannot build, a map whose entries are not a struct), which TryMake turns into
+      // a refusal, never throwing on bad input (D-BIND-94).
+      << "    private static bool IsMalformedInput(global::System.Exception exception) =>\n"
+      << "        exception is global::System.ArgumentException or "
+         "global::System.InvalidCastException\n"
+      << "            or global::System.InvalidOperationException or "
+         "global::System.NotSupportedException\n"
+      << "            or global::System.NullReferenceException or "
+         "global::System.IndexOutOfRangeException;\n\n"
       // Apache.Arrow's types have no value equality (Equals is by reference), so a column's
       // type is compared by its id and, for the temporal types, the unit and zone C++'s
       // DataType::Equals also compares.

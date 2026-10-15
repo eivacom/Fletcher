@@ -124,7 +124,7 @@ so it cannot refuse at generation as D-BIND-99 does. Options: document the requi
 the public surface, the protoc-dotnet README) as BIND-6e's for the model; and/or add a cross-file
 case to the goldens and lanes.
 
-**Q4 — A null struct whose non-nullable children hold nulls is refused.** *(runtime reviewer)* For a
+**Q4 — A null struct whose non-nullable children hold nulls is refused.** *(Implemented 2026-10-15 per D-BIND-106: `NullsUnderValidRows`; `ANullStructsChildrenMayHoldNullsAndAValidOnesMayNot`, flat and nested; a mutant counting every null fails it.)* *(runtime reviewer)* For a
 nullable message field, a struct element or a message map value, the inner accessor's null gate
 counts the whole child, slots under null parents included. Arrow C++'s `StructBuilder.AppendNull`
 writes placeholders there, so Fletcher's own batches pass; arrow-rs's `new_null_array(Struct)` and a
@@ -159,7 +159,7 @@ records are corrected at the close as a matter of course.
 
 ## DEBT
 
-- **T-D1 — The transitive D-BIND-96 case is untested** *(tests and plugin reviewers)*. No fixture has
+- **T-D1 — FIXED 2026-10-15:** a message reaching one whose accessor refuses now refuses up front, naming the inner reason, and its view has a comment, not a property (`HyperHolder` in the golden; `CsAccessor.AMessageReachingOneThatRefusesRefusesUpFront`, `AMessageReachingOneThatRefusesRefusesNamingIt`). Was: **the transitive D-BIND-96 case is untested** *(tests and plugin reviewers)*. No fixture has
   a message that reaches `Hyper` (a struct, list element or map value of it). By reading, the parent
   refuses at runtime through the inner `TryMake`, but its view gets a `HyperView` property where
   D-BIND-96 says "a comment instead of a getter".
@@ -173,7 +173,7 @@ records are corrected at the close as a matter of course.
   source; lower-case `@` and D-BIND-84 (`Schema_`) messages; proto2 optional/required; an empty
   message as a struct and element; a field-level flatten; map keys `bool` / `uint32` / `uint64`, map
   values enum / bytes.
-- **R-D1 — Exceptions can still escape `TryMake`** *(runtime reviewer, reported)*: a null array in a
+- **R-D1 — FIXED 2026-10-15:** a null array is refused by name, and what Apache.Arrow throws on malformed input inside `TryMake` becomes a refusal (`MalformedInputIsRefusedNotThrown`; a mutant dropping the null check fails it). Was: **exceptions can still escape `TryMake`** *(runtime reviewer, reported)*: a null array in a
   batch (`columns[i].Length`); `[.. array.Fields]` building a child Apache.Arrow cannot build;
   `MapArray.Keys` when the entries child is not a `StructArray`. D-BIND-94 says it never throws on
   bad input.

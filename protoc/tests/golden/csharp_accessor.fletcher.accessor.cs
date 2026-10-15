@@ -103,8 +103,17 @@ public sealed class PositionAccessor : global::Eiva.Fletcher.Model.IArrowRows<Po
             error = "Position: the batch is null.";
             return false;
         }
-        return FromColumns(batch.Length, [.. batch.Arrays], [.. batch.Schema.FieldsList], batch.Schema.Metadata,
-            null, out accessor, out error);
+        try
+        {
+            return FromColumns(batch.Length, [.. batch.Arrays], [.. batch.Schema.FieldsList],
+                batch.Schema.Metadata, null, out accessor, out error);
+        }
+        catch (global::System.Exception exception) when (IsMalformedInput(exception))
+        {
+            accessor = null;
+            error = $"Position: the batch is malformed ({exception.GetType().Name}: {exception.Message})";
+            return false;
+        }
     }
 
     /// <summary>Validates the children of <paramref name="array"/>, a column of this message, and
@@ -120,10 +129,19 @@ public sealed class PositionAccessor : global::Eiva.Fletcher.Model.IArrowRows<Po
             error = "Position: the array is null.";
             return false;
         }
-        // Fields is read once: Apache.Arrow 23 allocates on every read of it.
-        return FromColumns(array.Length, [.. array.Fields],
-            [.. ((global::Apache.Arrow.Types.StructType)array.Data.DataType).Fields], null, array,
-            out accessor, out error);
+        try
+        {
+            // Fields is read once: Apache.Arrow 23 allocates on every read of it.
+            return FromColumns(array.Length, [.. array.Fields],
+                [.. ((global::Apache.Arrow.Types.StructType)array.Data.DataType).Fields], null, array,
+                out accessor, out error);
+        }
+        catch (global::System.Exception exception) when (IsMalformedInput(exception))
+        {
+            accessor = null;
+            error = $"Position: the array is malformed ({exception.GetType().Name}: {exception.Message})";
+            return false;
+        }
     }
 
     private static bool FromColumns(int length, global::Apache.Arrow.IArrowArray[] columns,
@@ -140,6 +158,11 @@ public sealed class PositionAccessor : global::Eiva.Fletcher.Model.IArrowRows<Po
         }
         for (var i = 0; i < columns.Length; i++)
         {
+            if (columns[i] is null)
+            {
+                error = $"Position column {i}: the array is null.";
+                return false;
+            }
             if (columns[i].Length != length)
             {
                 error = $"Position column {i}: {columns[i].Length} rows, expected {length}.";
@@ -151,9 +174,10 @@ public sealed class PositionAccessor : global::Eiva.Fletcher.Model.IArrowRows<Po
             error = Mismatch("Position column 0 'lat'", global::Fletcher.Gen.Golden.Accessor.Position.Schema.GetFieldByIndex(0).DataType, columns[0]);
             return false;
         }
-        if (c0.NullCount != 0)
+        var n0 = NullsUnderValidRows(c0, validity);
+        if (n0 != 0)
         {
-            error = $"Position column 0 'lat': non-nullable, found {c0.NullCount} nulls.";
+            error = $"Position column 0 'lat': non-nullable, found {n0} nulls.";
             return false;
         }
         if (columns[1] is not global::Apache.Arrow.DoubleArray c1 || !SameType(c1.Data.DataType, global::Fletcher.Gen.Golden.Accessor.Position.Schema.GetFieldByIndex(1).DataType))
@@ -161,9 +185,10 @@ public sealed class PositionAccessor : global::Eiva.Fletcher.Model.IArrowRows<Po
             error = Mismatch("Position column 1 'lon'", global::Fletcher.Gen.Golden.Accessor.Position.Schema.GetFieldByIndex(1).DataType, columns[1]);
             return false;
         }
-        if (c1.NullCount != 0)
+        var n1 = NullsUnderValidRows(c1, validity);
+        if (n1 != 0)
         {
-            error = $"Position column 1 'lon': non-nullable, found {c1.NullCount} nulls.";
+            error = $"Position column 1 'lon': non-nullable, found {n1} nulls.";
             return false;
         }
         if (columns[2] is not global::Apache.Arrow.FloatArray c2 || !SameType(c2.Data.DataType, global::Fletcher.Gen.Golden.Accessor.Position.Schema.GetFieldByIndex(2).DataType))
@@ -187,6 +212,20 @@ public sealed class PositionAccessor : global::Eiva.Fletcher.Model.IArrowRows<Po
         if ((uint)row >= (uint)_length)
             throw new global::System.ArgumentOutOfRangeException(nameof(row), row, null);
     }
+
+    private static int NullsUnderValidRows(global::Apache.Arrow.IArrowArray column, global::Apache.Arrow.StructArray? parent)
+    {
+        if (column.NullCount == 0 || parent is null || parent.NullCount == 0) return column.NullCount;
+        var nulls = 0;
+        for (var i = 0; i < column.Length; i++)
+            if (column.IsNull(i) && !parent.IsNull(i)) nulls++;
+        return nulls;
+    }
+
+    private static bool IsMalformedInput(global::System.Exception exception) =>
+        exception is global::System.ArgumentException or global::System.InvalidCastException
+            or global::System.InvalidOperationException or global::System.NotSupportedException
+            or global::System.NullReferenceException or global::System.IndexOutOfRangeException;
 
     private static bool SameType(global::Apache.Arrow.Types.IArrowType actual, global::Apache.Arrow.Types.IArrowType expected) =>
         actual.TypeId == expected.TypeId && (actual, expected) switch
@@ -304,8 +343,17 @@ public sealed class Sample_NoteAccessor : global::Eiva.Fletcher.Model.IArrowRows
             error = "Sample_Note: the batch is null.";
             return false;
         }
-        return FromColumns(batch.Length, [.. batch.Arrays], [.. batch.Schema.FieldsList], batch.Schema.Metadata,
-            null, out accessor, out error);
+        try
+        {
+            return FromColumns(batch.Length, [.. batch.Arrays], [.. batch.Schema.FieldsList],
+                batch.Schema.Metadata, null, out accessor, out error);
+        }
+        catch (global::System.Exception exception) when (IsMalformedInput(exception))
+        {
+            accessor = null;
+            error = $"Sample_Note: the batch is malformed ({exception.GetType().Name}: {exception.Message})";
+            return false;
+        }
     }
 
     /// <summary>Validates the children of <paramref name="array"/>, a column of this message, and
@@ -321,10 +369,19 @@ public sealed class Sample_NoteAccessor : global::Eiva.Fletcher.Model.IArrowRows
             error = "Sample_Note: the array is null.";
             return false;
         }
-        // Fields is read once: Apache.Arrow 23 allocates on every read of it.
-        return FromColumns(array.Length, [.. array.Fields],
-            [.. ((global::Apache.Arrow.Types.StructType)array.Data.DataType).Fields], null, array,
-            out accessor, out error);
+        try
+        {
+            // Fields is read once: Apache.Arrow 23 allocates on every read of it.
+            return FromColumns(array.Length, [.. array.Fields],
+                [.. ((global::Apache.Arrow.Types.StructType)array.Data.DataType).Fields], null, array,
+                out accessor, out error);
+        }
+        catch (global::System.Exception exception) when (IsMalformedInput(exception))
+        {
+            accessor = null;
+            error = $"Sample_Note: the array is malformed ({exception.GetType().Name}: {exception.Message})";
+            return false;
+        }
     }
 
     private static bool FromColumns(int length, global::Apache.Arrow.IArrowArray[] columns,
@@ -341,6 +398,11 @@ public sealed class Sample_NoteAccessor : global::Eiva.Fletcher.Model.IArrowRows
         }
         for (var i = 0; i < columns.Length; i++)
         {
+            if (columns[i] is null)
+            {
+                error = $"Sample_Note column {i}: the array is null.";
+                return false;
+            }
             if (columns[i].Length != length)
             {
                 error = $"Sample_Note column {i}: {columns[i].Length} rows, expected {length}.";
@@ -352,9 +414,10 @@ public sealed class Sample_NoteAccessor : global::Eiva.Fletcher.Model.IArrowRows
             error = Mismatch("Sample_Note column 0 'text'", global::Fletcher.Gen.Golden.Accessor.Sample_Note.Schema.GetFieldByIndex(0).DataType, columns[0]);
             return false;
         }
-        if (c0.NullCount != 0)
+        var n0 = NullsUnderValidRows(c0, validity);
+        if (n0 != 0)
         {
-            error = $"Sample_Note column 0 'text': non-nullable, found {c0.NullCount} nulls.";
+            error = $"Sample_Note column 0 'text': non-nullable, found {n0} nulls.";
             return false;
         }
         var result = new Sample_NoteAccessor(length, validity, schemaMetadata ?? NoMetadata, fields,
@@ -371,6 +434,20 @@ public sealed class Sample_NoteAccessor : global::Eiva.Fletcher.Model.IArrowRows
         if ((uint)row >= (uint)_length)
             throw new global::System.ArgumentOutOfRangeException(nameof(row), row, null);
     }
+
+    private static int NullsUnderValidRows(global::Apache.Arrow.IArrowArray column, global::Apache.Arrow.StructArray? parent)
+    {
+        if (column.NullCount == 0 || parent is null || parent.NullCount == 0) return column.NullCount;
+        var nulls = 0;
+        for (var i = 0; i < column.Length; i++)
+            if (column.IsNull(i) && !parent.IsNull(i)) nulls++;
+        return nulls;
+    }
+
+    private static bool IsMalformedInput(global::System.Exception exception) =>
+        exception is global::System.ArgumentException or global::System.InvalidCastException
+            or global::System.InvalidOperationException or global::System.NotSupportedException
+            or global::System.NullReferenceException or global::System.IndexOutOfRangeException;
 
     private static bool SameType(global::Apache.Arrow.Types.IArrowType actual, global::Apache.Arrow.Types.IArrowType expected) =>
         actual.TypeId == expected.TypeId && (actual, expected) switch
@@ -509,8 +586,17 @@ public sealed class SampleAccessor : global::Eiva.Fletcher.Model.IArrowRows<Samp
             error = "Sample: the batch is null.";
             return false;
         }
-        return FromColumns(batch.Length, [.. batch.Arrays], [.. batch.Schema.FieldsList], batch.Schema.Metadata,
-            null, out accessor, out error);
+        try
+        {
+            return FromColumns(batch.Length, [.. batch.Arrays], [.. batch.Schema.FieldsList],
+                batch.Schema.Metadata, null, out accessor, out error);
+        }
+        catch (global::System.Exception exception) when (IsMalformedInput(exception))
+        {
+            accessor = null;
+            error = $"Sample: the batch is malformed ({exception.GetType().Name}: {exception.Message})";
+            return false;
+        }
     }
 
     /// <summary>Validates the children of <paramref name="array"/>, a column of this message, and
@@ -526,10 +612,19 @@ public sealed class SampleAccessor : global::Eiva.Fletcher.Model.IArrowRows<Samp
             error = "Sample: the array is null.";
             return false;
         }
-        // Fields is read once: Apache.Arrow 23 allocates on every read of it.
-        return FromColumns(array.Length, [.. array.Fields],
-            [.. ((global::Apache.Arrow.Types.StructType)array.Data.DataType).Fields], null, array,
-            out accessor, out error);
+        try
+        {
+            // Fields is read once: Apache.Arrow 23 allocates on every read of it.
+            return FromColumns(array.Length, [.. array.Fields],
+                [.. ((global::Apache.Arrow.Types.StructType)array.Data.DataType).Fields], null, array,
+                out accessor, out error);
+        }
+        catch (global::System.Exception exception) when (IsMalformedInput(exception))
+        {
+            accessor = null;
+            error = $"Sample: the array is malformed ({exception.GetType().Name}: {exception.Message})";
+            return false;
+        }
     }
 
     private static bool FromColumns(int length, global::Apache.Arrow.IArrowArray[] columns,
@@ -546,6 +641,11 @@ public sealed class SampleAccessor : global::Eiva.Fletcher.Model.IArrowRows<Samp
         }
         for (var i = 0; i < columns.Length; i++)
         {
+            if (columns[i] is null)
+            {
+                error = $"Sample column {i}: the array is null.";
+                return false;
+            }
             if (columns[i].Length != length)
             {
                 error = $"Sample column {i}: {columns[i].Length} rows, expected {length}.";
@@ -557,9 +657,10 @@ public sealed class SampleAccessor : global::Eiva.Fletcher.Model.IArrowRows<Samp
             error = Mismatch("Sample column 0 'id'", global::Fletcher.Gen.Golden.Accessor.Sample.Schema.GetFieldByIndex(0).DataType, columns[0]);
             return false;
         }
-        if (c0.NullCount != 0)
+        var n0 = NullsUnderValidRows(c0, validity);
+        if (n0 != 0)
         {
-            error = $"Sample column 0 'id': non-nullable, found {c0.NullCount} nulls.";
+            error = $"Sample column 0 'id': non-nullable, found {n0} nulls.";
             return false;
         }
         if (columns[1] is not global::Apache.Arrow.Int64Array c1 || !SameType(c1.Data.DataType, global::Fletcher.Gen.Golden.Accessor.Sample.Schema.GetFieldByIndex(1).DataType))
@@ -567,9 +668,10 @@ public sealed class SampleAccessor : global::Eiva.Fletcher.Model.IArrowRows<Samp
             error = Mismatch("Sample column 1 'ticks'", global::Fletcher.Gen.Golden.Accessor.Sample.Schema.GetFieldByIndex(1).DataType, columns[1]);
             return false;
         }
-        if (c1.NullCount != 0)
+        var n1 = NullsUnderValidRows(c1, validity);
+        if (n1 != 0)
         {
-            error = $"Sample column 1 'ticks': non-nullable, found {c1.NullCount} nulls.";
+            error = $"Sample column 1 'ticks': non-nullable, found {n1} nulls.";
             return false;
         }
         if (columns[2] is not global::Apache.Arrow.UInt32Array c2 || !SameType(c2.Data.DataType, global::Fletcher.Gen.Golden.Accessor.Sample.Schema.GetFieldByIndex(2).DataType))
@@ -577,9 +679,10 @@ public sealed class SampleAccessor : global::Eiva.Fletcher.Model.IArrowRows<Samp
             error = Mismatch("Sample column 2 'flags'", global::Fletcher.Gen.Golden.Accessor.Sample.Schema.GetFieldByIndex(2).DataType, columns[2]);
             return false;
         }
-        if (c2.NullCount != 0)
+        var n2 = NullsUnderValidRows(c2, validity);
+        if (n2 != 0)
         {
-            error = $"Sample column 2 'flags': non-nullable, found {c2.NullCount} nulls.";
+            error = $"Sample column 2 'flags': non-nullable, found {n2} nulls.";
             return false;
         }
         if (columns[3] is not global::Apache.Arrow.UInt64Array c3 || !SameType(c3.Data.DataType, global::Fletcher.Gen.Golden.Accessor.Sample.Schema.GetFieldByIndex(3).DataType))
@@ -587,9 +690,10 @@ public sealed class SampleAccessor : global::Eiva.Fletcher.Model.IArrowRows<Samp
             error = Mismatch("Sample column 3 'serial'", global::Fletcher.Gen.Golden.Accessor.Sample.Schema.GetFieldByIndex(3).DataType, columns[3]);
             return false;
         }
-        if (c3.NullCount != 0)
+        var n3 = NullsUnderValidRows(c3, validity);
+        if (n3 != 0)
         {
-            error = $"Sample column 3 'serial': non-nullable, found {c3.NullCount} nulls.";
+            error = $"Sample column 3 'serial': non-nullable, found {n3} nulls.";
             return false;
         }
         if (columns[4] is not global::Apache.Arrow.FloatArray c4 || !SameType(c4.Data.DataType, global::Fletcher.Gen.Golden.Accessor.Sample.Schema.GetFieldByIndex(4).DataType))
@@ -597,9 +701,10 @@ public sealed class SampleAccessor : global::Eiva.Fletcher.Model.IArrowRows<Samp
             error = Mismatch("Sample column 4 'gain'", global::Fletcher.Gen.Golden.Accessor.Sample.Schema.GetFieldByIndex(4).DataType, columns[4]);
             return false;
         }
-        if (c4.NullCount != 0)
+        var n4 = NullsUnderValidRows(c4, validity);
+        if (n4 != 0)
         {
-            error = $"Sample column 4 'gain': non-nullable, found {c4.NullCount} nulls.";
+            error = $"Sample column 4 'gain': non-nullable, found {n4} nulls.";
             return false;
         }
         if (columns[5] is not global::Apache.Arrow.DoubleArray c5 || !SameType(c5.Data.DataType, global::Fletcher.Gen.Golden.Accessor.Sample.Schema.GetFieldByIndex(5).DataType))
@@ -607,9 +712,10 @@ public sealed class SampleAccessor : global::Eiva.Fletcher.Model.IArrowRows<Samp
             error = Mismatch("Sample column 5 'value'", global::Fletcher.Gen.Golden.Accessor.Sample.Schema.GetFieldByIndex(5).DataType, columns[5]);
             return false;
         }
-        if (c5.NullCount != 0)
+        var n5 = NullsUnderValidRows(c5, validity);
+        if (n5 != 0)
         {
-            error = $"Sample column 5 'value': non-nullable, found {c5.NullCount} nulls.";
+            error = $"Sample column 5 'value': non-nullable, found {n5} nulls.";
             return false;
         }
         if (columns[6] is not global::Apache.Arrow.BooleanArray c6 || !SameType(c6.Data.DataType, global::Fletcher.Gen.Golden.Accessor.Sample.Schema.GetFieldByIndex(6).DataType))
@@ -617,9 +723,10 @@ public sealed class SampleAccessor : global::Eiva.Fletcher.Model.IArrowRows<Samp
             error = Mismatch("Sample column 6 'valid'", global::Fletcher.Gen.Golden.Accessor.Sample.Schema.GetFieldByIndex(6).DataType, columns[6]);
             return false;
         }
-        if (c6.NullCount != 0)
+        var n6 = NullsUnderValidRows(c6, validity);
+        if (n6 != 0)
         {
-            error = $"Sample column 6 'valid': non-nullable, found {c6.NullCount} nulls.";
+            error = $"Sample column 6 'valid': non-nullable, found {n6} nulls.";
             return false;
         }
         if (columns[7] is not global::Apache.Arrow.StringArray c7 || !SameType(c7.Data.DataType, global::Fletcher.Gen.Golden.Accessor.Sample.Schema.GetFieldByIndex(7).DataType))
@@ -627,9 +734,10 @@ public sealed class SampleAccessor : global::Eiva.Fletcher.Model.IArrowRows<Samp
             error = Mismatch("Sample column 7 'name'", global::Fletcher.Gen.Golden.Accessor.Sample.Schema.GetFieldByIndex(7).DataType, columns[7]);
             return false;
         }
-        if (c7.NullCount != 0)
+        var n7 = NullsUnderValidRows(c7, validity);
+        if (n7 != 0)
         {
-            error = $"Sample column 7 'name': non-nullable, found {c7.NullCount} nulls.";
+            error = $"Sample column 7 'name': non-nullable, found {n7} nulls.";
             return false;
         }
         if (columns[8] is not global::Apache.Arrow.BinaryArray c8 || !SameType(c8.Data.DataType, global::Fletcher.Gen.Golden.Accessor.Sample.Schema.GetFieldByIndex(8).DataType))
@@ -637,9 +745,10 @@ public sealed class SampleAccessor : global::Eiva.Fletcher.Model.IArrowRows<Samp
             error = Mismatch("Sample column 8 'payload'", global::Fletcher.Gen.Golden.Accessor.Sample.Schema.GetFieldByIndex(8).DataType, columns[8]);
             return false;
         }
-        if (c8.NullCount != 0)
+        var n8 = NullsUnderValidRows(c8, validity);
+        if (n8 != 0)
         {
-            error = $"Sample column 8 'payload': non-nullable, found {c8.NullCount} nulls.";
+            error = $"Sample column 8 'payload': non-nullable, found {n8} nulls.";
             return false;
         }
         if (columns[9] is not global::Apache.Arrow.Int32Array c9 || !SameType(c9.Data.DataType, global::Fletcher.Gen.Golden.Accessor.Sample.Schema.GetFieldByIndex(9).DataType))
@@ -647,9 +756,10 @@ public sealed class SampleAccessor : global::Eiva.Fletcher.Model.IArrowRows<Samp
             error = Mismatch("Sample column 9 'quality'", global::Fletcher.Gen.Golden.Accessor.Sample.Schema.GetFieldByIndex(9).DataType, columns[9]);
             return false;
         }
-        if (c9.NullCount != 0)
+        var n9 = NullsUnderValidRows(c9, validity);
+        if (n9 != 0)
         {
-            error = $"Sample column 9 'quality': non-nullable, found {c9.NullCount} nulls.";
+            error = $"Sample column 9 'quality': non-nullable, found {n9} nulls.";
             return false;
         }
         if (columns[10] is not global::Apache.Arrow.TimestampArray c10 || !SameType(c10.Data.DataType, global::Fletcher.Gen.Golden.Accessor.Sample.Schema.GetFieldByIndex(10).DataType))
@@ -657,9 +767,10 @@ public sealed class SampleAccessor : global::Eiva.Fletcher.Model.IArrowRows<Samp
             error = Mismatch("Sample column 10 'at'", global::Fletcher.Gen.Golden.Accessor.Sample.Schema.GetFieldByIndex(10).DataType, columns[10]);
             return false;
         }
-        if (c10.NullCount != 0)
+        var n10 = NullsUnderValidRows(c10, validity);
+        if (n10 != 0)
         {
-            error = $"Sample column 10 'at': non-nullable, found {c10.NullCount} nulls.";
+            error = $"Sample column 10 'at': non-nullable, found {n10} nulls.";
             return false;
         }
         if (columns[11] is not global::Apache.Arrow.DurationArray c11 || !SameType(c11.Data.DataType, global::Fletcher.Gen.Golden.Accessor.Sample.Schema.GetFieldByIndex(11).DataType))
@@ -667,9 +778,10 @@ public sealed class SampleAccessor : global::Eiva.Fletcher.Model.IArrowRows<Samp
             error = Mismatch("Sample column 11 'span'", global::Fletcher.Gen.Golden.Accessor.Sample.Schema.GetFieldByIndex(11).DataType, columns[11]);
             return false;
         }
-        if (c11.NullCount != 0)
+        var n11 = NullsUnderValidRows(c11, validity);
+        if (n11 != 0)
         {
-            error = $"Sample column 11 'span': non-nullable, found {c11.NullCount} nulls.";
+            error = $"Sample column 11 'span': non-nullable, found {n11} nulls.";
             return false;
         }
         if (columns[12] is not global::Apache.Arrow.StructArray c12 || c12.Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId.Struct)
@@ -677,9 +789,10 @@ public sealed class SampleAccessor : global::Eiva.Fletcher.Model.IArrowRows<Samp
             error = Mismatch("Sample column 12 'position'", global::Fletcher.Gen.Golden.Accessor.Sample.Schema.GetFieldByIndex(12).DataType, columns[12]);
             return false;
         }
-        if (c12.NullCount != 0)
+        var n12 = NullsUnderValidRows(c12, validity);
+        if (n12 != 0)
         {
-            error = $"Sample column 12 'position': non-nullable, found {c12.NullCount} nulls.";
+            error = $"Sample column 12 'position': non-nullable, found {n12} nulls.";
             return false;
         }
         if (!global::Fletcher.Gen.Golden.Accessor.PositionAccessor.TryMake(c12, out var a12, out var e12))
@@ -727,9 +840,10 @@ public sealed class SampleAccessor : global::Eiva.Fletcher.Model.IArrowRows<Samp
             error = Mismatch("Sample column 19 'note'", global::Fletcher.Gen.Golden.Accessor.Sample.Schema.GetFieldByIndex(19).DataType, columns[19]);
             return false;
         }
-        if (c19.NullCount != 0)
+        var n19 = NullsUnderValidRows(c19, validity);
+        if (n19 != 0)
         {
-            error = $"Sample column 19 'note': non-nullable, found {c19.NullCount} nulls.";
+            error = $"Sample column 19 'note': non-nullable, found {n19} nulls.";
             return false;
         }
         if (!global::Fletcher.Gen.Golden.Accessor.Sample_NoteAccessor.TryMake(c19, out var a19, out var e19))
@@ -772,6 +886,20 @@ public sealed class SampleAccessor : global::Eiva.Fletcher.Model.IArrowRows<Samp
         if ((uint)row >= (uint)_length)
             throw new global::System.ArgumentOutOfRangeException(nameof(row), row, null);
     }
+
+    private static int NullsUnderValidRows(global::Apache.Arrow.IArrowArray column, global::Apache.Arrow.StructArray? parent)
+    {
+        if (column.NullCount == 0 || parent is null || parent.NullCount == 0) return column.NullCount;
+        var nulls = 0;
+        for (var i = 0; i < column.Length; i++)
+            if (column.IsNull(i) && !parent.IsNull(i)) nulls++;
+        return nulls;
+    }
+
+    private static bool IsMalformedInput(global::System.Exception exception) =>
+        exception is global::System.ArgumentException or global::System.InvalidCastException
+            or global::System.InvalidOperationException or global::System.NotSupportedException
+            or global::System.NullReferenceException or global::System.IndexOutOfRangeException;
 
     private static bool SameType(global::Apache.Arrow.Types.IArrowType actual, global::Apache.Arrow.Types.IArrowType expected) =>
         actual.TypeId == expected.TypeId && (actual, expected) switch
@@ -920,8 +1048,17 @@ public sealed class TrackAccessor : global::Eiva.Fletcher.Model.IArrowRows<Track
             error = "Track: the batch is null.";
             return false;
         }
-        return FromColumns(batch.Length, [.. batch.Arrays], [.. batch.Schema.FieldsList], batch.Schema.Metadata,
-            null, out accessor, out error);
+        try
+        {
+            return FromColumns(batch.Length, [.. batch.Arrays], [.. batch.Schema.FieldsList],
+                batch.Schema.Metadata, null, out accessor, out error);
+        }
+        catch (global::System.Exception exception) when (IsMalformedInput(exception))
+        {
+            accessor = null;
+            error = $"Track: the batch is malformed ({exception.GetType().Name}: {exception.Message})";
+            return false;
+        }
     }
 
     /// <summary>Validates the children of <paramref name="array"/>, a column of this message, and
@@ -937,10 +1074,19 @@ public sealed class TrackAccessor : global::Eiva.Fletcher.Model.IArrowRows<Track
             error = "Track: the array is null.";
             return false;
         }
-        // Fields is read once: Apache.Arrow 23 allocates on every read of it.
-        return FromColumns(array.Length, [.. array.Fields],
-            [.. ((global::Apache.Arrow.Types.StructType)array.Data.DataType).Fields], null, array,
-            out accessor, out error);
+        try
+        {
+            // Fields is read once: Apache.Arrow 23 allocates on every read of it.
+            return FromColumns(array.Length, [.. array.Fields],
+                [.. ((global::Apache.Arrow.Types.StructType)array.Data.DataType).Fields], null, array,
+                out accessor, out error);
+        }
+        catch (global::System.Exception exception) when (IsMalformedInput(exception))
+        {
+            accessor = null;
+            error = $"Track: the array is malformed ({exception.GetType().Name}: {exception.Message})";
+            return false;
+        }
     }
 
     private static bool FromColumns(int length, global::Apache.Arrow.IArrowArray[] columns,
@@ -957,6 +1103,11 @@ public sealed class TrackAccessor : global::Eiva.Fletcher.Model.IArrowRows<Track
         }
         for (var i = 0; i < columns.Length; i++)
         {
+            if (columns[i] is null)
+            {
+                error = $"Track column {i}: the array is null.";
+                return false;
+            }
             if (columns[i].Length != length)
             {
                 error = $"Track column {i}: {columns[i].Length} rows, expected {length}.";
@@ -968,9 +1119,10 @@ public sealed class TrackAccessor : global::Eiva.Fletcher.Model.IArrowRows<Track
             error = Mismatch("Track column 0 'id'", global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(0).DataType, columns[0]);
             return false;
         }
-        if (c0.NullCount != 0)
+        var n0 = NullsUnderValidRows(c0, validity);
+        if (n0 != 0)
         {
-            error = $"Track column 0 'id': non-nullable, found {c0.NullCount} nulls.";
+            error = $"Track column 0 'id': non-nullable, found {n0} nulls.";
             return false;
         }
         if (columns[1] is not global::Apache.Arrow.ListArray c1 || c1.Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId.List)
@@ -978,9 +1130,10 @@ public sealed class TrackAccessor : global::Eiva.Fletcher.Model.IArrowRows<Track
             error = Mismatch("Track column 1 'ints'", global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(1).DataType, columns[1]);
             return false;
         }
-        if (c1.NullCount != 0)
+        var n1 = NullsUnderValidRows(c1, validity);
+        if (n1 != 0)
         {
-            error = $"Track column 1 'ints': non-nullable, found {c1.NullCount} nulls.";
+            error = $"Track column 1 'ints': non-nullable, found {n1} nulls.";
             return false;
         }
         if (c1.Values is not global::Apache.Arrow.Int32Array x1 || !SameType(x1.Data.DataType, ((global::Apache.Arrow.Types.ListType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(1).DataType).ValueDataType))
@@ -994,9 +1147,10 @@ public sealed class TrackAccessor : global::Eiva.Fletcher.Model.IArrowRows<Track
             error = Mismatch("Track column 2 'names'", global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(2).DataType, columns[2]);
             return false;
         }
-        if (c2.NullCount != 0)
+        var n2 = NullsUnderValidRows(c2, validity);
+        if (n2 != 0)
         {
-            error = $"Track column 2 'names': non-nullable, found {c2.NullCount} nulls.";
+            error = $"Track column 2 'names': non-nullable, found {n2} nulls.";
             return false;
         }
         if (c2.Values is not global::Apache.Arrow.StringArray x2 || !SameType(x2.Data.DataType, ((global::Apache.Arrow.Types.ListType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(2).DataType).ValueDataType))
@@ -1010,9 +1164,10 @@ public sealed class TrackAccessor : global::Eiva.Fletcher.Model.IArrowRows<Track
             error = Mismatch("Track column 3 'blobs'", global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(3).DataType, columns[3]);
             return false;
         }
-        if (c3.NullCount != 0)
+        var n3 = NullsUnderValidRows(c3, validity);
+        if (n3 != 0)
         {
-            error = $"Track column 3 'blobs': non-nullable, found {c3.NullCount} nulls.";
+            error = $"Track column 3 'blobs': non-nullable, found {n3} nulls.";
             return false;
         }
         if (c3.Values is not global::Apache.Arrow.BinaryArray x3 || !SameType(x3.Data.DataType, ((global::Apache.Arrow.Types.ListType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(3).DataType).ValueDataType))
@@ -1026,9 +1181,10 @@ public sealed class TrackAccessor : global::Eiva.Fletcher.Model.IArrowRows<Track
             error = Mismatch("Track column 4 'flags'", global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(4).DataType, columns[4]);
             return false;
         }
-        if (c4.NullCount != 0)
+        var n4 = NullsUnderValidRows(c4, validity);
+        if (n4 != 0)
         {
-            error = $"Track column 4 'flags': non-nullable, found {c4.NullCount} nulls.";
+            error = $"Track column 4 'flags': non-nullable, found {n4} nulls.";
             return false;
         }
         if (c4.Values is not global::Apache.Arrow.BooleanArray x4 || !SameType(x4.Data.DataType, ((global::Apache.Arrow.Types.ListType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(4).DataType).ValueDataType))
@@ -1042,9 +1198,10 @@ public sealed class TrackAccessor : global::Eiva.Fletcher.Model.IArrowRows<Track
             error = Mismatch("Track column 5 'qualities'", global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(5).DataType, columns[5]);
             return false;
         }
-        if (c5.NullCount != 0)
+        var n5 = NullsUnderValidRows(c5, validity);
+        if (n5 != 0)
         {
-            error = $"Track column 5 'qualities': non-nullable, found {c5.NullCount} nulls.";
+            error = $"Track column 5 'qualities': non-nullable, found {n5} nulls.";
             return false;
         }
         if (c5.Values is not global::Apache.Arrow.Int32Array x5 || !SameType(x5.Data.DataType, ((global::Apache.Arrow.Types.ListType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(5).DataType).ValueDataType))
@@ -1058,9 +1215,10 @@ public sealed class TrackAccessor : global::Eiva.Fletcher.Model.IArrowRows<Track
             error = Mismatch("Track column 6 'values'", global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(6).DataType, columns[6]);
             return false;
         }
-        if (c6.NullCount != 0)
+        var n6 = NullsUnderValidRows(c6, validity);
+        if (n6 != 0)
         {
-            error = $"Track column 6 'values': non-nullable, found {c6.NullCount} nulls.";
+            error = $"Track column 6 'values': non-nullable, found {n6} nulls.";
             return false;
         }
         if (c6.Values is not global::Apache.Arrow.DoubleArray x6 || !SameType(x6.Data.DataType, ((global::Apache.Arrow.Types.ListType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(6).DataType).ValueDataType))
@@ -1074,9 +1232,10 @@ public sealed class TrackAccessor : global::Eiva.Fletcher.Model.IArrowRows<Track
             error = Mismatch("Track column 7 'points'", global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(7).DataType, columns[7]);
             return false;
         }
-        if (c7.NullCount != 0)
+        var n7 = NullsUnderValidRows(c7, validity);
+        if (n7 != 0)
         {
-            error = $"Track column 7 'points': non-nullable, found {c7.NullCount} nulls.";
+            error = $"Track column 7 'points': non-nullable, found {n7} nulls.";
             return false;
         }
         if (c7.Values is not global::Apache.Arrow.StructArray x7 || x7.Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId.Struct)
@@ -1095,9 +1254,10 @@ public sealed class TrackAccessor : global::Eiva.Fletcher.Model.IArrowRows<Track
             error = Mismatch("Track column 8 'scores'", global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(8).DataType, columns[8]);
             return false;
         }
-        if (c8.NullCount != 0)
+        var n8 = NullsUnderValidRows(c8, validity);
+        if (n8 != 0)
         {
-            error = $"Track column 8 'scores': non-nullable, found {c8.NullCount} nulls.";
+            error = $"Track column 8 'scores': non-nullable, found {n8} nulls.";
             return false;
         }
         if (c8.Keys is not global::Apache.Arrow.StringArray x8k || !SameType(x8k.Data.DataType, ((global::Apache.Arrow.Types.MapType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(8).DataType).KeyField.DataType))
@@ -1117,9 +1277,10 @@ public sealed class TrackAccessor : global::Eiva.Fletcher.Model.IArrowRows<Track
             error = Mismatch("Track column 9 'places'", global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(9).DataType, columns[9]);
             return false;
         }
-        if (c9.NullCount != 0)
+        var n9 = NullsUnderValidRows(c9, validity);
+        if (n9 != 0)
         {
-            error = $"Track column 9 'places': non-nullable, found {c9.NullCount} nulls.";
+            error = $"Track column 9 'places': non-nullable, found {n9} nulls.";
             return false;
         }
         if (c9.Keys is not global::Apache.Arrow.StringArray x9k || !SameType(x9k.Data.DataType, ((global::Apache.Arrow.Types.MapType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(9).DataType).KeyField.DataType))
@@ -1144,9 +1305,10 @@ public sealed class TrackAccessor : global::Eiva.Fletcher.Model.IArrowRows<Track
             error = Mismatch("Track column 10 'labels'", global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(10).DataType, columns[10]);
             return false;
         }
-        if (c10.NullCount != 0)
+        var n10 = NullsUnderValidRows(c10, validity);
+        if (n10 != 0)
         {
-            error = $"Track column 10 'labels': non-nullable, found {c10.NullCount} nulls.";
+            error = $"Track column 10 'labels': non-nullable, found {n10} nulls.";
             return false;
         }
         if (c10.Keys is not global::Apache.Arrow.Int64Array x10k || !SameType(x10k.Data.DataType, ((global::Apache.Arrow.Types.MapType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(10).DataType).KeyField.DataType))
@@ -1166,9 +1328,10 @@ public sealed class TrackAccessor : global::Eiva.Fletcher.Model.IArrowRows<Track
             error = Mismatch("Track column 11 'grid'", global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(11).DataType, columns[11]);
             return false;
         }
-        if (c11.NullCount != 0)
+        var n11 = NullsUnderValidRows(c11, validity);
+        if (n11 != 0)
         {
-            error = $"Track column 11 'grid': non-nullable, found {c11.NullCount} nulls.";
+            error = $"Track column 11 'grid': non-nullable, found {n11} nulls.";
             return false;
         }
         if (c11.Values is not global::Apache.Arrow.ListArray x11 || x11.Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId.List)
@@ -1193,9 +1356,10 @@ public sealed class TrackAccessor : global::Eiva.Fletcher.Model.IArrowRows<Track
             error = Mismatch("Track column 12 'cube'", global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(12).DataType, columns[12]);
             return false;
         }
-        if (c12.NullCount != 0)
+        var n12 = NullsUnderValidRows(c12, validity);
+        if (n12 != 0)
         {
-            error = $"Track column 12 'cube': non-nullable, found {c12.NullCount} nulls.";
+            error = $"Track column 12 'cube': non-nullable, found {n12} nulls.";
             return false;
         }
         if (c12.Values is not global::Apache.Arrow.ListArray x12 || x12.Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId.List)
@@ -1226,9 +1390,10 @@ public sealed class TrackAccessor : global::Eiva.Fletcher.Model.IArrowRows<Track
             error = Mismatch("Track column 13 'matrix'", global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(13).DataType, columns[13]);
             return false;
         }
-        if (c13.NullCount != 0)
+        var n13 = NullsUnderValidRows(c13, validity);
+        if (n13 != 0)
         {
-            error = $"Track column 13 'matrix': non-nullable, found {c13.NullCount} nulls.";
+            error = $"Track column 13 'matrix': non-nullable, found {n13} nulls.";
             return false;
         }
         if (c13.Values is not global::Apache.Arrow.ListArray x13 || x13.Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId.List)
@@ -1304,6 +1469,20 @@ public sealed class TrackAccessor : global::Eiva.Fletcher.Model.IArrowRows<Track
         if ((uint)row >= (uint)_length)
             throw new global::System.ArgumentOutOfRangeException(nameof(row), row, null);
     }
+
+    private static int NullsUnderValidRows(global::Apache.Arrow.IArrowArray column, global::Apache.Arrow.StructArray? parent)
+    {
+        if (column.NullCount == 0 || parent is null || parent.NullCount == 0) return column.NullCount;
+        var nulls = 0;
+        for (var i = 0; i < column.Length; i++)
+            if (column.IsNull(i) && !parent.IsNull(i)) nulls++;
+        return nulls;
+    }
+
+    private static bool IsMalformedInput(global::System.Exception exception) =>
+        exception is global::System.ArgumentException or global::System.InvalidCastException
+            or global::System.InvalidOperationException or global::System.NotSupportedException
+            or global::System.NullReferenceException or global::System.IndexOutOfRangeException;
 
     private static bool SameType(global::Apache.Arrow.Types.IArrowType actual, global::Apache.Arrow.Types.IArrowType expected) =>
         actual.TypeId == expected.TypeId && (actual, expected) switch
@@ -1422,8 +1601,17 @@ public sealed class HyperAccessor : global::Eiva.Fletcher.Model.IArrowRows<Hyper
             error = "Hyper: the batch is null.";
             return false;
         }
-        return FromColumns(batch.Length, [.. batch.Arrays], [.. batch.Schema.FieldsList], batch.Schema.Metadata,
-            null, out accessor, out error);
+        try
+        {
+            return FromColumns(batch.Length, [.. batch.Arrays], [.. batch.Schema.FieldsList],
+                batch.Schema.Metadata, null, out accessor, out error);
+        }
+        catch (global::System.Exception exception) when (IsMalformedInput(exception))
+        {
+            accessor = null;
+            error = $"Hyper: the batch is malformed ({exception.GetType().Name}: {exception.Message})";
+            return false;
+        }
     }
 
     /// <summary>Validates the children of <paramref name="array"/>, a column of this message, and
@@ -1439,10 +1627,19 @@ public sealed class HyperAccessor : global::Eiva.Fletcher.Model.IArrowRows<Hyper
             error = "Hyper: the array is null.";
             return false;
         }
-        // Fields is read once: Apache.Arrow 23 allocates on every read of it.
-        return FromColumns(array.Length, [.. array.Fields],
-            [.. ((global::Apache.Arrow.Types.StructType)array.Data.DataType).Fields], null, array,
-            out accessor, out error);
+        try
+        {
+            // Fields is read once: Apache.Arrow 23 allocates on every read of it.
+            return FromColumns(array.Length, [.. array.Fields],
+                [.. ((global::Apache.Arrow.Types.StructType)array.Data.DataType).Fields], null, array,
+                out accessor, out error);
+        }
+        catch (global::System.Exception exception) when (IsMalformedInput(exception))
+        {
+            accessor = null;
+            error = $"Hyper: the array is malformed ({exception.GetType().Name}: {exception.Message})";
+            return false;
+        }
     }
 
     private static bool FromColumns(int length, global::Apache.Arrow.IArrowArray[] columns,
@@ -1464,6 +1661,11 @@ public sealed class HyperAccessor : global::Eiva.Fletcher.Model.IArrowRows<Hyper
         }
         for (var i = 0; i < columns.Length; i++)
         {
+            if (columns[i] is null)
+            {
+                error = $"Hyper column {i}: the array is null.";
+                return false;
+            }
             if (columns[i].Length != length)
             {
                 error = $"Hyper column {i}: {columns[i].Length} rows, expected {length}.";
@@ -1475,9 +1677,10 @@ public sealed class HyperAccessor : global::Eiva.Fletcher.Model.IArrowRows<Hyper
             error = Mismatch("Hyper column 0 'id'", global::Fletcher.Gen.Golden.Accessor.Hyper.Schema.GetFieldByIndex(0).DataType, columns[0]);
             return false;
         }
-        if (c0.NullCount != 0)
+        var n0 = NullsUnderValidRows(c0, validity);
+        if (n0 != 0)
         {
-            error = $"Hyper column 0 'id': non-nullable, found {c0.NullCount} nulls.";
+            error = $"Hyper column 0 'id': non-nullable, found {n0} nulls.";
             return false;
         }
         var result = new HyperAccessor(length, validity, schemaMetadata ?? NoMetadata, fields,
@@ -1494,6 +1697,248 @@ public sealed class HyperAccessor : global::Eiva.Fletcher.Model.IArrowRows<Hyper
         if ((uint)row >= (uint)_length)
             throw new global::System.ArgumentOutOfRangeException(nameof(row), row, null);
     }
+
+    private static int NullsUnderValidRows(global::Apache.Arrow.IArrowArray column, global::Apache.Arrow.StructArray? parent)
+    {
+        if (column.NullCount == 0 || parent is null || parent.NullCount == 0) return column.NullCount;
+        var nulls = 0;
+        for (var i = 0; i < column.Length; i++)
+            if (column.IsNull(i) && !parent.IsNull(i)) nulls++;
+        return nulls;
+    }
+
+    private static bool IsMalformedInput(global::System.Exception exception) =>
+        exception is global::System.ArgumentException or global::System.InvalidCastException
+            or global::System.InvalidOperationException or global::System.NotSupportedException
+            or global::System.NullReferenceException or global::System.IndexOutOfRangeException;
+
+    private static bool SameType(global::Apache.Arrow.Types.IArrowType actual, global::Apache.Arrow.Types.IArrowType expected) =>
+        actual.TypeId == expected.TypeId && (actual, expected) switch
+        {
+            (global::Apache.Arrow.Types.TimestampType a, global::Apache.Arrow.Types.TimestampType e) =>
+                a.Unit == e.Unit && a.Timezone == e.Timezone,
+            (global::Apache.Arrow.Types.DurationType a, global::Apache.Arrow.Types.DurationType e) => a.Unit == e.Unit,
+            _ => true,
+        };
+
+    private static string Mismatch(string where, global::Apache.Arrow.Types.IArrowType expected,
+        global::Apache.Arrow.IArrowArray actual) =>
+        $"{where}: expected {Describe(expected)}, got {Describe(actual.Data.DataType)}.";
+
+    private static string Describe(global::Apache.Arrow.Types.IArrowType type) => type switch
+    {
+        global::Apache.Arrow.Types.TimestampType t => $"timestamp[{t.Unit}, {t.Timezone ?? "no zone"}]",
+        global::Apache.Arrow.Types.DurationType t => $"duration[{t.Unit}]",
+        _ => type.Name,
+    };
+}
+
+/// <summary>Reads <see cref="HyperHolder"/> rows from Arrow column by column: every column is
+/// validated and cast once, by TryMake, and read in place by <see cref="HyperHolderView"/>.</summary>
+/// <remarks>
+/// Validation is positional and type-only: column names and the nullable flag are tolerated,
+/// and a column the proto says is never null must hold no nulls. TryMake never throws on
+/// bad input and returns the reason instead (D-BIND-94).
+/// </remarks>
+public sealed class HyperHolderAccessor : global::Eiva.Fletcher.Model.IArrowRows<HyperHolderView>
+{
+    private static readonly global::System.Collections.Generic.IReadOnlyDictionary<string, string> NoMetadata =
+        global::System.Collections.ObjectModel.ReadOnlyDictionary<string, string>.Empty;
+    private static readonly string? Refusal = "HyperHolder column 1 'hyper': a message whose accessor refuses (Hyper column 1 'cells': a list nested 4 deep, beyond the accessor's cap of 3).";
+    private readonly int _length;
+    private readonly global::Apache.Arrow.StructArray? _validity;
+    private readonly global::System.Collections.Generic.IReadOnlyDictionary<string, string> _schemaMetadata;
+    private readonly global::Apache.Arrow.Field[] _fields;
+    private readonly global::Apache.Arrow.StructArray _rows;
+    internal global::Apache.Arrow.Int32Array _c0 = null!;
+
+    private HyperHolderAccessor(int length, global::Apache.Arrow.StructArray? validity, global::System.Collections.Generic.IReadOnlyDictionary<string, string> schemaMetadata,
+        global::Apache.Arrow.Field[] fields, global::Apache.Arrow.StructArray rows)
+    {
+        _length = length;
+        _validity = validity;
+        _schemaMetadata = schemaMetadata;
+        _fields = fields;
+        _rows = rows;
+    }
+
+    /// <summary>The number of rows.</summary>
+    public int Length => _length;
+
+    /// <summary>Whether row <paramref name="row"/> is null: always false for a RecordBatch, the
+    /// struct's own validity for a StructArray.</summary>
+    public bool IsNull(int row)
+    {
+        CheckRow(row);
+        return _validity is not null && _validity.IsNull(row);
+    }
+
+    /// <summary>Row <paramref name="row"/>, read in place. The view borrows this accessor.</summary>
+    public HyperHolderView At(int row)
+    {
+        CheckRow(row);
+        return new HyperHolderView(this, row);
+    }
+
+    /// <summary>Row <paramref name="row"/> as a new <see cref="HyperHolder"/>, read by its <c>FromArrow</c>, so it is
+    /// the row the model and its subscriber read (D-BIND-102). A null row of a StructArray reads its
+    /// children's values; <see cref="IsNull"/> tells.</summary>
+    public HyperHolder ToRow(int row)
+    {
+        CheckRow(row);
+        return global::Fletcher.Gen.Golden.Accessor.HyperHolder.FromArrow(_rows, row);
+    }
+
+    /// <summary>The batch schema's metadata; empty, never null, for a StructArray or when absent.</summary>
+    public global::System.Collections.Generic.IReadOnlyDictionary<string, string> SchemaMetadata => _schemaMetadata;
+
+    /// <summary>The metadata of column <paramref name="index"/>; empty, never null, when absent.</summary>
+    public global::System.Collections.Generic.IReadOnlyDictionary<string, string> FieldMetadata(int index)
+    {
+        if ((uint)index >= (uint)_fields.Length)
+            throw new global::System.ArgumentOutOfRangeException(nameof(index), index, null);
+        return _fields[index].Metadata ?? NoMetadata;
+    }
+
+    /// <summary>The metadata of the first column named <paramref name="name"/> in the batch, which
+    /// may name its columns differently from the proto; empty when none is.</summary>
+    public global::System.Collections.Generic.IReadOnlyDictionary<string, string> FieldMetadata(string name)
+    {
+        global::System.ArgumentNullException.ThrowIfNull(name);
+        foreach (var field in _fields)
+            if (field.Name == name) return field.Metadata ?? NoMetadata;
+        return NoMetadata;
+    }
+
+    /// <summary>The schema metadata's value for <paramref name="key"/>, or null when absent.</summary>
+    public string? Metadata(string key)
+    {
+        global::System.ArgumentNullException.ThrowIfNull(key);
+        return _schemaMetadata.TryGetValue(key, out var value) ? value : null;
+    }
+
+    /// <summary>Validates <paramref name="batch"/> and casts its columns once.</summary>
+    /// <returns>True with the accessor, or false with the reason in <paramref name="error"/>.</returns>
+    public static bool TryMake(global::Apache.Arrow.RecordBatch? batch,
+        [global::System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out HyperHolderAccessor? accessor,
+        [global::System.Diagnostics.CodeAnalysis.NotNullWhen(false)] out string? error)
+    {
+        if (batch is null)
+        {
+            accessor = null;
+            error = "HyperHolder: the batch is null.";
+            return false;
+        }
+        try
+        {
+            return FromColumns(batch.Length, [.. batch.Arrays], [.. batch.Schema.FieldsList],
+                batch.Schema.Metadata, null, out accessor, out error);
+        }
+        catch (global::System.Exception exception) when (IsMalformedInput(exception))
+        {
+            accessor = null;
+            error = $"HyperHolder: the batch is malformed ({exception.GetType().Name}: {exception.Message})";
+            return false;
+        }
+    }
+
+    /// <summary>Validates the children of <paramref name="array"/>, a column of this message, and
+    /// casts them once.</summary>
+    /// <returns>True with the accessor, or false with the reason in <paramref name="error"/>.</returns>
+    public static bool TryMake(global::Apache.Arrow.StructArray? array,
+        [global::System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out HyperHolderAccessor? accessor,
+        [global::System.Diagnostics.CodeAnalysis.NotNullWhen(false)] out string? error)
+    {
+        if (array is null)
+        {
+            accessor = null;
+            error = "HyperHolder: the array is null.";
+            return false;
+        }
+        try
+        {
+            // Fields is read once: Apache.Arrow 23 allocates on every read of it.
+            return FromColumns(array.Length, [.. array.Fields],
+                [.. ((global::Apache.Arrow.Types.StructType)array.Data.DataType).Fields], null, array,
+                out accessor, out error);
+        }
+        catch (global::System.Exception exception) when (IsMalformedInput(exception))
+        {
+            accessor = null;
+            error = $"HyperHolder: the array is malformed ({exception.GetType().Name}: {exception.Message})";
+            return false;
+        }
+    }
+
+    private static bool FromColumns(int length, global::Apache.Arrow.IArrowArray[] columns,
+        global::Apache.Arrow.Field[] fields, global::System.Collections.Generic.IReadOnlyDictionary<string, string>? schemaMetadata,
+        global::Apache.Arrow.StructArray? validity,
+        [global::System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out HyperHolderAccessor? accessor,
+        [global::System.Diagnostics.CodeAnalysis.NotNullWhen(false)] out string? error)
+    {
+        accessor = null;
+        if (Refusal is not null)
+        {
+            error = Refusal;
+            return false;
+        }
+        if (columns.Length != 3 || fields.Length != 3)
+        {
+            error = $"HyperHolder: expected 3 columns, got {columns.Length}.";
+            return false;
+        }
+        for (var i = 0; i < columns.Length; i++)
+        {
+            if (columns[i] is null)
+            {
+                error = $"HyperHolder column {i}: the array is null.";
+                return false;
+            }
+            if (columns[i].Length != length)
+            {
+                error = $"HyperHolder column {i}: {columns[i].Length} rows, expected {length}.";
+                return false;
+            }
+        }
+        if (columns[0] is not global::Apache.Arrow.Int32Array c0 || !SameType(c0.Data.DataType, global::Fletcher.Gen.Golden.Accessor.HyperHolder.Schema.GetFieldByIndex(0).DataType))
+        {
+            error = Mismatch("HyperHolder column 0 'id'", global::Fletcher.Gen.Golden.Accessor.HyperHolder.Schema.GetFieldByIndex(0).DataType, columns[0]);
+            return false;
+        }
+        var n0 = NullsUnderValidRows(c0, validity);
+        if (n0 != 0)
+        {
+            error = $"HyperHolder column 0 'id': non-nullable, found {n0} nulls.";
+            return false;
+        }
+        var result = new HyperHolderAccessor(length, validity, schemaMetadata ?? NoMetadata, fields,
+            validity ?? new global::Apache.Arrow.StructArray(new global::Apache.Arrow.Types.StructType(fields), length,
+                columns, global::Apache.Arrow.ArrowBuffer.Empty, 0));
+        result._c0 = c0;
+        accessor = result;
+        error = null;
+        return true;
+    }
+
+    private void CheckRow(int row)
+    {
+        if ((uint)row >= (uint)_length)
+            throw new global::System.ArgumentOutOfRangeException(nameof(row), row, null);
+    }
+
+    private static int NullsUnderValidRows(global::Apache.Arrow.IArrowArray column, global::Apache.Arrow.StructArray? parent)
+    {
+        if (column.NullCount == 0 || parent is null || parent.NullCount == 0) return column.NullCount;
+        var nulls = 0;
+        for (var i = 0; i < column.Length; i++)
+            if (column.IsNull(i) && !parent.IsNull(i)) nulls++;
+        return nulls;
+    }
+
+    private static bool IsMalformedInput(global::System.Exception exception) =>
+        exception is global::System.ArgumentException or global::System.InvalidCastException
+            or global::System.InvalidOperationException or global::System.NotSupportedException
+            or global::System.NullReferenceException or global::System.IndexOutOfRangeException;
 
     private static bool SameType(global::Apache.Arrow.Types.IArrowType actual, global::Apache.Arrow.Types.IArrowType expected) =>
         actual.TypeId == expected.TypeId && (actual, expected) switch
