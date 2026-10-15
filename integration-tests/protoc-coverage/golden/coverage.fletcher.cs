@@ -543,7 +543,7 @@ public sealed class Branch
             var l = (global::Apache.Arrow.ListArray)fields[2];
             var e = (global::Apache.Arrow.StructArray)l.Values;
             var start = l.ValueOffsets[index];
-            var end = l.ValueOffsets[index + 1];
+            var end = l.IsNull(index) ? start : l.ValueOffsets[index + 1];
             var x = new global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>(end - start);
             for (var j = start; j < end; j++) x.Add(global::Fletcher.Gen.Integration.Coverage.Leaf.FromArrow(e, j));
             row.Leaves = x;
@@ -991,7 +991,7 @@ public sealed class CompositeCoverage
             var l = (global::Apache.Arrow.ListArray)fields[4];
             var e = (global::Apache.Arrow.Int32Array)l.Values;
             var start = l.ValueOffsets[index];
-            var end = l.ValueOffsets[index + 1];
+            var end = l.IsNull(index) ? start : l.ValueOffsets[index + 1];
             var x = new global::System.Collections.Generic.List<int>(end - start);
             for (var j = start; j < end; j++) x.Add(e.GetValue(j).GetValueOrDefault());
             row.RepeatedScalar = x;
@@ -1000,7 +1000,7 @@ public sealed class CompositeCoverage
             var l = (global::Apache.Arrow.ListArray)fields[5];
             var e = (global::Apache.Arrow.StringArray)l.Values;
             var start = l.ValueOffsets[index];
-            var end = l.ValueOffsets[index + 1];
+            var end = l.IsNull(index) ? start : l.ValueOffsets[index + 1];
             var x = new global::System.Collections.Generic.List<string>(end - start);
             for (var j = start; j < end; j++) x.Add(e.GetString(j) ?? "");
             row.RepeatedString = x;
@@ -1009,7 +1009,7 @@ public sealed class CompositeCoverage
             var l = (global::Apache.Arrow.ListArray)fields[6];
             var e = (global::Apache.Arrow.BinaryArray)l.Values;
             var start = l.ValueOffsets[index];
-            var end = l.ValueOffsets[index + 1];
+            var end = l.IsNull(index) ? start : l.ValueOffsets[index + 1];
             var x = new global::System.Collections.Generic.List<byte[]>(end - start);
             for (var j = start; j < end; j++) x.Add(e.GetBytes(j).ToArray());
             row.RepeatedBytes = x;
@@ -1018,7 +1018,7 @@ public sealed class CompositeCoverage
             var l = (global::Apache.Arrow.ListArray)fields[7];
             var e = (global::Apache.Arrow.StructArray)l.Values;
             var start = l.ValueOffsets[index];
-            var end = l.ValueOffsets[index + 1];
+            var end = l.IsNull(index) ? start : l.ValueOffsets[index + 1];
             var x = new global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>(end - start);
             for (var j = start; j < end; j++) x.Add(global::Fletcher.Gen.Integration.Coverage.Leaf.FromArrow(e, j));
             row.RepeatedStruct = x;
@@ -1028,7 +1028,7 @@ public sealed class CompositeCoverage
             var k = (global::Apache.Arrow.StringArray)m.Keys;
             var e = (global::Apache.Arrow.Int32Array)m.Values;
             var start = m.ValueOffsets[index];
-            var end = m.ValueOffsets[index + 1];
+            var end = m.IsNull(index) ? start : m.ValueOffsets[index + 1];
             var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.KeyValuePair<string, int>>(end - start);
             for (var j = start; j < end; j++) x.Add(new global::System.Collections.Generic.KeyValuePair<string, int>(k.GetString(j) ?? "", e.GetValue(j).GetValueOrDefault()));
             row.MapScalar = x;
@@ -1038,7 +1038,7 @@ public sealed class CompositeCoverage
             var k = (global::Apache.Arrow.StringArray)m.Keys;
             var e = (global::Apache.Arrow.StructArray)m.Values;
             var start = m.ValueOffsets[index];
-            var end = m.ValueOffsets[index + 1];
+            var end = m.IsNull(index) ? start : m.ValueOffsets[index + 1];
             var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.KeyValuePair<string, global::Fletcher.Gen.Integration.Coverage.Leaf>>(end - start);
             for (var j = start; j < end; j++) x.Add(new global::System.Collections.Generic.KeyValuePair<string, global::Fletcher.Gen.Integration.Coverage.Leaf>(k.GetString(j) ?? "", global::Fletcher.Gen.Integration.Coverage.Leaf.FromArrow(e, j)));
             row.MapStruct = x;
@@ -1047,20 +1047,20 @@ public sealed class CompositeCoverage
             var l = (global::Apache.Arrow.ListArray)fields[10];
             var e = (global::Apache.Arrow.StructArray)l.Values;
             var start = l.ValueOffsets[index];
-            var end = l.ValueOffsets[index + 1];
+            var end = l.IsNull(index) ? start : l.ValueOffsets[index + 1];
             var x = new global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>(end - start);
             for (var j = start; j < end; j++) x.Add(global::Fletcher.Gen.Integration.Coverage.Leaf.FromArrow(e, j));
             row.FlattenedStructList = x;
         }
         {
             var l = (global::Apache.Arrow.ListArray)fields[11];
-            var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>>(l.ValueOffsets[index + 1] - l.ValueOffsets[index]);
+            var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>>((l.IsNull(index) ? l.ValueOffsets[index] : l.ValueOffsets[index + 1]) - l.ValueOffsets[index]);
             var e0 = (global::Apache.Arrow.ListArray)l.Values;
-            for (var j0 = l.ValueOffsets[index]; j0 < l.ValueOffsets[index + 1]; j0++)
+            for (var j0 = l.ValueOffsets[index]; j0 < (l.IsNull(index) ? l.ValueOffsets[index] : l.ValueOffsets[index + 1]); j0++)
             {
-                var x0 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>(e0.ValueOffsets[j0 + 1] - e0.ValueOffsets[j0]);
+                var x0 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>((e0.IsNull(j0) ? e0.ValueOffsets[j0] : e0.ValueOffsets[j0 + 1]) - e0.ValueOffsets[j0]);
                 var e0_ = (global::Apache.Arrow.StructArray)e0.Values;
-                for (var j0_ = e0.ValueOffsets[j0]; j0_ < e0.ValueOffsets[j0 + 1]; j0_++)
+                for (var j0_ = e0.ValueOffsets[j0]; j0_ < (e0.IsNull(j0) ? e0.ValueOffsets[j0] : e0.ValueOffsets[j0 + 1]); j0_++)
                 {
                     x0.Add(global::Fletcher.Gen.Integration.Coverage.Leaf.FromArrow(e0_, j0_));
                 }
@@ -1070,17 +1070,17 @@ public sealed class CompositeCoverage
         }
         {
             var l = (global::Apache.Arrow.ListArray)fields[12];
-            var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>>>(l.ValueOffsets[index + 1] - l.ValueOffsets[index]);
+            var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>>>((l.IsNull(index) ? l.ValueOffsets[index] : l.ValueOffsets[index + 1]) - l.ValueOffsets[index]);
             var e0 = (global::Apache.Arrow.ListArray)l.Values;
-            for (var j0 = l.ValueOffsets[index]; j0 < l.ValueOffsets[index + 1]; j0++)
+            for (var j0 = l.ValueOffsets[index]; j0 < (l.IsNull(index) ? l.ValueOffsets[index] : l.ValueOffsets[index + 1]); j0++)
             {
-                var x0 = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>>(e0.ValueOffsets[j0 + 1] - e0.ValueOffsets[j0]);
+                var x0 = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>>((e0.IsNull(j0) ? e0.ValueOffsets[j0] : e0.ValueOffsets[j0 + 1]) - e0.ValueOffsets[j0]);
                 var e0_ = (global::Apache.Arrow.ListArray)e0.Values;
-                for (var j0_ = e0.ValueOffsets[j0]; j0_ < e0.ValueOffsets[j0 + 1]; j0_++)
+                for (var j0_ = e0.ValueOffsets[j0]; j0_ < (e0.IsNull(j0) ? e0.ValueOffsets[j0] : e0.ValueOffsets[j0 + 1]); j0_++)
                 {
-                    var x0_ = new global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>(e0_.ValueOffsets[j0_ + 1] - e0_.ValueOffsets[j0_]);
+                    var x0_ = new global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>((e0_.IsNull(j0_) ? e0_.ValueOffsets[j0_] : e0_.ValueOffsets[j0_ + 1]) - e0_.ValueOffsets[j0_]);
                     var e0__ = (global::Apache.Arrow.StructArray)e0_.Values;
-                    for (var j0__ = e0_.ValueOffsets[j0_]; j0__ < e0_.ValueOffsets[j0_ + 1]; j0__++)
+                    for (var j0__ = e0_.ValueOffsets[j0_]; j0__ < (e0_.IsNull(j0_) ? e0_.ValueOffsets[j0_] : e0_.ValueOffsets[j0_ + 1]); j0__++)
                     {
                         x0_.Add(global::Fletcher.Gen.Integration.Coverage.Leaf.FromArrow(e0__, j0__));
                     }
@@ -1094,7 +1094,7 @@ public sealed class CompositeCoverage
             var l = (global::Apache.Arrow.ListArray)fields[13];
             var e = (global::Apache.Arrow.StructArray)l.Values;
             var start = l.ValueOffsets[index];
-            var end = l.ValueOffsets[index + 1];
+            var end = l.IsNull(index) ? start : l.ValueOffsets[index + 1];
             var x = new global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>(end - start);
             for (var j = start; j < end; j++) x.Add(global::Fletcher.Gen.Integration.Coverage.Leaf.FromArrow(e, j));
             row.OptionalFlattenedStructList = x;

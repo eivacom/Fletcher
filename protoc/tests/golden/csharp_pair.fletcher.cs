@@ -205,7 +205,7 @@ public sealed class Reading
             var l = (global::Apache.Arrow.ListArray)fields[4];
             var e = (global::Apache.Arrow.Int32Array)l.Values;
             var start = l.ValueOffsets[index];
-            var end = l.ValueOffsets[index + 1];
+            var end = l.IsNull(index) ? start : l.ValueOffsets[index + 1];
             var x = new global::System.Collections.Generic.List<int>(end - start);
             for (var j = start; j < end; j++) x.Add(e.GetValue(j).GetValueOrDefault());
             row.Samples = x;
@@ -215,7 +215,7 @@ public sealed class Reading
             var k = (global::Apache.Arrow.StringArray)m.Keys;
             var e = (global::Apache.Arrow.Int64Array)m.Values;
             var start = m.ValueOffsets[index];
-            var end = m.ValueOffsets[index + 1];
+            var end = m.IsNull(index) ? start : m.ValueOffsets[index + 1];
             var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.KeyValuePair<string, long>>(end - start);
             for (var j = start; j < end; j++) x.Add(new global::System.Collections.Generic.KeyValuePair<string, long>(k.GetString(j) ?? "", e.GetValue(j).GetValueOrDefault()));
             row.Tags = x;
@@ -225,7 +225,7 @@ public sealed class Reading
             var l = (global::Apache.Arrow.ListArray)fields[7];
             var e = (global::Apache.Arrow.StructArray)l.Values;
             var start = l.ValueOffsets[index];
-            var end = l.ValueOffsets[index + 1];
+            var end = l.IsNull(index) ? start : l.ValueOffsets[index + 1];
             var x = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Pair.Stamp>(end - start);
             for (var j = start; j < end; j++) x.Add(global::Fletcher.Gen.Golden.Pair.Stamp.FromArrow(e, j));
             row.History = x;
@@ -293,7 +293,7 @@ public sealed class Marks
             var l = (global::Apache.Arrow.ListArray)fields[0];
             var e = (global::Apache.Arrow.StructArray)l.Values;
             var start = l.ValueOffsets[index];
-            var end = l.ValueOffsets[index + 1];
+            var end = l.IsNull(index) ? start : l.ValueOffsets[index + 1];
             var x = new global::System.Collections.Generic.List<global::Fletcher.Gen.Google.Protobuf.Timestamp>(end - start);
             for (var j = start; j < end; j++) x.Add(global::Fletcher.Gen.Google.Protobuf.Timestamp.FromArrow(e, j));
             row.At = x;

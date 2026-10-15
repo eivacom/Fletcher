@@ -187,6 +187,8 @@ public sealed class GeneratedAccessorCollectionTests
         Assert.True(view.Places.ValueIsNull(0));
         Assert.True(view.Grid.IsNull(0));
         Assert.Empty(view.Grid[0]);
+        // B1 of BIND-7's review: ToRow, the model's FromArrow, reads the null inner list as empty too.
+        Assert.Empty(Make(batch).ToRow(0).Grid[0]);
         Assert.Equal(new[] { "5/-5/-" }, view.Grid[2].Select(Describe));
     }
 
@@ -200,6 +202,8 @@ public sealed class GeneratedAccessorCollectionTests
         var accessor = Make(Replace(model, 14, withNull));
 
         Assert.Empty(accessor.At(0).MaybePoints);
+        // B1 of BIND-7's review: ToRow, the model's FromArrow, reads it as the view does.
+        Assert.Empty(accessor.ToRow(0).MaybePoints);
         Assert.Equal(new[] { "102/-102/102" }, accessor.At(1).MaybePoints.Select(Describe));
     }
 

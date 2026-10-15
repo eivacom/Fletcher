@@ -144,8 +144,11 @@ void EmitReadList(std::ostringstream& o, const Elem& e, const std::string& list,
       << in << "{\n";
     if (e.is_list) {
         const std::string inner = "x" + id;
+        // B1 of BIND-7's review: a null inner list reads as empty, whatever its offsets span.
         EmitReadList(o, *e.inner, values, values + ".ValueOffsets[" + j + "]",
-                     values + ".ValueOffsets[" + j + " + 1]", inner, id + "_", in + "    ");
+                     "(" + values + ".IsNull(" + j + ") ? " + values + ".ValueOffsets[" + j +
+                         "] : " + values + ".ValueOffsets[" + j + " + 1])",
+                     inner, id + "_", in + "    ");
         o << in << "    " << out << ".Add(" << inner << ");\n";
     } else {
         o << in << "    " << out << ".Add("
@@ -500,8 +503,10 @@ void EmitRead(std::ostringstream& o, const Column& c) {
                 // 6c-3: a list of lists, read level by level.
                 o << in << "{\n"
                   << in << "    var l = (global::Apache.Arrow.ListArray)" << field << ";\n";
-                EmitReadList(o, c.elem, "l", "l.ValueOffsets[index]", "l.ValueOffsets[index + 1]",
-                             "x", "0", in + "    ");
+                EmitReadList(
+                    o, c.elem, "l", "l.ValueOffsets[index]",
+                    "(l.IsNull(index) ? l.ValueOffsets[index] : l.ValueOffsets[index + 1])", "x",
+                    "0", in + "    ");
                 o << in << "    row." << c.property << " = x;\n" << in << "}\n";
                 return;
             }
@@ -513,8 +518,10 @@ void EmitRead(std::ostringstream& o, const Column& c) {
               << ")l.Values;\n"
               // ValueOffsets is already sliced to the array's own offset; the older
               // GetValueOffset is obsolete in Apache.Arrow 23 (CS0618 fails the build).
-              << in << "    var start = l.ValueOffsets[index];\n"
-              << in << "    var end = l.ValueOffsets[index + 1];\n"
+              << in
+              << "    var start = l.ValueOffsets[index];\n"
+              // B1 of BIND-7's review: a null list reads as empty, whatever its offsets span.
+              << in << "    var end = l.IsNull(index) ? start : l.ValueOffsets[index + 1];\n"
               << in << "    var x = new " << ListOf(ElemTypeText(c.elem)) << "(end - start);\n"
               << in << "    for (var j = start; j < end; j++) x.Add("
               << (c.elem.is_struct ? c.elem.cls + ".FromArrow(e, j)"
@@ -534,7 +541,7 @@ void EmitRead(std::ostringstream& o, const Column& c) {
               << in << "    var k = (" << ArrayClass(c.key.scalar) << ")m.Keys;\n"
               << in << "    var e = (" << values << ")m.Values;\n"
               << in << "    var start = m.ValueOffsets[index];\n"
-              << in << "    var end = m.ValueOffsets[index + 1];\n"
+              << in << "    var end = m.IsNull(index) ? start : m.ValueOffsets[index + 1];\n"
               << in << "    var x = new " << ListOf(pair) << "(end - start);\n"
               << in << "    for (var j = start; j < end; j++) x.Add(new " << pair << "("
               << ReadElement(c.key.scalar, "k", "j") << ", "

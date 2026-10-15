@@ -1817,3 +1817,15 @@ TEST(CsAccessor, AStringOrBytesFieldHasASpanGetterNamedAfterEveryProperty) {
     // A nullable one too: Apache.Arrow's GetBytes reads a null as empty (a runtime test pins it).
     ExpectContains(view, span + "NoteUtf8 => _accessor._c3.GetBytes(_row);\n");
 }
+
+TEST(CsAccessor, FromArrowReadsANullListAsEmptyAtEveryLevel) {
+    // B1 of BIND-7's review: Arrow lets a null list's offsets span elements, so the model's
+    // FromArrow (and ToRow, which is it) reads a null list, map or inner list as empty, as the
+    // view does (D-BIND-101), instead of the elements its offsets span.
+    const auto files = AccessorGolden();
+    const std::string track = ClassBody(FileOf(files, "csharp_accessor.fletcher.cs"), "Track");
+    ExpectContains(track, "var end = l.IsNull(index) ? start : l.ValueOffsets[index + 1];");
+    ExpectContains(track, "var end = m.IsNull(index) ? start : m.ValueOffsets[index + 1];");
+    ExpectContains(track, "(l.IsNull(index) ? l.ValueOffsets[index] : l.ValueOffsets[index + 1])");
+    ExpectContains(track, "(e0.IsNull(j0) ? e0.ValueOffsets[j0] : e0.ValueOffsets[j0 + 1])");
+}

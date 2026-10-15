@@ -732,7 +732,7 @@ public sealed class Track
             var l = (global::Apache.Arrow.ListArray)fields[1];
             var e = (global::Apache.Arrow.Int32Array)l.Values;
             var start = l.ValueOffsets[index];
-            var end = l.ValueOffsets[index + 1];
+            var end = l.IsNull(index) ? start : l.ValueOffsets[index + 1];
             var x = new global::System.Collections.Generic.List<int>(end - start);
             for (var j = start; j < end; j++) x.Add(e.GetValue(j).GetValueOrDefault());
             row.Ints = x;
@@ -741,7 +741,7 @@ public sealed class Track
             var l = (global::Apache.Arrow.ListArray)fields[2];
             var e = (global::Apache.Arrow.StringArray)l.Values;
             var start = l.ValueOffsets[index];
-            var end = l.ValueOffsets[index + 1];
+            var end = l.IsNull(index) ? start : l.ValueOffsets[index + 1];
             var x = new global::System.Collections.Generic.List<string>(end - start);
             for (var j = start; j < end; j++) x.Add(e.GetString(j) ?? "");
             row.Names = x;
@@ -750,7 +750,7 @@ public sealed class Track
             var l = (global::Apache.Arrow.ListArray)fields[3];
             var e = (global::Apache.Arrow.BinaryArray)l.Values;
             var start = l.ValueOffsets[index];
-            var end = l.ValueOffsets[index + 1];
+            var end = l.IsNull(index) ? start : l.ValueOffsets[index + 1];
             var x = new global::System.Collections.Generic.List<byte[]>(end - start);
             for (var j = start; j < end; j++) x.Add(e.GetBytes(j).ToArray());
             row.Blobs = x;
@@ -759,7 +759,7 @@ public sealed class Track
             var l = (global::Apache.Arrow.ListArray)fields[4];
             var e = (global::Apache.Arrow.BooleanArray)l.Values;
             var start = l.ValueOffsets[index];
-            var end = l.ValueOffsets[index + 1];
+            var end = l.IsNull(index) ? start : l.ValueOffsets[index + 1];
             var x = new global::System.Collections.Generic.List<bool>(end - start);
             for (var j = start; j < end; j++) x.Add(e.GetValue(j).GetValueOrDefault());
             row.Flags = x;
@@ -768,7 +768,7 @@ public sealed class Track
             var l = (global::Apache.Arrow.ListArray)fields[5];
             var e = (global::Apache.Arrow.Int32Array)l.Values;
             var start = l.ValueOffsets[index];
-            var end = l.ValueOffsets[index + 1];
+            var end = l.IsNull(index) ? start : l.ValueOffsets[index + 1];
             var x = new global::System.Collections.Generic.List<Quality>(end - start);
             for (var j = start; j < end; j++) x.Add((Quality)e.GetValue(j).GetValueOrDefault());
             row.Qualities = x;
@@ -777,7 +777,7 @@ public sealed class Track
             var l = (global::Apache.Arrow.ListArray)fields[6];
             var e = (global::Apache.Arrow.DoubleArray)l.Values;
             var start = l.ValueOffsets[index];
-            var end = l.ValueOffsets[index + 1];
+            var end = l.IsNull(index) ? start : l.ValueOffsets[index + 1];
             var x = new global::System.Collections.Generic.List<double>(end - start);
             for (var j = start; j < end; j++) x.Add(e.GetValue(j).GetValueOrDefault());
             row.Values = x;
@@ -786,7 +786,7 @@ public sealed class Track
             var l = (global::Apache.Arrow.ListArray)fields[7];
             var e = (global::Apache.Arrow.StructArray)l.Values;
             var start = l.ValueOffsets[index];
-            var end = l.ValueOffsets[index + 1];
+            var end = l.IsNull(index) ? start : l.ValueOffsets[index + 1];
             var x = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>(end - start);
             for (var j = start; j < end; j++) x.Add(global::Fletcher.Gen.Golden.Accessor.Position.FromArrow(e, j));
             row.Points = x;
@@ -796,7 +796,7 @@ public sealed class Track
             var k = (global::Apache.Arrow.StringArray)m.Keys;
             var e = (global::Apache.Arrow.Int32Array)m.Values;
             var start = m.ValueOffsets[index];
-            var end = m.ValueOffsets[index + 1];
+            var end = m.IsNull(index) ? start : m.ValueOffsets[index + 1];
             var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.KeyValuePair<string, int>>(end - start);
             for (var j = start; j < end; j++) x.Add(new global::System.Collections.Generic.KeyValuePair<string, int>(k.GetString(j) ?? "", e.GetValue(j).GetValueOrDefault()));
             row.Scores = x;
@@ -806,7 +806,7 @@ public sealed class Track
             var k = (global::Apache.Arrow.StringArray)m.Keys;
             var e = (global::Apache.Arrow.StructArray)m.Values;
             var start = m.ValueOffsets[index];
-            var end = m.ValueOffsets[index + 1];
+            var end = m.IsNull(index) ? start : m.ValueOffsets[index + 1];
             var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.KeyValuePair<string, global::Fletcher.Gen.Golden.Accessor.Position>>(end - start);
             for (var j = start; j < end; j++) x.Add(new global::System.Collections.Generic.KeyValuePair<string, global::Fletcher.Gen.Golden.Accessor.Position>(k.GetString(j) ?? "", global::Fletcher.Gen.Golden.Accessor.Position.FromArrow(e, j)));
             row.Places = x;
@@ -816,20 +816,20 @@ public sealed class Track
             var k = (global::Apache.Arrow.Int64Array)m.Keys;
             var e = (global::Apache.Arrow.StringArray)m.Values;
             var start = m.ValueOffsets[index];
-            var end = m.ValueOffsets[index + 1];
+            var end = m.IsNull(index) ? start : m.ValueOffsets[index + 1];
             var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.KeyValuePair<long, string>>(end - start);
             for (var j = start; j < end; j++) x.Add(new global::System.Collections.Generic.KeyValuePair<long, string>(k.GetValue(j).GetValueOrDefault(), e.GetString(j) ?? ""));
             row.Labels = x;
         }
         {
             var l = (global::Apache.Arrow.ListArray)fields[11];
-            var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>>(l.ValueOffsets[index + 1] - l.ValueOffsets[index]);
+            var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>>((l.IsNull(index) ? l.ValueOffsets[index] : l.ValueOffsets[index + 1]) - l.ValueOffsets[index]);
             var e0 = (global::Apache.Arrow.ListArray)l.Values;
-            for (var j0 = l.ValueOffsets[index]; j0 < l.ValueOffsets[index + 1]; j0++)
+            for (var j0 = l.ValueOffsets[index]; j0 < (l.IsNull(index) ? l.ValueOffsets[index] : l.ValueOffsets[index + 1]); j0++)
             {
-                var x0 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>(e0.ValueOffsets[j0 + 1] - e0.ValueOffsets[j0]);
+                var x0 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>((e0.IsNull(j0) ? e0.ValueOffsets[j0] : e0.ValueOffsets[j0 + 1]) - e0.ValueOffsets[j0]);
                 var e0_ = (global::Apache.Arrow.StructArray)e0.Values;
-                for (var j0_ = e0.ValueOffsets[j0]; j0_ < e0.ValueOffsets[j0 + 1]; j0_++)
+                for (var j0_ = e0.ValueOffsets[j0]; j0_ < (e0.IsNull(j0) ? e0.ValueOffsets[j0] : e0.ValueOffsets[j0 + 1]); j0_++)
                 {
                     x0.Add(global::Fletcher.Gen.Golden.Accessor.Position.FromArrow(e0_, j0_));
                 }
@@ -839,17 +839,17 @@ public sealed class Track
         }
         {
             var l = (global::Apache.Arrow.ListArray)fields[12];
-            var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>>>(l.ValueOffsets[index + 1] - l.ValueOffsets[index]);
+            var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>>>((l.IsNull(index) ? l.ValueOffsets[index] : l.ValueOffsets[index + 1]) - l.ValueOffsets[index]);
             var e0 = (global::Apache.Arrow.ListArray)l.Values;
-            for (var j0 = l.ValueOffsets[index]; j0 < l.ValueOffsets[index + 1]; j0++)
+            for (var j0 = l.ValueOffsets[index]; j0 < (l.IsNull(index) ? l.ValueOffsets[index] : l.ValueOffsets[index + 1]); j0++)
             {
-                var x0 = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>>(e0.ValueOffsets[j0 + 1] - e0.ValueOffsets[j0]);
+                var x0 = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>>((e0.IsNull(j0) ? e0.ValueOffsets[j0] : e0.ValueOffsets[j0 + 1]) - e0.ValueOffsets[j0]);
                 var e0_ = (global::Apache.Arrow.ListArray)e0.Values;
-                for (var j0_ = e0.ValueOffsets[j0]; j0_ < e0.ValueOffsets[j0 + 1]; j0_++)
+                for (var j0_ = e0.ValueOffsets[j0]; j0_ < (e0.IsNull(j0) ? e0.ValueOffsets[j0] : e0.ValueOffsets[j0 + 1]); j0_++)
                 {
-                    var x0_ = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>(e0_.ValueOffsets[j0_ + 1] - e0_.ValueOffsets[j0_]);
+                    var x0_ = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>((e0_.IsNull(j0_) ? e0_.ValueOffsets[j0_] : e0_.ValueOffsets[j0_ + 1]) - e0_.ValueOffsets[j0_]);
                     var e0__ = (global::Apache.Arrow.StructArray)e0_.Values;
-                    for (var j0__ = e0_.ValueOffsets[j0_]; j0__ < e0_.ValueOffsets[j0_ + 1]; j0__++)
+                    for (var j0__ = e0_.ValueOffsets[j0_]; j0__ < (e0_.IsNull(j0_) ? e0_.ValueOffsets[j0_] : e0_.ValueOffsets[j0_ + 1]); j0__++)
                     {
                         x0_.Add(global::Fletcher.Gen.Golden.Accessor.Position.FromArrow(e0__, j0__));
                     }
@@ -861,13 +861,13 @@ public sealed class Track
         }
         {
             var l = (global::Apache.Arrow.ListArray)fields[13];
-            var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<int>>(l.ValueOffsets[index + 1] - l.ValueOffsets[index]);
+            var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<int>>((l.IsNull(index) ? l.ValueOffsets[index] : l.ValueOffsets[index + 1]) - l.ValueOffsets[index]);
             var e0 = (global::Apache.Arrow.ListArray)l.Values;
-            for (var j0 = l.ValueOffsets[index]; j0 < l.ValueOffsets[index + 1]; j0++)
+            for (var j0 = l.ValueOffsets[index]; j0 < (l.IsNull(index) ? l.ValueOffsets[index] : l.ValueOffsets[index + 1]); j0++)
             {
-                var x0 = new global::System.Collections.Generic.List<int>(e0.ValueOffsets[j0 + 1] - e0.ValueOffsets[j0]);
+                var x0 = new global::System.Collections.Generic.List<int>((e0.IsNull(j0) ? e0.ValueOffsets[j0] : e0.ValueOffsets[j0 + 1]) - e0.ValueOffsets[j0]);
                 var e0_ = (global::Apache.Arrow.Int32Array)e0.Values;
-                for (var j0_ = e0.ValueOffsets[j0]; j0_ < e0.ValueOffsets[j0 + 1]; j0_++)
+                for (var j0_ = e0.ValueOffsets[j0]; j0_ < (e0.IsNull(j0) ? e0.ValueOffsets[j0] : e0.ValueOffsets[j0 + 1]); j0_++)
                 {
                     x0.Add(e0_.GetValue(j0_).GetValueOrDefault());
                 }
@@ -879,7 +879,7 @@ public sealed class Track
             var l = (global::Apache.Arrow.ListArray)fields[14];
             var e = (global::Apache.Arrow.StructArray)l.Values;
             var start = l.ValueOffsets[index];
-            var end = l.ValueOffsets[index + 1];
+            var end = l.IsNull(index) ? start : l.ValueOffsets[index + 1];
             var x = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>(end - start);
             for (var j = start; j < end; j++) x.Add(global::Fletcher.Gen.Golden.Accessor.Position.FromArrow(e, j));
             row.MaybePoints = x;
@@ -1000,21 +1000,21 @@ public sealed class Hyper
         row.Id = ((global::Apache.Arrow.Int32Array)fields[0]).GetValue(index).GetValueOrDefault();
         {
             var l = (global::Apache.Arrow.ListArray)fields[1];
-            var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>>>>(l.ValueOffsets[index + 1] - l.ValueOffsets[index]);
+            var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>>>>((l.IsNull(index) ? l.ValueOffsets[index] : l.ValueOffsets[index + 1]) - l.ValueOffsets[index]);
             var e0 = (global::Apache.Arrow.ListArray)l.Values;
-            for (var j0 = l.ValueOffsets[index]; j0 < l.ValueOffsets[index + 1]; j0++)
+            for (var j0 = l.ValueOffsets[index]; j0 < (l.IsNull(index) ? l.ValueOffsets[index] : l.ValueOffsets[index + 1]); j0++)
             {
-                var x0 = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>>>(e0.ValueOffsets[j0 + 1] - e0.ValueOffsets[j0]);
+                var x0 = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>>>((e0.IsNull(j0) ? e0.ValueOffsets[j0] : e0.ValueOffsets[j0 + 1]) - e0.ValueOffsets[j0]);
                 var e0_ = (global::Apache.Arrow.ListArray)e0.Values;
-                for (var j0_ = e0.ValueOffsets[j0]; j0_ < e0.ValueOffsets[j0 + 1]; j0_++)
+                for (var j0_ = e0.ValueOffsets[j0]; j0_ < (e0.IsNull(j0) ? e0.ValueOffsets[j0] : e0.ValueOffsets[j0 + 1]); j0_++)
                 {
-                    var x0_ = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>>(e0_.ValueOffsets[j0_ + 1] - e0_.ValueOffsets[j0_]);
+                    var x0_ = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>>((e0_.IsNull(j0_) ? e0_.ValueOffsets[j0_] : e0_.ValueOffsets[j0_ + 1]) - e0_.ValueOffsets[j0_]);
                     var e0__ = (global::Apache.Arrow.ListArray)e0_.Values;
-                    for (var j0__ = e0_.ValueOffsets[j0_]; j0__ < e0_.ValueOffsets[j0_ + 1]; j0__++)
+                    for (var j0__ = e0_.ValueOffsets[j0_]; j0__ < (e0_.IsNull(j0_) ? e0_.ValueOffsets[j0_] : e0_.ValueOffsets[j0_ + 1]); j0__++)
                     {
-                        var x0__ = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>(e0__.ValueOffsets[j0__ + 1] - e0__.ValueOffsets[j0__]);
+                        var x0__ = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>((e0__.IsNull(j0__) ? e0__.ValueOffsets[j0__] : e0__.ValueOffsets[j0__ + 1]) - e0__.ValueOffsets[j0__]);
                         var e0___ = (global::Apache.Arrow.StructArray)e0__.Values;
-                        for (var j0___ = e0__.ValueOffsets[j0__]; j0___ < e0__.ValueOffsets[j0__ + 1]; j0___++)
+                        for (var j0___ = e0__.ValueOffsets[j0__]; j0___ < (e0__.IsNull(j0__) ? e0__.ValueOffsets[j0__] : e0__.ValueOffsets[j0__ + 1]); j0___++)
                         {
                             x0__.Add(global::Fletcher.Gen.Golden.Accessor.Position.FromArrow(e0___, j0___));
                         }

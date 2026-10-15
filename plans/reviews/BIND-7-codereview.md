@@ -47,6 +47,11 @@ briefed by the author.
 
 ### B1 — `ToRow` and the view disagree on a null list whose offsets span elements
 
+> **FIXED 2026-10-15.** The model's `FromArrow` reads a null list, map or inner list, at every
+> level, as empty (a null-aware end offset), so `ToRow`, `FromArrow`, the generated subscriber and the
+> view agree. Both null-list tests now assert `ToRow` too; a plugin case pins the emitted reads, and a
+> mutant removing either the outer or the inner check fails one of them. Every model golden moves by
+> the changed reads only.
 *Found by the runtime reviewer. Reproduced.*
 
 D-BIND-101 reads a null inner list (and a null row of a nullable list column) as an empty window, and

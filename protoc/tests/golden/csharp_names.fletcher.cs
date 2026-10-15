@@ -107,7 +107,7 @@ public sealed class RouteList
             var l = (global::Apache.Arrow.ListArray)fields[0];
             var e = (global::Apache.Arrow.StructArray)l.Values;
             var start = l.ValueOffsets[index];
-            var end = l.ValueOffsets[index + 1];
+            var end = l.IsNull(index) ? start : l.ValueOffsets[index + 1];
             var x = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Names.Waypoint>(end - start);
             for (var j = start; j < end; j++) x.Add(global::Fletcher.Gen.Golden.Names.Waypoint.FromArrow(e, j));
             row.Waypoint = x;
@@ -177,7 +177,7 @@ public sealed class RouteMap
             var k = (global::Apache.Arrow.StringArray)m.Keys;
             var e = (global::Apache.Arrow.StructArray)m.Values;
             var start = m.ValueOffsets[index];
-            var end = m.ValueOffsets[index + 1];
+            var end = m.IsNull(index) ? start : m.ValueOffsets[index + 1];
             var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.KeyValuePair<string, global::Fletcher.Gen.Golden.Names.Waypoint>>(end - start);
             for (var j = start; j < end; j++) x.Add(new global::System.Collections.Generic.KeyValuePair<string, global::Fletcher.Gen.Golden.Names.Waypoint>(k.GetString(j) ?? "", global::Fletcher.Gen.Golden.Names.Waypoint.FromArrow(e, j)));
             row.Waypoint = x;
@@ -464,7 +464,7 @@ public sealed class UsesLocals
             var l = (global::Apache.Arrow.ListArray)fields[1];
             var e = (global::Apache.Arrow.StructArray)l.Values;
             var start = l.ValueOffsets[index];
-            var end = l.ValueOffsets[index + 1];
+            var end = l.IsNull(index) ? start : l.ValueOffsets[index + 1];
             var x = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Names.@array>(end - start);
             for (var j = start; j < end; j++) x.Add(global::Fletcher.Gen.Golden.Names.@array.FromArrow(e, j));
             row.Items = x;
@@ -585,7 +585,7 @@ public sealed class UsesKeywords
             var l = (global::Apache.Arrow.ListArray)fields[2];
             var e = (global::Apache.Arrow.StructArray)l.Values;
             var start = l.ValueOffsets[index];
-            var end = l.ValueOffsets[index + 1];
+            var end = l.IsNull(index) ? start : l.ValueOffsets[index + 1];
             var x = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Names.@class>(end - start);
             for (var j = start; j < end; j++) x.Add(global::Fletcher.Gen.Golden.Names.@class.FromArrow(e, j));
             row.Ks = x;
@@ -738,7 +738,7 @@ public sealed class UsesOwnNames
             var l = (global::Apache.Arrow.ListArray)fields[1];
             var e = (global::Apache.Arrow.StructArray)l.Values;
             var start = l.ValueOffsets[index];
-            var end = l.ValueOffsets[index + 1];
+            var end = l.IsNull(index) ? start : l.ValueOffsets[index + 1];
             var x = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Names.FromArrow_>(end - start);
             for (var j = start; j < end; j++) x.Add(global::Fletcher.Gen.Golden.Names.FromArrow_.FromArrow(e, j));
             row.Fs = x;
