@@ -2947,3 +2947,35 @@ accessor), after a read-only map of the C++ and Rust accessors and the capstone 
   reads `array.Fields[n]` per column, so it allocates 64 bytes per column per row; recorded as debt.
   **Declined:** the view over `(StructArray, int)` with `Fields` fetched once at construction (64
   bytes per view, a cast per getter, and a second type beside `RowView`); no view at all.
+  *(Amended by D-BIND-98, 2026-10-14: `ToRow()` moves from the view to the accessor as
+  `ToRow(row)`, so the view has no members of its own beside the field properties.)*
+
+- **D-BIND-98 - the C# accessor and view split their surfaces so that no field name can collide
+  with a generated member: `<Msg>Accessor` has no per-field getters, only `TryMake`, `Length`,
+  `IsNull(row)`, `At(row)` (returning `<Msg>View`), `ToRow(row)` and D-BIND-95's metadata API;
+  `<Msg>View` has only the field properties, named exactly as on the model class (D-BIND-73, 84,
+  89). Amends D-BIND-97.** *LOCKED BY THE MAINTAINER 2026-10-14 (BIND-7a), after asking why the rule
+  was needed and why the split over a suffix.* A field getter beside the accessor's own members
+  collides with them: `message Track { int32 length = 1; Point at = 2; }` would give a `Length`
+  getter beside the row count `Length` and an `At` getter beside `At(row)`, CS0102 or a silent change
+  of meaning, and a valid `.proto` must never break generation. With the split, the view's only
+  members are the fields, so it reuses the model class's names and their rule unchanged: one name
+  per field across the model class and the view. The accessor can gain members later without
+  renaming any user's getter, which under a suffix rule would be a breaking change on upgrade
+  (`Slice` added, a field `slice` becomes `Slice_`). `ToRow()` leaves the view for that reason (a
+  field `to_row`). D-BIND-96's "a comment instead of a getter" applies to the view's property. The
+  string field's UTF-8 span getter (D-BIND-97, slice 7c) has a field-derived name and goes through
+  D-BIND-89's taken set like any property. The cost: unlike C++ (`acc.speed(row)` beside its
+  `RowView`), a column loop reads `acc.At(row).Speed`; the view is a two-word `readonly struct` the
+  JIT is expected to inline, which 7a measures. C++'s own accessor puts `num_rows()` and
+  `is_null(row)` beside its field getters, and `recordbatch_accessor_emitter.cpp` showed no guard
+  against a field of either name; whether one breaks it was not checked (not BIND's to fix).
+  **Also ruled with it, 2026-10-15, after a full C++/C# comparison:** (1) the row index is `int`
+  (`Length`, `IsNull(row)`, `At(row)`, `ToRow(row)`), as every Apache.Arrow array indexes with
+  `int`, where C++ uses `int64_t`; (2) the view's property TYPES are the model class's too, not only
+  its names: a C# `enum` (C++ gives a raw `int32` and `x_typed()`), D-BIND-26's lossless temporal
+  structs, `T?` where C++ returns `std::optional`, and a nullable struct field as `<Inner>View?`,
+  null on a null row, as C++'s `optional<RowView>`. Collection getters stay for 7b.
+  **Declined:** C++-like per-field getters on the accessor with a second reserved list and a `_`
+  suffix on clashes (two names for one field, and every new accessor member renames somebody's
+  getter).

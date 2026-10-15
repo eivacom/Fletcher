@@ -186,8 +186,8 @@ This is the same shape as C++ (`fletcher-protoc::plugin`) and TypeScript
 | `class <Msg>` — setters, getters, `EncodeTo`, `Encode`, `DecodeInto`, ctors from bytes | `sealed class <Msg>` — properties, `static Schema Schema { get }`, `static RecordBatch ToArrow(IEnumerable<Msg>)`, `static <Msg> FromArrow(StructArray, int)`. **No `EncodeTo`/`DecodeInto`** — generated C# writes no wire bytes |
 | nested `enum` | real C# `enum`, int32-backed (D-BIND-8); a nested one is flat, `Player_Color` (D-BIND-69). Members by protoc's C# rule, prefix stripped then PascalCase: C++ `Color::COLOR_RED` is C# `Color.Red`, same number (D-BIND-70) |
 | `<Msg>Schema()` → `OwnedSchema` | `<Msg>.Schema` → `Apache.Arrow.Schema`, metadata preserved |
-| `class <Msg>View` (row-oriented, over a Scalar) | `readonly struct <Msg>View` of (accessor, row), which is also the accessor's `RowView`: getters read the cast-once columns in place, a string field also has a zero-copy UTF-8 `ReadOnlySpan<byte>` getter, `ToRow()` materialises (D-BIND-97; planned as "over `(StructArray, int)`" until measured: `StructArray.Fields` allocates 64 bytes per read) |
-| `class <Msg>Accessor` — `Make(RecordBatch)`, `Make(StructArray)`, column getters, `RowView` | `sealed class <Msg>Accessor` — `TryMake(RecordBatch, out accessor, out error)`, `TryMake(StructArray, out accessor, out error)`, never throwing on bad input (D-BIND-94: C++ returns a status and Rust a `Result`, so the reason is kept; this read "deviation from C++ `Make`-throws", which C++ does not do), column getters, `RowView` (= `<Msg>View`), `SchemaMetadata`, `FieldMetadata(int)`, `FieldMetadata(string)` and the shortcut `Metadata(key)` (D-BIND-95); a message it cannot support keeps its class and `TryMake` refuses with the reason (D-BIND-96) |
+| `class <Msg>View` (row-oriented, over a Scalar) | `readonly struct <Msg>View` of (accessor, row), which is also the accessor's `RowView`: its only members are the field properties, named and typed as on the model class (a nullable struct field is `<Inner>View?`; D-BIND-98), which read the cast-once columns in place; a string field also has a zero-copy UTF-8 `ReadOnlySpan<byte>` getter (D-BIND-97; `ToRow()` moved to the accessor, D-BIND-98; planned as "over `(StructArray, int)`" until measured: `StructArray.Fields` allocates 64 bytes per read) |
+| `class <Msg>Accessor` — `Make(RecordBatch)`, `Make(StructArray)`, column getters, `RowView` | `sealed class <Msg>Accessor` — `TryMake(RecordBatch, out accessor, out error)`, `TryMake(StructArray, out accessor, out error)`, never throwing on bad input (D-BIND-94: C++ returns a status and Rust a `Result`, so the reason is kept; this read "deviation from C++ `Make`-throws", which C++ does not do), `Length`, `IsNull(row)`, `At(row)` returning the `RowView` (= `<Msg>View`), `ToRow(row)`, rows indexed by `int` as in Apache.Arrow (C++ `int64_t`), and no per-field getters, so no field name can collide with a member (D-BIND-98: C++ has column getters on the accessor), `SchemaMetadata`, `FieldMetadata(int)`, `FieldMetadata(string)` and the shortcut `Metadata(key)` (D-BIND-95); a message it cannot support keeps its class and `TryMake` refuses with the reason (D-BIND-96) |
 | the pair's `TopicSegments()`, `TopicKey()` | `static class <Svc>_<Method>Topic` in the MODEL file — `static IReadOnlyList<string> Segments`, `const string Key` — so the native pair and BIND-8's gateway pair share one topic (D-BIND-77). Segments in C++'s form: the package is ONE segment, dots kept (D-BIND-72), so a C# and a C++ publisher of one method register the same topic (B5, by test) |
 | `<Svc>_<Method>Publisher` — `TopicSegments()`, `TopicKey()`, `Schema()`, `Publish(row)`, `Publish(row, attachments)` | same names — `static TopicPath Topic`, `const string TopicKey`, `static Schema Schema`, ctor `(PubSubProviderHandle provider, TopicOptions? options = null)`, `Publish(<Msg>)` (one-row batch, bind, publish row 0; its price documented, D-BIND-78), `Publish(<Msg>, AttachmentsBuilder?)`, `Publish(IEnumerable<<Msg>>)` (binds once, publishes N: the fast path, development plan B-2), `Dispose()` |
 | `<Svc>_<Method>Subscriber` — `Subscribe(cb)`, `SubscribeInPlace(cb)`, `Unsubscribe(id)` | `static TopicPath Topic`, `const string TopicKey`, `static Schema Schema`, ctor `(PubSubProviderHandle provider)`, `Subscribe(<Svc>_<Method>Handler handler, TopicOptions? options = null)` → `Subscription`, `Unsubscribe(Subscription)`, `event HandlerFaulted`, `AbsorbedCallbackFailures`, `Dispose()`, where `delegate void <Svc>_<Method>Handler(<Msg> row, AttachmentsView attachments)` is generated beside the pair. **Amended 2026-10-07 (D-BIND-79):** this read `Action<<Msg>, AttachmentsView>`, which a net8.0 consumer cannot compile (`AttachmentsView` is a ref struct; CS9244). **No `SubscribeInPlace`**: it exists in C++ to avoid a per-sample allocation, and the C# equivalent is batch delivery. See Q16 |
@@ -517,17 +517,19 @@ classDiagram
     }
     class MsgView {
         <<planned BIND-7 readonly struct, also RowView>>
-        +MsgAccessor Accessor
-        +int Row
-        +typed getters, read in place
+        -MsgAccessor accessor
+        -int row
+        +field properties only, read in place
         +NameUtf8() ReadOnlySpan~byte~
-        +ToRow() Msg
     }
     class MsgAccessor {
         <<planned BIND-7>>
         +TryMake(RecordBatch batch, out MsgAccessor accessor, out string error) bool$
         +TryMake(StructArray source, out MsgAccessor accessor, out string error) bool$
+        +int Length
+        +IsNull(int row) bool
         +At(int row) MsgView
+        +ToRow(int row) Msg
         +IReadOnlyDictionary SchemaMetadata
         +FieldMetadata(int index) IReadOnlyDictionary
         +FieldMetadata(string name) IReadOnlyDictionary
@@ -567,7 +569,7 @@ classDiagram
     }
     MsgAccessor *-- MsgView : yields, one per row
     MsgAccessor ..> Msg : reads columns of
-    MsgView ..> Msg : materialises
+    MsgAccessor ..> Msg : materialises a row as
     SvcMethodPublisher *-- Publisher : wraps
     SvcMethodSubscriber *-- Subscriber : wraps
     SvcMethodPublisher ..> Msg : publishes
@@ -579,8 +581,8 @@ classDiagram
     Publisher ..> BoundRows : publishes row i of
     Subscriber ..> FletcherCodec : decodes through
     note for BoundRows "Borrows the exported ArrowArray. Dispose unbinds THEN releases. One export serves N publishes."
-    note for MsgAccessor "Column oriented, cast once. TryMake never throws on bad input and returns the reason, as C++ returns a status and Rust a Result (D-BIND-94)."
-    note for MsgView "Borrows its accessor and must not outlive it. One type is both the view and the RowView (D-BIND-97)."
+    note for MsgAccessor "Column oriented, cast once. TryMake never throws on bad input and returns the reason, as C++ returns a status and Rust a Result (D-BIND-94). No per-field getters, so no field name can collide with a member (D-BIND-98)."
+    note for MsgView "Borrows its accessor and must not outlive it. One type is both the view and the RowView (D-BIND-97). Its only public members are the fields, named as on the model class (D-BIND-98)."
     note for Msg "No EncodeTo and no DecodeInto. Generated C# writes no wire bytes."
 ```
 

@@ -795,7 +795,9 @@ never throwing on bad input (C++ returns a status, it does not throw); `SchemaMe
 `FieldMetadata(int | string)` and the shortcut `Metadata(key)`; a message the accessor cannot
 support keeps its class, whose `TryMake` refuses with the reason, as in C++; `<Msg>View` is
 (accessor, row), the accessor's `RowView`, because `StructArray.Fields` allocates 64 bytes per
-read (measured), so a view over `(StructArray, int)` would allocate on every getter. Slices: 7a
+read (measured), so a view over `(StructArray, int)` would allocate on every getter. Then
+(D-BIND-98) the accessor has no per-field getters and the view only the fields, named as on the
+model class, so no field name can collide with a member; `ToRow(row)` is the accessor's. Slices: 7a
 accessor scalars, structs, `TryMake`, metadata and D-BIND-10's record; 7b collections; 7c the
 view; 7d the capstone's C# arm; 7e review.
 
