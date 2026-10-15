@@ -77,6 +77,9 @@ struct PluginOptions {
     bool accessor = false;
     bool rust = false;
     CsharpOutput csharp = CsharpOutput::None;
+    // `csharp_accessor` (BIND-7): <stem>.fletcher.accessor.cs and <stem>.fletcher.arrow.cs, the
+    // C# accessor and view. It needs `csharp`, whose model class they read into (D-BIND-99).
+    bool csharp_accessor = false;
     std::vector<MetadataRule> metadata_rules;
 };
 

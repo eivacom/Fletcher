@@ -23,6 +23,7 @@
 #include "cpp_backend_schema_visitor.hpp"
 #include "cpp_backend_type_table.hpp"
 #include "cpp_backend_view_visitor.hpp"
+#include "csharp_backend_accessor_visitor.hpp"
 #include "csharp_backend_type_table.hpp"
 #include "csharp_backend_visitor.hpp"
 #include "generator_internal.hpp"
@@ -1740,6 +1741,8 @@ bool ParsePluginParameter(const std::string& parameter, PluginOptions* out, std:
             csharp = true;
         else if (token == "csharp_model_only")
             csharp_model_only = true;
+        else if (token == "csharp_accessor")
+            out->csharp_accessor = true;
         // Unknown tokens are ignored, unchanged from the pre-existing behaviour
         // the RBA-1 no-drift contract depends on. metadata_from_option= tokens
         // are claimed below and MUST parse.
@@ -1824,6 +1827,21 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
         }
     }
 
+    // BIND-7: `csharp_accessor` needs the model (D-BIND-99), and its view and accessor names must
+    // not clash with a type the model declares (D-BIND-100), refused before any output.
+    if (opts.csharp_accessor) {
+        if (opts.csharp == CsharpOutput::None) {
+            *error =
+                "csharp_accessor needs csharp (or csharp,csharp_model_only): the accessor and "
+                "view read into the model class in <stem>.fletcher.cs (D-BIND-99).";
+            return false;
+        }
+        if (auto conflict = csharp_backend::CsAccessorNameConflict(file)) {
+            *error = std::move(*conflict);
+            return false;
+        }
+    }
+
     // Always emit the C++ header (edge-compatible, nanoarrow only).
     {
         const std::string content = GenerateFile(file, schema_only, resolver.get());
@@ -1873,6 +1891,22 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
         std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(
             context->Open(StripProtoSuffix(file->name()) + ".fletcher.native.cs"));
         if (!WriteToStream(stream.get(), native_content, error)) return false;
+    }
+
+    // The C# accessor and view (BIND-7), in their own two files, as C++ writes its accessor and
+    // view headers apart from the row class. Additive: no other output changes.
+    if (opts.csharp_accessor) {
+        csharp_backend::CsAccessorVisitor accessor(file);
+        const std::string stem = StripProtoSuffix(file->name());
+        for (const auto& [suffix, content] :
+             {std::pair<std::string, std::string>{".fletcher.accessor.cs",
+                                                  accessor.GenerateAccessorFile()},
+              std::pair<std::string, std::string>{".fletcher.arrow.cs",
+                                                  accessor.GenerateViewFile()}}) {
+            std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(
+                context->Open(stem + suffix));
+            if (!WriteToStream(stream.get(), content, error)) return false;
+        }
     }
 
     // Optionally emit one serialized Arrow IPC schema file per message

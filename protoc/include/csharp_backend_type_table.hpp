@@ -132,6 +132,15 @@ std::string CsTypeRef(const google::protobuf::EnumDescriptor* enm,
 // bind to a member, so declarations keep CsTypeRef's shorter name.
 std::string CsTypeExpr(const google::protobuf::Descriptor* msg);
 
+// BIND-7: the names of a message's view struct and accessor class, its C# class name (CsTypeName,
+// without the `@` a lower-case-only name is written with) followed by `View` and `Accessor`:
+// `Track` gives `TrackView` and `TrackAccessor`, `message row` gives `rowView`. The `Expr`
+// forms name them in full, for code expressions, as CsTypeExpr does (review B2).
+std::string CsViewName(const google::protobuf::Descriptor* msg);
+std::string CsAccessorName(const google::protobuf::Descriptor* msg);
+std::string CsViewExpr(const google::protobuf::Descriptor* msg);
+std::string CsAccessorExpr(const google::protobuf::Descriptor* msg);
+
 // The property for proto field `field_name` of `owner`: protoc's GetPropertyName,
 // with the generated class's own members added to the reserved list (D-BIND-73), and
 // suffixed further while it equals the class's C# name (D-BIND-84: `message Schema` with a

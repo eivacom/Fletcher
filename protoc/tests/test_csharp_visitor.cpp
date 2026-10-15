@@ -26,6 +26,7 @@
 #include <google/protobuf/wrappers.pb.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -33,6 +34,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include <vector>
 
 #include "generator.hpp"
 #include "generator_internal.hpp"
@@ -522,6 +524,17 @@ TEST(CsVisitor, CsharpTokenChangesNoExistingOutputAndAddsOnlyItsOwnFiles) {
             EXPECT_EQ(with.count("player.fletcher.cs"), 1u) << "'" << prefix + token << "'";
             EXPECT_EQ(with.count("player.fletcher.native.cs"), added - 1)
                 << "'" << prefix + token << "'";
+            // BIND-7: `csharp_accessor` adds the accessor and the view, and changes nothing else,
+            // the model included.
+            const auto with_accessor = GenerateWith(file, prefix + token + ",csharp_accessor");
+            ASSERT_EQ(with_accessor.size(), with.size() + 2) << "'" << prefix + token << "'";
+            for (const auto& [name, content] : with) {
+                const auto it = with_accessor.find(name);
+                ASSERT_NE(it, with_accessor.end()) << name << " vanished with csharp_accessor";
+                EXPECT_EQ(it->second, content) << name << " changed with csharp_accessor";
+            }
+            EXPECT_EQ(with_accessor.count("player.fletcher.accessor.cs"), 1u);
+            EXPECT_EQ(with_accessor.count("player.fletcher.arrow.cs"), 1u);
         }
     }
 }
@@ -1134,11 +1147,13 @@ std::string ReadText(const std::filesystem::path& path) {
     return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 }
 
-// Parses tests/golden/<name> into `pool`, with the well-known files the goldens import
+// Parses `source` as the file `name` into `pool`, with the well-known files the goldens import
 // copied in first.
-const FileDescriptor* BuildGoldenFixture(DescriptorPool& pool, const std::string& name) {
+const FileDescriptor* BuildSource(DescriptorPool& pool, const std::string& name,
+                                  const std::string& source) {
     const FileDescriptor* wkt_files[] = {
         google::protobuf::Timestamp::GetDescriptor()->file(),
+        google::protobuf::Duration::GetDescriptor()->file(),
         google::protobuf::Empty::GetDescriptor()->file(),
     };
     for (const FileDescriptor* wkt : wkt_files) {
@@ -1146,11 +1161,6 @@ const FileDescriptor* BuildGoldenFixture(DescriptorPool& pool, const std::string
         FileDescriptorProto copy;
         wkt->CopyTo(&copy);
         if (pool.BuildFile(copy) == nullptr) return nullptr;
-    }
-    const std::string source = ReadText(GoldenDir() / name);
-    if (source.empty()) {
-        ADD_FAILURE() << "cannot read " << (GoldenDir() / name);
-        return nullptr;
     }
     io::ArrayInputStream input(source.data(), static_cast<int>(source.size()));
     CollectErrors errors;
@@ -1164,6 +1174,16 @@ const FileDescriptor* BuildGoldenFixture(DescriptorPool& pool, const std::string
     }
     fdp.set_name(name);
     return pool.BuildFile(fdp);
+}
+
+// Parses tests/golden/<name> into `pool` (BuildSource).
+const FileDescriptor* BuildGoldenFixture(DescriptorPool& pool, const std::string& name) {
+    const std::string source = ReadText(GoldenDir() / name);
+    if (source.empty()) {
+        ADD_FAILURE() << "cannot read " << (GoldenDir() / name);
+        return nullptr;
+    }
+    return BuildSource(pool, name, source);
 }
 
 // The pair fixture every CsVisitorPair case uses.
@@ -1316,9 +1336,17 @@ TEST(CsVisitorPair, TheCommittedGoldensAreThePluginsOutput) {
     const FileDescriptor* proto2 = BuildGoldenFixture(proto2_pool, "csharp_proto2.proto");
     ASSERT_NE(proto2, nullptr);
     for (auto& [name, content] : GenerateWith(proto2, "csharp")) files.emplace(name, content);
+    // BIND-7a: the accessor and the view, beside their model.
+    DescriptorPool accessor_pool;
+    const FileDescriptor* accessor = BuildGoldenFixture(accessor_pool, "csharp_accessor.proto");
+    ASSERT_NE(accessor, nullptr);
+    for (auto& [name, content] : GenerateWith(accessor, "csharp,csharp_model_only,csharp_accessor"))
+        files.emplace(name, content);
     for (const char* name : {"csharp_pair.fletcher.cs", "csharp_pair.fletcher.native.cs",
                              "google/protobuf/timestamp.fletcher.cs", "csharp_names.fletcher.cs",
-                             "csharp_names.fletcher.native.cs", "csharp_proto2.fletcher.cs"}) {
+                             "csharp_names.fletcher.native.cs", "csharp_proto2.fletcher.cs",
+                             "csharp_accessor.fletcher.cs", "csharp_accessor.fletcher.accessor.cs",
+                             "csharp_accessor.fletcher.arrow.cs"}) {
         const std::string generated = FileOf(files, name);
         const auto path = GoldenDir() / name;
         if (const char* capture = std::getenv("FLETCHER_CAPTURE_GOLDENS");
@@ -1431,4 +1459,215 @@ TEST(CsVisitor, AListOfListsConvertsLevelByLevel) {
     ExpectContains(nested, "            x.Add(x0);\n");
     EXPECT_NE(nested.find(" ToArrow("), std::string::npos) << nested;
     EXPECT_NE(nested.find(" FromArrow("), std::string::npos) << nested;
+}
+
+// ===========================================================================
+// BIND-7a: the C# accessor and view, under `csharp_accessor` (D-BIND-94 to 100).
+// ===========================================================================
+
+namespace {
+
+// Generates `source` (the file `accessor_case.proto`) with `opts`, returning false and the
+// error when the generator refuses it.
+bool GenerateSource(const std::string& source, const std::string& opts,
+                    std::map<std::string, std::string>* files, std::string* error) {
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildSource(pool, "accessor_case.proto", source);
+    if (file == nullptr) {
+        ADD_FAILURE() << "fixture does not build";
+        return false;
+    }
+    MemoryContext ctx;
+    const bool ok = fletcher::ArrowRowGenerator().Generate(file, opts, &ctx, error);
+    *files = ctx.files();
+    return ok;
+}
+
+std::map<std::string, std::string> AccessorGolden() {
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildGoldenFixture(pool, "csharp_accessor.proto");
+    EXPECT_NE(file, nullptr);
+    if (file == nullptr) return {};
+    return GenerateWith(file, "csharp,csharp_model_only,csharp_accessor");
+}
+
+// The text of one generated struct, as ClassBody gives a class.
+std::string StructBody(const std::string& cs, const std::string& name) {
+    const std::string head = "public readonly struct " + name + "\n{\n";
+    const size_t start = cs.find(head);
+    if (start == std::string::npos) return {};
+    const size_t end = cs.find("\n}\n", start);
+    return cs.substr(start, end == std::string::npos ? std::string::npos : end + 3 - start);
+}
+
+// Every member declared `    public ` in a body, up to its body, initialiser or parameters:
+// `public int Length`, `public static bool TryMake`.
+std::vector<std::string> PublicMembers(const std::string& body) {
+    std::vector<std::string> out;
+    size_t pos = 0;
+    while ((pos = body.find("\n    public ", pos)) != std::string::npos) {
+        pos += 5;
+        const size_t end = body.find_first_of("{=(\n", pos + 7);
+        std::string member = body.substr(pos, end - pos);
+        while (!member.empty() && member.back() == ' ') member.pop_back();
+        out.push_back(member);
+    }
+    return out;
+}
+
+}  // namespace
+
+TEST(CsAccessor, TheTokenIsParsedAndOtherTokensAreUnchanged) {
+    for (const auto& [parameter, expected] : {std::pair<const char*, bool>{"", false},
+                                              {"csharp", false},
+                                              {"accessor", false},
+                                              {"csharp,csharp_accessor", true},
+                                              {"csharp_accessor,csharp", true}}) {
+        fletcher::PluginOptions options;
+        std::string error;
+        ASSERT_TRUE(fletcher::ParsePluginParameter(parameter, &options, &error)) << error;
+        EXPECT_EQ(options.csharp_accessor, expected) << "'" << parameter << "'";
+        // The C++ accessor's token is its own: `accessor` never means the C# one, nor back.
+        EXPECT_EQ(options.accessor, std::string(parameter) == "accessor")
+            << "'" << parameter << "'";
+    }
+}
+
+TEST(CsAccessor, WithoutTheModelItIsRefusedBeforeAnyOutput) {
+    // D-BIND-99: the view's types and ToRow are the model's, so the token alone is refused.
+    const std::string source = "syntax = \"proto3\";\npackage a;\nmessage M { int32 x = 1; }\n";
+    for (const std::string opts :
+         {"csharp_accessor", "ts,csharp_accessor", "csharp_model_only,csharp_accessor"}) {
+        std::map<std::string, std::string> files;
+        std::string error;
+        EXPECT_FALSE(GenerateSource(source, opts, &files, &error)) << opts;
+        EXPECT_NE(error.find("csharp_accessor needs csharp"), std::string::npos) << error;
+        EXPECT_NE(error.find("D-BIND-99"), std::string::npos) << error;
+        EXPECT_TRUE(files.empty()) << opts << " wrote " << files.size() << " files";
+    }
+    for (const std::string opts :
+         {"csharp,csharp_accessor", "csharp,csharp_model_only,csharp_accessor"}) {
+        std::map<std::string, std::string> files;
+        std::string error;
+        EXPECT_TRUE(GenerateSource(source, opts, &files, &error)) << opts << ": " << error;
+    }
+}
+
+TEST(CsAccessor, AGeneratedNameThatIsAlsoADeclaredTypeIsRefused) {
+    // D-BIND-100: two different messages, one generated name. Each is refused naming both,
+    // before any output; without the token the same file generates.
+    const std::pair<const char*, const char*> clashes[] = {
+        {"message Track { int32 x = 1; }\nmessage TrackView { int32 y = 1; }\n",
+         "message 'a.TrackView'"},
+        {"message Track { int32 x = 1; }\nmessage TrackAccessor { int32 y = 1; }\n",
+         "message 'a.TrackAccessor'"},
+        {"message Track { int32 x = 1; }\nenum TrackView { TRACK_VIEW_UNSPECIFIED = 0; }\n",
+         "enum 'a.TrackView'"},
+        {"message Outer { message Inner { int32 x = 1; } Inner i = 1; }\n"
+         "message Outer_InnerView { int32 y = 1; }\n",
+         "message 'a.Outer_InnerView'"},
+    };
+    for (const auto& [body, named] : clashes) {
+        const std::string source = std::string("syntax = \"proto3\";\npackage a;\n") + body;
+        std::map<std::string, std::string> files;
+        std::string error;
+        EXPECT_FALSE(GenerateSource(source, "csharp,csharp_accessor", &files, &error)) << body;
+        EXPECT_NE(error.find(named), std::string::npos) << error;
+        EXPECT_NE(error.find("D-BIND-100"), std::string::npos) << error;
+        EXPECT_TRUE(files.empty()) << body;
+        EXPECT_TRUE(GenerateSource(source, "csharp", &files, &error)) << body << ": " << error;
+    }
+}
+
+TEST(CsAccessor, AFieldNamedAfterItsOwnViewIsRefused) {
+    // D-BIND-100: `Track.track_view` would be the property TrackView of the struct TrackView.
+    const std::string source =
+        "syntax = \"proto3\";\npackage a;\nmessage Track { int32 track_view = 1; }\n";
+    std::map<std::string, std::string> files;
+    std::string error;
+    EXPECT_FALSE(GenerateSource(source, "csharp,csharp_accessor", &files, &error));
+    EXPECT_NE(error.find("field 'track_view'"), std::string::npos) << error;
+    EXPECT_NE(error.find("D-BIND-100"), std::string::npos) << error;
+}
+
+TEST(CsAccessor, TheAccessorHasOnlyItsFixedMembers) {
+    // D-BIND-98: no per-field member on the accessor, so no field name can collide with one.
+    const auto files = AccessorGolden();
+    const std::string body =
+        ClassBody(FileOf(files, "csharp_accessor.fletcher.accessor.cs"), "SampleAccessor");
+    ASSERT_FALSE(body.empty());
+    const std::string dict =
+        "global::System.Collections.Generic.IReadOnlyDictionary<string, string>";
+    const std::vector<std::string> expected = {
+        "public int Length",
+        "public bool IsNull",
+        "public SampleView At",
+        "public " + dict + " SchemaMetadata",
+        "public " + dict + " FieldMetadata",
+        "public " + dict + " FieldMetadata",
+        "public string? Metadata",
+        "public static bool TryMake",
+        "public static bool TryMake",
+    };
+    EXPECT_EQ(PublicMembers(body), expected) << body;
+}
+
+TEST(CsAccessor, TheViewHasTheModelsPropertiesWithTheirNamesAndTypes) {
+    // D-BIND-98: one name per field across the model and the view, and the model's type, a
+    // struct field being the struct's view (`?` where the model's is nullable).
+    const auto files = AccessorGolden();
+    const std::string model = ClassBody(FileOf(files, "csharp_accessor.fletcher.cs"), "Sample");
+    const std::string view =
+        StructBody(FileOf(files, "csharp_accessor.fletcher.arrow.cs"), "SampleView");
+    ASSERT_FALSE(model.empty());
+    ASSERT_FALSE(view.empty());
+    std::vector<std::string> expected;
+    for (auto p : PublicMembers(model)) {
+        if (p.find(" static ") != std::string::npos) continue;  // Schema, ToArrow, FromArrow
+        for (const std::string s : {"Position ", "Position? ", "Sample_Note "}) {
+            if (p.rfind("public " + s, 0) != 0) continue;
+            const size_t cut = s.find_first_of("? ");
+            p = "public " + s.substr(0, cut) + "View" + p.substr(7 + cut);
+            break;
+        }
+        expected.push_back(p);
+    }
+    EXPECT_EQ(PublicMembers(view), expected) << view;
+}
+
+TEST(CsAccessor, AColumnIsValidatedAgainstTheModelsSchema) {
+    // Positional and type-only, against the model class's own Schema, with the non-null gate on
+    // non-nullable columns only (D-RBA-4), and a struct through its own accessor.
+    const auto files = AccessorGolden();
+    const std::string body =
+        ClassBody(FileOf(files, "csharp_accessor.fletcher.accessor.cs"), "SampleAccessor");
+    ExpectContains(body,
+                   "if (columns[0] is not global::Apache.Arrow.Int32Array c0 || "
+                   "!SameType(c0.Data.DataType, "
+                   "global::Fletcher.Gen.Golden.Accessor.Sample.Schema.GetFieldByIndex(0)."
+                   "DataType))");
+    ExpectContains(body,
+                   "error = $\"Sample column 0 'id': non-nullable, found {c0.NullCount} nulls.\";");
+    EXPECT_EQ(body.find("'maybe_id': non-nullable"), std::string::npos) << body;
+    ExpectContains(body,
+                   "if (!global::Fletcher.Gen.Golden.Accessor.PositionAccessor.TryMake(c12, out "
+                   "var a12, out var e12))");
+    ExpectContains(body, "a.Unit == e.Unit && a.Timezone == e.Timezone");
+    EXPECT_EQ(body.find("Refusal"), std::string::npos) << "Sample reads every column";
+}
+
+TEST(CsAccessor, AColumnItCannotReadKeepsTheClassAndRefusesWithTheReason) {
+    // D-BIND-96, at BIND-7a's boundary: a list column arrives in 7b, so Track's TryMake
+    // refuses naming it, and the view says so where its property would be.
+    const auto files = AccessorGolden();
+    const std::string body =
+        ClassBody(FileOf(files, "csharp_accessor.fletcher.accessor.cs"), "TrackAccessor");
+    ExpectContains(body,
+                   "private static readonly string? Refusal = \"Track column 1 'points': a list "
+                   "column, which the C# accessor does not read yet.\";");
+    ExpectContains(body, "if (Refusal is not null)");
+    const std::string view =
+        StructBody(FileOf(files, "csharp_accessor.fletcher.arrow.cs"), "TrackView");
+    ExpectContains(view, "    public int Id => ");
+    ExpectContains(view, "    // Not read: field 'points' is a list column");
 }

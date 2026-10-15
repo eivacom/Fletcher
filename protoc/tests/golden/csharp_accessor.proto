@@ -1,0 +1,62 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// BIND-7a: the fixture behind the committed C# accessor goldens csharp_accessor.fletcher.cs,
+// csharp_accessor.fletcher.accessor.cs and csharp_accessor.fletcher.arrow.cs.
+// test_csharp_visitor generates them from this file and fails if any differs from the
+// committed copy by a byte; dotnet/tests/Fletcher.Tests compiles them and reads batches
+// through them. Regenerate with FLETCHER_CAPTURE_GOLDENS=1 and review the diff as source.
+syntax = "proto3";
+
+package golden.accessor;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+enum Quality {
+  QUALITY_UNSPECIFIED = 0;
+  QUALITY_GOOD = 1;
+  QUALITY_POOR = 2;
+}
+
+// A struct the samples below carry, plainly and optionally.
+message Position {
+  double lat = 1;
+  double lon = 2;
+  optional float depth = 3;
+}
+
+// Every scalar kind BIND-7a reads, each plain and optional, and the two struct shapes.
+message Sample {
+  int32 id = 1;
+  int64 ticks = 2;
+  uint32 flags = 3;
+  uint64 serial = 4;
+  float gain = 5;
+  double value = 6;
+  bool valid = 7;
+  string name = 8;
+  bytes payload = 9;
+  Quality quality = 10;
+  google.protobuf.Timestamp at = 11;
+  google.protobuf.Duration span = 12;
+  Position position = 13;
+
+  optional int32 maybe_id = 21;
+  optional string maybe_name = 22;
+  optional bytes maybe_payload = 23;
+  optional Quality maybe_quality = 24;
+  optional bool maybe_valid = 25;
+  optional Position maybe_position = 26;
+
+  message Note {
+    string text = 1;
+  }
+  Note note = 30;
+}
+
+// A list column, which BIND-7a does not read: the class exists and TryMake refuses (D-BIND-96).
+message Track {
+  int32 id = 1;
+  repeated Position points = 2;
+}

@@ -500,6 +500,28 @@ std::string CsTypeExpr(const google::protobuf::Descriptor* msg) {
     return "global::" + CsNamespace(msg->file()) + "." + FlatName(msg);
 }
 
+namespace {
+
+std::string Unverbatim(std::string name) { return name.rfind('@', 0) == 0 ? name.substr(1) : name; }
+
+}  // namespace
+
+std::string CsViewName(const google::protobuf::Descriptor* msg) {
+    return Unverbatim(FlatName(msg)) + "View";
+}
+
+std::string CsAccessorName(const google::protobuf::Descriptor* msg) {
+    return Unverbatim(FlatName(msg)) + "Accessor";
+}
+
+std::string CsViewExpr(const google::protobuf::Descriptor* msg) {
+    return "global::" + CsNamespace(msg->file()) + "." + CsViewName(msg);
+}
+
+std::string CsAccessorExpr(const google::protobuf::Descriptor* msg) {
+    return "global::" + CsNamespace(msg->file()) + "." + CsAccessorName(msg);
+}
+
 std::string CsPropertyName(std::string_view field_name, const google::protobuf::Descriptor* owner) {
     std::string property = UnderscoresToCamelCase(field_name, true, false);
     // protoc compares with the message's own (unflattened) name. A flat name such

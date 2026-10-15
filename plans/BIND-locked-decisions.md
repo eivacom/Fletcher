@@ -267,6 +267,12 @@ commit.
   BIND-6 with a nested fixture at a **non-zero offset** as the forcing test. The
   finding is then recorded here as the locked rule. Writing nested getters before
   it is settled → STOP-AND-ASK. (RBA-2 carry-forward.)
+  ✅ **Settled 2026-10-15 (BIND-7a), by measurement: arrow-dotnet is C++'s case.** On
+  Apache.Arrow 23, `StructArray.Fields` returns every child already windowed to the struct's
+  `[offset, len)`: a struct sliced at offset 1, length 3 gives children at offset 1, length 3,
+  their null counts adjusted. **The C# accessor does NOT re-slice.** Forcing test:
+  `GeneratedAccessorTests.AStructArrayAtANonZeroOffsetReadsItsOwnRows` (nested structs included);
+  a mutant that re-slices fails it. (BIND-6c-2 had already seen it for the model's `FromArrow`.)
 
 - **D-BIND-11 — Parity is proven by shared fixtures and executable oracles, never
   by hand-transcription.** With one codec, the old two-way byte-parity harness is
@@ -2979,3 +2985,26 @@ accessor), after a read-only map of the C++ and Rust accessors and the capstone 
   **Declined:** C++-like per-field getters on the accessor with a second reserved list and a `_`
   suffix on clashes (two names for one field, and every new accessor member renames somebody's
   getter).
+
+- **D-BIND-99 - `csharp_accessor` requires `csharp` (or `csharp,csharp_model_only`): given alone,
+  generation fails with a message saying so, before any output is written.** *LOCKED BY THE
+  MAINTAINER 2026-10-15 (BIND-7a).* The view's properties have the model class's types (D-BIND-98:
+  its enums, `Eiva.Fletcher.Model.Timestamp` and `Duration`) and `ToRow(row)` returns the model
+  class, so the two accessor files cannot compile without `<stem>.fletcher.cs`. Failing names the
+  missing token at generation time instead of leaving a compile error in the user's build.
+  **Declined:** the token implying the model (one token writing three files); writing the two files
+  alone, as C++'s `accessor` does (C++'s accessor needs no row class, C#'s does).
+
+- **D-BIND-100 - a message whose name equals another message's generated `<Msg>View` or
+  `<Msg>Accessor` in the same C# namespace refuses generation under `csharp_accessor`, with an
+  error naming both messages.** *LOCKED BY THE MAINTAINER 2026-10-15 (BIND-7a), after asking how two
+  different messages could clash.* They are different messages; their GENERATED types clash:
+  `message Track` gets the view struct `TrackView`, and `message TrackView` gets the model class
+  `TrackView`, both in `Fletcher.Gen.<Package>`, which is CS0101. BIND-6 never derives a type name
+  from another, so this is new with the view and accessor. Refused like D-BIND-91's namespace
+  clashes: rare, and never silently renamed. **Declined:** suffixing the generated type
+  (`TrackView_`), a name the user cannot predict without the rule. **Found while implementing
+  (2026-10-15), refused the same way:** a field named after its own message's view
+  (`Track.track_view` would be the property `TrackView` inside the struct `TrackView`, CS0542).
+  Only the file and its imports are visible to the plugin, so a clash with an unimported file of
+  the same package is left to the compiler.

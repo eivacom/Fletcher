@@ -942,3 +942,33 @@ the gateway-client rows to BIND-8, the matrix to BIND-10.
   commits. Wait for a run to finish before the next push, or batch.
 - **The Windows edit tools change text.** The Edit tool turned `\u2028` into the raw character in a
   plan file, and a Perl replacement turned `\u0085` into `0085`; both were caught by checking bytes.
+
+## BIND-7 — the C# accessor and view (from 2026-10-14, IN PROGRESS)
+
+**Rulings before code.** Six questions were ruled before or at 7a's start (D-BIND-94 to 98, 99,
+100): `TryMake` with the reason; metadata as C++ and Rust expose it; an unsupported message keeps
+its class; the view is (accessor, row); the accessor has no per-field members and the view only the
+fields, named and typed as on the model class; `csharp_accessor` needs `csharp`; a generated name
+that is also a declared type is refused.
+
+**7a (2026-10-15).** The `csharp_accessor` token writes `<stem>.fletcher.accessor.cs` and
+`<stem>.fletcher.arrow.cs`. One emitter, `csharp_backend_accessor_visitor`, writes both (the plan
+had named two); it walks the model's own field list and the model's column classification, which
+moved, unchanged, from `csharp_backend_visitor.cpp` into `csharp_backend_columns` so the two cannot
+drift. Every expected column type is read from the model class's `Schema`. 7a reads scalars,
+optionals, enums, `Timestamp`, `Duration` and structs; a message with a list or map column keeps
+its class and its `TryMake` refuses naming the column, until 7b.
+
+- **D-BIND-10 settled.** Measured on Apache.Arrow 23: `StructArray.Fields` returns each child
+  already windowed to the struct's slice (a slice at offset 1 gives children at offset 1, length
+  3, null counts adjusted), as C++'s `field(i)` does. The accessor does not re-slice. The forcing
+  test is `GeneratedAccessorTests.AStructArrayAtANonZeroOffsetReadsItsOwnRows`; a mutant that
+  re-slices fails it.
+- **Found while implementing:** a field named after its own view (`Track.track_view` gives the
+  property `TrackView` inside the struct `TrackView`, CS0542) is refused with D-BIND-100's error,
+  as the maintainer ruled for type clashes.
+- **Measured:** reading values, optionals, enums, timestamps and nested structs through the view
+  allocates 0 bytes over 64,000 rows (`ReadingThroughTheViewAllocatesNothing`).
+- **Tests:** plugin suite 175 (8 new `CsAccessor.*` cases; the no-drift case now covers the token
+  on every base); `Fletcher.Tests` 10 new cases on net8.0 and net10.0; three mutants (re-slice,
+  time zone ignored, non-null gate removed) each fail a test.
