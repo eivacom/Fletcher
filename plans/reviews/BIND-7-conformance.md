@@ -13,3 +13,8 @@ the acceptance in `plans/BIND-csharp-bindings.md` (### BIND-7) and the tracker r
 | 5 | Full type parity: scalar, nullable scalar, struct, repeated scalar, repeated struct, map (scalar and message value), nested list to the cap, metadata | MET | The `Sample` and `Track` goldens cover every kind, depth 3 included (`Cube`); `EveryColumnReadsBackAsTheModelWroteIt`, `EveryCollectionReadsBackAsTheModelWroteIt`, `ANullElementReadsAsCppReadsIt`, `MetadataIsTheBatchsAndEmptyNeverNullWhenAbsent`. |
 | 6 | C# joins `accessor-capstone` as the third arm: same proto, fixture and oracle, `observed == expected`, nothing transcribed | MET | `CapstoneTests.TheCSharpAccessorReadsTheSharedFixtureAsTheOracleSays` loads both JSON files and generates the proto in `FletcherGen`; no expected value in the C# file; `TheComparisonCanFail` keeps it honest. The arm's input types come from C#'s own Schema (review T-D2). |
 | T | Tracker forcing tests: the capstone's C# arm `observed == expected`; a windowing fixture at a non-zero offset | MET | As rows 6 and 2. |
+
+**At the close (2026-10-15, `268dceb`):** row 4's PARTLY is answered by rulings, not by code. "Cached
+columns own their buffers" is C++'s; C#'s accessor borrows its source and says so (D-BIND-103). The
+wider leaf set at the cap is kept as a superset (D-BIND-104), and "never throwing" is met (review
+R-D1). Row 6's circular input types are known debt (T-D2).

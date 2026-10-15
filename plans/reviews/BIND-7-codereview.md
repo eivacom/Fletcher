@@ -17,6 +17,15 @@ running them. One is a wrong read in the model's `FromArrow`, which `ToRow` now 
 accessor and the generated subscriber already had. The other is a gap in D-BIND-100's name-clash
 check across imported files. BIND-7 does not close.
 
+> **CLOSED 2026-10-15, on CI at `268dceb` (`ci.pr` 38746753749, 52/52).** Both blockers fixed (B1 in
+> `774848b`, B2 in `7df7a3b`), all five questions ruled and implemented (D-BIND-103 to 107), and the
+> DEBT the maintainer chose fixed: R-D1, T-D1, P-D1 and P-D2. The remaining DEBT (T-D2, T-D3, R-D2,
+> R-D3, P-D3) and the NITs are carried as KNOWN debt, listed in the tracker's BIND-7 section; the
+> stale records were corrected. Two fixes found more than they were asked to: B1's root was in
+> BIND-6's `FromArrow`, so the generated subscriber reads a null list correctly now too; and B1's
+> first fix put an unparenthesised conditional into a `for` condition, which the plugin suite did
+> not catch (it does not compile C#) and the .NET lanes would have.
+
 ## How this review was done, and its limit
 
 The method of BIND-4 to BIND-6. Three reviewers with **fresh context** each took one area:

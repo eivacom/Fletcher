@@ -943,7 +943,7 @@ the gateway-client rows to BIND-8, the matrix to BIND-10.
 - **The Windows edit tools change text.** The Edit tool turned `\u2028` into the raw character in a
   plan file, and a Perl replacement turned `\u0085` into `0085`; both were caught by checking bytes.
 
-## BIND-7 — the C# accessor and view (from 2026-10-14, IN PROGRESS)
+## BIND-7 — the C# accessor and view (2026-10-14 to 2026-10-15, CLOSED)
 
 **Rulings before code.** Six questions were ruled before or at 7a's start (D-BIND-94 to 98, 99,
 100): `TryMake` with the reason; metadata as C++ and Rust expose it; an unsupported message keeps
@@ -1025,3 +1025,35 @@ compares it with the one committed oracle, which it passed on the first run. `Th
 keeps the comparison honest. The directory joins the protoc-dotnet lane's checkout (both legs)
 and the path filters of all three lanes: before, a change to the capstone files alone ran neither
 the C++ nor the Rust arm.
+
+**7e, the review (2026-10-15).** Three fresh-context reviewers (the plugin emitter; the generated
+C# and `Eiva.Fletcher.Model`; tests, CI and acceptance) found 2 BLOCKERs, both reproduced by running
+them, and 5 questions (`plans/reviews/BIND-7-codereview.md`, `BIND-7-conformance.md`).
+
+- **B1:** the model's `FromArrow` read a null list's offsets, so `ToRow` and the view disagreed on
+  valid input. The root was BIND-6's, so the generated subscriber had it too; fixed at every level.
+- **B2:** D-BIND-100 missed a clash between an imported file's generated view and a message here
+  (CS0101); the check now covers every visible file of the namespace.
+- **The rulings:** the accessor borrows its source (D-BIND-103); the scalar-leaf superset is kept
+  (D-BIND-104); a cross-file element needs its file generated with `csharp_accessor`, now compiled
+  in the protoc-dotnet lane (D-BIND-105); the non-null gate counts only under valid parents
+  (D-BIND-106); the support types are hidden, for generated code (D-BIND-107).
+- **Debt fixed by the maintainer's choice:** `TryMake` no longer throws on malformed input (R-D1); a
+  message reaching one that refuses refuses up front (T-D1); the field rule (P-D1); a record
+  correction (P-D2). The rest is known debt in the tracker's BIND-7 section.
+
+**Closed on CI** at `268dceb`, `ci.pr` 38746753749, 52/52. The run at `8e97ebb` needed one rerun of
+the known `gateway-fastdds-ts` flake ("peer RECV lines: []"), which recurred after eight days; its
+fix is proposed as a separate session.
+
+**Lessons for the next items.**
+
+- **The plugin suite does not compile C#.** B1's first fix emitted an unparenthesised conditional
+  into a `for` condition; only the .NET lanes would have caught it. Run them before calling a
+  generator change done.
+- **A new read path inherits the old one's bugs.** `ToRow` reused `FromArrow` by ruling, which made
+  BIND-6's null-list bug visible; the review found it by comparing two paths that must agree.
+- **Allocation tests need a bound, not zero.** The runtime allocates a few hundred bytes once while
+  it tiers a measured loop up; the tests bound bytes by what one allocating read would cost.
+- **Perl on Windows-shell one-liners:** an escaped `|` inside a `|`-delimited pattern is alternation,
+  and `\n` in a double-quoted replacement is a real newline. Prefer the Edit tool for code.

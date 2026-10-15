@@ -857,7 +857,7 @@ Kind: 🟪 spec · 🟦 impl · 🔬 proof · ⚙ pipelines · 📓 docs
 | BIND-4 | Pub/sub in `Eiva.Fletcher`: registry, `Publisher`, `Subscriber`, `SchemaArrival`, thunk discipline, error handling | A | 🟦 | BIND-3 | Bucket 3 over `inprocess`; Bucket 4 over `fastdds`/`xrce` by selector; C# arm of `CallerTier`; per-row publish benchmark recorded (D-BIND-37) | 🟢 (reopened twice on 2026-09-25 and re-closed on CI: D-BIND-56 at `78ac363`, bucket 4 over `xrce`; D-BIND-57 at `bdd4fba`, bucket 3's 49-case file set mapped and the matrix checked) |
 | BIND-5 | `SubscriberArrow` batch-first + the copy oracle end-to-end from C# | A | 🔬 | BIND-4 | `pubsub-arrow` cases; copy oracle green with the **C#** producer (D-BIND-58) | 🟢 (closed on CI at `a43c384`, `ci.pr` run 36563607601, 50/50, after a fresh-context review whose 9 BLOCKERs were fixed; D-BIND-58 to 68; conformance 11 of 11) |
 | BIND-6 | C# backend on the IR: type table + visitor → `<stem>.fletcher.cs` | B | 🟦 | — (GIR) | `CsVisitor.*`, `CsVisitorPair.*`, `CsVisitorCrossFile.*`, `CsNames.*` and `CsTypeTable.*` in `protoc/tests` (named `CsharpVisitor.*` until review T-D5 corrected it, 2026-10-14); no-drift test unchanged | 🟢 (closed on CI at `63ab057`, `ci.pr` 38575041994, after a fresh-context review whose 5 BLOCKERs were fixed and 10 questions ruled, D-BIND-83 to 93; the minor debt carried as known, listed in BIND-6's section) |
-| BIND-7 | Arrow view + accessor emitters (`csharp_accessor`) + capstone third arm | B | 🟦 | BIND-6, BIND-3 | `accessor-capstone` C# arm `observed == expected`; `StructArray` windowing fixture at non-zero offset | 🔴 (7a pushed 2026-10-15 at `42213cd`: scalars, optionals, enums, temporal, structs, `TryMake`, metadata, D-BIND-10 settled; 7b pushed at `b1fbfb3`: lists, maps, lists of lists to the cap, as borrowed windows, D-BIND-101; 7c pushed at `6db96cd`: `ToRow` via the model's `FromArrow`, UTF-8 and bytes span getters, D-BIND-102; 7d pushed at `8e97ebb`: C# is the capstone's third arm, its filters in all three lanes; 7e, the review: 2 blockers and 5 rulings (D-BIND-103 to 107) fixed and implemented, close pending CI) |
+| BIND-7 | Arrow view + accessor emitters (`csharp_accessor`) + capstone third arm | B | 🟦 | BIND-6, BIND-3 | `accessor-capstone` C# arm `observed == expected`; `StructArray` windowing fixture at non-zero offset | 🟢 (closed on CI at `268dceb`, `ci.pr` 38746753749, after a fresh-context review whose 2 BLOCKERs were fixed and 5 questions ruled, D-BIND-103 to 107; rulings during the round D-BIND-94 to 102; the minor debt carried as known, listed in BIND-7's section) |
 | BIND-T | TS `Publisher`/`Subscriber` emitter | C | 🟦 | — | `TsVisitor.DescriptorByteIdentical` still green + new emitter cases | ⚪ |
 | BIND-8 | `Eiva.Fletcher.GatewayClient` (managed port; the codec exception) | C | 🟦 | — | Bucket 2 green (the Part 4 file set, not a count); `Package.GatewayClientHasNoRuntimesFolder` | ⚪ |
 | BIND-9 | CI/CD: RID matrix, publish to `nuget.eiva.com` from a self-hosted job (D-BIND-28), size budget, licence files | D | ⚙ | BIND-0 (skeleton), all for release | `cd.dotnet.yml` dry run; packed-size check; asset-isolation + licence check | ⚪ |
@@ -1925,6 +1925,21 @@ fifth, member-name collisions, at 7a's start (D-BIND-98). Slices:
   file's accessor, so every file a file imports is generated with `csharp_accessor` too, as BIND-6e
   asks of the model; the protoc-dotnet lane compiles such a case. The accessor borrows its source
   (D-BIND-103).
+
+**Closed 2026-10-15 on CI at `268dceb` (`ci.pr` 38746753749, 52/52).** Known debt carried out, by
+the maintainer's choice, from `plans/reviews/BIND-7-codereview.md`:
+
+- **T-D2** the capstone's C# arm takes its input types from C#'s own `Schema`; compare
+  `CapstoneBatch.Schema` with the C++ `.ipc` (add `ipc` to the capstone's Exec). BIND-9's lane work.
+- **T-D3** coverage gaps: `MapView` foreach allocation; bool/double/enum windows in the measured
+  loop; a null inner list at depth 3 and under a scalar leaf; `ToRow` of a null StructArray row;
+  refusals from a StructArray source; `@` and `Schema_` messages, proto2, empty messages, a
+  field-level flatten, map keys bool/uint32/uint64 and enum/bytes map values.
+- **R-D2** malformed offsets throw from a getter, and `ListView.Of` / `MapView.Of` check on every
+  read (C++ has the same exposure).
+- **R-D3** `default(<Msg>View)` throws on every property; document it.
+- **P-D3** `FieldsOf` runs several times per message; `FileHeader` is duplicated.
+- **The NITs** of the review.
 
 ### BIND-T — TypeScript `Publisher` / `Subscriber`
 
