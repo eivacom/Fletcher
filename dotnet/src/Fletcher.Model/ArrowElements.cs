@@ -9,7 +9,12 @@
 // MapView) then holds that reader and a range, so reading an element is one interface call on a
 // typed array and allocates nothing. These types live here, not beside the generated code,
 // because generated code is compiled into each consumer's assembly (see the project file).
+//
+// They are for generated code (D-BIND-107): public because that code compiles in the consumer's
+// assembly, hidden from IntelliSense, and free to change together with the plugin within a
+// MAJOR.MINOR. ListView and MapView are the API a consumer uses.
 using System;
+using System.ComponentModel;
 using System.Runtime.CompilerServices;
 
 using Apache.Arrow;
@@ -24,7 +29,8 @@ namespace Eiva.Fletcher.Model;
 /// element that is null reads as <see cref="Get"/>'s documented default, with
 /// <see cref="IsNull"/> telling it apart (D-BIND-101).
 /// </remarks>
-public interface IArrowElements<out T>
+[EditorBrowsable(EditorBrowsableState.Never)]
+public interface IArrowElements<T>
 {
     /// <summary>The element at <paramref name="index"/> of the child array.</summary>
     public T Get(int index);
@@ -35,7 +41,8 @@ public interface IArrowElements<out T>
 
 /// <summary>The rows of a generated accessor, which a list of structs reads its elements from.</summary>
 /// <typeparam name="TView">The accessor's view struct.</typeparam>
-public interface IArrowRows<out TView>
+[EditorBrowsable(EditorBrowsableState.Never)]
+public interface IArrowRows<TView>
 {
     /// <summary>Whether row <paramref name="row"/> is null.</summary>
     public bool IsNull(int row);
@@ -46,6 +53,7 @@ public interface IArrowRows<out TView>
 
 /// <summary>Numeric elements: a null element reads as zero.</summary>
 /// <typeparam name="T">The element's C# type, as its typed array declares it.</typeparam>
+[EditorBrowsable(EditorBrowsableState.Never)]
 public sealed class PrimitiveElements<T> : IArrowElements<T>
     where T : struct, IEquatable<T>
 {
@@ -66,6 +74,7 @@ public sealed class PrimitiveElements<T> : IArrowElements<T>
 }
 
 /// <summary>Boolean elements: a null element reads as false.</summary>
+[EditorBrowsable(EditorBrowsableState.Never)]
 public sealed class BooleanElements : IArrowElements<bool>
 {
     private readonly BooleanArray _array;
@@ -85,6 +94,7 @@ public sealed class BooleanElements : IArrowElements<bool>
 }
 
 /// <summary>UTF-8 elements, decoded on every read: a null element reads as the empty string.</summary>
+[EditorBrowsable(EditorBrowsableState.Never)]
 public sealed class StringElements : IArrowElements<string>
 {
     private readonly StringArray _array;
@@ -104,6 +114,7 @@ public sealed class StringElements : IArrowElements<string>
 }
 
 /// <summary>Bytes elements, copied on every read as the model's <c>byte[]</c>: a null element reads as empty.</summary>
+[EditorBrowsable(EditorBrowsableState.Never)]
 public sealed class BinaryElements : IArrowElements<byte[]>
 {
     private readonly BinaryArray _array;
@@ -124,6 +135,7 @@ public sealed class BinaryElements : IArrowElements<byte[]>
 
 /// <summary>Enum elements, stored as int32: a null element reads as the enum's zero value.</summary>
 /// <typeparam name="TEnum">A generated enum, whose underlying type is <see cref="int"/>.</typeparam>
+[EditorBrowsable(EditorBrowsableState.Never)]
 public sealed class EnumElements<TEnum> : IArrowElements<TEnum>
     where TEnum : struct, Enum
 {
@@ -154,6 +166,7 @@ public sealed class EnumElements<TEnum> : IArrowElements<TEnum>
 
 /// <summary>Struct elements, read through the inner message's accessor: a null element reads as null (D-BIND-101).</summary>
 /// <typeparam name="TView">The inner message's view struct.</typeparam>
+[EditorBrowsable(EditorBrowsableState.Never)]
 public sealed class ViewElements<TView> : IArrowElements<TView?>
     where TView : struct
 {
@@ -175,6 +188,7 @@ public sealed class ViewElements<TView> : IArrowElements<TView?>
 
 /// <summary>List elements of a list of lists: each reads as a window; a null inner list as an empty one.</summary>
 /// <typeparam name="T">The inner lists' element.</typeparam>
+[EditorBrowsable(EditorBrowsableState.Never)]
 public sealed class ListElements<T> : IArrowElements<ListView<T>>
 {
     private readonly ListArray _array;
@@ -198,6 +212,7 @@ public sealed class ListElements<T> : IArrowElements<ListView<T>>
 }
 
 /// <summary>Timestamp elements, in their column's unit and zone.</summary>
+[EditorBrowsable(EditorBrowsableState.Never)]
 public sealed class TimestampElements : IArrowElements<Timestamp>
 {
     private readonly TimestampArray _array;
@@ -219,6 +234,7 @@ public sealed class TimestampElements : IArrowElements<Timestamp>
 }
 
 /// <summary>Duration elements, in their column's unit.</summary>
+[EditorBrowsable(EditorBrowsableState.Never)]
 public sealed class DurationElements : IArrowElements<Duration>
 {
     private readonly DurationArray _array;

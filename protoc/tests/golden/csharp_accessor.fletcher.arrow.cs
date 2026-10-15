@@ -8,7 +8,8 @@ namespace Fletcher.Gen.Golden.Accessor;
 
 /// <summary>One row of a <see cref="PositionAccessor"/>, read in place: its properties are <see cref="Position"/>'s,
 /// with the same names and types.</summary>
-/// <remarks>Borrows its accessor; a string property decodes UTF-8 on every read.</remarks>
+/// <remarks>Borrows its accessor, and is valid only while the accessor's source is not
+/// disposed (D-BIND-103). A string property decodes UTF-8 on every read.</remarks>
 public readonly struct PositionView
 {
     private readonly PositionAccessor _accessor;
@@ -29,7 +30,8 @@ public readonly struct PositionView
 
 /// <summary>One row of a <see cref="Sample_NoteAccessor"/>, read in place: its properties are <see cref="Sample_Note"/>'s,
 /// with the same names and types.</summary>
-/// <remarks>Borrows its accessor; a string property decodes UTF-8 on every read.</remarks>
+/// <remarks>Borrows its accessor, and is valid only while the accessor's source is not
+/// disposed (D-BIND-103). A string property decodes UTF-8 on every read.</remarks>
 public readonly struct Sample_NoteView
 {
     private readonly Sample_NoteAccessor _accessor;
@@ -48,7 +50,8 @@ public readonly struct Sample_NoteView
 
 /// <summary>One row of a <see cref="SampleAccessor"/>, read in place: its properties are <see cref="Sample"/>'s,
 /// with the same names and types.</summary>
-/// <remarks>Borrows its accessor; a string property decodes UTF-8 on every read.</remarks>
+/// <remarks>Borrows its accessor, and is valid only while the accessor's source is not
+/// disposed (D-BIND-103). A string property decodes UTF-8 on every read.</remarks>
 public readonly struct SampleView
 {
     private readonly SampleAccessor _accessor;
@@ -111,7 +114,8 @@ public readonly struct SampleView
 
 /// <summary>One row of a <see cref="TrackAccessor"/>, read in place: its properties are <see cref="Track"/>'s,
 /// with the same names and types.</summary>
-/// <remarks>Borrows its accessor; a string property decodes UTF-8 on every read.</remarks>
+/// <remarks>Borrows its accessor, and is valid only while the accessor's source is not
+/// disposed (D-BIND-103). A string property decodes UTF-8 on every read.</remarks>
 public readonly struct TrackView
 {
     private readonly TrackAccessor _accessor;
@@ -156,7 +160,8 @@ public readonly struct TrackView
 
 /// <summary>One row of a <see cref="HyperAccessor"/>, read in place: its properties are <see cref="Hyper"/>'s,
 /// with the same names and types.</summary>
-/// <remarks>Borrows its accessor; a string property decodes UTF-8 on every read.</remarks>
+/// <remarks>Borrows its accessor, and is valid only while the accessor's source is not
+/// disposed (D-BIND-103). A string property decodes UTF-8 on every read.</remarks>
 public readonly struct HyperView
 {
     private readonly HyperAccessor _accessor;
@@ -175,7 +180,8 @@ public readonly struct HyperView
 
 /// <summary>One row of a <see cref="HyperHolderAccessor"/>, read in place: its properties are <see cref="HyperHolder"/>'s,
 /// with the same names and types.</summary>
-/// <remarks>Borrows its accessor; a string property decodes UTF-8 on every read.</remarks>
+/// <remarks>Borrows its accessor, and is valid only while the accessor's source is not
+/// disposed (D-BIND-103). A string property decodes UTF-8 on every read.</remarks>
 public readonly struct HyperHolderView
 {
     private readonly HyperHolderAccessor _accessor;

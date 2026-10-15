@@ -356,7 +356,11 @@ std::string GenerateAccessor(const Descriptor* msg, const FileDescriptor* file,
          "tolerated,\n"
       << "/// and a column the proto says is never null must hold no nulls. TryMake never "
          "throws on\n"
-      << "/// bad input and returns the reason instead (D-BIND-94).\n"
+      << "/// bad input and returns the reason instead (D-BIND-94). It BORROWS its source: it, "
+         "its\n"
+      << "/// views, their windows and span getters are valid only while the source batch or "
+         "array\n"
+      << "/// is not disposed, whose buffers Dispose frees (D-BIND-103).\n"
       << "/// </remarks>\n"
       // IArrowRows: what a list of this message, or a map with it as value, reads rows through
       // (D-BIND-101). Its two members are the accessor's own IsNull and At: no member is added.
@@ -719,8 +723,8 @@ std::string GenerateView(const Descriptor* msg, const FileDescriptor* file,
     o << "/// <summary>One row of a <see cref=\"" << cls << "\"/>, read in place: its properties "
       << "are <see cref=\"" << CsTypeName(msg) << "\"/>'s,\n"
       << "/// with the same names and types.</summary>\n"
-      << "/// <remarks>Borrows its accessor; a string property decodes UTF-8 on every "
-         "read.</remarks>\n"
+      << "/// <remarks>Borrows its accessor, and is valid only while the accessor's source is not\n"
+      << "/// disposed (D-BIND-103). A string property decodes UTF-8 on every read.</remarks>\n"
       << "public readonly struct " << view << "\n{\n"
       << "    private readonly " << cls << " _accessor;\n"
       << "    private readonly int _row;\n\n"

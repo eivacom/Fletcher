@@ -2932,6 +2932,9 @@ accessor), after a read-only map of the C++ and Rust accessors and the capstone 
   struct at all, transitively, with a comment saying why (D-RBA-8). C# follows C++, as BIND-6 did
   throughout: code that names the class still compiles, and the refusal names the field.
   **Declined:** Rust's form (the class disappears, and with it every class that reaches it).
+  *(Amended by D-BIND-104, 2026-10-15: C# also reads a list of lists with a scalar leaf, which C++
+  refuses, so "cannot support" is C++'s set less that case. And since BIND-7 review T-D1 a message that
+  reaches one which refuses refuses up front, naming the inner reason, with a comment in its view.)*
 
 - **D-BIND-97 - `<Msg>View` is a `readonly struct` of (the accessor, a row), in
   `<stem>.fletcher.arrow.cs`, and the accessor's `RowView` IS that view; its getters read the
@@ -3042,9 +3045,10 @@ accessor), after a read-only map of the C++ and Rust accessors and the capstone 
   copies nothing) and `ToRow(row)` returns `<Msg>.FromArrow(columns, row)`: one read path for a
   model row, so a row from `ToRow`, from `FromArrow` and from the generated subscriber are the same
   by construction (defaults, temporal recounting, null elements, G-Q4). It re-casts each column per
-  call and reads `Fields` once per nested struct level (64 bytes each), small next to the row and
-  lists it allocates by design; the zero-copy path is the view. Like `FromArrow`, it does not
-  consult a row's own validity: a null row of a StructArray source reads its children's values,
+  call and reads `Fields` once per nested struct VALUE (64 bytes each: per element of a list of
+  structs and per message map value, as BIND-7 review P-D2 corrected "per level"), small next
+  to the row and lists it allocates by design; the zero-copy path is the view. Like `FromArrow`,
+  it does not consult a row's own validity: a null row of a StructArray source reads its children's values,
   and `IsNull` says so. (2) D-BIND-97 gave a string field a `ReadOnlySpan<byte>` getter of its
   UTF-8 bytes, `<Property>Utf8`; a bytes field, whose `byte[]` property copies on every read, gets
   `<Property>Span` for the same reason. Both are named after every model property, by D-BIND-89's

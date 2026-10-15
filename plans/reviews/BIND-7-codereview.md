@@ -151,6 +151,13 @@ extension points. The `out` variance buys nothing for struct types and blocks fu
 | Q4 | Count nulls only under valid parents; wider than C++ | D-BIND-106 |
 | Q5 | Support types hidden, for generated code; `ListView` / `MapView` stay public | D-BIND-107 |
 
+**Implemented 2026-10-15:** Q1, the lifetime rule on the generated accessor and view, `ListView`,
+`MapView` and the public surface; Q2, D-BIND-96 amended; Q3, documented in the plan, the public
+surface and the protoc-dotnet README, and compiled there (`model.proto`, `shared.proto` and
+`timestamp.proto` with `csharp_accessor`; `RouteReadsThroughItsAccessorWithTypesFromAnotherFileAndAssembly`);
+Q4, see its note; Q5, the support types `[EditorBrowsable(Never)]` without variance, pinned by
+`TheSupportTypesAreHiddenAndTheWindowsAreNot`. P-D2 is corrected in D-BIND-102.
+
 **DEBT to fix before the close, the maintainer's choice:** the correctness items R-D1, T-D1, P-D1
 and P-D2. The rest (T-D2, T-D3, R-D2, R-D3, P-D3) and the NITs are carried as known debt; the stale
 records are corrected at the close as a matter of course.

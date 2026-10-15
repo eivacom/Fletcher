@@ -8,6 +8,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.ComponentModel;
 
 using Apache.Arrow;
 
@@ -16,7 +17,8 @@ namespace Eiva.Fletcher.Model;
 /// <summary>The elements of one list in an Arrow list column, read in place.</summary>
 /// <typeparam name="T">The value an element reads as: a null element reads as its documented default, see <see cref="IsNull"/>.</typeparam>
 /// <remarks>
-/// Borrows the accessor that produced it. <c>foreach</c> over it does not allocate; through
+/// Borrows the accessor that produced it, and is valid only while the accessor's source batch or
+/// array is not disposed (D-BIND-103). <c>foreach</c> over it does not allocate; through
 /// <see cref="IEnumerable{T}"/> it is boxed, as any struct is.
 /// </remarks>
 public readonly struct ListView<T> : IReadOnlyList<T>
@@ -26,6 +28,7 @@ public readonly struct ListView<T> : IReadOnlyList<T>
     private readonly int _count;
 
     /// <summary>A window of <paramref name="count"/> elements of <paramref name="elements"/>, from <paramref name="start"/>.</summary>
+    [EditorBrowsable(EditorBrowsableState.Never)]
     public ListView(IArrowElements<T> elements, int start, int count)
     {
         ArgumentNullException.ThrowIfNull(elements);
@@ -38,6 +41,7 @@ public readonly struct ListView<T> : IReadOnlyList<T>
 
     /// <summary>The list at <paramref name="row"/> of <paramref name="list"/>, its elements read through <paramref name="elements"/>.</summary>
     /// <remarks>The offsets are absolute in the list's values child, a sliced list included.</remarks>
+    [EditorBrowsable(EditorBrowsableState.Never)]
     public static ListView<T> Of(ListArray list, int row, IArrowElements<T> elements)
     {
         ArgumentNullException.ThrowIfNull(list);

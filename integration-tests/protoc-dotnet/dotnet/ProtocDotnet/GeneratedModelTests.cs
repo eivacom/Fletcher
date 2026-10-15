@@ -80,10 +80,13 @@ public sealed class GeneratedModelTests
         Assert.Null(typeof(Pos).GetMethod("ToArrowColumns", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static));
         Assert.NotNull(typeof(Pos).GetMethod("ToArrowColumns", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static));
 
-        // The other assembly is a model too: Apache.Arrow, and nothing of Fletcher's at all.
+        // The other assembly is a model too: Apache.Arrow, and of Fletcher's only Fletcher.Model,
+        // which its accessors need since BIND-7 (D-BIND-105, D-BIND-101).
         var references = typeof(Pos).Assembly.GetReferencedAssemblies().Select(a => a.Name ?? "").ToList();
         Assert.Contains("Apache.Arrow", references);
-        Assert.DoesNotContain(references, name => name == "Fletcher" || name.StartsWith("Fletcher.", StringComparison.Ordinal));
+        Assert.Equal(
+            new[] { "Fletcher.Model" },
+            references.Where(name => name == "Fletcher" || name.StartsWith("Fletcher.", StringComparison.Ordinal)).ToArray());
     }
 
     [Fact]

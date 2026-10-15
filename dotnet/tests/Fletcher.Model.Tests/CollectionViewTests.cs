@@ -226,4 +226,29 @@ public sealed class CollectionViewTests
         Assert.Equal(expected, second.Select(e => e).ToList());
         Assert.Throws<ArgumentOutOfRangeException>(() => second.Key(3));
     }
+
+    [Fact]
+    public void TheSupportTypesAreHiddenAndTheWindowsAreNot()
+    {
+        // D-BIND-107: the readers, the two interfaces and the windows' constructors and Of are for
+        // generated code, hidden from IntelliSense; ListView and MapView are the consumer's API.
+        static bool Hidden(System.Reflection.MemberInfo member) =>
+            member.GetCustomAttributes(typeof(System.ComponentModel.EditorBrowsableAttribute), false)
+                .Cast<System.ComponentModel.EditorBrowsableAttribute>()
+                .Any(a => a.State == System.ComponentModel.EditorBrowsableState.Never);
+
+        var support = typeof(ListView<>).Assembly.GetExportedTypes()
+            .Where(t => t.Name.Contains("Elements", StringComparison.Ordinal) || t.Name.StartsWith("IArrowRows", StringComparison.Ordinal))
+            .ToList();
+        Assert.Equal(11, support.Count);
+        Assert.All(support, t => Assert.True(Hidden(t), t.Name));
+        Assert.All(support.Where(t => t.IsInterface), t => Assert.False(t.GetGenericArguments()[0].IsGenericParameter && (t.GetGenericArguments()[0].GenericParameterAttributes & System.Reflection.GenericParameterAttributes.VarianceMask) != 0, t.Name));
+
+        foreach (var window in new[] { typeof(ListView<>), typeof(MapView<,>) })
+        {
+            Assert.False(Hidden(window), window.Name);
+            Assert.All(window.GetConstructors(), c => Assert.True(Hidden(c), window.Name + " constructor"));
+            Assert.True(Hidden(window.GetMethod("Of")!), window.Name + ".Of");
+        }
+    }
 }

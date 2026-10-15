@@ -86,7 +86,7 @@
          opts out of the native pair, as a gateway or WASM project would. -->
     <RemoveDir Directories="$(FletcherGenDir)" />
     <MakeDir Directories="$(FletcherGenDir)" />
-    <Exec Command="&quot;$(FletcherProtoc)&quot; --plugin=protoc-gen-fletcher=&quot;$(FletcherProtocPlugin)&quot; --fletcher_opt=csharp,csharp_model_only,ipc --fletcher_out=&quot;$(FletcherGenDir)&quot; -I &quot;$(FletcherProtoDir)&quot; -I &quot;$(_FletcherWkt)&quot; &quot;$(FletcherProtoDir)/model.proto&quot;" />
+    <Exec Command="&quot;$(FletcherProtoc)&quot; --plugin=protoc-gen-fletcher=&quot;$(FletcherProtocPlugin)&quot; --fletcher_opt=csharp,csharp_model_only,ipc,csharp_accessor --fletcher_out=&quot;$(FletcherGenDir)&quot; -I &quot;$(FletcherProtoDir)&quot; -I &quot;$(_FletcherWkt)&quot; &quot;$(FletcherProtoDir)/model.proto&quot;" />
     <!-- BIND-7d: the capstone with the accessor and view (csharp_accessor needs the model,
          D-BIND-99), as a consumer reading batches would generate it. -->
     <Exec Command="&quot;$(FletcherProtoc)&quot; --plugin=protoc-gen-fletcher=&quot;$(FletcherProtocPlugin)&quot; --fletcher_opt=csharp,csharp_model_only,csharp_accessor --fletcher_out=&quot;$(FletcherGenDir)&quot; -I &quot;$(FletcherCapstoneDir)/proto&quot; -I &quot;$(FletcherOptionsDir)&quot; -I &quot;$(_FletcherWkt)&quot; &quot;$(FletcherCapstoneDir)/proto/accessor_capstone.proto&quot;" />

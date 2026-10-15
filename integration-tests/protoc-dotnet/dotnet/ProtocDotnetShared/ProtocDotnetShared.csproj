@@ -27,8 +27,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Apache.Arrow and nothing else: neither file uses Eiva.Fletcher.Model's types. -->
+    <!-- Apache.Arrow, and since BIND-7 (D-BIND-105) Eiva.Fletcher.Model: both files are generated
+         with csharp_accessor too, because model.proto's accessor reads Pos, Fix and Timestamp
+         through theirs, and an accessor's windows live in Model (D-BIND-101). -->
     <PackageReference Include="Apache.Arrow" Version="[23.0.0]" />
+    <ProjectReference Include="../../../../dotnet/src/Fletcher.Model/Fletcher.Model.csproj" />
   </ItemGroup>
 
   <!-- ProtocDotnet's FletcherGen recipe (D-BIND-71) over two files. timestamp.proto is named
@@ -44,9 +47,9 @@
     </PropertyGroup>
     <RemoveDir Directories="$(FletcherGenDir)" />
     <MakeDir Directories="$(FletcherGenDir)" />
-    <Exec Command="&quot;$(FletcherProtoc)&quot; --plugin=protoc-gen-fletcher=&quot;$(FletcherProtocPlugin)&quot; --fletcher_opt=csharp,csharp_model_only --fletcher_out=&quot;$(FletcherGenDir)&quot; -I &quot;$(FletcherProtoDir)&quot; -I &quot;$(_FletcherWkt)&quot; &quot;$(FletcherProtoDir)/shared.proto&quot; google/protobuf/timestamp.proto" />
+    <Exec Command="&quot;$(FletcherProtoc)&quot; --plugin=protoc-gen-fletcher=&quot;$(FletcherProtocPlugin)&quot; --fletcher_opt=csharp,csharp_model_only,csharp_accessor --fletcher_out=&quot;$(FletcherGenDir)&quot; -I &quot;$(FletcherProtoDir)&quot; -I &quot;$(_FletcherWkt)&quot; &quot;$(FletcherProtoDir)/shared.proto&quot; google/protobuf/timestamp.proto" />
     <ItemGroup>
-      <Compile Include="$(FletcherGenDir)/**/*.fletcher.cs" />
+      <Compile Include="$(FletcherGenDir)/**/*.fletcher.cs;$(FletcherGenDir)/**/*.fletcher.accessor.cs;$(FletcherGenDir)/**/*.fletcher.arrow.cs" />
     </ItemGroup>
     <Error Condition="!Exists('$(FletcherGenDir)/shared.fletcher.cs') Or !Exists('$(FletcherGenDir)/google/protobuf/timestamp.fletcher.cs')"
            Text="protoc ran but did not write shared.fletcher.cs and google/protobuf/timestamp.fletcher.cs into $(FletcherGenDir)" />

@@ -797,9 +797,11 @@ support keeps its class, whose `TryMake` refuses with the reason, as in C++; `<M
 (accessor, row), the accessor's `RowView`, because `StructArray.Fields` allocates 64 bytes per
 read (measured), so a view over `(StructArray, int)` would allocate on every getter. Then
 (D-BIND-98) the accessor has no per-field getters and the view only the fields, named as on the
-model class, so no field name can collide with a member; `ToRow(row)` is the accessor's. Slices: 7a
-accessor scalars, structs, `TryMake`, metadata and D-BIND-10's record; 7b collections; 7c the
-view; 7d the capstone's C# arm; 7e review.
+model class, so no field name can collide with a member; `ToRow(row)` is the accessor's. Ruled
+during the round: D-BIND-99 to 102 (the token needs `csharp`; name clashes refused; collections
+as zero-copy windows; `ToRow` through `FromArrow`), and on its review D-BIND-103 to 107. Slices:
+7a accessor scalars, structs, `TryMake`, metadata and D-BIND-10's record; 7b collections; 7c
+`ToRow` and the span getters; 7d the capstone's C# arm; 7e review.
 
 **One generated shape, two C# runtimes (D-BIND-72, 2026-09-29).** Per `.proto`,
 one file: a row type per message, one schema bound to it, the topics. The C# model

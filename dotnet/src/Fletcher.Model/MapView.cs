@@ -8,6 +8,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.ComponentModel;
 
 using Apache.Arrow;
 
@@ -16,7 +17,10 @@ namespace Eiva.Fletcher.Model;
 /// <summary>The entries of one map in an Arrow map column, read in place.</summary>
 /// <typeparam name="TKey">The key's C# type. Arrow map keys are never null.</typeparam>
 /// <typeparam name="TValue">The value an entry's value reads as: a null value reads as its documented default, see <see cref="ValueIsNull"/>.</typeparam>
-/// <remarks>Borrows the accessor that produced it. <c>foreach</c> over it does not allocate.</remarks>
+/// <remarks>
+/// Borrows the accessor that produced it, and is valid only while the accessor's source batch or
+/// array is not disposed (D-BIND-103). <c>foreach</c> over it does not allocate.
+/// </remarks>
 public readonly struct MapView<TKey, TValue> : IReadOnlyList<KeyValuePair<TKey, TValue>>
 {
     private readonly IArrowElements<TKey>? _keys;
@@ -25,6 +29,7 @@ public readonly struct MapView<TKey, TValue> : IReadOnlyList<KeyValuePair<TKey, 
     private readonly int _count;
 
     /// <summary>A window of <paramref name="count"/> entries from <paramref name="start"/>.</summary>
+    [EditorBrowsable(EditorBrowsableState.Never)]
     public MapView(IArrowElements<TKey> keys, IArrowElements<TValue> values, int start, int count)
     {
         ArgumentNullException.ThrowIfNull(keys);
@@ -38,6 +43,7 @@ public readonly struct MapView<TKey, TValue> : IReadOnlyList<KeyValuePair<TKey, 
     }
 
     /// <summary>The map at <paramref name="row"/> of <paramref name="map"/>.</summary>
+    [EditorBrowsable(EditorBrowsableState.Never)]
     public static MapView<TKey, TValue> Of(MapArray map, int row, IArrowElements<TKey> keys, IArrowElements<TValue> values)
     {
         ArgumentNullException.ThrowIfNull(map);

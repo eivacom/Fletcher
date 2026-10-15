@@ -11,7 +11,9 @@ namespace Fletcher.Gen.Golden.Accessor;
 /// <remarks>
 /// Validation is positional and type-only: column names and the nullable flag are tolerated,
 /// and a column the proto says is never null must hold no nulls. TryMake never throws on
-/// bad input and returns the reason instead (D-BIND-94).
+/// bad input and returns the reason instead (D-BIND-94). It BORROWS its source: it, its
+/// views, their windows and span getters are valid only while the source batch or array
+/// is not disposed, whose buffers Dispose frees (D-BIND-103).
 /// </remarks>
 public sealed class PositionAccessor : global::Eiva.Fletcher.Model.IArrowRows<PositionView>
 {
@@ -253,7 +255,9 @@ public sealed class PositionAccessor : global::Eiva.Fletcher.Model.IArrowRows<Po
 /// <remarks>
 /// Validation is positional and type-only: column names and the nullable flag are tolerated,
 /// and a column the proto says is never null must hold no nulls. TryMake never throws on
-/// bad input and returns the reason instead (D-BIND-94).
+/// bad input and returns the reason instead (D-BIND-94). It BORROWS its source: it, its
+/// views, their windows and span getters are valid only while the source batch or array
+/// is not disposed, whose buffers Dispose frees (D-BIND-103).
 /// </remarks>
 public sealed class Sample_NoteAccessor : global::Eiva.Fletcher.Model.IArrowRows<Sample_NoteView>
 {
@@ -475,7 +479,9 @@ public sealed class Sample_NoteAccessor : global::Eiva.Fletcher.Model.IArrowRows
 /// <remarks>
 /// Validation is positional and type-only: column names and the nullable flag are tolerated,
 /// and a column the proto says is never null must hold no nulls. TryMake never throws on
-/// bad input and returns the reason instead (D-BIND-94).
+/// bad input and returns the reason instead (D-BIND-94). It BORROWS its source: it, its
+/// views, their windows and span getters are valid only while the source batch or array
+/// is not disposed, whose buffers Dispose frees (D-BIND-103).
 /// </remarks>
 public sealed class SampleAccessor : global::Eiva.Fletcher.Model.IArrowRows<SampleView>
 {
@@ -927,7 +933,9 @@ public sealed class SampleAccessor : global::Eiva.Fletcher.Model.IArrowRows<Samp
 /// <remarks>
 /// Validation is positional and type-only: column names and the nullable flag are tolerated,
 /// and a column the proto says is never null must hold no nulls. TryMake never throws on
-/// bad input and returns the reason instead (D-BIND-94).
+/// bad input and returns the reason instead (D-BIND-94). It BORROWS its source: it, its
+/// views, their windows and span getters are valid only while the source batch or array
+/// is not disposed, whose buffers Dispose frees (D-BIND-103).
 /// </remarks>
 public sealed class TrackAccessor : global::Eiva.Fletcher.Model.IArrowRows<TrackView>
 {
@@ -1510,7 +1518,9 @@ public sealed class TrackAccessor : global::Eiva.Fletcher.Model.IArrowRows<Track
 /// <remarks>
 /// Validation is positional and type-only: column names and the nullable flag are tolerated,
 /// and a column the proto says is never null must hold no nulls. TryMake never throws on
-/// bad input and returns the reason instead (D-BIND-94).
+/// bad input and returns the reason instead (D-BIND-94). It BORROWS its source: it, its
+/// views, their windows and span getters are valid only while the source batch or array
+/// is not disposed, whose buffers Dispose frees (D-BIND-103).
 /// </remarks>
 public sealed class HyperAccessor : global::Eiva.Fletcher.Model.IArrowRows<HyperView>
 {
@@ -1738,7 +1748,9 @@ public sealed class HyperAccessor : global::Eiva.Fletcher.Model.IArrowRows<Hyper
 /// <remarks>
 /// Validation is positional and type-only: column names and the nullable flag are tolerated,
 /// and a column the proto says is never null must hold no nulls. TryMake never throws on
-/// bad input and returns the reason instead (D-BIND-94).
+/// bad input and returns the reason instead (D-BIND-94). It BORROWS its source: it, its
+/// views, their windows and span getters are valid only while the source batch or array
+/// is not disposed, whose buffers Dispose frees (D-BIND-103).
 /// </remarks>
 public sealed class HyperHolderAccessor : global::Eiva.Fletcher.Model.IArrowRows<HyperHolderView>
 {

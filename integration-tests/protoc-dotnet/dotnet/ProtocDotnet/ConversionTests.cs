@@ -261,6 +261,35 @@ public sealed class ConversionTests
         Assert.Empty(empty.Marks);
     }
 
+    [Fact]
+    public void RouteReadsThroughItsAccessorWithTypesFromAnotherFileAndAssembly()
+    {
+        // D-BIND-105: a struct column, a list and a map of them, an enum and a list of enums, and
+        // `repeated google.protobuf.Timestamp`, all from another file and assembly, are read
+        // through those files' own accessors, which ProtocDotnetShared generates with
+        // csharp_accessor. Compiling this is half the test.
+        Route[] sent = { Trip, new Route(), Trip };
+        using RecordBatch batch = Route.ToArrow(sent);
+        Assert.True(RouteAccessor.TryMake(batch, out var accessor, out var error), error);
+
+        RouteView trip = accessor.At(0);
+        Assert.Equal(55.67, trip.Start.Lat);
+        Assert.Equal("start", trip.Start.Label);
+        Assert.Equal(2, trip.Legs.Count);
+        Assert.Equal(180, trip.Legs[0]!.Value.Lon);
+        Assert.Equal(new[] { "b", "a", "b" }, Enumerable.Range(0, trip.Stops.Count).Select(trip.Stops.Key));
+        Assert.Equal("dup", trip.Stops.Value(2)!.Value.Label);
+        Assert.Equal(Quality.Poor, trip.Quality);
+        Assert.Equal(new[] { Quality.Good, Quality.Unspecified, Quality.Poor }, trip.Checks.ToList());
+        Assert.Equal(Quality.Good, trip.Fix.Quality);
+        Assert.Equal(2, trip.Fix.Trail[0]!.Value.Lon);
+        Assert.Equal(999_999_999, trip.Marks[1]!.Value.Nanos);
+        Assert.Empty(accessor.At(1).Legs);
+
+        // ToRow is the model's FromArrow, so it is the row sent (D-BIND-102).
+        Assert.Equal(sent.Select(Describe), Enumerable.Range(0, sent.Length).Select(i => Describe(accessor.ToRow(i))));
+    }
+
     private static string Describe(Route r) => string.Join(" | ",
         Describe(r.Start),
         "[" + string.Join(",", r.Legs.Select(p => Describe(p))) + "]",
