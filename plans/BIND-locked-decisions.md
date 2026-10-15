@@ -3103,3 +3103,41 @@ The next ones were ruled on 2026-10-15, on the questions of BIND-7's review
   constructors and `Of` must be public; they are marked `[EditorBrowsable(Never)]` and documented as
   for generated code, and the `out` variance, which buys nothing for struct types, is dropped.
   **Declined:** supporting them as extension points.
+
+The next ones were ruled on 2026-10-15, at the start of BIND-8 (`Eiva.Fletcher.GatewayClient`), after
+a read-only map of the gateway's protocol (`gateway/src/ws_session.*`, the wire-format spec), the
+TypeScript client (`gateway-client-ts/`) and the lanes that run a live gateway. They settle what
+D-BIND-72 left to BIND-8.
+
+- **D-BIND-108 - the gateway client works on Arrow `RecordBatch`es: its managed codec converts a
+  batch to positional rows and back with the Arrow schema, and the generated gateway pair calls the
+  model's `ToArrow` / `FromArrow`, as the native pair does.** *LOCKED BY THE MAINTAINER 2026-10-15
+  (BIND-8 Q1).* D-BIND-72 lets the client take a `RecordBatch` from the typed pair or constrain `T`
+  itself. At the batch level the gateway and native paths share the whole model layer and one codec
+  shape (Arrow in, bytes out, as C++'s codec behind the C ABI), and the descriptor the codec needs is
+  read from the schema's `field_number` metadata (D-BIND-72 point 2). **Declined:** a client
+  generic over the row type that encodes it directly (a second row-to-bytes path beside `ToArrow`).
+
+- **D-BIND-109 - the gateway pair is asked for with `csharp_gateway`, which needs `csharp` (as
+  D-BIND-99), and written to `<stem>.fletcher.gateway.cs` as `<Svc>_<Method>GatewayPublisher` and
+  `<Svc>_<Method>GatewaySubscriber`; it references `Eiva.Fletcher.GatewayClient` only and reuses the
+  model's `<Svc>_<Method>Topic` (D-BIND-77).** *LOCKED BY THE MAINTAINER 2026-10-15 (BIND-8 Q2).*
+  Distinct names let one project hold both pairs, and nothing native reaches a gateway-only build.
+  **Declined:** the native pair's names in a `Gateway` sub-namespace (two types of one name, told
+  apart by a `using`).
+
+- **D-BIND-110 - the client has one control request awaiting its reply at a time, so an `error`
+  reply always belongs to the request in flight.** *LOCKED BY THE MAINTAINER 2026-10-15 (BIND-8 Q3).*
+  The gateway's `{"type":"error"}` carries no request id (`ws_session.cpp:132-142`). The TypeScript
+  client queues pending requests and gives an error to the oldest one, which can blame the wrong
+  call; serialising the requests (publishes included) makes the attribution certain. Data frames to
+  subscribers are not requests and are never held back. **Declined:** the TypeScript queue
+  (parity, at the price of a misattributed error).
+
+- **D-BIND-111 - `PublishAsync` completes when the gateway acknowledges with `published`, or fails
+  with the gateway's error.** *LOCKED BY THE MAINTAINER 2026-10-15 (BIND-8 Q4).* As the TypeScript
+  client does; a refused publish is tied to its call. A PUBLISH frame carries one row
+  (`publish_frame.hpp`), so publishing a batch sends one frame per row and awaits each
+  acknowledgement in turn (D-BIND-110); pipelining is a later optimisation, measured first.
+  **Declined:** completing when the frame is sent, with errors as an
+  event.

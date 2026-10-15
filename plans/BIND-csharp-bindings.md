@@ -859,7 +859,7 @@ Kind: 🟪 spec · 🟦 impl · 🔬 proof · ⚙ pipelines · 📓 docs
 | BIND-6 | C# backend on the IR: type table + visitor → `<stem>.fletcher.cs` | B | 🟦 | — (GIR) | `CsVisitor.*`, `CsVisitorPair.*`, `CsVisitorCrossFile.*`, `CsNames.*` and `CsTypeTable.*` in `protoc/tests` (named `CsharpVisitor.*` until review T-D5 corrected it, 2026-10-14); no-drift test unchanged | 🟢 (closed on CI at `63ab057`, `ci.pr` 38575041994, after a fresh-context review whose 5 BLOCKERs were fixed and 10 questions ruled, D-BIND-83 to 93; the minor debt carried as known, listed in BIND-6's section) |
 | BIND-7 | Arrow view + accessor emitters (`csharp_accessor`) + capstone third arm | B | 🟦 | BIND-6, BIND-3 | `accessor-capstone` C# arm `observed == expected`; `StructArray` windowing fixture at non-zero offset | 🟢 (closed on CI at `268dceb`, `ci.pr` 38746753749, after a fresh-context review whose 2 BLOCKERs were fixed and 5 questions ruled, D-BIND-103 to 107; rulings during the round D-BIND-94 to 102; the minor debt carried as known, listed in BIND-7's section) |
 | BIND-T | TS `Publisher`/`Subscriber` emitter | C | 🟦 | — | `TsVisitor.DescriptorByteIdentical` still green + new emitter cases | ⚪ |
-| BIND-8 | `Eiva.Fletcher.GatewayClient` (managed port; the codec exception) | C | 🟦 | — | Bucket 2 green (the Part 4 file set, not a count); `Package.GatewayClientHasNoRuntimesFolder` | ⚪ |
+| BIND-8 | `Eiva.Fletcher.GatewayClient` (managed port; the codec exception) | C | 🟦 | — | Bucket 2 green (the Part 4 file set, not a count); `Package.GatewayClientHasNoRuntimesFolder` | 🔴 (started 2026-10-15: four rulings D-BIND-108 to 111, slices 8a to 8e) |
 | BIND-9 | CI/CD: RID matrix, publish to `nuget.eiva.com` from a self-hosted job (D-BIND-28), size budget, licence files | D | ⚙ | BIND-0 (skeleton), all for release | `cd.dotnet.yml` dry run; packed-size check; asset-isolation + licence check | ⚪ |
 | BIND-10 | Docs, TD-009, archive to `docs/archive/BIND/` | D | 📓 | all | docs review | ⚪ |
 
@@ -2002,6 +2002,29 @@ client, **so that** I need no native assets at all.
   gateway client exchanges rows, in both directions and through the generated gateway pair, with C++
   and TypeScript over the gateway, and with the C# native pair. Same shared `.proto` and field-by-field
   comparison as BIND-9's C#-native rows; the matrix is in BIND-6's open note.
+
+**Plan, agreed 2026-10-15 at the start.** A read-only map of the gateway (`gateway/src/ws_session.*`
+is the protocol's authority; the spec omits the `unsubscribed` and `published` replies and the
+optional `schema` of `create_topic`), the TypeScript client and the live-gateway lanes came first,
+and four questions were ruled (D-BIND-108 to 111: a `RecordBatch`-level codec; the `csharp_gateway`
+token and names; one request in flight; `PublishAsync` awaits the ack). Slices:
+
+- **8a:** the managed codec: envelope, PUBLISH / MESSAGE frames, the positional row codec driven by
+  the Arrow schema's `field_number` metadata, the JSON schema a `create_topic` sends, and `schemaIpc`
+  read with `Apache.Arrow.Ipc`. Bucket 2's codec files ported (`test_envelope`, `test_publish_frame`,
+  `test_schema_codec`, the TS envelope, wire-encode, object-backend and ws-protocol tests), and byte
+  parity with C++-written vectors.
+- **8b:** `FletcherClient` over `ClientWebSocket` (§2.8's surface, `CancellationToken` on every
+  call), the TS client tests ported, and `integration-tests/gateway-dotnet-end-to-end` against a live
+  gateway over `inprocess` and `fastdds`.
+- **8c:** the generated gateway pair (D-BIND-109): golden, plugin cases, a live round trip.
+- **8d:** the cross-language rows (C# gateway client ↔ C++, TypeScript and the C# native pair), and
+  packaging: `IsAotCompatible`, the `Eiva.Fletcher.Model` reference, the no-`runtimes/` check
+  (`Package.GatewayClientHasNoRuntimesFolder`).
+- **8e:** fresh-context review and close.
+
+The Fast DDS legs share `gateway-fastdds-ts`'s exposure to Fast DDS 3.4.0's data-sharing defect
+(`fastdds-pubsub-provider/README.md`); its handling is being researched separately.
 
 ### BIND-9 — CI/CD pipelines and packaging
 
