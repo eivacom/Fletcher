@@ -40,6 +40,8 @@ on:
 # dotnet/.editorconfig, and its pinned AOT toolchain packs from dotnet/Directory.Build.targets
 # (D-BIND-81; ci.pr.yml's filter lacked it until review T-D4). A new consumer of a path outside this lane's checkout adds it
 # HERE and to ci.pr.yml's filter, in the same commit.
+# Since BIND-7d it also checks out integration-tests/accessor-capstone: the C# capstone arm
+# generates its proto and reads its fixture and oracle, shared with the C++ and Rust lanes.
 jobs:
   linux:
     runs-on: ubuntu-latest
@@ -49,6 +51,7 @@ jobs:
           sparse-checkout: |
             protoc
             integration-tests/protoc-dotnet
+            integration-tests/accessor-capstone
             dotnet
             .conan-profiles
             .github
@@ -91,6 +94,7 @@ jobs:
           sparse-checkout: |
             protoc
             integration-tests/protoc-dotnet
+            integration-tests/accessor-capstone
             dotnet
             .conan-profiles
             .github

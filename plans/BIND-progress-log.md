@@ -1015,3 +1015,13 @@ else.
   collections and a sliced source; the spans, including a null that spans bytes); two mutants
   (`ToRow` reading row 0, a span reading row 0) each fail a test, and the third is the finding
   above.
+
+**7d (2026-10-15).** C# is `accessor-capstone`'s third arm (D-BIND-11). `ProtocDotnet`'s
+`FletcherGen` target also generates the capstone's one proto with
+`csharp,csharp_model_only,csharp_accessor`; `CapstoneTests` builds the shared fixture's batch from
+Apache.Arrow arrays (the generated model cannot write its null elements), reads it through the
+generated `CapstoneBatchAccessor` and its views, normalises the readout into the oracle's shape and
+compares it with the one committed oracle, which it passed on the first run. `TheComparisonCanFail`
+keeps the comparison honest. The directory joins the protoc-dotnet lane's checkout (both legs)
+and the path filters of all three lanes: before, a change to the capstone files alone ran neither
+the C++ nor the Rust arm.

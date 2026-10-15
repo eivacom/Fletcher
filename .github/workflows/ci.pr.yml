@@ -274,6 +274,7 @@ jobs:
               - 'arrow-bridge/**'
               - 'pubsub/**'
               - 'integration-tests/protoc-arrow-bridge/**'
+              - 'integration-tests/accessor-capstone/**'
               - '.github/workflows/ci.pr.yml'
               - '.github/workflows/ci.integration-test.protoc-arrow-bridge.yml'
               - '.github/actions/pull-devcontainer-image/**'
@@ -346,6 +347,7 @@ jobs:
             integration-protoc-gen-fletcher-rust:
               - 'protoc/**'
               - 'integration-tests/protoc-gen-fletcher-rust/**'
+              - 'integration-tests/accessor-capstone/**'
               - '.github/workflows/ci.pr.yml'
               - '.github/workflows/ci.integration-test.protoc-gen-fletcher-rust.yml'
               - '.github/actions/pull-devcontainer-image/**'
@@ -356,6 +358,7 @@ jobs:
             integration-protoc-dotnet:
               - 'protoc/**'
               - 'integration-tests/protoc-dotnet/**'
+              - 'integration-tests/accessor-capstone/**'
               - 'dotnet/global.json'
               - 'dotnet/Directory.Build.props'
               - 'dotnet/Directory.Build.targets'

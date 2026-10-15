@@ -30,6 +30,10 @@
     <FletcherProtoc Condition="'$(FletcherProtoc)' == ''">$(PROTOC)</FletcherProtoc>
     <FletcherProtoDir>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/../../proto'))</FletcherProtoDir>
     <FletcherGenDir>$(MSBuildProjectDirectory)/$(BaseIntermediateOutputPath)fletcher-gen</FletcherGenDir>
+    <!-- BIND-7d: the accessor capstone's ONE proto, fixture and oracle, shared with the C++
+         and Rust arms; its proto imports fletcher/options.proto, from the plugin's include. -->
+    <FletcherCapstoneDir>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/../../../accessor-capstone'))</FletcherCapstoneDir>
+    <FletcherOptionsDir>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/../../../../protoc/include'))</FletcherOptionsDir>
   </PropertyGroup>
 
   <ItemGroup>
@@ -58,6 +62,11 @@
       <_Parameter1>FletcherGenDir</_Parameter1>
       <_Parameter2>$(FletcherGenDir)</_Parameter2>
     </AssemblyAttribute>
+    <!-- Where CapstoneTests find the shared fixture and oracle (BIND-7d). -->
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>CapstoneFixturesDir</_Parameter1>
+      <_Parameter2>$(FletcherCapstoneDir)/fixtures</_Parameter2>
+    </AssemblyAttribute>
   </ItemGroup>
 
   <!-- D-BIND-71's consumer recipe, as a consumer would write it: protoc runs from an
@@ -78,11 +87,16 @@
     <RemoveDir Directories="$(FletcherGenDir)" />
     <MakeDir Directories="$(FletcherGenDir)" />
     <Exec Command="&quot;$(FletcherProtoc)&quot; --plugin=protoc-gen-fletcher=&quot;$(FletcherProtocPlugin)&quot; --fletcher_opt=csharp,csharp_model_only,ipc --fletcher_out=&quot;$(FletcherGenDir)&quot; -I &quot;$(FletcherProtoDir)&quot; -I &quot;$(_FletcherWkt)&quot; &quot;$(FletcherProtoDir)/model.proto&quot;" />
+    <!-- BIND-7d: the capstone with the accessor and view (csharp_accessor needs the model,
+         D-BIND-99), as a consumer reading batches would generate it. -->
+    <Exec Command="&quot;$(FletcherProtoc)&quot; --plugin=protoc-gen-fletcher=&quot;$(FletcherProtocPlugin)&quot; --fletcher_opt=csharp,csharp_model_only,csharp_accessor --fletcher_out=&quot;$(FletcherGenDir)&quot; -I &quot;$(FletcherCapstoneDir)/proto&quot; -I &quot;$(FletcherOptionsDir)&quot; -I &quot;$(_FletcherWkt)&quot; &quot;$(FletcherCapstoneDir)/proto/accessor_capstone.proto&quot;" />
     <ItemGroup>
-      <Compile Include="$(FletcherGenDir)/*.fletcher.cs" />
+      <Compile Include="$(FletcherGenDir)/*.fletcher.cs;$(FletcherGenDir)/*.fletcher.accessor.cs;$(FletcherGenDir)/*.fletcher.arrow.cs" />
     </ItemGroup>
     <Error Condition="!Exists('$(FletcherGenDir)/model.fletcher.cs')"
            Text="protoc ran but wrote no model.fletcher.cs into $(FletcherGenDir)" />
+    <Error Condition="!Exists('$(FletcherGenDir)/accessor_capstone.fletcher.accessor.cs')"
+           Text="protoc ran but wrote no accessor_capstone.fletcher.accessor.cs into $(FletcherGenDir)" />
   </Target>
 
 </Project>
