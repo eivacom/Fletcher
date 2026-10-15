@@ -49,8 +49,9 @@ public sealed class Timestamp
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new Timestamp();
-        row.Seconds = ((global::Apache.Arrow.Int64Array)array.Fields[0]).GetValue(index).GetValueOrDefault();
-        row.Nanos = ((global::Apache.Arrow.Int32Array)array.Fields[1]).GetValue(index).GetValueOrDefault();
+        var fields = array.Fields;
+        row.Seconds = ((global::Apache.Arrow.Int64Array)fields[0]).GetValue(index).GetValueOrDefault();
+        row.Nanos = ((global::Apache.Arrow.Int32Array)fields[1]).GetValue(index).GetValueOrDefault();
         return row;
     }
 }

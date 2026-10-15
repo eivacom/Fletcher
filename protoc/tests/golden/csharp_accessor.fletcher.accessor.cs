@@ -21,17 +21,19 @@ public sealed class PositionAccessor : global::Eiva.Fletcher.Model.IArrowRows<Po
     private readonly global::Apache.Arrow.StructArray? _validity;
     private readonly global::System.Collections.Generic.IReadOnlyDictionary<string, string> _schemaMetadata;
     private readonly global::Apache.Arrow.Field[] _fields;
+    private readonly global::Apache.Arrow.StructArray _rows;
     internal global::Apache.Arrow.DoubleArray _c0 = null!;
     internal global::Apache.Arrow.DoubleArray _c1 = null!;
     internal global::Apache.Arrow.FloatArray _c2 = null!;
 
     private PositionAccessor(int length, global::Apache.Arrow.StructArray? validity, global::System.Collections.Generic.IReadOnlyDictionary<string, string> schemaMetadata,
-        global::Apache.Arrow.Field[] fields)
+        global::Apache.Arrow.Field[] fields, global::Apache.Arrow.StructArray rows)
     {
         _length = length;
         _validity = validity;
         _schemaMetadata = schemaMetadata;
         _fields = fields;
+        _rows = rows;
     }
 
     /// <summary>The number of rows.</summary>
@@ -50,6 +52,15 @@ public sealed class PositionAccessor : global::Eiva.Fletcher.Model.IArrowRows<Po
     {
         CheckRow(row);
         return new PositionView(this, row);
+    }
+
+    /// <summary>Row <paramref name="row"/> as a new <see cref="Position"/>, read by its <c>FromArrow</c>, so it is
+    /// the row the model and its subscriber read (D-BIND-102). A null row of a StructArray reads its
+    /// children's values; <see cref="IsNull"/> tells.</summary>
+    public Position ToRow(int row)
+    {
+        CheckRow(row);
+        return global::Fletcher.Gen.Golden.Accessor.Position.FromArrow(_rows, row);
     }
 
     /// <summary>The batch schema's metadata; empty, never null, for a StructArray or when absent.</summary>
@@ -160,7 +171,9 @@ public sealed class PositionAccessor : global::Eiva.Fletcher.Model.IArrowRows<Po
             error = Mismatch("Position column 2 'depth'", global::Fletcher.Gen.Golden.Accessor.Position.Schema.GetFieldByIndex(2).DataType, columns[2]);
             return false;
         }
-        var result = new PositionAccessor(length, validity, schemaMetadata ?? NoMetadata, fields);
+        var result = new PositionAccessor(length, validity, schemaMetadata ?? NoMetadata, fields,
+            validity ?? new global::Apache.Arrow.StructArray(new global::Apache.Arrow.Types.StructType(fields), length,
+                columns, global::Apache.Arrow.ArrowBuffer.Empty, 0));
         result._c0 = c0;
         result._c1 = c1;
         result._c2 = c2;
@@ -211,15 +224,17 @@ public sealed class Sample_NoteAccessor : global::Eiva.Fletcher.Model.IArrowRows
     private readonly global::Apache.Arrow.StructArray? _validity;
     private readonly global::System.Collections.Generic.IReadOnlyDictionary<string, string> _schemaMetadata;
     private readonly global::Apache.Arrow.Field[] _fields;
+    private readonly global::Apache.Arrow.StructArray _rows;
     internal global::Apache.Arrow.StringArray _c0 = null!;
 
     private Sample_NoteAccessor(int length, global::Apache.Arrow.StructArray? validity, global::System.Collections.Generic.IReadOnlyDictionary<string, string> schemaMetadata,
-        global::Apache.Arrow.Field[] fields)
+        global::Apache.Arrow.Field[] fields, global::Apache.Arrow.StructArray rows)
     {
         _length = length;
         _validity = validity;
         _schemaMetadata = schemaMetadata;
         _fields = fields;
+        _rows = rows;
     }
 
     /// <summary>The number of rows.</summary>
@@ -238,6 +253,15 @@ public sealed class Sample_NoteAccessor : global::Eiva.Fletcher.Model.IArrowRows
     {
         CheckRow(row);
         return new Sample_NoteView(this, row);
+    }
+
+    /// <summary>Row <paramref name="row"/> as a new <see cref="Sample_Note"/>, read by its <c>FromArrow</c>, so it is
+    /// the row the model and its subscriber read (D-BIND-102). A null row of a StructArray reads its
+    /// children's values; <see cref="IsNull"/> tells.</summary>
+    public Sample_Note ToRow(int row)
+    {
+        CheckRow(row);
+        return global::Fletcher.Gen.Golden.Accessor.Sample_Note.FromArrow(_rows, row);
     }
 
     /// <summary>The batch schema's metadata; empty, never null, for a StructArray or when absent.</summary>
@@ -333,7 +357,9 @@ public sealed class Sample_NoteAccessor : global::Eiva.Fletcher.Model.IArrowRows
             error = $"Sample_Note column 0 'text': non-nullable, found {c0.NullCount} nulls.";
             return false;
         }
-        var result = new Sample_NoteAccessor(length, validity, schemaMetadata ?? NoMetadata, fields);
+        var result = new Sample_NoteAccessor(length, validity, schemaMetadata ?? NoMetadata, fields,
+            validity ?? new global::Apache.Arrow.StructArray(new global::Apache.Arrow.Types.StructType(fields), length,
+                columns, global::Apache.Arrow.ArrowBuffer.Empty, 0));
         result._c0 = c0;
         accessor = result;
         error = null;
@@ -382,6 +408,7 @@ public sealed class SampleAccessor : global::Eiva.Fletcher.Model.IArrowRows<Samp
     private readonly global::Apache.Arrow.StructArray? _validity;
     private readonly global::System.Collections.Generic.IReadOnlyDictionary<string, string> _schemaMetadata;
     private readonly global::Apache.Arrow.Field[] _fields;
+    private readonly global::Apache.Arrow.StructArray _rows;
     internal global::Apache.Arrow.Int32Array _c0 = null!;
     internal global::Apache.Arrow.Int64Array _c1 = null!;
     internal global::Apache.Arrow.UInt32Array _c2 = null!;
@@ -406,12 +433,13 @@ public sealed class SampleAccessor : global::Eiva.Fletcher.Model.IArrowRows<Samp
     internal global::Fletcher.Gen.Golden.Accessor.Sample_NoteAccessor _c19 = null!;
 
     private SampleAccessor(int length, global::Apache.Arrow.StructArray? validity, global::System.Collections.Generic.IReadOnlyDictionary<string, string> schemaMetadata,
-        global::Apache.Arrow.Field[] fields)
+        global::Apache.Arrow.Field[] fields, global::Apache.Arrow.StructArray rows)
     {
         _length = length;
         _validity = validity;
         _schemaMetadata = schemaMetadata;
         _fields = fields;
+        _rows = rows;
     }
 
     /// <summary>The number of rows.</summary>
@@ -430,6 +458,15 @@ public sealed class SampleAccessor : global::Eiva.Fletcher.Model.IArrowRows<Samp
     {
         CheckRow(row);
         return new SampleView(this, row);
+    }
+
+    /// <summary>Row <paramref name="row"/> as a new <see cref="Sample"/>, read by its <c>FromArrow</c>, so it is
+    /// the row the model and its subscriber read (D-BIND-102). A null row of a StructArray reads its
+    /// children's values; <see cref="IsNull"/> tells.</summary>
+    public Sample ToRow(int row)
+    {
+        CheckRow(row);
+        return global::Fletcher.Gen.Golden.Accessor.Sample.FromArrow(_rows, row);
     }
 
     /// <summary>The batch schema's metadata; empty, never null, for a StructArray or when absent.</summary>
@@ -700,7 +737,9 @@ public sealed class SampleAccessor : global::Eiva.Fletcher.Model.IArrowRows<Samp
             error = "Sample column 19 'note': " + e19;
             return false;
         }
-        var result = new SampleAccessor(length, validity, schemaMetadata ?? NoMetadata, fields);
+        var result = new SampleAccessor(length, validity, schemaMetadata ?? NoMetadata, fields,
+            validity ?? new global::Apache.Arrow.StructArray(new global::Apache.Arrow.Types.StructType(fields), length,
+                columns, global::Apache.Arrow.ArrowBuffer.Empty, 0));
         result._c0 = c0;
         result._c1 = c1;
         result._c2 = c2;
@@ -770,6 +809,7 @@ public sealed class TrackAccessor : global::Eiva.Fletcher.Model.IArrowRows<Track
     private readonly global::Apache.Arrow.StructArray? _validity;
     private readonly global::System.Collections.Generic.IReadOnlyDictionary<string, string> _schemaMetadata;
     private readonly global::Apache.Arrow.Field[] _fields;
+    private readonly global::Apache.Arrow.StructArray _rows;
     internal global::Apache.Arrow.Int32Array _c0 = null!;
     internal global::Apache.Arrow.ListArray _c1 = null!;
     internal global::Eiva.Fletcher.Model.IArrowElements<int> _e1 = null!;
@@ -804,12 +844,13 @@ public sealed class TrackAccessor : global::Eiva.Fletcher.Model.IArrowRows<Track
     internal global::Eiva.Fletcher.Model.IArrowElements<PositionView?> _e14 = null!;
 
     private TrackAccessor(int length, global::Apache.Arrow.StructArray? validity, global::System.Collections.Generic.IReadOnlyDictionary<string, string> schemaMetadata,
-        global::Apache.Arrow.Field[] fields)
+        global::Apache.Arrow.Field[] fields, global::Apache.Arrow.StructArray rows)
     {
         _length = length;
         _validity = validity;
         _schemaMetadata = schemaMetadata;
         _fields = fields;
+        _rows = rows;
     }
 
     /// <summary>The number of rows.</summary>
@@ -828,6 +869,15 @@ public sealed class TrackAccessor : global::Eiva.Fletcher.Model.IArrowRows<Track
     {
         CheckRow(row);
         return new TrackView(this, row);
+    }
+
+    /// <summary>Row <paramref name="row"/> as a new <see cref="Track"/>, read by its <c>FromArrow</c>, so it is
+    /// the row the model and its subscriber read (D-BIND-102). A null row of a StructArray reads its
+    /// children's values; <see cref="IsNull"/> tells.</summary>
+    public Track ToRow(int row)
+    {
+        CheckRow(row);
+        return global::Fletcher.Gen.Golden.Accessor.Track.FromArrow(_rows, row);
     }
 
     /// <summary>The batch schema's metadata; empty, never null, for a StructArray or when absent.</summary>
@@ -1209,7 +1259,9 @@ public sealed class TrackAccessor : global::Eiva.Fletcher.Model.IArrowRows<Track
             return false;
         }
         var l14 = new global::Eiva.Fletcher.Model.ViewElements<PositionView>(a14);
-        var result = new TrackAccessor(length, validity, schemaMetadata ?? NoMetadata, fields);
+        var result = new TrackAccessor(length, validity, schemaMetadata ?? NoMetadata, fields,
+            validity ?? new global::Apache.Arrow.StructArray(new global::Apache.Arrow.Types.StructType(fields), length,
+                columns, global::Apache.Arrow.ArrowBuffer.Empty, 0));
         result._c0 = c0;
         result._c1 = c1;
         result._e1 = l1;
@@ -1290,15 +1342,17 @@ public sealed class HyperAccessor : global::Eiva.Fletcher.Model.IArrowRows<Hyper
     private readonly global::Apache.Arrow.StructArray? _validity;
     private readonly global::System.Collections.Generic.IReadOnlyDictionary<string, string> _schemaMetadata;
     private readonly global::Apache.Arrow.Field[] _fields;
+    private readonly global::Apache.Arrow.StructArray _rows;
     internal global::Apache.Arrow.Int32Array _c0 = null!;
 
     private HyperAccessor(int length, global::Apache.Arrow.StructArray? validity, global::System.Collections.Generic.IReadOnlyDictionary<string, string> schemaMetadata,
-        global::Apache.Arrow.Field[] fields)
+        global::Apache.Arrow.Field[] fields, global::Apache.Arrow.StructArray rows)
     {
         _length = length;
         _validity = validity;
         _schemaMetadata = schemaMetadata;
         _fields = fields;
+        _rows = rows;
     }
 
     /// <summary>The number of rows.</summary>
@@ -1317,6 +1371,15 @@ public sealed class HyperAccessor : global::Eiva.Fletcher.Model.IArrowRows<Hyper
     {
         CheckRow(row);
         return new HyperView(this, row);
+    }
+
+    /// <summary>Row <paramref name="row"/> as a new <see cref="Hyper"/>, read by its <c>FromArrow</c>, so it is
+    /// the row the model and its subscriber read (D-BIND-102). A null row of a StructArray reads its
+    /// children's values; <see cref="IsNull"/> tells.</summary>
+    public Hyper ToRow(int row)
+    {
+        CheckRow(row);
+        return global::Fletcher.Gen.Golden.Accessor.Hyper.FromArrow(_rows, row);
     }
 
     /// <summary>The batch schema's metadata; empty, never null, for a StructArray or when absent.</summary>
@@ -1417,7 +1480,9 @@ public sealed class HyperAccessor : global::Eiva.Fletcher.Model.IArrowRows<Hyper
             error = $"Hyper column 0 'id': non-nullable, found {c0.NullCount} nulls.";
             return false;
         }
-        var result = new HyperAccessor(length, validity, schemaMetadata ?? NoMetadata, fields);
+        var result = new HyperAccessor(length, validity, schemaMetadata ?? NoMetadata, fields,
+            validity ?? new global::Apache.Arrow.StructArray(new global::Apache.Arrow.Types.StructType(fields), length,
+                columns, global::Apache.Arrow.ArrowBuffer.Empty, 0));
         result._c0 = c0;
         accessor = result;
         error = null;

@@ -57,9 +57,10 @@ public sealed class Clash
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new Clash();
-        row.FooBar = ((global::Apache.Arrow.Int32Array)array.Fields[0]).GetValue(index);
-        row.FooBar_ = ((global::Apache.Arrow.Int32Array)array.Fields[1]).GetValue(index);
-        row.FooBar__ = ((global::Apache.Arrow.Int32Array)array.Fields[2]).GetValue(index);
+        var fields = array.Fields;
+        row.FooBar = ((global::Apache.Arrow.Int32Array)fields[0]).GetValue(index);
+        row.FooBar_ = ((global::Apache.Arrow.Int32Array)fields[1]).GetValue(index);
+        row.FooBar__ = ((global::Apache.Arrow.Int32Array)fields[2]).GetValue(index);
         return row;
     }
 }

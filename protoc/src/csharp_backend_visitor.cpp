@@ -440,7 +440,7 @@ std::string GenerateToArrow(const std::string& cls, const std::vector<Column>& c
 // Statements that read row `index` of one column back into `row`.
 void EmitRead(std::ostringstream& o, const Column& c) {
     const std::string n = std::to_string(c.index);
-    const std::string field = "array.Fields[" + n + "]";
+    const std::string field = "fields[" + n + "]";
     const std::string in = "        ";
     switch (c.kind) {
         case ColKind::SCALAR: {
@@ -555,6 +555,8 @@ std::string GenerateFromArrow(const std::string& cls, const std::vector<Column>&
       << " FromArrow(global::Apache.Arrow.StructArray array, int index)\n    {\n"
       << "        global::System.ArgumentNullException.ThrowIfNull(array);\n"
       << "        var row = new " << cls << "();\n";
+    // D-BIND-102: Fields is read once; Apache.Arrow 23 allocates 64 bytes on every read of it.
+    if (!columns.empty()) o << "        var fields = array.Fields;\n";
     for (const auto& c : columns) EmitRead(o, c);
     o << "        return row;\n    }\n";
     return o.str();

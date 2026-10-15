@@ -56,7 +56,8 @@ public sealed class NestedEnums
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new NestedEnums();
-        row.State = (NestedEnums_InnerStatus)((global::Apache.Arrow.Int32Array)array.Fields[0]).GetValue(index).GetValueOrDefault();
+        var fields = array.Fields;
+        row.State = (NestedEnums_InnerStatus)((global::Apache.Arrow.Int32Array)fields[0]).GetValue(index).GetValueOrDefault();
         return row;
     }
 }
@@ -358,46 +359,47 @@ public sealed class ScalarCoverage
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new ScalarCoverage();
-        row.BoolValue = ((global::Apache.Arrow.BooleanArray)array.Fields[0]).GetValue(index).GetValueOrDefault();
-        row.Int32Value = ((global::Apache.Arrow.Int32Array)array.Fields[1]).GetValue(index).GetValueOrDefault();
-        row.Int64Value = ((global::Apache.Arrow.Int64Array)array.Fields[2]).GetValue(index).GetValueOrDefault();
-        row.Uint32Value = ((global::Apache.Arrow.UInt32Array)array.Fields[3]).GetValue(index).GetValueOrDefault();
-        row.Uint64Value = ((global::Apache.Arrow.UInt64Array)array.Fields[4]).GetValue(index).GetValueOrDefault();
-        row.Sint32Value = ((global::Apache.Arrow.Int32Array)array.Fields[5]).GetValue(index).GetValueOrDefault();
-        row.Sint64Value = ((global::Apache.Arrow.Int64Array)array.Fields[6]).GetValue(index).GetValueOrDefault();
-        row.Fixed32Value = ((global::Apache.Arrow.UInt32Array)array.Fields[7]).GetValue(index).GetValueOrDefault();
-        row.Fixed64Value = ((global::Apache.Arrow.UInt64Array)array.Fields[8]).GetValue(index).GetValueOrDefault();
-        row.Sfixed32Value = ((global::Apache.Arrow.Int32Array)array.Fields[9]).GetValue(index).GetValueOrDefault();
-        row.Sfixed64Value = ((global::Apache.Arrow.Int64Array)array.Fields[10]).GetValue(index).GetValueOrDefault();
-        row.FloatValue = ((global::Apache.Arrow.FloatArray)array.Fields[11]).GetValue(index).GetValueOrDefault();
-        row.DoubleValue = ((global::Apache.Arrow.DoubleArray)array.Fields[12]).GetValue(index).GetValueOrDefault();
-        row.StringValue = ((global::Apache.Arrow.StringArray)array.Fields[13]).GetString(index) ?? "";
-        { var a = (global::Apache.Arrow.BinaryArray)array.Fields[14]; row.BytesValue = a.IsNull(index) ? global::System.Array.Empty<byte>() : a.GetBytes(index).ToArray(); }
-        row.OptionalBool = ((global::Apache.Arrow.BooleanArray)array.Fields[15]).GetValue(index);
-        row.OptionalInt32 = ((global::Apache.Arrow.Int32Array)array.Fields[16]).GetValue(index);
-        row.OptionalString = ((global::Apache.Arrow.StringArray)array.Fields[17]).GetString(index);
-        { var a = (global::Apache.Arrow.BinaryArray)array.Fields[18]; row.OptionalBytes = a.IsNull(index) ? null : a.GetBytes(index).ToArray(); }
-        row.WrappedBool = ((global::Apache.Arrow.BooleanArray)array.Fields[19]).GetValue(index);
-        row.WrappedInt32 = ((global::Apache.Arrow.Int32Array)array.Fields[20]).GetValue(index);
-        row.WrappedInt64 = ((global::Apache.Arrow.Int64Array)array.Fields[21]).GetValue(index);
-        row.WrappedUint32 = ((global::Apache.Arrow.UInt32Array)array.Fields[22]).GetValue(index);
-        row.WrappedUint64 = ((global::Apache.Arrow.UInt64Array)array.Fields[23]).GetValue(index);
-        row.WrappedFloat = ((global::Apache.Arrow.FloatArray)array.Fields[24]).GetValue(index);
-        row.WrappedDouble = ((global::Apache.Arrow.DoubleArray)array.Fields[25]).GetValue(index);
-        row.WrappedString = ((global::Apache.Arrow.StringArray)array.Fields[26]).GetString(index);
-        { var a = (global::Apache.Arrow.BinaryArray)array.Fields[27]; row.WrappedBytes = a.IsNull(index) ? null : a.GetBytes(index).ToArray(); }
+        var fields = array.Fields;
+        row.BoolValue = ((global::Apache.Arrow.BooleanArray)fields[0]).GetValue(index).GetValueOrDefault();
+        row.Int32Value = ((global::Apache.Arrow.Int32Array)fields[1]).GetValue(index).GetValueOrDefault();
+        row.Int64Value = ((global::Apache.Arrow.Int64Array)fields[2]).GetValue(index).GetValueOrDefault();
+        row.Uint32Value = ((global::Apache.Arrow.UInt32Array)fields[3]).GetValue(index).GetValueOrDefault();
+        row.Uint64Value = ((global::Apache.Arrow.UInt64Array)fields[4]).GetValue(index).GetValueOrDefault();
+        row.Sint32Value = ((global::Apache.Arrow.Int32Array)fields[5]).GetValue(index).GetValueOrDefault();
+        row.Sint64Value = ((global::Apache.Arrow.Int64Array)fields[6]).GetValue(index).GetValueOrDefault();
+        row.Fixed32Value = ((global::Apache.Arrow.UInt32Array)fields[7]).GetValue(index).GetValueOrDefault();
+        row.Fixed64Value = ((global::Apache.Arrow.UInt64Array)fields[8]).GetValue(index).GetValueOrDefault();
+        row.Sfixed32Value = ((global::Apache.Arrow.Int32Array)fields[9]).GetValue(index).GetValueOrDefault();
+        row.Sfixed64Value = ((global::Apache.Arrow.Int64Array)fields[10]).GetValue(index).GetValueOrDefault();
+        row.FloatValue = ((global::Apache.Arrow.FloatArray)fields[11]).GetValue(index).GetValueOrDefault();
+        row.DoubleValue = ((global::Apache.Arrow.DoubleArray)fields[12]).GetValue(index).GetValueOrDefault();
+        row.StringValue = ((global::Apache.Arrow.StringArray)fields[13]).GetString(index) ?? "";
+        { var a = (global::Apache.Arrow.BinaryArray)fields[14]; row.BytesValue = a.IsNull(index) ? global::System.Array.Empty<byte>() : a.GetBytes(index).ToArray(); }
+        row.OptionalBool = ((global::Apache.Arrow.BooleanArray)fields[15]).GetValue(index);
+        row.OptionalInt32 = ((global::Apache.Arrow.Int32Array)fields[16]).GetValue(index);
+        row.OptionalString = ((global::Apache.Arrow.StringArray)fields[17]).GetString(index);
+        { var a = (global::Apache.Arrow.BinaryArray)fields[18]; row.OptionalBytes = a.IsNull(index) ? null : a.GetBytes(index).ToArray(); }
+        row.WrappedBool = ((global::Apache.Arrow.BooleanArray)fields[19]).GetValue(index);
+        row.WrappedInt32 = ((global::Apache.Arrow.Int32Array)fields[20]).GetValue(index);
+        row.WrappedInt64 = ((global::Apache.Arrow.Int64Array)fields[21]).GetValue(index);
+        row.WrappedUint32 = ((global::Apache.Arrow.UInt32Array)fields[22]).GetValue(index);
+        row.WrappedUint64 = ((global::Apache.Arrow.UInt64Array)fields[23]).GetValue(index);
+        row.WrappedFloat = ((global::Apache.Arrow.FloatArray)fields[24]).GetValue(index);
+        row.WrappedDouble = ((global::Apache.Arrow.DoubleArray)fields[25]).GetValue(index);
+        row.WrappedString = ((global::Apache.Arrow.StringArray)fields[26]).GetString(index);
+        { var a = (global::Apache.Arrow.BinaryArray)fields[27]; row.WrappedBytes = a.IsNull(index) ? null : a.GetBytes(index).ToArray(); }
         {
-            var a = (global::Apache.Arrow.TimestampArray)array.Fields[28];
+            var a = (global::Apache.Arrow.TimestampArray)fields[28];
             var t = (global::Apache.Arrow.Types.TimestampType)a.Data.DataType;
             row.TimestampValue = new global::Eiva.Fletcher.Model.Timestamp(a.GetValue(index).GetValueOrDefault(), t.Unit, t.Timezone);
         }
         {
-            var a = (global::Apache.Arrow.DurationArray)array.Fields[29];
+            var a = (global::Apache.Arrow.DurationArray)fields[29];
             var t = (global::Apache.Arrow.Types.DurationType)a.Data.DataType;
             row.DurationValue = new global::Eiva.Fletcher.Model.Duration(a.GetValue(index).GetValueOrDefault(), t.Unit);
         }
-        row.Status = (TopLevelStatus)((global::Apache.Arrow.Int32Array)array.Fields[30]).GetValue(index).GetValueOrDefault();
-        row.NestedStatus = (NestedEnums_InnerStatus)((global::Apache.Arrow.Int32Array)array.Fields[31]).GetValue(index).GetValueOrDefault();
+        row.Status = (TopLevelStatus)((global::Apache.Arrow.Int32Array)fields[30]).GetValue(index).GetValueOrDefault();
+        row.NestedStatus = (NestedEnums_InnerStatus)((global::Apache.Arrow.Int32Array)fields[31]).GetValue(index).GetValueOrDefault();
         return row;
     }
 }
@@ -458,9 +460,10 @@ public sealed class Leaf
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new Leaf();
-        row.Id = ((global::Apache.Arrow.Int32Array)array.Fields[0]).GetValue(index).GetValueOrDefault();
-        row.Label = ((global::Apache.Arrow.StringArray)array.Fields[1]).GetString(index) ?? "";
-        row.Status = (TopLevelStatus)((global::Apache.Arrow.Int32Array)array.Fields[2]).GetValue(index).GetValueOrDefault();
+        var fields = array.Fields;
+        row.Id = ((global::Apache.Arrow.Int32Array)fields[0]).GetValue(index).GetValueOrDefault();
+        row.Label = ((global::Apache.Arrow.StringArray)fields[1]).GetString(index) ?? "";
+        row.Status = (TopLevelStatus)((global::Apache.Arrow.Int32Array)fields[2]).GetValue(index).GetValueOrDefault();
         return row;
     }
 }
@@ -533,10 +536,11 @@ public sealed class Branch
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new Branch();
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[0]; row.Leaf = global::Fletcher.Gen.Integration.Coverage.Leaf.FromArrow(s, index); }
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[1]; row.OptionalLeaf = s.IsNull(index) ? null : global::Fletcher.Gen.Integration.Coverage.Leaf.FromArrow(s, index); }
+        var fields = array.Fields;
+        { var s = (global::Apache.Arrow.StructArray)fields[0]; row.Leaf = global::Fletcher.Gen.Integration.Coverage.Leaf.FromArrow(s, index); }
+        { var s = (global::Apache.Arrow.StructArray)fields[1]; row.OptionalLeaf = s.IsNull(index) ? null : global::Fletcher.Gen.Integration.Coverage.Leaf.FromArrow(s, index); }
         {
-            var l = (global::Apache.Arrow.ListArray)array.Fields[2];
+            var l = (global::Apache.Arrow.ListArray)fields[2];
             var e = (global::Apache.Arrow.StructArray)l.Values;
             var start = l.ValueOffsets[index];
             var end = l.ValueOffsets[index + 1];
@@ -603,8 +607,9 @@ public sealed class FlattenedPoint
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new FlattenedPoint();
-        row.X = ((global::Apache.Arrow.DoubleArray)array.Fields[0]).GetValue(index).GetValueOrDefault();
-        row.Y = ((global::Apache.Arrow.DoubleArray)array.Fields[1]).GetValue(index).GetValueOrDefault();
+        var fields = array.Fields;
+        row.X = ((global::Apache.Arrow.DoubleArray)fields[0]).GetValue(index).GetValueOrDefault();
+        row.Y = ((global::Apache.Arrow.DoubleArray)fields[1]).GetValue(index).GetValueOrDefault();
         return row;
     }
 }
@@ -652,8 +657,9 @@ public sealed class FieldFlattenedPosition
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new FieldFlattenedPosition();
-        row.X = ((global::Apache.Arrow.DoubleArray)array.Fields[0]).GetValue(index).GetValueOrDefault();
-        row.Y = ((global::Apache.Arrow.DoubleArray)array.Fields[1]).GetValue(index).GetValueOrDefault();
+        var fields = array.Fields;
+        row.X = ((global::Apache.Arrow.DoubleArray)fields[0]).GetValue(index).GetValueOrDefault();
+        row.Y = ((global::Apache.Arrow.DoubleArray)fields[1]).GetValue(index).GetValueOrDefault();
         return row;
     }
 }
@@ -976,12 +982,13 @@ public sealed class CompositeCoverage
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new CompositeCoverage();
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[0]; row.Scalars = global::Fletcher.Gen.Integration.Coverage.ScalarCoverage.FromArrow(s, index); }
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[1]; row.OptionalScalars = s.IsNull(index) ? null : global::Fletcher.Gen.Integration.Coverage.ScalarCoverage.FromArrow(s, index); }
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[2]; row.Branch = global::Fletcher.Gen.Integration.Coverage.Branch.FromArrow(s, index); }
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[3]; row.OptionalBranch = s.IsNull(index) ? null : global::Fletcher.Gen.Integration.Coverage.Branch.FromArrow(s, index); }
+        var fields = array.Fields;
+        { var s = (global::Apache.Arrow.StructArray)fields[0]; row.Scalars = global::Fletcher.Gen.Integration.Coverage.ScalarCoverage.FromArrow(s, index); }
+        { var s = (global::Apache.Arrow.StructArray)fields[1]; row.OptionalScalars = s.IsNull(index) ? null : global::Fletcher.Gen.Integration.Coverage.ScalarCoverage.FromArrow(s, index); }
+        { var s = (global::Apache.Arrow.StructArray)fields[2]; row.Branch = global::Fletcher.Gen.Integration.Coverage.Branch.FromArrow(s, index); }
+        { var s = (global::Apache.Arrow.StructArray)fields[3]; row.OptionalBranch = s.IsNull(index) ? null : global::Fletcher.Gen.Integration.Coverage.Branch.FromArrow(s, index); }
         {
-            var l = (global::Apache.Arrow.ListArray)array.Fields[4];
+            var l = (global::Apache.Arrow.ListArray)fields[4];
             var e = (global::Apache.Arrow.Int32Array)l.Values;
             var start = l.ValueOffsets[index];
             var end = l.ValueOffsets[index + 1];
@@ -990,7 +997,7 @@ public sealed class CompositeCoverage
             row.RepeatedScalar = x;
         }
         {
-            var l = (global::Apache.Arrow.ListArray)array.Fields[5];
+            var l = (global::Apache.Arrow.ListArray)fields[5];
             var e = (global::Apache.Arrow.StringArray)l.Values;
             var start = l.ValueOffsets[index];
             var end = l.ValueOffsets[index + 1];
@@ -999,7 +1006,7 @@ public sealed class CompositeCoverage
             row.RepeatedString = x;
         }
         {
-            var l = (global::Apache.Arrow.ListArray)array.Fields[6];
+            var l = (global::Apache.Arrow.ListArray)fields[6];
             var e = (global::Apache.Arrow.BinaryArray)l.Values;
             var start = l.ValueOffsets[index];
             var end = l.ValueOffsets[index + 1];
@@ -1008,7 +1015,7 @@ public sealed class CompositeCoverage
             row.RepeatedBytes = x;
         }
         {
-            var l = (global::Apache.Arrow.ListArray)array.Fields[7];
+            var l = (global::Apache.Arrow.ListArray)fields[7];
             var e = (global::Apache.Arrow.StructArray)l.Values;
             var start = l.ValueOffsets[index];
             var end = l.ValueOffsets[index + 1];
@@ -1017,7 +1024,7 @@ public sealed class CompositeCoverage
             row.RepeatedStruct = x;
         }
         {
-            var m = (global::Apache.Arrow.MapArray)array.Fields[8];
+            var m = (global::Apache.Arrow.MapArray)fields[8];
             var k = (global::Apache.Arrow.StringArray)m.Keys;
             var e = (global::Apache.Arrow.Int32Array)m.Values;
             var start = m.ValueOffsets[index];
@@ -1027,7 +1034,7 @@ public sealed class CompositeCoverage
             row.MapScalar = x;
         }
         {
-            var m = (global::Apache.Arrow.MapArray)array.Fields[9];
+            var m = (global::Apache.Arrow.MapArray)fields[9];
             var k = (global::Apache.Arrow.StringArray)m.Keys;
             var e = (global::Apache.Arrow.StructArray)m.Values;
             var start = m.ValueOffsets[index];
@@ -1037,7 +1044,7 @@ public sealed class CompositeCoverage
             row.MapStruct = x;
         }
         {
-            var l = (global::Apache.Arrow.ListArray)array.Fields[10];
+            var l = (global::Apache.Arrow.ListArray)fields[10];
             var e = (global::Apache.Arrow.StructArray)l.Values;
             var start = l.ValueOffsets[index];
             var end = l.ValueOffsets[index + 1];
@@ -1046,7 +1053,7 @@ public sealed class CompositeCoverage
             row.FlattenedStructList = x;
         }
         {
-            var l = (global::Apache.Arrow.ListArray)array.Fields[11];
+            var l = (global::Apache.Arrow.ListArray)fields[11];
             var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>>(l.ValueOffsets[index + 1] - l.ValueOffsets[index]);
             var e0 = (global::Apache.Arrow.ListArray)l.Values;
             for (var j0 = l.ValueOffsets[index]; j0 < l.ValueOffsets[index + 1]; j0++)
@@ -1062,7 +1069,7 @@ public sealed class CompositeCoverage
             row.NestedStructLists = x;
         }
         {
-            var l = (global::Apache.Arrow.ListArray)array.Fields[12];
+            var l = (global::Apache.Arrow.ListArray)fields[12];
             var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Integration.Coverage.Leaf>>>(l.ValueOffsets[index + 1] - l.ValueOffsets[index]);
             var e0 = (global::Apache.Arrow.ListArray)l.Values;
             for (var j0 = l.ValueOffsets[index]; j0 < l.ValueOffsets[index + 1]; j0++)
@@ -1084,7 +1091,7 @@ public sealed class CompositeCoverage
             row.Depth3StructLists = x;
         }
         {
-            var l = (global::Apache.Arrow.ListArray)array.Fields[13];
+            var l = (global::Apache.Arrow.ListArray)fields[13];
             var e = (global::Apache.Arrow.StructArray)l.Values;
             var start = l.ValueOffsets[index];
             var end = l.ValueOffsets[index + 1];
@@ -1092,8 +1099,8 @@ public sealed class CompositeCoverage
             for (var j = start; j < end; j++) x.Add(global::Fletcher.Gen.Integration.Coverage.Leaf.FromArrow(e, j));
             row.OptionalFlattenedStructList = x;
         }
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[14]; row.MessageFlattenedPoint = global::Fletcher.Gen.Integration.Coverage.FlattenedPoint.FromArrow(s, index); }
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[15]; row.FieldFlattenedPosition = global::Fletcher.Gen.Integration.Coverage.FieldFlattenedPosition.FromArrow(s, index); }
+        { var s = (global::Apache.Arrow.StructArray)fields[14]; row.MessageFlattenedPoint = global::Fletcher.Gen.Integration.Coverage.FlattenedPoint.FromArrow(s, index); }
+        { var s = (global::Apache.Arrow.StructArray)fields[15]; row.FieldFlattenedPosition = global::Fletcher.Gen.Integration.Coverage.FieldFlattenedPosition.FromArrow(s, index); }
         return row;
     }
 }
@@ -1132,7 +1139,8 @@ public sealed class ServiceRequest
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new ServiceRequest();
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[0]; row.Payload = global::Fletcher.Gen.Integration.Coverage.CompositeCoverage.FromArrow(s, index); }
+        var fields = array.Fields;
+        { var s = (global::Apache.Arrow.StructArray)fields[0]; row.Payload = global::Fletcher.Gen.Integration.Coverage.CompositeCoverage.FromArrow(s, index); }
         return row;
     }
 }
@@ -1185,8 +1193,9 @@ public sealed class ServiceReply
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new ServiceReply();
-        row.Accepted = ((global::Apache.Arrow.BooleanArray)array.Fields[0]).GetValue(index).GetValueOrDefault();
-        row.Message = ((global::Apache.Arrow.StringArray)array.Fields[1]).GetString(index) ?? "";
+        var fields = array.Fields;
+        row.Accepted = ((global::Apache.Arrow.BooleanArray)fields[0]).GetValue(index).GetValueOrDefault();
+        row.Message = ((global::Apache.Arrow.StringArray)fields[1]).GetString(index) ?? "";
         return row;
     }
 }

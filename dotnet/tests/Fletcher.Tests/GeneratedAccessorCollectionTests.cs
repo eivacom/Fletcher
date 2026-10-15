@@ -110,6 +110,21 @@ public sealed class GeneratedAccessorCollectionTests
     }
 
     [Fact]
+    public void ToRowCopiesEveryCollectionOutAsTheModelWroteIt()
+    {
+        // D-BIND-102: ToRow is the model's FromArrow, collections included; checked by writing the
+        // row again and reading it through the view.
+        Track[] rows = { Full(1), new Track { Id = 2 }, Full(3) };
+        using RecordBatch batch = Track.ToArrow(rows);
+        var accessor = Make(batch);
+        for (int i = 0; i < rows.Length; i++)
+        {
+            using RecordBatch again = Track.ToArrow(new[] { accessor.ToRow(i) });
+            AssertRow(rows[i], Make(again).At(0));
+        }
+    }
+
+    [Fact]
     public void ACollectionOfAStructAtANonZeroOffsetReadsItsOwnRows()
     {
         // D-BIND-10 for lists: the struct's children come windowed, and a list child's offsets

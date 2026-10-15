@@ -295,7 +295,7 @@ public sealed class GeneratedAccessorTests
     {
         // D-BIND-97 and D-BIND-98: the view is (accessor, row) over columns cast once, so a read
         // of a value, an optional, an enum, a timestamp or a nested struct allocates nothing.
-        // A string or bytes property allocates by design and is left out.
+        // A string or bytes property allocates by design and is left out; its span getter is in.
         using RecordBatch batch = Sample.ToArrow(Enumerable.Range(0, 64).Select(i => i % 2 == 0 ? Full(i) : Sparse(i)).ToArray());
         var accessor = Make(batch);
 
@@ -307,7 +307,9 @@ public sealed class GeneratedAccessorTests
                 SampleView v = accessor.At(i);
                 sum += v.Id + v.Ticks + v.Value + (v.MaybeId ?? 0) + (int)v.Quality + (v.MaybeQuality is null ? 1 : 0)
                        + v.At.Value + v.Span.Value + v.Position.Lat + (v.Position.Depth ?? 0)
-                       + (v.MaybePosition?.Lon ?? 0) + (v.Valid ? 1 : 0);
+                       + (v.MaybePosition?.Lon ?? 0) + (v.Valid ? 1 : 0)
+                       // D-BIND-102: the string and bytes values read in place.
+                       + v.NameUtf8.Length + v.PayloadSpan.Length + v.MaybeNameUtf8.Length + v.Note.TextUtf8.Length;
             }
             return sum;
         }
@@ -325,6 +327,69 @@ public sealed class GeneratedAccessorTests
         long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
 
         Assert.NotEqual(0, total);
-        Assert.Equal(0, allocated);
+        // The runtime allocates a few hundred bytes once while it tiers a loop up; an allocating
+        // read would cost at least 24 bytes each, times 64,000 rows of reads here.
+        Assert.True(allocated < 4096, $"{allocated} bytes");
+    }
+
+
+    [Fact]
+    public void ToRowIsTheRowTheModelWrote()
+    {
+        // D-BIND-102: ToRow reads through the model's FromArrow, so every column comes back as
+        // written. Checked by writing the row again and reading it through the (tested) view.
+        Sample[] rows = { Full(1), Sparse(2), Full(3) };
+        using RecordBatch batch = Sample.ToArrow(rows);
+        var accessor = Make(batch);
+        for (var i = 0; i < rows.Length; i++)
+        {
+            Sample row = accessor.ToRow(i);
+            using RecordBatch again = Sample.ToArrow(new[] { row });
+            AssertRow(rows[i], Make(again).At(0));
+        }
+        Assert.Throws<ArgumentOutOfRangeException>(() => accessor.ToRow(rows.Length));
+    }
+
+    [Fact]
+    public void ToRowOfAStructArrayAtANonZeroOffsetIsItsOwnRow()
+    {
+        Sample[] rows = { Full(1), Full(2), Sparse(3) };
+        using RecordBatch batch = Sample.ToArrow(rows);
+        var slice = (StructArray)AsStruct(batch).Slice(1, 2);
+        Assert.True(SampleAccessor.TryMake(slice, out var accessor, out var error), error);
+        for (var i = 0; i < 2; i++)
+        {
+            using RecordBatch again = Sample.ToArrow(new[] { accessor.ToRow(i) });
+            AssertRow(rows[i + 1], Make(again).At(0));
+        }
+    }
+
+    [Fact]
+    public void AStringOrBytesValueReadsInPlaceAsItsBytes()
+    {
+        // D-BIND-102: <Property>Utf8 is the string's UTF-8, <Property>Span the bytes; a null value
+        // reads as an empty span.
+        using RecordBatch batch = Sample.ToArrow(new[] { Full(7), Sparse(8) });
+        var accessor = Make(batch);
+        SampleView full = accessor.At(0);
+        SampleView sparse = accessor.At(1);
+
+        Assert.Equal(System.Text.Encoding.UTF8.GetBytes(full.Name), full.NameUtf8.ToArray());
+        Assert.Equal(System.Text.Encoding.UTF8.GetBytes(full.MaybeName!), full.MaybeNameUtf8.ToArray());
+        Assert.Equal(System.Text.Encoding.UTF8.GetBytes(full.Note.Text), full.Note.TextUtf8.ToArray());
+        Assert.Equal(full.Payload, full.PayloadSpan.ToArray());
+        Assert.Equal(full.MaybePayload, full.MaybePayloadSpan.ToArray());
+        Assert.True(sparse.MaybeNameUtf8.IsEmpty);
+        Assert.True(sparse.MaybePayloadSpan.IsEmpty);
+        Assert.True(sparse.NameUtf8.IsEmpty);
+
+        // Arrow lets a null value's offsets span bytes; it reads as empty all the same (Apache.Arrow's
+        // GetBytes sees to it, which is why the generated getter has no guard).
+        var offsets = new ArrowBuffer.Builder<int>().Append(0).Append(3).Append(6).Build();
+        var data = new ArrowBuffer.Builder<byte>().AppendRange("abcdef"u8.ToArray()).Build();
+        var spanning = new StringArray(2, offsets, data, new ArrowBuffer.BitmapBuilder().Append(true).Append(false).Build(), 1);
+        SampleView nulled = Make(Replace(batch, 14, spanning)).At(1);
+        Assert.Null(nulled.MaybeName);
+        Assert.True(nulled.MaybeNameUtf8.IsEmpty);
     }
 }

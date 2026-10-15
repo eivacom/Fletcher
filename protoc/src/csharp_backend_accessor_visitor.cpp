@@ -57,6 +57,7 @@ struct AccessorField {
     bool nullable = false;         // the model property's `?`
     std::optional<Column> column;  // nullopt when this accessor does not read it
     std::string why;               // when not read: the reason
+    std::string span;              // a string or bytes field: its ReadOnlySpan<byte> getter
 };
 
 // The fields of `msg`, walked as CsVisitor::GenerateMessage walks them, so every property
@@ -97,6 +98,16 @@ std::vector<AccessorField> FieldsOf(const Descriptor* msg, const FileDescriptor*
             f.column = std::move(*column);
         }
         out.push_back(std::move(f));
+    }
+    // D-BIND-102: a string field's UTF-8 bytes and a bytes field's bytes, read in place, named
+    // after every model property so none of them moves, and never the view's own name.
+    for (auto& f : out) {
+        if (!f.column || f.column->kind != ColKind::SCALAR) continue;
+        const std::string& type = f.column->scalar.type_text;
+        if (type != "string" && type != "byte[]") continue;
+        f.span = f.property + (type == "string" ? "Utf8" : "Span");
+        while (taken.count(f.span) != 0 || f.span == CsViewName(msg)) f.span += '_';
+        taken.insert(f.span);
     }
     return out;
 }
@@ -279,6 +290,9 @@ std::string GenerateAccessor(const Descriptor* msg, const FileDescriptor* file,
             label + " column " + std::to_string(f.index) + " '" + f.name + "': " + f.why + ".";
         break;
     }
+    // Whether the model has FromArrow, which ToRow returns through (D-BIND-102).
+    std::set<const Descriptor*> seen;
+    const bool model_converts = ConversionBlocker(msg, file, cross, seen).empty();
 
     std::ostringstream o;
     o << "/// <summary>Reads <see cref=\"" << CsTypeName(msg)
@@ -308,7 +322,8 @@ std::string GenerateAccessor(const Descriptor* msg, const FileDescriptor* file,
     o << "    private readonly int _length;\n"
       << "    private readonly global::Apache.Arrow.StructArray? _validity;\n"
       << "    private readonly " << kDict << " _schemaMetadata;\n"
-      << "    private readonly global::Apache.Arrow.Field[] _fields;\n";
+      << "    private readonly global::Apache.Arrow.Field[] _fields;\n"
+      << "    private readonly global::Apache.Arrow.StructArray _rows;\n";
     for (const auto& f : fields) {
         if (!f.column) continue;
         const auto& c = *f.column;
@@ -330,12 +345,13 @@ std::string GenerateAccessor(const Descriptor* msg, const FileDescriptor* file,
     o << "\n"
       << "    private " << cls << "(int length, global::Apache.Arrow.StructArray? validity, "
       << kDict << " schemaMetadata,\n"
-      << "        global::Apache.Arrow.Field[] fields)\n"
+      << "        global::Apache.Arrow.Field[] fields, global::Apache.Arrow.StructArray rows)\n"
       << "    {\n"
       << "        _length = length;\n"
       << "        _validity = validity;\n"
       << "        _schemaMetadata = schemaMetadata;\n"
       << "        _fields = fields;\n"
+      << "        _rows = rows;\n"
       << "    }\n\n"
       << "    /// <summary>The number of rows.</summary>\n"
       << "    public int Length => _length;\n\n"
@@ -354,6 +370,21 @@ std::string GenerateAccessor(const Descriptor* msg, const FileDescriptor* file,
       << "        CheckRow(row);\n"
       << "        return new " << view << "(this, row);\n"
       << "    }\n\n"
+      << "    /// <summary>Row <paramref name=\"row\"/> as a new <see cref=\"" << CsTypeName(msg)
+      << "\"/>, read by its <c>FromArrow</c>, so it is\n"
+      << "    /// the row the model and its subscriber read (D-BIND-102). A null row of a "
+         "StructArray reads its\n"
+      << "    /// children's values; <see cref=\"IsNull\"/> tells.</summary>\n"
+      << "    public " << CsTypeName(msg) << " ToRow(int row)\n"
+      << "    {\n"
+      << "        CheckRow(row);\n";
+    if (model_converts)
+        o << "        return " << model << ".FromArrow(_rows, row);\n";
+    else
+        // No FromArrow exists for this message, and its TryMake always refuses, so no accessor
+        // of it can be made: the statement only has to compile.
+        o << "        throw new global::System.InvalidOperationException(Refusal);\n";
+    o << "    }\n\n"
       << "    /// <summary>The batch schema's metadata; empty, never null, for a StructArray or "
          "when absent.</summary>\n"
       << "    public " << kDict << " SchemaMetadata => _schemaMetadata;\n\n"
@@ -462,7 +493,11 @@ std::string GenerateAccessor(const Descriptor* msg, const FileDescriptor* file,
                      file);
     }
     o << "        var result = new " << cls
-      << "(length, validity, schemaMetadata ?? NoMetadata, fields);\n";
+      << "(length, validity, schemaMetadata ?? NoMetadata, fields,\n"
+      // ToRow's columns: a StructArray source itself, or a batch's columns wrapped, no copy.
+      << "            validity ?? new global::Apache.Arrow.StructArray(new "
+         "global::Apache.Arrow.Types.StructType(fields), length,\n"
+      << "                columns, global::Apache.Arrow.ArrowBuffer.Empty, 0));\n";
     for (const auto& f : fields) {
         if (!f.column) continue;
         const auto& c = *f.column;
@@ -603,6 +638,13 @@ std::string GenerateView(const Descriptor* msg, const FileDescriptor* file,
         const auto& c = *f.column;
         o << "\n    public " << ViewType(c, f.type_text, file) << (f.nullable ? "?" : "") << " "
           << f.property << " => " << ReadExpression(c, f.type_text, f.nullable, file) << ";\n";
+        if (!f.span.empty()) {
+            // D-BIND-102: the same value's bytes in place, copying nothing. Apache.Arrow's GetBytes
+            // reads a null value as empty even where its offsets span bytes (a test pins it), so
+            // a nullable field needs no guard.
+            o << "\n    public global::System.ReadOnlySpan<byte> " << f.span << " => _accessor._c"
+              << c.index << ".GetBytes(_row);\n";
+        }
     }
     o << "}\n";
     return o.str();

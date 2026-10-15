@@ -42,6 +42,8 @@ public readonly struct Sample_NoteView
     }
 
     public string Text => _accessor._c0.GetString(_row) ?? "";
+
+    public global::System.ReadOnlySpan<byte> TextUtf8 => _accessor._c0.GetBytes(_row);
 }
 
 /// <summary>One row of a <see cref="SampleAccessor"/>, read in place: its properties are <see cref="Sample"/>'s,
@@ -74,7 +76,11 @@ public readonly struct SampleView
 
     public string Name => _accessor._c7.GetString(_row) ?? "";
 
+    public global::System.ReadOnlySpan<byte> NameUtf8 => _accessor._c7.GetBytes(_row);
+
     public byte[] Payload => _accessor._c8.GetBytes(_row).ToArray();
+
+    public global::System.ReadOnlySpan<byte> PayloadSpan => _accessor._c8.GetBytes(_row);
 
     public Quality Quality => (Quality)_accessor._c9.GetValue(_row).GetValueOrDefault();
 
@@ -88,7 +94,11 @@ public readonly struct SampleView
 
     public string? MaybeName => _accessor._c14.GetString(_row);
 
+    public global::System.ReadOnlySpan<byte> MaybeNameUtf8 => _accessor._c14.GetBytes(_row);
+
     public byte[]? MaybePayload => _accessor._c15.IsNull(_row) ? null : _accessor._c15.GetBytes(_row).ToArray();
+
+    public global::System.ReadOnlySpan<byte> MaybePayloadSpan => _accessor._c15.GetBytes(_row);
 
     public Quality? MaybeQuality => _accessor._c16.GetValue(_row) is int v ? (Quality)v : null;
 

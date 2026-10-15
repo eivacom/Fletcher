@@ -998,3 +998,20 @@ fixture constrains it.
   `Fletcher.Tests` seven new collection cases (the 7a case for a list refusal retired); four
   mutants each fail a test. The nullability test's G-Q4 exception list gains the golden's
   deliberate instance, `Track.MaybePoints`.
+
+**7c (2026-10-15).** `ToRow(row)` and the span getters (D-BIND-102, ruled at 7c's start after the
+maintainer asked for both `ToRow` designs' pros and cons). `ToRow` returns the model's own
+`FromArrow` over the accessor's columns, kept as one `StructArray` (the source, or a wrapper around
+a batch's columns), so a row from `ToRow` is the row the model and its subscriber read. A string
+field's view gets `<Property>Utf8` and a bytes field `<Property>Span`, `ReadOnlySpan<byte>` read in
+place, named after every model property. BIND-6's `FromArrow` debt is paid: `Fields` is read once
+per call, which moves every model golden by that one line and the column reads it feeds, nothing
+else.
+
+- **Found by a mutant:** the null guard planned for a nullable string's span was redundant;
+  Apache.Arrow's `GetBytes` reads a null as empty even where its offsets span bytes. The guard was
+  dropped and a test pins the behaviour.
+- **Tests:** plugin suite 180 (two new); `Fletcher.Tests` 409, four new (`ToRow` for scalars,
+  collections and a sliced source; the spans, including a null that spans bytes); two mutants
+  (`ToRow` reading row 0, a span reading row 0) each fail a test, and the third is the finding
+  above.

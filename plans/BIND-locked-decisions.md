@@ -3030,3 +3030,24 @@ accessor), after a read-only map of the C++ and Rust accessors and the capstone 
   element, as C++'s `optional<RowView>`. Nothing a C++ or Rust producer may write is refused.
   **Declined:** the model's types (a copy per read); refusing a batch with a null element in
   `TryMake` (a legal batch from another producer would be refused).
+
+- **D-BIND-102 - `accessor.ToRow(row)` is the model's `FromArrow` over the accessor's columns; a
+  bytes field's view gets a zero-copy span getter as a string field does; and the model's
+  `FromArrow` reads `StructArray.Fields` once per call.** *LOCKED BY THE MAINTAINER 2026-10-15
+  (BIND-7c), after asking for the two `ToRow` designs' pros and cons.* (1) `TryMake` keeps the
+  columns as one `StructArray` (the source itself, or a wrapper around a batch's columns, which
+  copies nothing) and `ToRow(row)` returns `<Msg>.FromArrow(columns, row)`: one read path for a
+  model row, so a row from `ToRow`, from `FromArrow` and from the generated subscriber are the same
+  by construction (defaults, temporal recounting, null elements, G-Q4). It re-casts each column per
+  call and reads `Fields` once per nested struct level (64 bytes each), small next to the row and
+  lists it allocates by design; the zero-copy path is the view. Like `FromArrow`, it does not
+  consult a row's own validity: a null row of a StructArray source reads its children's values,
+  and `IsNull` says so. (2) D-BIND-97 gave a string field a `ReadOnlySpan<byte>` getter of its
+  UTF-8 bytes, `<Property>Utf8`; a bytes field, whose `byte[]` property copies on every read, gets
+  `<Property>Span` for the same reason. Both are named after every model property, by D-BIND-89's
+  taken set (a field `name_utf8` keeps `NameUtf8` and the getter becomes `NameUtf8_`), and never
+  the view's own name. A null value reads as an empty span: Apache.Arrow's `GetBytes` returns one even where the null's offsets span bytes (pinned by a test), so the getter needs no guard. (3) BIND-6's known debt is paid where
+  `ToRow` now depends on it: `FromArrow` reads `array.Fields` once, not once per column (Apache.Arrow
+  23 allocates 64 bytes on every read of it). **Declined:** `ToRow` generated from the accessor's
+  cast columns (faster, but a second read path that must agree with `FromArrow` shape by shape);
+  a span getter for strings only.

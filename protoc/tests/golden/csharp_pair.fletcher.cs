@@ -52,7 +52,8 @@ public sealed class Stamp
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new Stamp();
-        row.By = ((global::Apache.Arrow.StringArray)array.Fields[0]).GetString(index) ?? "";
+        var fields = array.Fields;
+        row.By = ((global::Apache.Arrow.StringArray)fields[0]).GetString(index) ?? "";
         return row;
     }
 }
@@ -195,12 +196,13 @@ public sealed class Reading
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new Reading();
-        row.Id = ((global::Apache.Arrow.Int32Array)array.Fields[0]).GetValue(index).GetValueOrDefault();
-        row.Name = ((global::Apache.Arrow.StringArray)array.Fields[1]).GetString(index) ?? "";
-        row.Value = ((global::Apache.Arrow.DoubleArray)array.Fields[2]).GetValue(index);
-        row.Mood = (Mood)((global::Apache.Arrow.Int32Array)array.Fields[3]).GetValue(index).GetValueOrDefault();
+        var fields = array.Fields;
+        row.Id = ((global::Apache.Arrow.Int32Array)fields[0]).GetValue(index).GetValueOrDefault();
+        row.Name = ((global::Apache.Arrow.StringArray)fields[1]).GetString(index) ?? "";
+        row.Value = ((global::Apache.Arrow.DoubleArray)fields[2]).GetValue(index);
+        row.Mood = (Mood)((global::Apache.Arrow.Int32Array)fields[3]).GetValue(index).GetValueOrDefault();
         {
-            var l = (global::Apache.Arrow.ListArray)array.Fields[4];
+            var l = (global::Apache.Arrow.ListArray)fields[4];
             var e = (global::Apache.Arrow.Int32Array)l.Values;
             var start = l.ValueOffsets[index];
             var end = l.ValueOffsets[index + 1];
@@ -209,7 +211,7 @@ public sealed class Reading
             row.Samples = x;
         }
         {
-            var m = (global::Apache.Arrow.MapArray)array.Fields[5];
+            var m = (global::Apache.Arrow.MapArray)fields[5];
             var k = (global::Apache.Arrow.StringArray)m.Keys;
             var e = (global::Apache.Arrow.Int64Array)m.Values;
             var start = m.ValueOffsets[index];
@@ -218,9 +220,9 @@ public sealed class Reading
             for (var j = start; j < end; j++) x.Add(new global::System.Collections.Generic.KeyValuePair<string, long>(k.GetString(j) ?? "", e.GetValue(j).GetValueOrDefault()));
             row.Tags = x;
         }
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[6]; row.Stamp = global::Fletcher.Gen.Golden.Pair.Stamp.FromArrow(s, index); }
+        { var s = (global::Apache.Arrow.StructArray)fields[6]; row.Stamp = global::Fletcher.Gen.Golden.Pair.Stamp.FromArrow(s, index); }
         {
-            var l = (global::Apache.Arrow.ListArray)array.Fields[7];
+            var l = (global::Apache.Arrow.ListArray)fields[7];
             var e = (global::Apache.Arrow.StructArray)l.Values;
             var start = l.ValueOffsets[index];
             var end = l.ValueOffsets[index + 1];
@@ -229,7 +231,7 @@ public sealed class Reading
             row.History = x;
         }
         {
-            var a = (global::Apache.Arrow.TimestampArray)array.Fields[8];
+            var a = (global::Apache.Arrow.TimestampArray)fields[8];
             var t = (global::Apache.Arrow.Types.TimestampType)a.Data.DataType;
             row.At = new global::Eiva.Fletcher.Model.Timestamp(a.GetValue(index).GetValueOrDefault(), t.Unit, t.Timezone);
         }
@@ -286,8 +288,9 @@ public sealed class Marks
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new Marks();
+        var fields = array.Fields;
         {
-            var l = (global::Apache.Arrow.ListArray)array.Fields[0];
+            var l = (global::Apache.Arrow.ListArray)fields[0];
             var e = (global::Apache.Arrow.StructArray)l.Values;
             var start = l.ValueOffsets[index];
             var end = l.ValueOffsets[index + 1];

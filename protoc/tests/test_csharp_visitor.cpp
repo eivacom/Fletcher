@@ -639,28 +639,29 @@ TEST(CsVisitor, ScalarOnlyMessageGetsFromArrow) {
     ExpectContains(sample,
                    "    public static Sample FromArrow(global::Apache.Arrow.StructArray array, int "
                    "index)\n");
+    // D-BIND-102: Fields is read once per call, not once per column.
+    ExpectContains(sample, "        var fields = array.Fields;\n");
     ExpectContains(sample,
-                   "        row.Flag = ((global::Apache.Arrow.BooleanArray)array.Fields[0])"
+                   "        row.Flag = ((global::Apache.Arrow.BooleanArray)fields[0])"
                    ".GetValue(index).GetValueOrDefault();\n");
     ExpectContains(sample,
-                   "        row.Name = ((global::Apache.Arrow.StringArray)array.Fields[6])"
+                   "        row.Name = ((global::Apache.Arrow.StringArray)fields[6])"
                    ".GetString(index) ?? \"\";\n");
     ExpectContains(sample,
-                   "        row.Note = ((global::Apache.Arrow.StringArray)array.Fields[7])"
+                   "        row.Note = ((global::Apache.Arrow.StringArray)fields[7])"
                    ".GetString(index);\n");
-    ExpectContains(
-        sample,
-        "        { var a = (global::Apache.Arrow.BinaryArray)array.Fields[8]; row.Blob = "
-        "a.IsNull(index) ? global::System.Array.Empty<byte>() : "
-        "a.GetBytes(index).ToArray(); }\n");
     ExpectContains(sample,
-                   "        row.Color = (Color)((global::Apache.Arrow.Int32Array)array.Fields[9])"
+                   "        { var a = (global::Apache.Arrow.BinaryArray)fields[8]; row.Blob = "
+                   "a.IsNull(index) ? global::System.Array.Empty<byte>() : "
+                   "a.GetBytes(index).ToArray(); }\n");
+    ExpectContains(sample,
+                   "        row.Color = (Color)((global::Apache.Arrow.Int32Array)fields[9])"
                    ".GetValue(index).GetValueOrDefault();\n");
     ExpectContains(sample,
-                   "        row.Tint = ((global::Apache.Arrow.Int32Array)array.Fields[10])"
+                   "        row.Tint = ((global::Apache.Arrow.Int32Array)fields[10])"
                    ".GetValue(index) is int v10 ? (Color)v10 : null;\n");
     ExpectContains(sample,
-                   "        row.Maybe = ((global::Apache.Arrow.Int32Array)array.Fields[11])"
+                   "        row.Maybe = ((global::Apache.Arrow.Int32Array)fields[11])"
                    ".GetValue(index);\n");
 }
 
@@ -704,10 +705,9 @@ TEST(CsVisitor, ListsStructsAndMapsConvertWithTheirSchemasOwnTypes) {
         "kv12, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);\n");
     // Reading back: the list's slice, the plain struct read as present (D-BIND-83), the
     // map's pairs.
-    ExpectContains(
-        player,
-        "        { var s = (global::Apache.Arrow.StructArray)array.Fields[11]; row.Stats = "
-        "global::Fletcher.Gen.Integration.Player_Stats.FromArrow(s, index); }\n");
+    ExpectContains(player,
+                   "        { var s = (global::Apache.Arrow.StructArray)fields[11]; row.Stats = "
+                   "global::Fletcher.Gen.Integration.Player_Stats.FromArrow(s, index); }\n");
     ExpectContains(player,
                    "    for (var j = start; j < end; j++) x.Add(new "
                    "global::System.Collections.Generic.KeyValuePair<string, int>(k.GetString(j) ?? "
@@ -1630,6 +1630,7 @@ TEST(CsAccessor, TheAccessorHasOnlyItsFixedMembers) {
         "public int Length",
         "public bool IsNull",
         "public SampleView At",
+        "public Sample ToRow",
         "public " + dict + " SchemaMetadata",
         "public " + dict + " FieldMetadata",
         "public " + dict + " FieldMetadata",
@@ -1660,7 +1661,14 @@ TEST(CsAccessor, TheViewHasTheModelsPropertiesWithTheirNamesAndTypes) {
         }
         expected.push_back(p);
     }
-    EXPECT_EQ(PublicMembers(view), expected) << view;
+    // The span getters are the view's own (D-BIND-102), checked by their own case.
+    auto members = PublicMembers(view);
+    members.erase(std::remove_if(members.begin(), members.end(),
+                                 [](const std::string& m) {
+                                     return m.find("ReadOnlySpan<byte>") != std::string::npos;
+                                 }),
+                  members.end());
+    EXPECT_EQ(members, expected) << view;
 }
 
 TEST(CsAccessor, AColumnIsValidatedAgainstTheModelsSchema) {
@@ -1771,4 +1779,41 @@ TEST(CsAccessor, ACollectionViewKeepsTheModelsPropertyNames) {
         StructBody(FileOf(files, "csharp_accessor.fletcher.arrow.cs"), "TrackView");
     ASSERT_FALSE(model.empty());
     EXPECT_EQ(names(PublicMembers(view)), names(PublicMembers(model))) << view;
+}
+
+TEST(CsAccessor, ToRowIsTheModelsFromArrowOverTheAccessorsColumns) {
+    // D-BIND-102: one read path for a model row. The columns are the StructArray source itself
+    // or a batch's columns wrapped, copying nothing.
+    const auto files = AccessorGolden();
+    const std::string body =
+        AccessorBody(FileOf(files, "csharp_accessor.fletcher.accessor.cs"), "Sample");
+    ExpectContains(body,
+                   "    public Sample ToRow(int row)\n    {\n        CheckRow(row);\n"
+                   "        return global::Fletcher.Gen.Golden.Accessor.Sample.FromArrow(_rows, "
+                   "row);\n    }\n");
+    ExpectContains(body,
+                   "validity ?? new global::Apache.Arrow.StructArray(new "
+                   "global::Apache.Arrow.Types.StructType(fields), length,\n"
+                   "                columns, global::Apache.Arrow.ArrowBuffer.Empty, 0));\n");
+}
+
+TEST(CsAccessor, AStringOrBytesFieldHasASpanGetterNamedAfterEveryProperty) {
+    // D-BIND-102: `<Property>Utf8` for a string, `<Property>Span` for bytes, after every model
+    // property by the D-BIND-89 taken set, so a field `name_utf8` keeps the name NameUtf8.
+    const std::string source =
+        "syntax = \"proto3\";\npackage a;\n"
+        "message M { string name = 1; string name_utf8 = 2; bytes data = 3; optional string note = "
+        "4; }\n";
+    std::map<std::string, std::string> files;
+    std::string error;
+    ASSERT_TRUE(GenerateSource(source, "csharp,csharp_accessor", &files, &error)) << error;
+    const std::string view = StructBody(FileOf(files, "accessor_case.fletcher.arrow.cs"), "MView");
+    const std::string span = "    public global::System.ReadOnlySpan<byte> ";
+    ExpectContains(view, "    public string Name => ");
+    ExpectContains(view, "    public string NameUtf8 => _accessor._c1.GetString(_row) ?? \"\";\n");
+    ExpectContains(view, span + "NameUtf8_ => _accessor._c0.GetBytes(_row);\n");
+    ExpectContains(view, span + "NameUtf8Utf8 => _accessor._c1.GetBytes(_row);\n");
+    ExpectContains(view, span + "DataSpan => _accessor._c2.GetBytes(_row);\n");
+    // A nullable one too: Apache.Arrow's GetBytes reads a null as empty (a runtime test pins it).
+    ExpectContains(view, span + "NoteUtf8 => _accessor._c3.GetBytes(_row);\n");
 }

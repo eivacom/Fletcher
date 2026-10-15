@@ -64,9 +64,10 @@ public sealed class Position
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new Position();
-        row.Lat = ((global::Apache.Arrow.DoubleArray)array.Fields[0]).GetValue(index).GetValueOrDefault();
-        row.Lon = ((global::Apache.Arrow.DoubleArray)array.Fields[1]).GetValue(index).GetValueOrDefault();
-        row.Depth = ((global::Apache.Arrow.FloatArray)array.Fields[2]).GetValue(index);
+        var fields = array.Fields;
+        row.Lat = ((global::Apache.Arrow.DoubleArray)fields[0]).GetValue(index).GetValueOrDefault();
+        row.Lon = ((global::Apache.Arrow.DoubleArray)fields[1]).GetValue(index).GetValueOrDefault();
+        row.Depth = ((global::Apache.Arrow.FloatArray)fields[2]).GetValue(index);
         return row;
     }
 }
@@ -111,7 +112,8 @@ public sealed class Sample_Note
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new Sample_Note();
-        row.Text = ((global::Apache.Arrow.StringArray)array.Fields[0]).GetString(index) ?? "";
+        var fields = array.Fields;
+        row.Text = ((global::Apache.Arrow.StringArray)fields[0]).GetString(index) ?? "";
         return row;
     }
 }
@@ -319,34 +321,35 @@ public sealed class Sample
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new Sample();
-        row.Id = ((global::Apache.Arrow.Int32Array)array.Fields[0]).GetValue(index).GetValueOrDefault();
-        row.Ticks = ((global::Apache.Arrow.Int64Array)array.Fields[1]).GetValue(index).GetValueOrDefault();
-        row.Flags = ((global::Apache.Arrow.UInt32Array)array.Fields[2]).GetValue(index).GetValueOrDefault();
-        row.Serial = ((global::Apache.Arrow.UInt64Array)array.Fields[3]).GetValue(index).GetValueOrDefault();
-        row.Gain = ((global::Apache.Arrow.FloatArray)array.Fields[4]).GetValue(index).GetValueOrDefault();
-        row.Value = ((global::Apache.Arrow.DoubleArray)array.Fields[5]).GetValue(index).GetValueOrDefault();
-        row.Valid = ((global::Apache.Arrow.BooleanArray)array.Fields[6]).GetValue(index).GetValueOrDefault();
-        row.Name = ((global::Apache.Arrow.StringArray)array.Fields[7]).GetString(index) ?? "";
-        { var a = (global::Apache.Arrow.BinaryArray)array.Fields[8]; row.Payload = a.IsNull(index) ? global::System.Array.Empty<byte>() : a.GetBytes(index).ToArray(); }
-        row.Quality = (Quality)((global::Apache.Arrow.Int32Array)array.Fields[9]).GetValue(index).GetValueOrDefault();
+        var fields = array.Fields;
+        row.Id = ((global::Apache.Arrow.Int32Array)fields[0]).GetValue(index).GetValueOrDefault();
+        row.Ticks = ((global::Apache.Arrow.Int64Array)fields[1]).GetValue(index).GetValueOrDefault();
+        row.Flags = ((global::Apache.Arrow.UInt32Array)fields[2]).GetValue(index).GetValueOrDefault();
+        row.Serial = ((global::Apache.Arrow.UInt64Array)fields[3]).GetValue(index).GetValueOrDefault();
+        row.Gain = ((global::Apache.Arrow.FloatArray)fields[4]).GetValue(index).GetValueOrDefault();
+        row.Value = ((global::Apache.Arrow.DoubleArray)fields[5]).GetValue(index).GetValueOrDefault();
+        row.Valid = ((global::Apache.Arrow.BooleanArray)fields[6]).GetValue(index).GetValueOrDefault();
+        row.Name = ((global::Apache.Arrow.StringArray)fields[7]).GetString(index) ?? "";
+        { var a = (global::Apache.Arrow.BinaryArray)fields[8]; row.Payload = a.IsNull(index) ? global::System.Array.Empty<byte>() : a.GetBytes(index).ToArray(); }
+        row.Quality = (Quality)((global::Apache.Arrow.Int32Array)fields[9]).GetValue(index).GetValueOrDefault();
         {
-            var a = (global::Apache.Arrow.TimestampArray)array.Fields[10];
+            var a = (global::Apache.Arrow.TimestampArray)fields[10];
             var t = (global::Apache.Arrow.Types.TimestampType)a.Data.DataType;
             row.At = new global::Eiva.Fletcher.Model.Timestamp(a.GetValue(index).GetValueOrDefault(), t.Unit, t.Timezone);
         }
         {
-            var a = (global::Apache.Arrow.DurationArray)array.Fields[11];
+            var a = (global::Apache.Arrow.DurationArray)fields[11];
             var t = (global::Apache.Arrow.Types.DurationType)a.Data.DataType;
             row.Span = new global::Eiva.Fletcher.Model.Duration(a.GetValue(index).GetValueOrDefault(), t.Unit);
         }
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[12]; row.Position = global::Fletcher.Gen.Golden.Accessor.Position.FromArrow(s, index); }
-        row.MaybeId = ((global::Apache.Arrow.Int32Array)array.Fields[13]).GetValue(index);
-        row.MaybeName = ((global::Apache.Arrow.StringArray)array.Fields[14]).GetString(index);
-        { var a = (global::Apache.Arrow.BinaryArray)array.Fields[15]; row.MaybePayload = a.IsNull(index) ? null : a.GetBytes(index).ToArray(); }
-        row.MaybeQuality = ((global::Apache.Arrow.Int32Array)array.Fields[16]).GetValue(index) is int v16 ? (Quality)v16 : null;
-        row.MaybeValid = ((global::Apache.Arrow.BooleanArray)array.Fields[17]).GetValue(index);
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[18]; row.MaybePosition = s.IsNull(index) ? null : global::Fletcher.Gen.Golden.Accessor.Position.FromArrow(s, index); }
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[19]; row.Note = global::Fletcher.Gen.Golden.Accessor.Sample_Note.FromArrow(s, index); }
+        { var s = (global::Apache.Arrow.StructArray)fields[12]; row.Position = global::Fletcher.Gen.Golden.Accessor.Position.FromArrow(s, index); }
+        row.MaybeId = ((global::Apache.Arrow.Int32Array)fields[13]).GetValue(index);
+        row.MaybeName = ((global::Apache.Arrow.StringArray)fields[14]).GetString(index);
+        { var a = (global::Apache.Arrow.BinaryArray)fields[15]; row.MaybePayload = a.IsNull(index) ? null : a.GetBytes(index).ToArray(); }
+        row.MaybeQuality = ((global::Apache.Arrow.Int32Array)fields[16]).GetValue(index) is int v16 ? (Quality)v16 : null;
+        row.MaybeValid = ((global::Apache.Arrow.BooleanArray)fields[17]).GetValue(index);
+        { var s = (global::Apache.Arrow.StructArray)fields[18]; row.MaybePosition = s.IsNull(index) ? null : global::Fletcher.Gen.Golden.Accessor.Position.FromArrow(s, index); }
+        { var s = (global::Apache.Arrow.StructArray)fields[19]; row.Note = global::Fletcher.Gen.Golden.Accessor.Sample_Note.FromArrow(s, index); }
         return row;
     }
 }
@@ -723,9 +726,10 @@ public sealed class Track
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new Track();
-        row.Id = ((global::Apache.Arrow.Int32Array)array.Fields[0]).GetValue(index).GetValueOrDefault();
+        var fields = array.Fields;
+        row.Id = ((global::Apache.Arrow.Int32Array)fields[0]).GetValue(index).GetValueOrDefault();
         {
-            var l = (global::Apache.Arrow.ListArray)array.Fields[1];
+            var l = (global::Apache.Arrow.ListArray)fields[1];
             var e = (global::Apache.Arrow.Int32Array)l.Values;
             var start = l.ValueOffsets[index];
             var end = l.ValueOffsets[index + 1];
@@ -734,7 +738,7 @@ public sealed class Track
             row.Ints = x;
         }
         {
-            var l = (global::Apache.Arrow.ListArray)array.Fields[2];
+            var l = (global::Apache.Arrow.ListArray)fields[2];
             var e = (global::Apache.Arrow.StringArray)l.Values;
             var start = l.ValueOffsets[index];
             var end = l.ValueOffsets[index + 1];
@@ -743,7 +747,7 @@ public sealed class Track
             row.Names = x;
         }
         {
-            var l = (global::Apache.Arrow.ListArray)array.Fields[3];
+            var l = (global::Apache.Arrow.ListArray)fields[3];
             var e = (global::Apache.Arrow.BinaryArray)l.Values;
             var start = l.ValueOffsets[index];
             var end = l.ValueOffsets[index + 1];
@@ -752,7 +756,7 @@ public sealed class Track
             row.Blobs = x;
         }
         {
-            var l = (global::Apache.Arrow.ListArray)array.Fields[4];
+            var l = (global::Apache.Arrow.ListArray)fields[4];
             var e = (global::Apache.Arrow.BooleanArray)l.Values;
             var start = l.ValueOffsets[index];
             var end = l.ValueOffsets[index + 1];
@@ -761,7 +765,7 @@ public sealed class Track
             row.Flags = x;
         }
         {
-            var l = (global::Apache.Arrow.ListArray)array.Fields[5];
+            var l = (global::Apache.Arrow.ListArray)fields[5];
             var e = (global::Apache.Arrow.Int32Array)l.Values;
             var start = l.ValueOffsets[index];
             var end = l.ValueOffsets[index + 1];
@@ -770,7 +774,7 @@ public sealed class Track
             row.Qualities = x;
         }
         {
-            var l = (global::Apache.Arrow.ListArray)array.Fields[6];
+            var l = (global::Apache.Arrow.ListArray)fields[6];
             var e = (global::Apache.Arrow.DoubleArray)l.Values;
             var start = l.ValueOffsets[index];
             var end = l.ValueOffsets[index + 1];
@@ -779,7 +783,7 @@ public sealed class Track
             row.Values = x;
         }
         {
-            var l = (global::Apache.Arrow.ListArray)array.Fields[7];
+            var l = (global::Apache.Arrow.ListArray)fields[7];
             var e = (global::Apache.Arrow.StructArray)l.Values;
             var start = l.ValueOffsets[index];
             var end = l.ValueOffsets[index + 1];
@@ -788,7 +792,7 @@ public sealed class Track
             row.Points = x;
         }
         {
-            var m = (global::Apache.Arrow.MapArray)array.Fields[8];
+            var m = (global::Apache.Arrow.MapArray)fields[8];
             var k = (global::Apache.Arrow.StringArray)m.Keys;
             var e = (global::Apache.Arrow.Int32Array)m.Values;
             var start = m.ValueOffsets[index];
@@ -798,7 +802,7 @@ public sealed class Track
             row.Scores = x;
         }
         {
-            var m = (global::Apache.Arrow.MapArray)array.Fields[9];
+            var m = (global::Apache.Arrow.MapArray)fields[9];
             var k = (global::Apache.Arrow.StringArray)m.Keys;
             var e = (global::Apache.Arrow.StructArray)m.Values;
             var start = m.ValueOffsets[index];
@@ -808,7 +812,7 @@ public sealed class Track
             row.Places = x;
         }
         {
-            var m = (global::Apache.Arrow.MapArray)array.Fields[10];
+            var m = (global::Apache.Arrow.MapArray)fields[10];
             var k = (global::Apache.Arrow.Int64Array)m.Keys;
             var e = (global::Apache.Arrow.StringArray)m.Values;
             var start = m.ValueOffsets[index];
@@ -818,7 +822,7 @@ public sealed class Track
             row.Labels = x;
         }
         {
-            var l = (global::Apache.Arrow.ListArray)array.Fields[11];
+            var l = (global::Apache.Arrow.ListArray)fields[11];
             var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>>(l.ValueOffsets[index + 1] - l.ValueOffsets[index]);
             var e0 = (global::Apache.Arrow.ListArray)l.Values;
             for (var j0 = l.ValueOffsets[index]; j0 < l.ValueOffsets[index + 1]; j0++)
@@ -834,7 +838,7 @@ public sealed class Track
             row.Grid = x;
         }
         {
-            var l = (global::Apache.Arrow.ListArray)array.Fields[12];
+            var l = (global::Apache.Arrow.ListArray)fields[12];
             var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>>>(l.ValueOffsets[index + 1] - l.ValueOffsets[index]);
             var e0 = (global::Apache.Arrow.ListArray)l.Values;
             for (var j0 = l.ValueOffsets[index]; j0 < l.ValueOffsets[index + 1]; j0++)
@@ -856,7 +860,7 @@ public sealed class Track
             row.Cube = x;
         }
         {
-            var l = (global::Apache.Arrow.ListArray)array.Fields[13];
+            var l = (global::Apache.Arrow.ListArray)fields[13];
             var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<int>>(l.ValueOffsets[index + 1] - l.ValueOffsets[index]);
             var e0 = (global::Apache.Arrow.ListArray)l.Values;
             for (var j0 = l.ValueOffsets[index]; j0 < l.ValueOffsets[index + 1]; j0++)
@@ -872,7 +876,7 @@ public sealed class Track
             row.Matrix = x;
         }
         {
-            var l = (global::Apache.Arrow.ListArray)array.Fields[14];
+            var l = (global::Apache.Arrow.ListArray)fields[14];
             var e = (global::Apache.Arrow.StructArray)l.Values;
             var start = l.ValueOffsets[index];
             var end = l.ValueOffsets[index + 1];
@@ -992,9 +996,10 @@ public sealed class Hyper
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new Hyper();
-        row.Id = ((global::Apache.Arrow.Int32Array)array.Fields[0]).GetValue(index).GetValueOrDefault();
+        var fields = array.Fields;
+        row.Id = ((global::Apache.Arrow.Int32Array)fields[0]).GetValue(index).GetValueOrDefault();
         {
-            var l = (global::Apache.Arrow.ListArray)array.Fields[1];
+            var l = (global::Apache.Arrow.ListArray)fields[1];
             var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>>>>(l.ValueOffsets[index + 1] - l.ValueOffsets[index]);
             var e0 = (global::Apache.Arrow.ListArray)l.Values;
             for (var j0 = l.ValueOffsets[index]; j0 < l.ValueOffsets[index + 1]; j0++)

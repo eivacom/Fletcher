@@ -47,7 +47,8 @@ public sealed class Waypoint
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new Waypoint();
-        row.Lat = ((global::Apache.Arrow.DoubleArray)array.Fields[0]).GetValue(index).GetValueOrDefault();
+        var fields = array.Fields;
+        row.Lat = ((global::Apache.Arrow.DoubleArray)fields[0]).GetValue(index).GetValueOrDefault();
         return row;
     }
 }
@@ -101,8 +102,9 @@ public sealed class RouteList
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new RouteList();
+        var fields = array.Fields;
         {
-            var l = (global::Apache.Arrow.ListArray)array.Fields[0];
+            var l = (global::Apache.Arrow.ListArray)fields[0];
             var e = (global::Apache.Arrow.StructArray)l.Values;
             var start = l.ValueOffsets[index];
             var end = l.ValueOffsets[index + 1];
@@ -169,8 +171,9 @@ public sealed class RouteMap
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new RouteMap();
+        var fields = array.Fields;
         {
-            var m = (global::Apache.Arrow.MapArray)array.Fields[0];
+            var m = (global::Apache.Arrow.MapArray)fields[0];
             var k = (global::Apache.Arrow.StringArray)m.Keys;
             var e = (global::Apache.Arrow.StructArray)m.Values;
             var start = m.ValueOffsets[index];
@@ -225,8 +228,9 @@ public sealed class RouteMixed
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new RouteMixed();
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[0]; row.Start = global::Fletcher.Gen.Golden.Names.Waypoint.FromArrow(s, index); }
-        row.Waypoint = ((global::Apache.Arrow.Int32Array)array.Fields[1]).GetValue(index).GetValueOrDefault();
+        var fields = array.Fields;
+        { var s = (global::Apache.Arrow.StructArray)fields[0]; row.Start = global::Fletcher.Gen.Golden.Names.Waypoint.FromArrow(s, index); }
+        row.Waypoint = ((global::Apache.Arrow.Int32Array)fields[1]).GetValue(index).GetValueOrDefault();
         return row;
     }
 }
@@ -270,7 +274,8 @@ public sealed class RouteOptional
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new RouteOptional();
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[0]; row.Waypoint = s.IsNull(index) ? null : global::Fletcher.Gen.Golden.Names.Waypoint.FromArrow(s, index); }
+        var fields = array.Fields;
+        { var s = (global::Apache.Arrow.StructArray)fields[0]; row.Waypoint = s.IsNull(index) ? null : global::Fletcher.Gen.Golden.Names.Waypoint.FromArrow(s, index); }
         return row;
     }
 }
@@ -309,7 +314,8 @@ public sealed class RouteSingle
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new RouteSingle();
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[0]; row.Waypoint = global::Fletcher.Gen.Golden.Names.Waypoint.FromArrow(s, index); }
+        var fields = array.Fields;
+        { var s = (global::Apache.Arrow.StructArray)fields[0]; row.Waypoint = global::Fletcher.Gen.Golden.Names.Waypoint.FromArrow(s, index); }
         return row;
     }
 }
@@ -349,7 +355,8 @@ public sealed class @row
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new @row();
-        row.A = ((global::Apache.Arrow.Int32Array)array.Fields[0]).GetValue(index).GetValueOrDefault();
+        var fields = array.Fields;
+        row.A = ((global::Apache.Arrow.Int32Array)fields[0]).GetValue(index).GetValueOrDefault();
         return row;
     }
 }
@@ -389,7 +396,8 @@ public sealed class @array
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new @array();
-        row.B = ((global::Apache.Arrow.Int32Array)array.Fields[0]).GetValue(index).GetValueOrDefault();
+        var fields = array.Fields;
+        row.B = ((global::Apache.Arrow.Int32Array)fields[0]).GetValue(index).GetValueOrDefault();
         return row;
     }
 }
@@ -450,9 +458,10 @@ public sealed class UsesLocals
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new UsesLocals();
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[0]; row.R = global::Fletcher.Gen.Golden.Names.@row.FromArrow(s, index); }
+        var fields = array.Fields;
+        { var s = (global::Apache.Arrow.StructArray)fields[0]; row.R = global::Fletcher.Gen.Golden.Names.@row.FromArrow(s, index); }
         {
-            var l = (global::Apache.Arrow.ListArray)array.Fields[1];
+            var l = (global::Apache.Arrow.ListArray)fields[1];
             var e = (global::Apache.Arrow.StructArray)l.Values;
             var start = l.ValueOffsets[index];
             var end = l.ValueOffsets[index + 1];
@@ -499,7 +508,8 @@ public sealed class @class
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new @class();
-        row.C = ((global::Apache.Arrow.Int32Array)array.Fields[0]).GetValue(index).GetValueOrDefault();
+        var fields = array.Fields;
+        row.C = ((global::Apache.Arrow.Int32Array)fields[0]).GetValue(index).GetValueOrDefault();
         return row;
     }
 }
@@ -568,10 +578,11 @@ public sealed class UsesKeywords
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new UsesKeywords();
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[0]; row.K = global::Fletcher.Gen.Golden.Names.@class.FromArrow(s, index); }
-        row.Lv = (@level)((global::Apache.Arrow.Int32Array)array.Fields[1]).GetValue(index).GetValueOrDefault();
+        var fields = array.Fields;
+        { var s = (global::Apache.Arrow.StructArray)fields[0]; row.K = global::Fletcher.Gen.Golden.Names.@class.FromArrow(s, index); }
+        row.Lv = (@level)((global::Apache.Arrow.Int32Array)fields[1]).GetValue(index).GetValueOrDefault();
         {
-            var l = (global::Apache.Arrow.ListArray)array.Fields[2];
+            var l = (global::Apache.Arrow.ListArray)fields[2];
             var e = (global::Apache.Arrow.StructArray)l.Values;
             var start = l.ValueOffsets[index];
             var end = l.ValueOffsets[index + 1];
@@ -618,7 +629,8 @@ public sealed class Schema_
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new Schema_();
-        row.Schema__ = ((global::Apache.Arrow.Int32Array)array.Fields[0]).GetValue(index).GetValueOrDefault();
+        var fields = array.Fields;
+        row.Schema__ = ((global::Apache.Arrow.Int32Array)fields[0]).GetValue(index).GetValueOrDefault();
         return row;
     }
 }
@@ -658,7 +670,8 @@ public sealed class FromArrow_
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new FromArrow_();
-        row.X = ((global::Apache.Arrow.Int32Array)array.Fields[0]).GetValue(index).GetValueOrDefault();
+        var fields = array.Fields;
+        row.X = ((global::Apache.Arrow.Int32Array)fields[0]).GetValue(index).GetValueOrDefault();
         return row;
     }
 }
@@ -719,9 +732,10 @@ public sealed class UsesOwnNames
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new UsesOwnNames();
-        { var s = (global::Apache.Arrow.StructArray)array.Fields[0]; row.S = global::Fletcher.Gen.Golden.Names.Schema_.FromArrow(s, index); }
+        var fields = array.Fields;
+        { var s = (global::Apache.Arrow.StructArray)fields[0]; row.S = global::Fletcher.Gen.Golden.Names.Schema_.FromArrow(s, index); }
         {
-            var l = (global::Apache.Arrow.ListArray)array.Fields[1];
+            var l = (global::Apache.Arrow.ListArray)fields[1];
             var e = (global::Apache.Arrow.StructArray)l.Values;
             var start = l.ValueOffsets[index];
             var end = l.ValueOffsets[index + 1];
@@ -768,7 +782,8 @@ public sealed class Topic
     {
         global::System.ArgumentNullException.ThrowIfNull(array);
         var row = new Topic();
-        row.A = ((global::Apache.Arrow.Int32Array)array.Fields[0]).GetValue(index).GetValueOrDefault();
+        var fields = array.Fields;
+        row.A = ((global::Apache.Arrow.Int32Array)fields[0]).GetValue(index).GetValueOrDefault();
         return row;
     }
 }
