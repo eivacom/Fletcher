@@ -3051,3 +3051,48 @@ accessor), after a read-only map of the C++ and Rust accessors and the capstone 
   23 allocates 64 bytes on every read of it). **Declined:** `ToRow` generated from the accessor's
   cast columns (faster, but a second read path that must agree with `FromArrow` shape by shape);
   a span getter for strings only.
+
+The next ones were ruled on 2026-10-15, on the questions of BIND-7's review
+(`plans/reviews/BIND-7-codereview.md`, Q1 to Q5).
+
+- **D-BIND-103 - an accessor BORROWS its source: it, its views, its windows and its span getters are
+  valid only while the source batch or array is not disposed, and say so.** *LOCKED BY THE
+  MAINTAINER 2026-10-15 (BIND-7 review Q1).* The accessor keeps the source's arrays, whose buffers are
+  native memory that `RecordBatch.Dispose` frees, so a read after it reads freed memory. C++'s accessor
+  owns its buffers through `shared_ptr` (D-RBA-7); .NET has no equivalent short of making the accessor
+  own the batch. BIND-7's acceptance line "cached columns own their buffers" is C++'s, recorded as
+  such. The rule is written on the generated accessor and view, on `ListView`, `MapView` and the span
+  getters, and in the public surface. **Declined:** an accessor that owns its source and is
+  `IDisposable` (every user disposes it, and the batch's own `Dispose` becomes ambiguous).
+
+- **D-BIND-104 - C# reads a list of lists with a scalar leaf, which C++'s accessor refuses: a
+  superset, kept. Amends D-BIND-96.** *LOCKED BY THE MAINTAINER 2026-10-15 (BIND-7 review Q2).* The
+  depth cap is C++'s (3, Q6); the leaf set is wider, because the windows compose and nothing shared
+  constrains it (the capstone has no scalar-leaf nested list). D-BIND-96's "cannot support" now means
+  C++'s cases except this one. **Declined:** refusing it, as C++ does (GIR-10).
+
+- **D-BIND-105 - a struct column, element or map value from another file is read through that file's
+  generated accessor, so that file must be generated with `csharp_accessor` too; documented, and
+  compiled in the protoc-dotnet lane.** *LOCKED BY THE MAINTAINER 2026-10-15 (BIND-7 review Q3).* It
+  includes `repeated google.protobuf.Timestamp` and a map to it, which the IR keeps as a message. The
+  plugin cannot see another run's parameters, so it cannot refuse at generation as D-BIND-99 does; as
+  for BIND-6e's model, every file a file imports is generated with the same tokens. The lane generates
+  `shared.proto` and `timestamp.proto` with the token and reads `model.proto`'s cross-file `Route`
+  through its accessor. **Declined:** documenting it without a lane case.
+
+- **D-BIND-106 - the non-null gate counts only the nulls under valid parents: a null struct whose
+  non-nullable children hold nulls is accepted. Wider than C++.** *LOCKED BY THE MAINTAINER
+  2026-10-15 (BIND-7 review Q4).* Arrow lets a null struct's children hold anything, nulls included
+  (arrow-rs's `new_null_array`, a struct built from children and a mask), and D-BIND-101 promises that
+  nothing a C++ or Rust producer may write is refused. The gate of a struct reached as a nullable
+  field, a list element or a map value therefore counts a child's nulls only where the struct itself
+  is valid; one bitmap pass in `TryMake`. A top-level column of a batch has no parent and is counted
+  whole, as before. **Declined:** C++'s gate, which refuses such a batch.
+
+- **D-BIND-107 - the runtime support types are for generated code: hidden from IntelliSense and free
+  to change with the plugin within a MAJOR.MINOR; `ListView` and `MapView` themselves stay public
+  API.** *LOCKED BY THE MAINTAINER 2026-10-15 (BIND-7 review Q5).* Generated code compiles in the
+  consumer's assembly, so `IArrowElements`, `IArrowRows`, the `*Elements` readers and the windows'
+  constructors and `Of` must be public; they are marked `[EditorBrowsable(Never)]` and documented as
+  for generated code, and the `out` variance, which buys nothing for struct types, is dropped.
+  **Declined:** supporting them as extension points.
