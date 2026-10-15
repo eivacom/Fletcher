@@ -972,3 +972,29 @@ its class and its `TryMake` refuses naming the column, until 7b.
 - **Tests:** plugin suite 175 (8 new `CsAccessor.*` cases; the no-drift case now covers the token
   on every base); `Fletcher.Tests` 10 new cases on net8.0 and net10.0; three mutants (re-slice,
   time zone ignored, non-null gate removed) each fail a test.
+
+**7b (2026-10-15).** Lists, maps and lists of lists, read as borrowed windows (D-BIND-101, ruled
+at 7b's start): `ListView<T>` and `MapView<TKey, TValue>` in `Eiva.Fletcher.Model`, beside
+`Timestamp`, with one element reader per kind (`PrimitiveElements<T>`, `StringElements`,
+`EnumElements<TEnum>`, `ViewElements<TView>` over the inner accessor, `ListElements<T>` for an
+inner list, ...), built once in `TryMake`. Each generated accessor now implements
+`IArrowRows<TView>`, whose members are its own `IsNull` and `At`. Lists of lists are read to C#'s
+cap of 3, as C++ reads them (Q6); a deeper one keeps the class and refuses (D-BIND-96). Unlike C++
+(GIR-10), a list of lists with a scalar leaf is read too: the windows compose, and no shared
+fixture constrains it.
+
+- **Found by a test:** a null inner list whose offsets still span elements read those elements;
+  `ListElements` now reads it as an empty window, and the model test's fixture carries such a
+  list.
+- **Found by a mutant:** a list-element type check that the array class already implies cannot be
+  told apart (an `Int64Array` is never an int32 list), so the refusal test now uses `list<utf8>`
+  where `list<bytes>` belongs, which only the type comparison refuses. The map-key check stays a
+  defensive duplicate: for every key type proto allows, the class fixes the type.
+- **Measured:** reading lists, maps and lists of lists allocates nothing per read; string keys and
+  elements allocate by design (they decode). The allocation tests bound the bytes by what one
+  allocating read would cost, because the runtime allocates a few hundred bytes once while it
+  tiers a measured loop up.
+- **Tests:** plugin suite 178 (three new `CsAccessor.*`); `Fletcher.Model.Tests` 70 (nine new);
+  `Fletcher.Tests` seven new collection cases (the 7a case for a list refusal retired); four
+  mutants each fail a test. The nullability test's G-Q4 exception list gains the golden's
+  deliberate instance, `Track.MaybePoints`.

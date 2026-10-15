@@ -57,6 +57,7 @@ std::optional<Elem> ElemOf(const IrNode& node, const FileDescriptor* file, const
         Elem e;
         e.is_struct = true;
         e.cls = CsTypeExpr(s.identity.descriptor);  // B2: named in full in method bodies
+        e.msg = s.identity.descriptor;
         e.other_file = cross.count(s.identity.descriptor) != 0;  // D-BIND-87
         return e;
     }

@@ -115,5 +115,50 @@ public readonly struct TrackView
 
     public int Id => _accessor._c0.GetValue(_row).GetValueOrDefault();
 
-    // Not read: field 'points' is a list column, which the C# accessor does not read yet.
+    public global::Eiva.Fletcher.Model.ListView<int> Ints => global::Eiva.Fletcher.Model.ListView<int>.Of(_accessor._c1, _row, _accessor._e1);
+
+    public global::Eiva.Fletcher.Model.ListView<string> Names => global::Eiva.Fletcher.Model.ListView<string>.Of(_accessor._c2, _row, _accessor._e2);
+
+    public global::Eiva.Fletcher.Model.ListView<byte[]> Blobs => global::Eiva.Fletcher.Model.ListView<byte[]>.Of(_accessor._c3, _row, _accessor._e3);
+
+    public global::Eiva.Fletcher.Model.ListView<bool> Flags => global::Eiva.Fletcher.Model.ListView<bool>.Of(_accessor._c4, _row, _accessor._e4);
+
+    public global::Eiva.Fletcher.Model.ListView<Quality> Qualities => global::Eiva.Fletcher.Model.ListView<Quality>.Of(_accessor._c5, _row, _accessor._e5);
+
+    public global::Eiva.Fletcher.Model.ListView<double> Values => global::Eiva.Fletcher.Model.ListView<double>.Of(_accessor._c6, _row, _accessor._e6);
+
+    public global::Eiva.Fletcher.Model.ListView<PositionView?> Points => global::Eiva.Fletcher.Model.ListView<PositionView?>.Of(_accessor._c7, _row, _accessor._e7);
+
+    public global::Eiva.Fletcher.Model.MapView<string, int> Scores => global::Eiva.Fletcher.Model.MapView<string, int>.Of(_accessor._c8, _row, _accessor._k8, _accessor._e8);
+
+    public global::Eiva.Fletcher.Model.MapView<string, PositionView?> Places => global::Eiva.Fletcher.Model.MapView<string, PositionView?>.Of(_accessor._c9, _row, _accessor._k9, _accessor._e9);
+
+    public global::Eiva.Fletcher.Model.MapView<long, string> Labels => global::Eiva.Fletcher.Model.MapView<long, string>.Of(_accessor._c10, _row, _accessor._k10, _accessor._e10);
+
+    public global::Eiva.Fletcher.Model.ListView<global::Eiva.Fletcher.Model.ListView<PositionView?>> Grid => global::Eiva.Fletcher.Model.ListView<global::Eiva.Fletcher.Model.ListView<PositionView?>>.Of(_accessor._c11, _row, _accessor._e11);
+
+    public global::Eiva.Fletcher.Model.ListView<global::Eiva.Fletcher.Model.ListView<global::Eiva.Fletcher.Model.ListView<PositionView?>>> Cube => global::Eiva.Fletcher.Model.ListView<global::Eiva.Fletcher.Model.ListView<global::Eiva.Fletcher.Model.ListView<PositionView?>>>.Of(_accessor._c12, _row, _accessor._e12);
+
+    public global::Eiva.Fletcher.Model.ListView<global::Eiva.Fletcher.Model.ListView<int>> Matrix => global::Eiva.Fletcher.Model.ListView<global::Eiva.Fletcher.Model.ListView<int>>.Of(_accessor._c13, _row, _accessor._e13);
+
+    public global::Eiva.Fletcher.Model.ListView<PositionView?> MaybePoints => _accessor._c14.IsNull(_row) ? default : global::Eiva.Fletcher.Model.ListView<PositionView?>.Of(_accessor._c14, _row, _accessor._e14);
+}
+
+/// <summary>One row of a <see cref="HyperAccessor"/>, read in place: its properties are <see cref="Hyper"/>'s,
+/// with the same names and types.</summary>
+/// <remarks>Borrows its accessor; a string property decodes UTF-8 on every read.</remarks>
+public readonly struct HyperView
+{
+    private readonly HyperAccessor _accessor;
+    private readonly int _row;
+
+    internal HyperView(HyperAccessor accessor, int row)
+    {
+        _accessor = accessor;
+        _row = row;
+    }
+
+    public int Id => _accessor._c0.GetValue(_row).GetValueOrDefault();
+
+    // Not read: field 'cells' is a list nested 4 deep, beyond the accessor's cap of 3.
 }

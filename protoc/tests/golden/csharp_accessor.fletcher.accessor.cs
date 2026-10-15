@@ -13,7 +13,7 @@ namespace Fletcher.Gen.Golden.Accessor;
 /// and a column the proto says is never null must hold no nulls. TryMake never throws on
 /// bad input and returns the reason instead (D-BIND-94).
 /// </remarks>
-public sealed class PositionAccessor
+public sealed class PositionAccessor : global::Eiva.Fletcher.Model.IArrowRows<PositionView>
 {
     private static readonly global::System.Collections.Generic.IReadOnlyDictionary<string, string> NoMetadata =
         global::System.Collections.ObjectModel.ReadOnlyDictionary<string, string>.Empty;
@@ -203,7 +203,7 @@ public sealed class PositionAccessor
 /// and a column the proto says is never null must hold no nulls. TryMake never throws on
 /// bad input and returns the reason instead (D-BIND-94).
 /// </remarks>
-public sealed class Sample_NoteAccessor
+public sealed class Sample_NoteAccessor : global::Eiva.Fletcher.Model.IArrowRows<Sample_NoteView>
 {
     private static readonly global::System.Collections.Generic.IReadOnlyDictionary<string, string> NoMetadata =
         global::System.Collections.ObjectModel.ReadOnlyDictionary<string, string>.Empty;
@@ -374,7 +374,7 @@ public sealed class Sample_NoteAccessor
 /// and a column the proto says is never null must hold no nulls. TryMake never throws on
 /// bad input and returns the reason instead (D-BIND-94).
 /// </remarks>
-public sealed class SampleAccessor
+public sealed class SampleAccessor : global::Eiva.Fletcher.Model.IArrowRows<SampleView>
 {
     private static readonly global::System.Collections.Generic.IReadOnlyDictionary<string, string> NoMetadata =
         global::System.Collections.ObjectModel.ReadOnlyDictionary<string, string>.Empty;
@@ -762,16 +762,46 @@ public sealed class SampleAccessor
 /// and a column the proto says is never null must hold no nulls. TryMake never throws on
 /// bad input and returns the reason instead (D-BIND-94).
 /// </remarks>
-public sealed class TrackAccessor
+public sealed class TrackAccessor : global::Eiva.Fletcher.Model.IArrowRows<TrackView>
 {
     private static readonly global::System.Collections.Generic.IReadOnlyDictionary<string, string> NoMetadata =
         global::System.Collections.ObjectModel.ReadOnlyDictionary<string, string>.Empty;
-    private static readonly string? Refusal = "Track column 1 'points': a list column, which the C# accessor does not read yet.";
     private readonly int _length;
     private readonly global::Apache.Arrow.StructArray? _validity;
     private readonly global::System.Collections.Generic.IReadOnlyDictionary<string, string> _schemaMetadata;
     private readonly global::Apache.Arrow.Field[] _fields;
     internal global::Apache.Arrow.Int32Array _c0 = null!;
+    internal global::Apache.Arrow.ListArray _c1 = null!;
+    internal global::Eiva.Fletcher.Model.IArrowElements<int> _e1 = null!;
+    internal global::Apache.Arrow.ListArray _c2 = null!;
+    internal global::Eiva.Fletcher.Model.IArrowElements<string> _e2 = null!;
+    internal global::Apache.Arrow.ListArray _c3 = null!;
+    internal global::Eiva.Fletcher.Model.IArrowElements<byte[]> _e3 = null!;
+    internal global::Apache.Arrow.ListArray _c4 = null!;
+    internal global::Eiva.Fletcher.Model.IArrowElements<bool> _e4 = null!;
+    internal global::Apache.Arrow.ListArray _c5 = null!;
+    internal global::Eiva.Fletcher.Model.IArrowElements<Quality> _e5 = null!;
+    internal global::Apache.Arrow.ListArray _c6 = null!;
+    internal global::Eiva.Fletcher.Model.IArrowElements<double> _e6 = null!;
+    internal global::Apache.Arrow.ListArray _c7 = null!;
+    internal global::Eiva.Fletcher.Model.IArrowElements<PositionView?> _e7 = null!;
+    internal global::Apache.Arrow.MapArray _c8 = null!;
+    internal global::Eiva.Fletcher.Model.IArrowElements<string> _k8 = null!;
+    internal global::Eiva.Fletcher.Model.IArrowElements<int> _e8 = null!;
+    internal global::Apache.Arrow.MapArray _c9 = null!;
+    internal global::Eiva.Fletcher.Model.IArrowElements<string> _k9 = null!;
+    internal global::Eiva.Fletcher.Model.IArrowElements<PositionView?> _e9 = null!;
+    internal global::Apache.Arrow.MapArray _c10 = null!;
+    internal global::Eiva.Fletcher.Model.IArrowElements<long> _k10 = null!;
+    internal global::Eiva.Fletcher.Model.IArrowElements<string> _e10 = null!;
+    internal global::Apache.Arrow.ListArray _c11 = null!;
+    internal global::Eiva.Fletcher.Model.IArrowElements<global::Eiva.Fletcher.Model.ListView<PositionView?>> _e11 = null!;
+    internal global::Apache.Arrow.ListArray _c12 = null!;
+    internal global::Eiva.Fletcher.Model.IArrowElements<global::Eiva.Fletcher.Model.ListView<global::Eiva.Fletcher.Model.ListView<PositionView?>>> _e12 = null!;
+    internal global::Apache.Arrow.ListArray _c13 = null!;
+    internal global::Eiva.Fletcher.Model.IArrowElements<global::Eiva.Fletcher.Model.ListView<int>> _e13 = null!;
+    internal global::Apache.Arrow.ListArray _c14 = null!;
+    internal global::Eiva.Fletcher.Model.IArrowElements<PositionView?> _e14 = null!;
 
     private TrackAccessor(int length, global::Apache.Arrow.StructArray? validity, global::System.Collections.Generic.IReadOnlyDictionary<string, string> schemaMetadata,
         global::Apache.Arrow.Field[] fields)
@@ -870,14 +900,9 @@ public sealed class TrackAccessor
         [global::System.Diagnostics.CodeAnalysis.NotNullWhen(false)] out string? error)
     {
         accessor = null;
-        if (Refusal is not null)
+        if (columns.Length != 15 || fields.Length != 15)
         {
-            error = Refusal;
-            return false;
-        }
-        if (columns.Length != 2 || fields.Length != 2)
-        {
-            error = $"Track: expected 2 columns, got {columns.Length}.";
+            error = $"Track: expected 15 columns, got {columns.Length}.";
             return false;
         }
         for (var i = 0; i < columns.Length; i++)
@@ -898,7 +923,501 @@ public sealed class TrackAccessor
             error = $"Track column 0 'id': non-nullable, found {c0.NullCount} nulls.";
             return false;
         }
+        if (columns[1] is not global::Apache.Arrow.ListArray c1 || c1.Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId.List)
+        {
+            error = Mismatch("Track column 1 'ints'", global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(1).DataType, columns[1]);
+            return false;
+        }
+        if (c1.NullCount != 0)
+        {
+            error = $"Track column 1 'ints': non-nullable, found {c1.NullCount} nulls.";
+            return false;
+        }
+        if (c1.Values is not global::Apache.Arrow.Int32Array x1 || !SameType(x1.Data.DataType, ((global::Apache.Arrow.Types.ListType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(1).DataType).ValueDataType))
+        {
+            error = Mismatch("Track column 1 'ints' element", ((global::Apache.Arrow.Types.ListType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(1).DataType).ValueDataType, c1.Values);
+            return false;
+        }
+        var l1 = new global::Eiva.Fletcher.Model.PrimitiveElements<int>(x1);
+        if (columns[2] is not global::Apache.Arrow.ListArray c2 || c2.Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId.List)
+        {
+            error = Mismatch("Track column 2 'names'", global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(2).DataType, columns[2]);
+            return false;
+        }
+        if (c2.NullCount != 0)
+        {
+            error = $"Track column 2 'names': non-nullable, found {c2.NullCount} nulls.";
+            return false;
+        }
+        if (c2.Values is not global::Apache.Arrow.StringArray x2 || !SameType(x2.Data.DataType, ((global::Apache.Arrow.Types.ListType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(2).DataType).ValueDataType))
+        {
+            error = Mismatch("Track column 2 'names' element", ((global::Apache.Arrow.Types.ListType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(2).DataType).ValueDataType, c2.Values);
+            return false;
+        }
+        var l2 = new global::Eiva.Fletcher.Model.StringElements(x2);
+        if (columns[3] is not global::Apache.Arrow.ListArray c3 || c3.Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId.List)
+        {
+            error = Mismatch("Track column 3 'blobs'", global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(3).DataType, columns[3]);
+            return false;
+        }
+        if (c3.NullCount != 0)
+        {
+            error = $"Track column 3 'blobs': non-nullable, found {c3.NullCount} nulls.";
+            return false;
+        }
+        if (c3.Values is not global::Apache.Arrow.BinaryArray x3 || !SameType(x3.Data.DataType, ((global::Apache.Arrow.Types.ListType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(3).DataType).ValueDataType))
+        {
+            error = Mismatch("Track column 3 'blobs' element", ((global::Apache.Arrow.Types.ListType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(3).DataType).ValueDataType, c3.Values);
+            return false;
+        }
+        var l3 = new global::Eiva.Fletcher.Model.BinaryElements(x3);
+        if (columns[4] is not global::Apache.Arrow.ListArray c4 || c4.Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId.List)
+        {
+            error = Mismatch("Track column 4 'flags'", global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(4).DataType, columns[4]);
+            return false;
+        }
+        if (c4.NullCount != 0)
+        {
+            error = $"Track column 4 'flags': non-nullable, found {c4.NullCount} nulls.";
+            return false;
+        }
+        if (c4.Values is not global::Apache.Arrow.BooleanArray x4 || !SameType(x4.Data.DataType, ((global::Apache.Arrow.Types.ListType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(4).DataType).ValueDataType))
+        {
+            error = Mismatch("Track column 4 'flags' element", ((global::Apache.Arrow.Types.ListType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(4).DataType).ValueDataType, c4.Values);
+            return false;
+        }
+        var l4 = new global::Eiva.Fletcher.Model.BooleanElements(x4);
+        if (columns[5] is not global::Apache.Arrow.ListArray c5 || c5.Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId.List)
+        {
+            error = Mismatch("Track column 5 'qualities'", global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(5).DataType, columns[5]);
+            return false;
+        }
+        if (c5.NullCount != 0)
+        {
+            error = $"Track column 5 'qualities': non-nullable, found {c5.NullCount} nulls.";
+            return false;
+        }
+        if (c5.Values is not global::Apache.Arrow.Int32Array x5 || !SameType(x5.Data.DataType, ((global::Apache.Arrow.Types.ListType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(5).DataType).ValueDataType))
+        {
+            error = Mismatch("Track column 5 'qualities' element", ((global::Apache.Arrow.Types.ListType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(5).DataType).ValueDataType, c5.Values);
+            return false;
+        }
+        var l5 = new global::Eiva.Fletcher.Model.EnumElements<Quality>(x5);
+        if (columns[6] is not global::Apache.Arrow.ListArray c6 || c6.Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId.List)
+        {
+            error = Mismatch("Track column 6 'values'", global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(6).DataType, columns[6]);
+            return false;
+        }
+        if (c6.NullCount != 0)
+        {
+            error = $"Track column 6 'values': non-nullable, found {c6.NullCount} nulls.";
+            return false;
+        }
+        if (c6.Values is not global::Apache.Arrow.DoubleArray x6 || !SameType(x6.Data.DataType, ((global::Apache.Arrow.Types.ListType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(6).DataType).ValueDataType))
+        {
+            error = Mismatch("Track column 6 'values' element", ((global::Apache.Arrow.Types.ListType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(6).DataType).ValueDataType, c6.Values);
+            return false;
+        }
+        var l6 = new global::Eiva.Fletcher.Model.PrimitiveElements<double>(x6);
+        if (columns[7] is not global::Apache.Arrow.ListArray c7 || c7.Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId.List)
+        {
+            error = Mismatch("Track column 7 'points'", global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(7).DataType, columns[7]);
+            return false;
+        }
+        if (c7.NullCount != 0)
+        {
+            error = $"Track column 7 'points': non-nullable, found {c7.NullCount} nulls.";
+            return false;
+        }
+        if (c7.Values is not global::Apache.Arrow.StructArray x7 || x7.Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId.Struct)
+        {
+            error = Mismatch("Track column 7 'points' element", ((global::Apache.Arrow.Types.ListType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(7).DataType).ValueDataType, c7.Values);
+            return false;
+        }
+        if (!global::Fletcher.Gen.Golden.Accessor.PositionAccessor.TryMake(x7, out var a7, out var e7))
+        {
+            error = "Track column 7 'points' element: " + e7;
+            return false;
+        }
+        var l7 = new global::Eiva.Fletcher.Model.ViewElements<PositionView>(a7);
+        if (columns[8] is not global::Apache.Arrow.MapArray c8 || c8.Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId.Map)
+        {
+            error = Mismatch("Track column 8 'scores'", global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(8).DataType, columns[8]);
+            return false;
+        }
+        if (c8.NullCount != 0)
+        {
+            error = $"Track column 8 'scores': non-nullable, found {c8.NullCount} nulls.";
+            return false;
+        }
+        if (c8.Keys is not global::Apache.Arrow.StringArray x8k || !SameType(x8k.Data.DataType, ((global::Apache.Arrow.Types.MapType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(8).DataType).KeyField.DataType))
+        {
+            error = Mismatch("Track column 8 'scores' key", ((global::Apache.Arrow.Types.MapType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(8).DataType).KeyField.DataType, c8.Keys);
+            return false;
+        }
+        var l8k = new global::Eiva.Fletcher.Model.StringElements(x8k);
+        if (c8.Values is not global::Apache.Arrow.Int32Array x8 || !SameType(x8.Data.DataType, ((global::Apache.Arrow.Types.MapType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(8).DataType).ValueField.DataType))
+        {
+            error = Mismatch("Track column 8 'scores' value", ((global::Apache.Arrow.Types.MapType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(8).DataType).ValueField.DataType, c8.Values);
+            return false;
+        }
+        var l8 = new global::Eiva.Fletcher.Model.PrimitiveElements<int>(x8);
+        if (columns[9] is not global::Apache.Arrow.MapArray c9 || c9.Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId.Map)
+        {
+            error = Mismatch("Track column 9 'places'", global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(9).DataType, columns[9]);
+            return false;
+        }
+        if (c9.NullCount != 0)
+        {
+            error = $"Track column 9 'places': non-nullable, found {c9.NullCount} nulls.";
+            return false;
+        }
+        if (c9.Keys is not global::Apache.Arrow.StringArray x9k || !SameType(x9k.Data.DataType, ((global::Apache.Arrow.Types.MapType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(9).DataType).KeyField.DataType))
+        {
+            error = Mismatch("Track column 9 'places' key", ((global::Apache.Arrow.Types.MapType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(9).DataType).KeyField.DataType, c9.Keys);
+            return false;
+        }
+        var l9k = new global::Eiva.Fletcher.Model.StringElements(x9k);
+        if (c9.Values is not global::Apache.Arrow.StructArray x9 || x9.Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId.Struct)
+        {
+            error = Mismatch("Track column 9 'places' value", ((global::Apache.Arrow.Types.MapType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(9).DataType).ValueField.DataType, c9.Values);
+            return false;
+        }
+        if (!global::Fletcher.Gen.Golden.Accessor.PositionAccessor.TryMake(x9, out var a9, out var e9))
+        {
+            error = "Track column 9 'places' value: " + e9;
+            return false;
+        }
+        var l9 = new global::Eiva.Fletcher.Model.ViewElements<PositionView>(a9);
+        if (columns[10] is not global::Apache.Arrow.MapArray c10 || c10.Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId.Map)
+        {
+            error = Mismatch("Track column 10 'labels'", global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(10).DataType, columns[10]);
+            return false;
+        }
+        if (c10.NullCount != 0)
+        {
+            error = $"Track column 10 'labels': non-nullable, found {c10.NullCount} nulls.";
+            return false;
+        }
+        if (c10.Keys is not global::Apache.Arrow.Int64Array x10k || !SameType(x10k.Data.DataType, ((global::Apache.Arrow.Types.MapType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(10).DataType).KeyField.DataType))
+        {
+            error = Mismatch("Track column 10 'labels' key", ((global::Apache.Arrow.Types.MapType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(10).DataType).KeyField.DataType, c10.Keys);
+            return false;
+        }
+        var l10k = new global::Eiva.Fletcher.Model.PrimitiveElements<long>(x10k);
+        if (c10.Values is not global::Apache.Arrow.StringArray x10 || !SameType(x10.Data.DataType, ((global::Apache.Arrow.Types.MapType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(10).DataType).ValueField.DataType))
+        {
+            error = Mismatch("Track column 10 'labels' value", ((global::Apache.Arrow.Types.MapType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(10).DataType).ValueField.DataType, c10.Values);
+            return false;
+        }
+        var l10 = new global::Eiva.Fletcher.Model.StringElements(x10);
+        if (columns[11] is not global::Apache.Arrow.ListArray c11 || c11.Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId.List)
+        {
+            error = Mismatch("Track column 11 'grid'", global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(11).DataType, columns[11]);
+            return false;
+        }
+        if (c11.NullCount != 0)
+        {
+            error = $"Track column 11 'grid': non-nullable, found {c11.NullCount} nulls.";
+            return false;
+        }
+        if (c11.Values is not global::Apache.Arrow.ListArray x11 || x11.Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId.List)
+        {
+            error = Mismatch("Track column 11 'grid' element", ((global::Apache.Arrow.Types.ListType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(11).DataType).ValueDataType, c11.Values);
+            return false;
+        }
+        if (x11.Values is not global::Apache.Arrow.StructArray x11_ || x11_.Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId.Struct)
+        {
+            error = Mismatch("Track column 11 'grid' element element", ((global::Apache.Arrow.Types.ListType)((global::Apache.Arrow.Types.ListType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(11).DataType).ValueDataType).ValueDataType, x11.Values);
+            return false;
+        }
+        if (!global::Fletcher.Gen.Golden.Accessor.PositionAccessor.TryMake(x11_, out var a11_, out var e11_))
+        {
+            error = "Track column 11 'grid' element element: " + e11_;
+            return false;
+        }
+        var l11_ = new global::Eiva.Fletcher.Model.ViewElements<PositionView>(a11_);
+        var l11 = new global::Eiva.Fletcher.Model.ListElements<PositionView?>(x11, l11_);
+        if (columns[12] is not global::Apache.Arrow.ListArray c12 || c12.Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId.List)
+        {
+            error = Mismatch("Track column 12 'cube'", global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(12).DataType, columns[12]);
+            return false;
+        }
+        if (c12.NullCount != 0)
+        {
+            error = $"Track column 12 'cube': non-nullable, found {c12.NullCount} nulls.";
+            return false;
+        }
+        if (c12.Values is not global::Apache.Arrow.ListArray x12 || x12.Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId.List)
+        {
+            error = Mismatch("Track column 12 'cube' element", ((global::Apache.Arrow.Types.ListType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(12).DataType).ValueDataType, c12.Values);
+            return false;
+        }
+        if (x12.Values is not global::Apache.Arrow.ListArray x12_ || x12_.Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId.List)
+        {
+            error = Mismatch("Track column 12 'cube' element element", ((global::Apache.Arrow.Types.ListType)((global::Apache.Arrow.Types.ListType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(12).DataType).ValueDataType).ValueDataType, x12.Values);
+            return false;
+        }
+        if (x12_.Values is not global::Apache.Arrow.StructArray x12__ || x12__.Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId.Struct)
+        {
+            error = Mismatch("Track column 12 'cube' element element element", ((global::Apache.Arrow.Types.ListType)((global::Apache.Arrow.Types.ListType)((global::Apache.Arrow.Types.ListType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(12).DataType).ValueDataType).ValueDataType).ValueDataType, x12_.Values);
+            return false;
+        }
+        if (!global::Fletcher.Gen.Golden.Accessor.PositionAccessor.TryMake(x12__, out var a12__, out var e12__))
+        {
+            error = "Track column 12 'cube' element element element: " + e12__;
+            return false;
+        }
+        var l12__ = new global::Eiva.Fletcher.Model.ViewElements<PositionView>(a12__);
+        var l12_ = new global::Eiva.Fletcher.Model.ListElements<PositionView?>(x12_, l12__);
+        var l12 = new global::Eiva.Fletcher.Model.ListElements<global::Eiva.Fletcher.Model.ListView<PositionView?>>(x12, l12_);
+        if (columns[13] is not global::Apache.Arrow.ListArray c13 || c13.Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId.List)
+        {
+            error = Mismatch("Track column 13 'matrix'", global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(13).DataType, columns[13]);
+            return false;
+        }
+        if (c13.NullCount != 0)
+        {
+            error = $"Track column 13 'matrix': non-nullable, found {c13.NullCount} nulls.";
+            return false;
+        }
+        if (c13.Values is not global::Apache.Arrow.ListArray x13 || x13.Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId.List)
+        {
+            error = Mismatch("Track column 13 'matrix' element", ((global::Apache.Arrow.Types.ListType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(13).DataType).ValueDataType, c13.Values);
+            return false;
+        }
+        if (x13.Values is not global::Apache.Arrow.Int32Array x13_ || !SameType(x13_.Data.DataType, ((global::Apache.Arrow.Types.ListType)((global::Apache.Arrow.Types.ListType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(13).DataType).ValueDataType).ValueDataType))
+        {
+            error = Mismatch("Track column 13 'matrix' element element", ((global::Apache.Arrow.Types.ListType)((global::Apache.Arrow.Types.ListType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(13).DataType).ValueDataType).ValueDataType, x13.Values);
+            return false;
+        }
+        var l13_ = new global::Eiva.Fletcher.Model.PrimitiveElements<int>(x13_);
+        var l13 = new global::Eiva.Fletcher.Model.ListElements<int>(x13, l13_);
+        if (columns[14] is not global::Apache.Arrow.ListArray c14 || c14.Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId.List)
+        {
+            error = Mismatch("Track column 14 'maybe_points'", global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(14).DataType, columns[14]);
+            return false;
+        }
+        if (c14.Values is not global::Apache.Arrow.StructArray x14 || x14.Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId.Struct)
+        {
+            error = Mismatch("Track column 14 'maybe_points' element", ((global::Apache.Arrow.Types.ListType)global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(14).DataType).ValueDataType, c14.Values);
+            return false;
+        }
+        if (!global::Fletcher.Gen.Golden.Accessor.PositionAccessor.TryMake(x14, out var a14, out var e14))
+        {
+            error = "Track column 14 'maybe_points' element: " + e14;
+            return false;
+        }
+        var l14 = new global::Eiva.Fletcher.Model.ViewElements<PositionView>(a14);
         var result = new TrackAccessor(length, validity, schemaMetadata ?? NoMetadata, fields);
+        result._c0 = c0;
+        result._c1 = c1;
+        result._e1 = l1;
+        result._c2 = c2;
+        result._e2 = l2;
+        result._c3 = c3;
+        result._e3 = l3;
+        result._c4 = c4;
+        result._e4 = l4;
+        result._c5 = c5;
+        result._e5 = l5;
+        result._c6 = c6;
+        result._e6 = l6;
+        result._c7 = c7;
+        result._e7 = l7;
+        result._c8 = c8;
+        result._k8 = l8k;
+        result._e8 = l8;
+        result._c9 = c9;
+        result._k9 = l9k;
+        result._e9 = l9;
+        result._c10 = c10;
+        result._k10 = l10k;
+        result._e10 = l10;
+        result._c11 = c11;
+        result._e11 = l11;
+        result._c12 = c12;
+        result._e12 = l12;
+        result._c13 = c13;
+        result._e13 = l13;
+        result._c14 = c14;
+        result._e14 = l14;
+        accessor = result;
+        error = null;
+        return true;
+    }
+
+    private void CheckRow(int row)
+    {
+        if ((uint)row >= (uint)_length)
+            throw new global::System.ArgumentOutOfRangeException(nameof(row), row, null);
+    }
+
+    private static bool SameType(global::Apache.Arrow.Types.IArrowType actual, global::Apache.Arrow.Types.IArrowType expected) =>
+        actual.TypeId == expected.TypeId && (actual, expected) switch
+        {
+            (global::Apache.Arrow.Types.TimestampType a, global::Apache.Arrow.Types.TimestampType e) =>
+                a.Unit == e.Unit && a.Timezone == e.Timezone,
+            (global::Apache.Arrow.Types.DurationType a, global::Apache.Arrow.Types.DurationType e) => a.Unit == e.Unit,
+            _ => true,
+        };
+
+    private static string Mismatch(string where, global::Apache.Arrow.Types.IArrowType expected,
+        global::Apache.Arrow.IArrowArray actual) =>
+        $"{where}: expected {Describe(expected)}, got {Describe(actual.Data.DataType)}.";
+
+    private static string Describe(global::Apache.Arrow.Types.IArrowType type) => type switch
+    {
+        global::Apache.Arrow.Types.TimestampType t => $"timestamp[{t.Unit}, {t.Timezone ?? "no zone"}]",
+        global::Apache.Arrow.Types.DurationType t => $"duration[{t.Unit}]",
+        _ => type.Name,
+    };
+}
+
+/// <summary>Reads <see cref="Hyper"/> rows from Arrow column by column: every column is
+/// validated and cast once, by TryMake, and read in place by <see cref="HyperView"/>.</summary>
+/// <remarks>
+/// Validation is positional and type-only: column names and the nullable flag are tolerated,
+/// and a column the proto says is never null must hold no nulls. TryMake never throws on
+/// bad input and returns the reason instead (D-BIND-94).
+/// </remarks>
+public sealed class HyperAccessor : global::Eiva.Fletcher.Model.IArrowRows<HyperView>
+{
+    private static readonly global::System.Collections.Generic.IReadOnlyDictionary<string, string> NoMetadata =
+        global::System.Collections.ObjectModel.ReadOnlyDictionary<string, string>.Empty;
+    private static readonly string? Refusal = "Hyper column 1 'cells': a list nested 4 deep, beyond the accessor's cap of 3.";
+    private readonly int _length;
+    private readonly global::Apache.Arrow.StructArray? _validity;
+    private readonly global::System.Collections.Generic.IReadOnlyDictionary<string, string> _schemaMetadata;
+    private readonly global::Apache.Arrow.Field[] _fields;
+    internal global::Apache.Arrow.Int32Array _c0 = null!;
+
+    private HyperAccessor(int length, global::Apache.Arrow.StructArray? validity, global::System.Collections.Generic.IReadOnlyDictionary<string, string> schemaMetadata,
+        global::Apache.Arrow.Field[] fields)
+    {
+        _length = length;
+        _validity = validity;
+        _schemaMetadata = schemaMetadata;
+        _fields = fields;
+    }
+
+    /// <summary>The number of rows.</summary>
+    public int Length => _length;
+
+    /// <summary>Whether row <paramref name="row"/> is null: always false for a RecordBatch, the
+    /// struct's own validity for a StructArray.</summary>
+    public bool IsNull(int row)
+    {
+        CheckRow(row);
+        return _validity is not null && _validity.IsNull(row);
+    }
+
+    /// <summary>Row <paramref name="row"/>, read in place. The view borrows this accessor.</summary>
+    public HyperView At(int row)
+    {
+        CheckRow(row);
+        return new HyperView(this, row);
+    }
+
+    /// <summary>The batch schema's metadata; empty, never null, for a StructArray or when absent.</summary>
+    public global::System.Collections.Generic.IReadOnlyDictionary<string, string> SchemaMetadata => _schemaMetadata;
+
+    /// <summary>The metadata of column <paramref name="index"/>; empty, never null, when absent.</summary>
+    public global::System.Collections.Generic.IReadOnlyDictionary<string, string> FieldMetadata(int index)
+    {
+        if ((uint)index >= (uint)_fields.Length)
+            throw new global::System.ArgumentOutOfRangeException(nameof(index), index, null);
+        return _fields[index].Metadata ?? NoMetadata;
+    }
+
+    /// <summary>The metadata of the first column named <paramref name="name"/> in the batch, which
+    /// may name its columns differently from the proto; empty when none is.</summary>
+    public global::System.Collections.Generic.IReadOnlyDictionary<string, string> FieldMetadata(string name)
+    {
+        global::System.ArgumentNullException.ThrowIfNull(name);
+        foreach (var field in _fields)
+            if (field.Name == name) return field.Metadata ?? NoMetadata;
+        return NoMetadata;
+    }
+
+    /// <summary>The schema metadata's value for <paramref name="key"/>, or null when absent.</summary>
+    public string? Metadata(string key)
+    {
+        global::System.ArgumentNullException.ThrowIfNull(key);
+        return _schemaMetadata.TryGetValue(key, out var value) ? value : null;
+    }
+
+    /// <summary>Validates <paramref name="batch"/> and casts its columns once.</summary>
+    /// <returns>True with the accessor, or false with the reason in <paramref name="error"/>.</returns>
+    public static bool TryMake(global::Apache.Arrow.RecordBatch? batch,
+        [global::System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out HyperAccessor? accessor,
+        [global::System.Diagnostics.CodeAnalysis.NotNullWhen(false)] out string? error)
+    {
+        if (batch is null)
+        {
+            accessor = null;
+            error = "Hyper: the batch is null.";
+            return false;
+        }
+        return FromColumns(batch.Length, [.. batch.Arrays], [.. batch.Schema.FieldsList], batch.Schema.Metadata,
+            null, out accessor, out error);
+    }
+
+    /// <summary>Validates the children of <paramref name="array"/>, a column of this message, and
+    /// casts them once.</summary>
+    /// <returns>True with the accessor, or false with the reason in <paramref name="error"/>.</returns>
+    public static bool TryMake(global::Apache.Arrow.StructArray? array,
+        [global::System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out HyperAccessor? accessor,
+        [global::System.Diagnostics.CodeAnalysis.NotNullWhen(false)] out string? error)
+    {
+        if (array is null)
+        {
+            accessor = null;
+            error = "Hyper: the array is null.";
+            return false;
+        }
+        // Fields is read once: Apache.Arrow 23 allocates on every read of it.
+        return FromColumns(array.Length, [.. array.Fields],
+            [.. ((global::Apache.Arrow.Types.StructType)array.Data.DataType).Fields], null, array,
+            out accessor, out error);
+    }
+
+    private static bool FromColumns(int length, global::Apache.Arrow.IArrowArray[] columns,
+        global::Apache.Arrow.Field[] fields, global::System.Collections.Generic.IReadOnlyDictionary<string, string>? schemaMetadata,
+        global::Apache.Arrow.StructArray? validity,
+        [global::System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out HyperAccessor? accessor,
+        [global::System.Diagnostics.CodeAnalysis.NotNullWhen(false)] out string? error)
+    {
+        accessor = null;
+        if (Refusal is not null)
+        {
+            error = Refusal;
+            return false;
+        }
+        if (columns.Length != 2 || fields.Length != 2)
+        {
+            error = $"Hyper: expected 2 columns, got {columns.Length}.";
+            return false;
+        }
+        for (var i = 0; i < columns.Length; i++)
+        {
+            if (columns[i].Length != length)
+            {
+                error = $"Hyper column {i}: {columns[i].Length} rows, expected {length}.";
+                return false;
+            }
+        }
+        if (columns[0] is not global::Apache.Arrow.Int32Array c0 || !SameType(c0.Data.DataType, global::Fletcher.Gen.Golden.Accessor.Hyper.Schema.GetFieldByIndex(0).DataType))
+        {
+            error = Mismatch("Hyper column 0 'id'", global::Fletcher.Gen.Golden.Accessor.Hyper.Schema.GetFieldByIndex(0).DataType, columns[0]);
+            return false;
+        }
+        if (c0.NullCount != 0)
+        {
+            error = $"Hyper column 0 'id': non-nullable, found {c0.NullCount} nulls.";
+            return false;
+        }
+        var result = new HyperAccessor(length, validity, schemaMetadata ?? NoMetadata, fields);
         result._c0 = c0;
         accessor = result;
         error = null;

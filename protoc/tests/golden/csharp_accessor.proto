@@ -10,6 +10,7 @@ syntax = "proto3";
 
 package golden.accessor;
 
+import "fletcher/options.proto";
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 
@@ -55,8 +56,49 @@ message Sample {
   Note note = 30;
 }
 
-// A list column, which BIND-7a does not read: the class exists and TryMake refuses (D-BIND-96).
+// BIND-7b: every collection shape the accessor reads, as borrowed windows (D-BIND-101).
 message Track {
   int32 id = 1;
-  repeated Position points = 2;
+  repeated int32 ints = 2;
+  repeated string names = 3;
+  repeated bytes blobs = 4;
+  repeated bool flags = 5;
+  repeated Quality qualities = 6;
+  repeated double values = 7;
+  repeated Position points = 8;
+  map<string, int32> scores = 9;
+  map<string, Position> places = 10;
+  map<int64, string> labels = 11;
+  // Lists of lists, as flatten wrappers nest them: depth 2 and 3 of structs, and a scalar leaf.
+  repeated PositionList grid = 12;
+  repeated PositionGrid cube = 13;
+  repeated IntList matrix = 14;
+  // Nullable in its column, not in the model (G-Q4): a null row reads as an empty window.
+  optional PositionList maybe_points = 15;
+}
+
+message PositionList {
+  option (fletcher.flatten) = true;
+  repeated Position items = 1;
+}
+
+message PositionGrid {
+  option (fletcher.flatten) = true;
+  repeated PositionList rows = 1;
+}
+
+message PositionCube {
+  option (fletcher.flatten) = true;
+  repeated PositionGrid planes = 1;
+}
+
+message IntList {
+  option (fletcher.flatten) = true;
+  repeated int32 values = 1;
+}
+
+// A list nested 4 deep, beyond the cap of 3: the class exists and TryMake refuses (D-BIND-96).
+message Hyper {
+  int32 id = 1;
+  repeated PositionCube cells = 2;
 }

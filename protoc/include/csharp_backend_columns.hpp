@@ -34,8 +34,9 @@ using CrossFile = std::set<const google::protobuf::Descriptor*>;
 struct Elem {
     bool is_struct = false;
     bool is_list = false;
-    CsScalarInfo scalar;          // when neither
-    std::string cls;              // when is_struct
+    CsScalarInfo scalar;                                // when neither
+    std::string cls;                                    // when is_struct
+    const google::protobuf::Descriptor* msg = nullptr;  // when is_struct: the message, for BIND-7
     bool other_file = false;      // when is_struct: the class is generated from another file
     std::shared_ptr<Elem> inner;  // when is_list: the element of this inner list
 };

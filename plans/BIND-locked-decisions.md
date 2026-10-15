@@ -3008,3 +3008,25 @@ accessor), after a read-only map of the C++ and Rust accessors and the capstone 
   (`Track.track_view` would be the property `TrackView` inside the struct `TrackView`, CS0542).
   Only the file and its imports are visible to the plugin, so a clash with an unimported file of
   the same package is left to the compiler.
+
+- **D-BIND-101 - a collection property of the C# view returns a borrowed window over the cast
+  column, not the model's `List`: `ListView<T>` for a list, `MapView<TKey, TValue>` for a map, a
+  list of lists as a `ListView` of `ListView`s; and a null element reads as C++ reads it.**
+  *LOCKED BY THE MAINTAINER 2026-10-15 (BIND-7b). Narrows D-BIND-98's "the view's types are the
+  model's", which left collection getters to 7b.* Returning the model's `List<T>` would allocate a
+  list and copy every element on every read, which BIND-7's "no per-cell materialisation" forbids
+  and C++ never does: its `ScalarSpan`, `StructSpan`, `ScalarMapSpan`, `StructMapSpan` and
+  `NestedStructSpan` are borrowed windows. The C# windows are readonly structs with `Count`, an
+  indexer, `IsNull(j)` (a map: `Key(j)`, `Value(j)`, `ValueIsNull(j)`), a `foreach` that does not
+  allocate, and `ToList()`, which builds the model's `List<T>` for a scalar list and
+  `List<KeyValuePair<TKey, TValue>>` for a scalar map on demand; a list of structs gives views,
+  the model's rows coming from `ToRow` (7c). The property keeps the model's NAME. The window and
+  element types live once in `Eiva.Fletcher.Model`, beside `Timestamp`, for the reason that
+  package exists: a type generated into every consumer assembly would collide (CS0433).
+  **Null elements, as C++:** Arrow list items and map values are nullable although no proto
+  producer writes a null element. A scalar element reads as its value, its proto default when
+  null, with `IsNull(j)` beside it; an inner list of a list of lists likewise (an empty window,
+  `IsNull(j)` true); a struct element or a message map value reads as `<Msg>View?`, null on a null
+  element, as C++'s `optional<RowView>`. Nothing a C++ or Rust producer may write is refused.
+  **Declined:** the model's types (a copy per read); refusing a batch with a null element in
+  `TryMake` (a legal batch from another producer would be refused).

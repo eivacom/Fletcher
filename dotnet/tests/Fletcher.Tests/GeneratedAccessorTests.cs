@@ -258,16 +258,6 @@ public sealed class GeneratedAccessorTests
     }
 
     [Fact]
-    public void AMessageWithAColumnItCannotReadRefusesNamingIt()
-    {
-        // D-BIND-96 at BIND-7a's boundary: lists are 7b's, so Track's accessor exists and refuses.
-        using RecordBatch batch = Track.ToArrow(new[] { new Track { Id = 1 } });
-        Assert.False(TrackAccessor.TryMake(batch, out var accessor, out var error));
-        Assert.Null(accessor);
-        Assert.Equal("Track column 1 'points': a list column, which the C# accessor does not read yet.", error);
-    }
-
-    [Fact]
     public void MetadataIsTheBatchsAndEmptyNeverNullWhenAbsent()
     {
         // D-BIND-95: SchemaMetadata, FieldMetadata by position and by live name, Metadata(key).

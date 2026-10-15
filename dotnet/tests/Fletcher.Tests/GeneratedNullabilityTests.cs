@@ -34,6 +34,9 @@ public sealed class GeneratedNullabilityTests
     private static readonly HashSet<string> NullableFieldNonNullProperty = new(StringComparer.Ordinal)
     {
         "CompositeCoverage.OptionalFlattenedStructList",
+        // BIND-7b: the same shape in the accessor golden, there so the view's read of a null row
+        // (an empty window) is tested.
+        "Track.MaybePoints",
     };
 
     private static IReadOnlyList<Type> GeneratedClasses() =>

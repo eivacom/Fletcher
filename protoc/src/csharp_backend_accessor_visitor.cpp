@@ -37,6 +37,17 @@ std::string Label(const Descriptor* msg) {
     return view.substr(0, view.size() - 4);
 }
 
+// Q6, D-BIND-9: C++'s accessor reads lists of lists to depth 3, and so does this one.
+constexpr int kMaxListDepth = 3;
+
+// How many list levels column `c` has: 0 for a scalar, a struct or a map, 1 for a list.
+int ListDepth(const Column& c) {
+    if (c.kind != ColKind::LIST) return 0;
+    int depth = 1;
+    for (const Elem* e = &c.elem; e->is_list; e = e->inner.get()) ++depth;
+    return depth;
+}
+
 // One field of a message as the accessor and view see it, in Schema column order.
 struct AccessorField {
     size_t index = 0;
@@ -75,10 +86,11 @@ std::vector<AccessorField> FieldsOf(const Descriptor* msg, const FileDescriptor*
         auto column = ClassifyColumn(node, file, cross, visiting, why);
         if (!column) {
             f.why = why;
-        } else if (column->kind == ColKind::LIST || column->kind == ColKind::MAP) {
-            // BIND-7a reads scalars and structs; lists and maps arrive in BIND-7b.
-            f.why = std::string("a ") + (column->kind == ColKind::LIST ? "list" : "map") +
-                    " column, which the C# accessor does not read yet";
+        } else if (ListDepth(*column) > kMaxListDepth) {
+            // Q6: lists of lists are read to the depth C++'s accessor reads, 3, and a deeper one
+            // keeps the class and refuses, as C++ does (D-BIND-96).
+            f.why = "a list nested " + std::to_string(ListDepth(*column)) +
+                    " deep, beyond the accessor's cap of " + std::to_string(kMaxListDepth);
         } else {
             column->index = i;
             column->property = f.property;
@@ -114,9 +126,76 @@ std::string ArrayClass(const Column& c) {
         case ColKind::TEMPORAL:
             return c.is_timestamp ? "global::Apache.Arrow.TimestampArray"
                                   : "global::Apache.Arrow.DurationArray";
+        case ColKind::LIST:
+            return "global::Apache.Arrow.ListArray";
+        case ColKind::MAP:
+            return "global::Apache.Arrow.MapArray";
         default:
             return "global::Apache.Arrow.StructArray";
     }
+}
+
+constexpr const char* kModel = "global::Eiva.Fletcher.Model.";
+
+// What one element of a list, or one key or value of a map, reads as (D-BIND-101): a scalar as
+// the model's type, a struct as its view, null on a null element, and an inner list as a window.
+std::string ElemType(const Elem& e, const FileDescriptor* file) {
+    if (e.is_list) return std::string(kModel) + "ListView<" + ElemType(*e.inner, file) + ">";
+    if (e.is_struct) return ViewRef(e.msg, file) + "?";
+    return e.scalar.type_text;
+}
+
+// The Eiva.Fletcher.Model reader of a scalar element child.
+std::string ScalarElements(const CsScalarInfo& info) {
+    if (info.type_text == "bool") return std::string(kModel) + "BooleanElements";
+    if (info.type_text == "string") return std::string(kModel) + "StringElements";
+    if (info.type_text == "byte[]") return std::string(kModel) + "BinaryElements";
+    if (info.is_enum) return std::string(kModel) + "EnumElements<" + info.type_text + ">";
+    return std::string(kModel) + "PrimitiveElements<" + info.type_text + ">";
+}
+
+// Statements in FromColumns that validate the element child `child` (a C# expression) against
+// the Arrow type `expected` and leave its reader, an IArrowElements of ElemType(e), in `l<id>`.
+// A struct element is validated by its own accessor; an inner list recurses (`id` + "_").
+void EmitElements(std::ostringstream& o, const Elem& e, const std::string& child,
+                  const std::string& expected, const std::string& where, const std::string& id,
+                  const FileDescriptor* file) {
+    const std::string in = "        ";
+    const std::string x = "x" + id;
+    const auto refuse = [&](const std::string& test) {
+        o << in << "if (" << child << " is not " << test << ")\n"
+          << in << "{\n"
+          << in << "    error = Mismatch(" << CsStringLiteral(where) << ", " << expected << ", "
+          << child << ");\n"
+          << in << "    return false;\n"
+          << in << "}\n";
+    };
+    if (e.is_list) {
+        refuse("global::Apache.Arrow.ListArray " + x + " || " + x +
+               ".Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId.List");
+        EmitElements(o, *e.inner, x + ".Values",
+                     "((global::Apache.Arrow.Types.ListType)" + expected + ").ValueDataType",
+                     where + " element", id + "_", file);
+        o << in << "var l" << id << " = new " << kModel << "ListElements<"
+          << ElemType(*e.inner, file) << ">(" << x << ", l" << id << "_);\n";
+        return;
+    }
+    if (e.is_struct) {
+        refuse("global::Apache.Arrow.StructArray " + x + " || " + x +
+               ".Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId.Struct");
+        o << in << "if (!" << CsAccessorExpr(e.msg) << ".TryMake(" << x << ", out var a" << id
+          << ", out var e" << id << "))\n"
+          << in << "{\n"
+          << in << "    error = " << CsStringLiteral(where + ": ") << " + e" << id << ";\n"
+          << in << "    return false;\n"
+          << in << "}\n"
+          << in << "var l" << id << " = new " << kModel << "ViewElements<" << ViewRef(e.msg, file)
+          << ">(a" << id << ");\n";
+        return;
+    }
+    refuse("global::Apache.Arrow." + e.scalar.arrow_array + " " + x + " || !SameType(" + x +
+           ".Data.DataType, " + expected + ")");
+    o << in << "var l" << id << " = new " << ScalarElements(e.scalar) << "(" << x << ");\n";
 }
 
 constexpr const char* kDict =
@@ -126,13 +205,19 @@ constexpr const char* kNotNullWhen = "[global::System.Diagnostics.CodeAnalysis.N
 // Statements in FromColumns that validate column `c` and leave it, cast, in `c<n>` (a struct:
 // its accessor in `a<n>`).
 void EmitValidate(std::ostringstream& o, const Column& c, const std::string& where,
-                  const std::string& schema) {
+                  const std::string& schema, const FileDescriptor* file) {
     const std::string n = std::to_string(c.index);
     const std::string in = "        ";
     const std::string expected = schema + ".GetFieldByIndex(" + n + ").DataType";
-    if (c.kind == ColKind::STRUCT) {
+    // A composite column is checked by its type id, then element by element: MapArray derives
+    // from ListArray, so the class alone would take a map for a list.
+    const char* type_id = c.kind == ColKind::STRUCT ? "Struct"
+                          : c.kind == ColKind::LIST ? "List"
+                          : c.kind == ColKind::MAP  ? "Map"
+                                                    : nullptr;
+    if (type_id != nullptr) {
         o << in << "if (columns[" << n << "] is not " << ArrayClass(c) << " c" << n << " || c" << n
-          << ".Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId.Struct)\n";
+          << ".Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId." << type_id << ")\n";
     } else {
         o << in << "if (columns[" << n << "] is not " << ArrayClass(c) << " c" << n
           << " || !SameType(c" << n << ".Data.DataType, " << expected << "))\n";
@@ -161,6 +246,21 @@ void EmitValidate(std::ostringstream& o, const Column& c, const std::string& whe
           << in << "    error = " << CsStringLiteral(where + ": ") << " + e" << n << ";\n"
           << in << "    return false;\n"
           << in << "}\n";
+    }
+    // A list's values child, and a map's keys and values, are whole (not sliced to the column),
+    // and the column's ValueOffsets index them absolutely, so each element reader is built once
+    // over the whole child.
+    if (c.kind == ColKind::LIST) {
+        EmitElements(o, c.elem, "c" + n + ".Values",
+                     "((global::Apache.Arrow.Types.ListType)" + expected + ").ValueDataType",
+                     where + " element", n, file);
+    }
+    if (c.kind == ColKind::MAP) {
+        const std::string map_type = "((global::Apache.Arrow.Types.MapType)" + expected + ")";
+        EmitElements(o, c.key, "c" + n + ".Keys", map_type + ".KeyField.DataType", where + " key",
+                     n + "k", file);
+        EmitElements(o, c.elem, "c" + n + ".Values", map_type + ".ValueField.DataType",
+                     where + " value", n, file);
     }
 }
 
@@ -192,7 +292,9 @@ std::string GenerateAccessor(const Descriptor* msg, const FileDescriptor* file,
          "throws on\n"
       << "/// bad input and returns the reason instead (D-BIND-94).\n"
       << "/// </remarks>\n"
-      << "public sealed class " << cls << "\n{\n"
+      // IArrowRows: what a list of this message, or a map with it as value, reads rows through
+      // (D-BIND-101). Its two members are the accessor's own IsNull and At: no member is added.
+      << "public sealed class " << cls << " : " << kModel << "IArrowRows<" << view << ">\n{\n"
       << "    private static readonly " << kDict
       << " NoMetadata =\n"
          "        global::System.Collections.ObjectModel.ReadOnlyDictionary<string, "
@@ -218,6 +320,12 @@ std::string GenerateAccessor(const Descriptor* msg, const FileDescriptor* file,
         if (c.kind == ColKind::TEMPORAL)
             o << "    internal global::Apache.Arrow.Types."
               << (c.is_timestamp ? "TimestampType" : "DurationType") << " _t" << n << " = null!;\n";
+        if (c.kind == ColKind::MAP)
+            o << "    internal " << kModel << "IArrowElements<" << ElemType(c.key, file) << "> _k"
+              << n << " = null!;\n";
+        if (c.kind == ColKind::LIST || c.kind == ColKind::MAP)
+            o << "    internal " << kModel << "IArrowElements<" << ElemType(c.elem, file) << "> _e"
+              << n << " = null!;\n";
     }
     o << "\n"
       << "    private " << cls << "(int length, global::Apache.Arrow.StructArray? validity, "
@@ -350,7 +458,8 @@ std::string GenerateAccessor(const Descriptor* msg, const FileDescriptor* file,
     for (const auto& f : fields) {
         if (!f.column) continue;
         EmitValidate(o, *f.column,
-                     label + " column " + std::to_string(f.index) + " '" + f.name + "'", schema);
+                     label + " column " + std::to_string(f.index) + " '" + f.name + "'", schema,
+                     file);
     }
     o << "        var result = new " << cls
       << "(length, validity, schemaMetadata ?? NoMetadata, fields);\n";
@@ -364,6 +473,9 @@ std::string GenerateAccessor(const Descriptor* msg, const FileDescriptor* file,
             o << "        result._t" << n << " = (global::Apache.Arrow.Types."
               << (c.is_timestamp ? "TimestampType" : "DurationType") << ")c" << n
               << ".Data.DataType;\n";
+        if (c.kind == ColKind::MAP) o << "        result._k" << n << " = l" << n << "k;\n";
+        if (c.kind == ColKind::LIST || c.kind == ColKind::MAP)
+            o << "        result._e" << n << " = l" << n << ";\n";
     }
     o << "        accessor = result;\n"
       << "        error = null;\n"
@@ -406,8 +518,27 @@ std::string GenerateAccessor(const Descriptor* msg, const FileDescriptor* file,
     return o.str();
 }
 
-// The expression a view property returns for column `c`, read at `_row`.
-std::string ReadExpression(const Column& c, const std::string& type_text) {
+// The type a view property declares for column `c`: the model property's, but a struct's view
+// for a struct, and a borrowed window for a list or a map (D-BIND-101).
+std::string ViewType(const Column& c, const std::string& type_text, const FileDescriptor* file) {
+    switch (c.kind) {
+        case ColKind::STRUCT:
+            return ViewRef(c.msg, file);
+        case ColKind::LIST:
+            return std::string(kModel) + "ListView<" + ElemType(c.elem, file) + ">";
+        case ColKind::MAP:
+            return std::string(kModel) + "MapView<" + ElemType(c.key, file) + ", " +
+                   ElemType(c.elem, file) + ">";
+        default:
+            return type_text;
+    }
+}
+
+// The expression a view property returns for column `c`, read at `_row`. `nullable` is the
+// model property's `?`: an optional flatten-wrapper list is nullable in its column but not in
+// the model (G-Q4), so its null row reads as an empty window there.
+std::string ReadExpression(const Column& c, const std::string& type_text, bool nullable,
+                           const FileDescriptor* file) {
     const std::string n = std::to_string(c.index);
     const std::string a = "_accessor._c" + n;
     switch (c.kind) {
@@ -430,6 +561,15 @@ std::string ReadExpression(const Column& c, const std::string& type_text) {
                        ") : null";
             return "new " + type_text + "(" + a + ".GetValue(_row).GetValueOrDefault(), " + unit +
                    ")";
+        }
+        case ColKind::LIST:
+        case ColKind::MAP: {
+            const std::string window =
+                ViewType(c, type_text, file) + ".Of(" + a + ", _row, " +
+                (c.kind == ColKind::MAP ? "_accessor._k" + n + ", " : std::string()) +
+                "_accessor._e" + n + ")";
+            if (!c.nullable) return window;
+            return a + ".IsNull(_row) ? " + (nullable ? "null" : "default") + " : " + window;
         }
         default:
             return c.nullable ? a + ".IsNull(_row) ? null : " + a + ".At(_row)" : a + ".At(_row)";
@@ -461,9 +601,8 @@ std::string GenerateView(const Descriptor* msg, const FileDescriptor* file,
             continue;
         }
         const auto& c = *f.column;
-        const std::string type = c.kind == ColKind::STRUCT ? ViewRef(c.msg, file) : f.type_text;
-        o << "\n    public " << type << (f.nullable ? "?" : "") << " " << f.property << " => "
-          << ReadExpression(c, f.type_text) << ";\n";
+        o << "\n    public " << ViewType(c, f.type_text, file) << (f.nullable ? "?" : "") << " "
+          << f.property << " => " << ReadExpression(c, f.type_text, f.nullable, file) << ";\n";
     }
     o << "}\n";
     return o.str();

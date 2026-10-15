@@ -351,16 +351,60 @@ public sealed class Sample
     }
 }
 
+public sealed class PositionList
+{
+    public global::System.Collections.Generic.List<Position> Items { get; set; } = new();
+    // No Schema: a flatten wrapper is inlined into the messages that use it.
+}
+
+public sealed class PositionGrid
+{
+    public global::System.Collections.Generic.List<global::System.Collections.Generic.List<Position>> Rows { get; set; } = new();
+    // No Schema: a flatten wrapper is inlined into the messages that use it.
+}
+
+public sealed class IntList
+{
+    public global::System.Collections.Generic.List<int> Values { get; set; } = new();
+    // No Schema: a flatten wrapper is inlined into the messages that use it.
+}
+
 public sealed class Track
 {
     public int Id { get; set; }
+    public global::System.Collections.Generic.List<int> Ints { get; set; } = new();
+    public global::System.Collections.Generic.List<string> Names { get; set; } = new();
+    public global::System.Collections.Generic.List<byte[]> Blobs { get; set; } = new();
+    public global::System.Collections.Generic.List<bool> Flags { get; set; } = new();
+    public global::System.Collections.Generic.List<Quality> Qualities { get; set; } = new();
+    public global::System.Collections.Generic.List<double> Values { get; set; } = new();
     public global::System.Collections.Generic.List<Position> Points { get; set; } = new();
+    public global::System.Collections.Generic.List<global::System.Collections.Generic.KeyValuePair<string, int>> Scores { get; set; } = new();
+    public global::System.Collections.Generic.List<global::System.Collections.Generic.KeyValuePair<string, Position>> Places { get; set; } = new();
+    public global::System.Collections.Generic.List<global::System.Collections.Generic.KeyValuePair<long, string>> Labels { get; set; } = new();
+    public global::System.Collections.Generic.List<global::System.Collections.Generic.List<Position>> Grid { get; set; } = new();
+    public global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<Position>>> Cube { get; set; } = new();
+    public global::System.Collections.Generic.List<global::System.Collections.Generic.List<int>> Matrix { get; set; } = new();
+    public global::System.Collections.Generic.List<Position> MaybePoints { get; set; } = new();
 
     public static global::Apache.Arrow.Schema Schema { get; } = new global::Apache.Arrow.Schema(
         new global::Apache.Arrow.Field[]
         {
             new global::Apache.Arrow.Field("id", global::Apache.Arrow.Types.Int32Type.Default, false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "1"), new("field_id", "1") }),
-            new global::Apache.Arrow.Field("points", new global::Apache.Arrow.Types.ListType(new global::Apache.Arrow.Field("item", new global::Apache.Arrow.Types.StructType(new global::Apache.Arrow.Field[] { new global::Apache.Arrow.Field("lat", global::Apache.Arrow.Types.DoubleType.Default, false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "1"), new("field_id", "1") }), new global::Apache.Arrow.Field("lon", global::Apache.Arrow.Types.DoubleType.Default, false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "2"), new("field_id", "2") }), new global::Apache.Arrow.Field("depth", global::Apache.Arrow.Types.FloatType.Default, true, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "3"), new("field_id", "3") }) }), true, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("proto_package", "golden.accessor"), new("proto_message", "Position") })), false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "2"), new("field_id", "2") }),
+            new global::Apache.Arrow.Field("ints", new global::Apache.Arrow.Types.ListType(new global::Apache.Arrow.Field("item", global::Apache.Arrow.Types.Int32Type.Default, true)), false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "2"), new("field_id", "2") }),
+            new global::Apache.Arrow.Field("names", new global::Apache.Arrow.Types.ListType(new global::Apache.Arrow.Field("item", global::Apache.Arrow.Types.StringType.Default, true)), false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "3"), new("field_id", "3") }),
+            new global::Apache.Arrow.Field("blobs", new global::Apache.Arrow.Types.ListType(new global::Apache.Arrow.Field("item", global::Apache.Arrow.Types.BinaryType.Default, true)), false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "4"), new("field_id", "4") }),
+            new global::Apache.Arrow.Field("flags", new global::Apache.Arrow.Types.ListType(new global::Apache.Arrow.Field("item", global::Apache.Arrow.Types.BooleanType.Default, true)), false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "5"), new("field_id", "5") }),
+            new global::Apache.Arrow.Field("qualities", new global::Apache.Arrow.Types.ListType(new global::Apache.Arrow.Field("item", global::Apache.Arrow.Types.Int32Type.Default, true)), false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "6"), new("field_id", "6") }),
+            new global::Apache.Arrow.Field("values", new global::Apache.Arrow.Types.ListType(new global::Apache.Arrow.Field("item", global::Apache.Arrow.Types.DoubleType.Default, true)), false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "7"), new("field_id", "7") }),
+            new global::Apache.Arrow.Field("points", new global::Apache.Arrow.Types.ListType(new global::Apache.Arrow.Field("item", new global::Apache.Arrow.Types.StructType(new global::Apache.Arrow.Field[] { new global::Apache.Arrow.Field("lat", global::Apache.Arrow.Types.DoubleType.Default, false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "1"), new("field_id", "1") }), new global::Apache.Arrow.Field("lon", global::Apache.Arrow.Types.DoubleType.Default, false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "2"), new("field_id", "2") }), new global::Apache.Arrow.Field("depth", global::Apache.Arrow.Types.FloatType.Default, true, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "3"), new("field_id", "3") }) }), true, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("proto_package", "golden.accessor"), new("proto_message", "Position") })), false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "8"), new("field_id", "8") }),
+            new global::Apache.Arrow.Field("scores", new global::Apache.Arrow.Types.MapType(new global::Apache.Arrow.Field("key", global::Apache.Arrow.Types.StringType.Default, false), new global::Apache.Arrow.Field("value", global::Apache.Arrow.Types.Int32Type.Default, true)), false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "9"), new("field_id", "9") }),
+            new global::Apache.Arrow.Field("places", new global::Apache.Arrow.Types.MapType(new global::Apache.Arrow.Field("key", global::Apache.Arrow.Types.StringType.Default, false), new global::Apache.Arrow.Field("value", new global::Apache.Arrow.Types.StructType(new global::Apache.Arrow.Field[] { new global::Apache.Arrow.Field("lat", global::Apache.Arrow.Types.DoubleType.Default, false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "1"), new("field_id", "1") }), new global::Apache.Arrow.Field("lon", global::Apache.Arrow.Types.DoubleType.Default, false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "2"), new("field_id", "2") }), new global::Apache.Arrow.Field("depth", global::Apache.Arrow.Types.FloatType.Default, true, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "3"), new("field_id", "3") }) }), true, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("proto_package", "golden.accessor"), new("proto_message", "Position") })), false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "10"), new("field_id", "10") }),
+            new global::Apache.Arrow.Field("labels", new global::Apache.Arrow.Types.MapType(new global::Apache.Arrow.Field("key", global::Apache.Arrow.Types.Int64Type.Default, false), new global::Apache.Arrow.Field("value", global::Apache.Arrow.Types.StringType.Default, true)), false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "11"), new("field_id", "11") }),
+            new global::Apache.Arrow.Field("grid", new global::Apache.Arrow.Types.ListType(new global::Apache.Arrow.Field("item", new global::Apache.Arrow.Types.ListType(new global::Apache.Arrow.Field("item", new global::Apache.Arrow.Types.StructType(new global::Apache.Arrow.Field[] { new global::Apache.Arrow.Field("lat", global::Apache.Arrow.Types.DoubleType.Default, false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "1"), new("field_id", "1") }), new global::Apache.Arrow.Field("lon", global::Apache.Arrow.Types.DoubleType.Default, false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "2"), new("field_id", "2") }), new global::Apache.Arrow.Field("depth", global::Apache.Arrow.Types.FloatType.Default, true, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "3"), new("field_id", "3") }) }), true, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("proto_package", "golden.accessor"), new("proto_message", "Position") })), true)), false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "12"), new("field_id", "12") }),
+            new global::Apache.Arrow.Field("cube", new global::Apache.Arrow.Types.ListType(new global::Apache.Arrow.Field("item", new global::Apache.Arrow.Types.ListType(new global::Apache.Arrow.Field("item", new global::Apache.Arrow.Types.ListType(new global::Apache.Arrow.Field("item", new global::Apache.Arrow.Types.StructType(new global::Apache.Arrow.Field[] { new global::Apache.Arrow.Field("lat", global::Apache.Arrow.Types.DoubleType.Default, false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "1"), new("field_id", "1") }), new global::Apache.Arrow.Field("lon", global::Apache.Arrow.Types.DoubleType.Default, false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "2"), new("field_id", "2") }), new global::Apache.Arrow.Field("depth", global::Apache.Arrow.Types.FloatType.Default, true, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "3"), new("field_id", "3") }) }), true, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("proto_package", "golden.accessor"), new("proto_message", "Position") })), true)), true)), false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "13"), new("field_id", "13") }),
+            new global::Apache.Arrow.Field("matrix", new global::Apache.Arrow.Types.ListType(new global::Apache.Arrow.Field("item", new global::Apache.Arrow.Types.ListType(new global::Apache.Arrow.Field("item", global::Apache.Arrow.Types.Int32Type.Default, true)), true)), false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "14"), new("field_id", "14") }),
+            new global::Apache.Arrow.Field("maybe_points", new global::Apache.Arrow.Types.ListType(new global::Apache.Arrow.Field("item", new global::Apache.Arrow.Types.StructType(new global::Apache.Arrow.Field[] { new global::Apache.Arrow.Field("lat", global::Apache.Arrow.Types.DoubleType.Default, false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "1"), new("field_id", "1") }), new global::Apache.Arrow.Field("lon", global::Apache.Arrow.Types.DoubleType.Default, false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "2"), new("field_id", "2") }), new global::Apache.Arrow.Field("depth", global::Apache.Arrow.Types.FloatType.Default, true, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "3"), new("field_id", "3") }) }), true, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("proto_package", "golden.accessor"), new("proto_message", "Position") })), true, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "15"), new("field_id", "15") }),
         },
         new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("proto_package", "golden.accessor"), new("proto_message", "Track") });
 
@@ -378,10 +422,72 @@ public sealed class Track
         for (var i = 0; i < rows.Count; i++)
         {
             var row = rows[i];
-            if (row.Points is null) throw new global::System.ArgumentException($"Track.Points is null in row {i}; use an empty collection instead.", nameof(rows));
-            foreach (var x1 in row.Points)
+            if (row.Ints is null) throw new global::System.ArgumentException($"Track.Ints is null in row {i}; use an empty collection instead.", nameof(rows));
+            if (row.Names is null) throw new global::System.ArgumentException($"Track.Names is null in row {i}; use an empty collection instead.", nameof(rows));
+            foreach (var x2 in row.Names)
             {
-                if (x1 is null) throw new global::System.ArgumentException($"Track.Points holds a null element in row {i}; an element is never null.", nameof(rows));
+                if (x2 is null) throw new global::System.ArgumentException($"Track.Names holds a null element in row {i}; an element is never null.", nameof(rows));
+            }
+            if (row.Blobs is null) throw new global::System.ArgumentException($"Track.Blobs is null in row {i}; use an empty collection instead.", nameof(rows));
+            foreach (var x3 in row.Blobs)
+            {
+                if (x3 is null) throw new global::System.ArgumentException($"Track.Blobs holds a null element in row {i}; an element is never null.", nameof(rows));
+            }
+            if (row.Flags is null) throw new global::System.ArgumentException($"Track.Flags is null in row {i}; use an empty collection instead.", nameof(rows));
+            if (row.Qualities is null) throw new global::System.ArgumentException($"Track.Qualities is null in row {i}; use an empty collection instead.", nameof(rows));
+            if (row.Values is null) throw new global::System.ArgumentException($"Track.Values is null in row {i}; use an empty collection instead.", nameof(rows));
+            if (row.Points is null) throw new global::System.ArgumentException($"Track.Points is null in row {i}; use an empty collection instead.", nameof(rows));
+            foreach (var x7 in row.Points)
+            {
+                if (x7 is null) throw new global::System.ArgumentException($"Track.Points holds a null element in row {i}; an element is never null.", nameof(rows));
+            }
+            if (row.Scores is null) throw new global::System.ArgumentException($"Track.Scores is null in row {i}; use an empty collection instead.", nameof(rows));
+            foreach (var x8 in row.Scores)
+            {
+                if (x8.Key is null) throw new global::System.ArgumentException($"Track.Scores holds a null map key in row {i}.", nameof(rows));
+            }
+            if (row.Places is null) throw new global::System.ArgumentException($"Track.Places is null in row {i}; use an empty collection instead.", nameof(rows));
+            foreach (var x9 in row.Places)
+            {
+                if (x9.Key is null) throw new global::System.ArgumentException($"Track.Places holds a null map key in row {i}.", nameof(rows));
+                if (x9.Value is null) throw new global::System.ArgumentException($"Track.Places holds a null map value in row {i}; a value is never null.", nameof(rows));
+            }
+            if (row.Labels is null) throw new global::System.ArgumentException($"Track.Labels is null in row {i}; use an empty collection instead.", nameof(rows));
+            foreach (var x10 in row.Labels)
+            {
+                if (x10.Value is null) throw new global::System.ArgumentException($"Track.Labels holds a null map value in row {i}; a value is never null.", nameof(rows));
+            }
+            if (row.Grid is null) throw new global::System.ArgumentException($"Track.Grid is null in row {i}; use an empty collection instead.", nameof(rows));
+            foreach (var x11 in row.Grid)
+            {
+                if (x11 is null) throw new global::System.ArgumentException($"Track.Grid holds a null element in row {i}; an element is never null.", nameof(rows));
+                foreach (var x11_1 in x11)
+                {
+                    if (x11_1 is null) throw new global::System.ArgumentException($"Track.Grid holds a null element in row {i}; an element is never null.", nameof(rows));
+                }
+            }
+            if (row.Cube is null) throw new global::System.ArgumentException($"Track.Cube is null in row {i}; use an empty collection instead.", nameof(rows));
+            foreach (var x12 in row.Cube)
+            {
+                if (x12 is null) throw new global::System.ArgumentException($"Track.Cube holds a null element in row {i}; an element is never null.", nameof(rows));
+                foreach (var x12_1 in x12)
+                {
+                    if (x12_1 is null) throw new global::System.ArgumentException($"Track.Cube holds a null element in row {i}; an element is never null.", nameof(rows));
+                    foreach (var x12_1_2 in x12_1)
+                    {
+                        if (x12_1_2 is null) throw new global::System.ArgumentException($"Track.Cube holds a null element in row {i}; an element is never null.", nameof(rows));
+                    }
+                }
+            }
+            if (row.Matrix is null) throw new global::System.ArgumentException($"Track.Matrix is null in row {i}; use an empty collection instead.", nameof(rows));
+            foreach (var x13 in row.Matrix)
+            {
+                if (x13 is null) throw new global::System.ArgumentException($"Track.Matrix holds a null element in row {i}; an element is never null.", nameof(rows));
+            }
+            if (row.MaybePoints is null) throw new global::System.ArgumentException($"Track.MaybePoints is null in row {i}; use an empty collection instead.", nameof(rows));
+            foreach (var x14 in row.MaybePoints)
+            {
+                if (x14 is null) throw new global::System.ArgumentException($"Track.MaybePoints holds a null element in row {i}; an element is never null.", nameof(rows));
             }
         }
         var b0 = new global::Apache.Arrow.Int32Array.Builder();
@@ -393,15 +499,224 @@ public sealed class Track
         var t1 = (global::Apache.Arrow.Types.ListType)Schema.GetFieldByIndex(1).DataType;
         var o1 = new global::Apache.Arrow.ArrowBuffer.Builder<int>(rows.Count + 1);
         o1.Append(0);
-        var f1 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>();
+        var b1 = new global::Apache.Arrow.Int32Array.Builder();
         foreach (var row in rows)
         {
-            f1.AddRange(row.Points);
-            o1.Append(f1.Count);
+            foreach (var x1 in row.Ints) b1.Append(x1);
+            o1.Append(b1.Length);
         }
-        var e1 = new global::Apache.Arrow.StructArray((global::Apache.Arrow.Types.StructType)t1.ValueDataType, f1.Count, global::Fletcher.Gen.Golden.Accessor.Position.ToArrowColumns(f1), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var e1 = b1.Build();
         var c1 = new global::Apache.Arrow.ListArray(t1, rows.Count, o1.Build(), e1, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
-        return new global::Apache.Arrow.IArrowArray[] { c0, c1 };
+        var t2 = (global::Apache.Arrow.Types.ListType)Schema.GetFieldByIndex(2).DataType;
+        var o2 = new global::Apache.Arrow.ArrowBuffer.Builder<int>(rows.Count + 1);
+        o2.Append(0);
+        var b2 = new global::Apache.Arrow.StringArray.Builder();
+        foreach (var row in rows)
+        {
+            foreach (var x2 in row.Names) b2.Append(x2);
+            o2.Append(b2.Length);
+        }
+        var e2 = b2.Build();
+        var c2 = new global::Apache.Arrow.ListArray(t2, rows.Count, o2.Build(), e2, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var t3 = (global::Apache.Arrow.Types.ListType)Schema.GetFieldByIndex(3).DataType;
+        var o3 = new global::Apache.Arrow.ArrowBuffer.Builder<int>(rows.Count + 1);
+        o3.Append(0);
+        var b3 = new global::Apache.Arrow.BinaryArray.Builder();
+        foreach (var row in rows)
+        {
+            foreach (var x3 in row.Blobs) b3.Append((global::System.ReadOnlySpan<byte>)x3);
+            o3.Append(b3.Length);
+        }
+        var e3 = b3.Build();
+        var c3 = new global::Apache.Arrow.ListArray(t3, rows.Count, o3.Build(), e3, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var t4 = (global::Apache.Arrow.Types.ListType)Schema.GetFieldByIndex(4).DataType;
+        var o4 = new global::Apache.Arrow.ArrowBuffer.Builder<int>(rows.Count + 1);
+        o4.Append(0);
+        var b4 = new global::Apache.Arrow.BooleanArray.Builder();
+        foreach (var row in rows)
+        {
+            foreach (var x4 in row.Flags) b4.Append(x4);
+            o4.Append(b4.Length);
+        }
+        var e4 = b4.Build();
+        var c4 = new global::Apache.Arrow.ListArray(t4, rows.Count, o4.Build(), e4, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var t5 = (global::Apache.Arrow.Types.ListType)Schema.GetFieldByIndex(5).DataType;
+        var o5 = new global::Apache.Arrow.ArrowBuffer.Builder<int>(rows.Count + 1);
+        o5.Append(0);
+        var b5 = new global::Apache.Arrow.Int32Array.Builder();
+        foreach (var row in rows)
+        {
+            foreach (var x5 in row.Qualities) b5.Append((int)x5);
+            o5.Append(b5.Length);
+        }
+        var e5 = b5.Build();
+        var c5 = new global::Apache.Arrow.ListArray(t5, rows.Count, o5.Build(), e5, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var t6 = (global::Apache.Arrow.Types.ListType)Schema.GetFieldByIndex(6).DataType;
+        var o6 = new global::Apache.Arrow.ArrowBuffer.Builder<int>(rows.Count + 1);
+        o6.Append(0);
+        var b6 = new global::Apache.Arrow.DoubleArray.Builder();
+        foreach (var row in rows)
+        {
+            foreach (var x6 in row.Values) b6.Append(x6);
+            o6.Append(b6.Length);
+        }
+        var e6 = b6.Build();
+        var c6 = new global::Apache.Arrow.ListArray(t6, rows.Count, o6.Build(), e6, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var t7 = (global::Apache.Arrow.Types.ListType)Schema.GetFieldByIndex(7).DataType;
+        var o7 = new global::Apache.Arrow.ArrowBuffer.Builder<int>(rows.Count + 1);
+        o7.Append(0);
+        var f7 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>();
+        foreach (var row in rows)
+        {
+            f7.AddRange(row.Points);
+            o7.Append(f7.Count);
+        }
+        var e7 = new global::Apache.Arrow.StructArray((global::Apache.Arrow.Types.StructType)t7.ValueDataType, f7.Count, global::Fletcher.Gen.Golden.Accessor.Position.ToArrowColumns(f7), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var c7 = new global::Apache.Arrow.ListArray(t7, rows.Count, o7.Build(), e7, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var t8 = (global::Apache.Arrow.Types.MapType)Schema.GetFieldByIndex(8).DataType;
+        var o8 = new global::Apache.Arrow.ArrowBuffer.Builder<int>(rows.Count + 1);
+        o8.Append(0);
+        var k8 = new global::Apache.Arrow.StringArray.Builder();
+        var b8 = new global::Apache.Arrow.Int32Array.Builder();
+        foreach (var row in rows)
+        {
+            foreach (var x8 in row.Scores)
+            {
+                k8.Append(x8.Key);
+                b8.Append(x8.Value);
+            }
+            o8.Append(k8.Length);
+        }
+        var kv8 = new global::Apache.Arrow.StructArray(t8.KeyValueType, k8.Length, new global::Apache.Arrow.IArrowArray[] { k8.Build(), b8.Build() }, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var c8 = new global::Apache.Arrow.MapArray(t8, rows.Count, o8.Build(), kv8, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var t9 = (global::Apache.Arrow.Types.MapType)Schema.GetFieldByIndex(9).DataType;
+        var o9 = new global::Apache.Arrow.ArrowBuffer.Builder<int>(rows.Count + 1);
+        o9.Append(0);
+        var k9 = new global::Apache.Arrow.StringArray.Builder();
+        var f9 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>();
+        foreach (var row in rows)
+        {
+            foreach (var x9 in row.Places)
+            {
+                k9.Append(x9.Key);
+                f9.Add(x9.Value);
+            }
+            o9.Append(k9.Length);
+        }
+        var kv9 = new global::Apache.Arrow.StructArray(t9.KeyValueType, k9.Length, new global::Apache.Arrow.IArrowArray[] { k9.Build(), new global::Apache.Arrow.StructArray((global::Apache.Arrow.Types.StructType)t9.ValueField.DataType, f9.Count, global::Fletcher.Gen.Golden.Accessor.Position.ToArrowColumns(f9), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0) }, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var c9 = new global::Apache.Arrow.MapArray(t9, rows.Count, o9.Build(), kv9, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var t10 = (global::Apache.Arrow.Types.MapType)Schema.GetFieldByIndex(10).DataType;
+        var o10 = new global::Apache.Arrow.ArrowBuffer.Builder<int>(rows.Count + 1);
+        o10.Append(0);
+        var k10 = new global::Apache.Arrow.Int64Array.Builder();
+        var b10 = new global::Apache.Arrow.StringArray.Builder();
+        foreach (var row in rows)
+        {
+            foreach (var x10 in row.Labels)
+            {
+                k10.Append(x10.Key);
+                b10.Append(x10.Value);
+            }
+            o10.Append(k10.Length);
+        }
+        var kv10 = new global::Apache.Arrow.StructArray(t10.KeyValueType, k10.Length, new global::Apache.Arrow.IArrowArray[] { k10.Build(), b10.Build() }, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var c10 = new global::Apache.Arrow.MapArray(t10, rows.Count, o10.Build(), kv10, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var v11 = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>>>(rows.Count);
+        foreach (var row in rows) v11.Add(row.Grid);
+        var t11 = (global::Apache.Arrow.Types.ListType)Schema.GetFieldByIndex(11).DataType;
+        var o11 = new global::Apache.Arrow.ArrowBuffer.Builder<int>(v11.Count + 1);
+        o11.Append(0);
+        var f11 = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>>();
+        foreach (var x11 in v11)
+        {
+            f11.AddRange(x11);
+            o11.Append(f11.Count);
+        }
+        var t11_ = (global::Apache.Arrow.Types.ListType)t11.ValueDataType;
+        var o11_ = new global::Apache.Arrow.ArrowBuffer.Builder<int>(f11.Count + 1);
+        o11_.Append(0);
+        var f11_ = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>();
+        foreach (var x11_ in f11)
+        {
+            f11_.AddRange(x11_);
+            o11_.Append(f11_.Count);
+        }
+        var a11__ = new global::Apache.Arrow.StructArray((global::Apache.Arrow.Types.StructType)t11_.ValueDataType, f11_.Count, global::Fletcher.Gen.Golden.Accessor.Position.ToArrowColumns(f11_), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var a11_ = new global::Apache.Arrow.ListArray(t11_, f11.Count, o11_.Build(), a11__, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var a11 = new global::Apache.Arrow.ListArray(t11, v11.Count, o11.Build(), a11_, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var c11 = a11;
+        var v12 = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>>>>(rows.Count);
+        foreach (var row in rows) v12.Add(row.Cube);
+        var t12 = (global::Apache.Arrow.Types.ListType)Schema.GetFieldByIndex(12).DataType;
+        var o12 = new global::Apache.Arrow.ArrowBuffer.Builder<int>(v12.Count + 1);
+        o12.Append(0);
+        var f12 = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>>>();
+        foreach (var x12 in v12)
+        {
+            f12.AddRange(x12);
+            o12.Append(f12.Count);
+        }
+        var t12_ = (global::Apache.Arrow.Types.ListType)t12.ValueDataType;
+        var o12_ = new global::Apache.Arrow.ArrowBuffer.Builder<int>(f12.Count + 1);
+        o12_.Append(0);
+        var f12_ = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>>();
+        foreach (var x12_ in f12)
+        {
+            f12_.AddRange(x12_);
+            o12_.Append(f12_.Count);
+        }
+        var t12__ = (global::Apache.Arrow.Types.ListType)t12_.ValueDataType;
+        var o12__ = new global::Apache.Arrow.ArrowBuffer.Builder<int>(f12_.Count + 1);
+        o12__.Append(0);
+        var f12__ = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>();
+        foreach (var x12__ in f12_)
+        {
+            f12__.AddRange(x12__);
+            o12__.Append(f12__.Count);
+        }
+        var a12___ = new global::Apache.Arrow.StructArray((global::Apache.Arrow.Types.StructType)t12__.ValueDataType, f12__.Count, global::Fletcher.Gen.Golden.Accessor.Position.ToArrowColumns(f12__), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var a12__ = new global::Apache.Arrow.ListArray(t12__, f12_.Count, o12__.Build(), a12___, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var a12_ = new global::Apache.Arrow.ListArray(t12_, f12.Count, o12_.Build(), a12__, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var a12 = new global::Apache.Arrow.ListArray(t12, v12.Count, o12.Build(), a12_, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var c12 = a12;
+        var v13 = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<int>>>(rows.Count);
+        foreach (var row in rows) v13.Add(row.Matrix);
+        var t13 = (global::Apache.Arrow.Types.ListType)Schema.GetFieldByIndex(13).DataType;
+        var o13 = new global::Apache.Arrow.ArrowBuffer.Builder<int>(v13.Count + 1);
+        o13.Append(0);
+        var f13 = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<int>>();
+        foreach (var x13 in v13)
+        {
+            f13.AddRange(x13);
+            o13.Append(f13.Count);
+        }
+        var t13_ = (global::Apache.Arrow.Types.ListType)t13.ValueDataType;
+        var o13_ = new global::Apache.Arrow.ArrowBuffer.Builder<int>(f13.Count + 1);
+        o13_.Append(0);
+        var f13_ = new global::System.Collections.Generic.List<int>();
+        foreach (var x13_ in f13)
+        {
+            f13_.AddRange(x13_);
+            o13_.Append(f13_.Count);
+        }
+        var b13__ = new global::Apache.Arrow.Int32Array.Builder();
+        foreach (var x13__ in f13_) b13__.Append(x13__);
+        var a13__ = b13__.Build();
+        var a13_ = new global::Apache.Arrow.ListArray(t13_, f13.Count, o13_.Build(), a13__, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var a13 = new global::Apache.Arrow.ListArray(t13, v13.Count, o13.Build(), a13_, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var c13 = a13;
+        var t14 = (global::Apache.Arrow.Types.ListType)Schema.GetFieldByIndex(14).DataType;
+        var o14 = new global::Apache.Arrow.ArrowBuffer.Builder<int>(rows.Count + 1);
+        o14.Append(0);
+        var f14 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>();
+        foreach (var row in rows)
+        {
+            f14.AddRange(row.MaybePoints);
+            o14.Append(f14.Count);
+        }
+        var e14 = new global::Apache.Arrow.StructArray((global::Apache.Arrow.Types.StructType)t14.ValueDataType, f14.Count, global::Fletcher.Gen.Golden.Accessor.Position.ToArrowColumns(f14), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var c14 = new global::Apache.Arrow.ListArray(t14, rows.Count, o14.Build(), e14, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        return new global::Apache.Arrow.IArrowArray[] { c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14 };
     }
 
     public static Track FromArrow(global::Apache.Arrow.StructArray array, int index)
@@ -411,12 +726,300 @@ public sealed class Track
         row.Id = ((global::Apache.Arrow.Int32Array)array.Fields[0]).GetValue(index).GetValueOrDefault();
         {
             var l = (global::Apache.Arrow.ListArray)array.Fields[1];
+            var e = (global::Apache.Arrow.Int32Array)l.Values;
+            var start = l.ValueOffsets[index];
+            var end = l.ValueOffsets[index + 1];
+            var x = new global::System.Collections.Generic.List<int>(end - start);
+            for (var j = start; j < end; j++) x.Add(e.GetValue(j).GetValueOrDefault());
+            row.Ints = x;
+        }
+        {
+            var l = (global::Apache.Arrow.ListArray)array.Fields[2];
+            var e = (global::Apache.Arrow.StringArray)l.Values;
+            var start = l.ValueOffsets[index];
+            var end = l.ValueOffsets[index + 1];
+            var x = new global::System.Collections.Generic.List<string>(end - start);
+            for (var j = start; j < end; j++) x.Add(e.GetString(j) ?? "");
+            row.Names = x;
+        }
+        {
+            var l = (global::Apache.Arrow.ListArray)array.Fields[3];
+            var e = (global::Apache.Arrow.BinaryArray)l.Values;
+            var start = l.ValueOffsets[index];
+            var end = l.ValueOffsets[index + 1];
+            var x = new global::System.Collections.Generic.List<byte[]>(end - start);
+            for (var j = start; j < end; j++) x.Add(e.GetBytes(j).ToArray());
+            row.Blobs = x;
+        }
+        {
+            var l = (global::Apache.Arrow.ListArray)array.Fields[4];
+            var e = (global::Apache.Arrow.BooleanArray)l.Values;
+            var start = l.ValueOffsets[index];
+            var end = l.ValueOffsets[index + 1];
+            var x = new global::System.Collections.Generic.List<bool>(end - start);
+            for (var j = start; j < end; j++) x.Add(e.GetValue(j).GetValueOrDefault());
+            row.Flags = x;
+        }
+        {
+            var l = (global::Apache.Arrow.ListArray)array.Fields[5];
+            var e = (global::Apache.Arrow.Int32Array)l.Values;
+            var start = l.ValueOffsets[index];
+            var end = l.ValueOffsets[index + 1];
+            var x = new global::System.Collections.Generic.List<Quality>(end - start);
+            for (var j = start; j < end; j++) x.Add((Quality)e.GetValue(j).GetValueOrDefault());
+            row.Qualities = x;
+        }
+        {
+            var l = (global::Apache.Arrow.ListArray)array.Fields[6];
+            var e = (global::Apache.Arrow.DoubleArray)l.Values;
+            var start = l.ValueOffsets[index];
+            var end = l.ValueOffsets[index + 1];
+            var x = new global::System.Collections.Generic.List<double>(end - start);
+            for (var j = start; j < end; j++) x.Add(e.GetValue(j).GetValueOrDefault());
+            row.Values = x;
+        }
+        {
+            var l = (global::Apache.Arrow.ListArray)array.Fields[7];
             var e = (global::Apache.Arrow.StructArray)l.Values;
             var start = l.ValueOffsets[index];
             var end = l.ValueOffsets[index + 1];
             var x = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>(end - start);
             for (var j = start; j < end; j++) x.Add(global::Fletcher.Gen.Golden.Accessor.Position.FromArrow(e, j));
             row.Points = x;
+        }
+        {
+            var m = (global::Apache.Arrow.MapArray)array.Fields[8];
+            var k = (global::Apache.Arrow.StringArray)m.Keys;
+            var e = (global::Apache.Arrow.Int32Array)m.Values;
+            var start = m.ValueOffsets[index];
+            var end = m.ValueOffsets[index + 1];
+            var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.KeyValuePair<string, int>>(end - start);
+            for (var j = start; j < end; j++) x.Add(new global::System.Collections.Generic.KeyValuePair<string, int>(k.GetString(j) ?? "", e.GetValue(j).GetValueOrDefault()));
+            row.Scores = x;
+        }
+        {
+            var m = (global::Apache.Arrow.MapArray)array.Fields[9];
+            var k = (global::Apache.Arrow.StringArray)m.Keys;
+            var e = (global::Apache.Arrow.StructArray)m.Values;
+            var start = m.ValueOffsets[index];
+            var end = m.ValueOffsets[index + 1];
+            var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.KeyValuePair<string, global::Fletcher.Gen.Golden.Accessor.Position>>(end - start);
+            for (var j = start; j < end; j++) x.Add(new global::System.Collections.Generic.KeyValuePair<string, global::Fletcher.Gen.Golden.Accessor.Position>(k.GetString(j) ?? "", global::Fletcher.Gen.Golden.Accessor.Position.FromArrow(e, j)));
+            row.Places = x;
+        }
+        {
+            var m = (global::Apache.Arrow.MapArray)array.Fields[10];
+            var k = (global::Apache.Arrow.Int64Array)m.Keys;
+            var e = (global::Apache.Arrow.StringArray)m.Values;
+            var start = m.ValueOffsets[index];
+            var end = m.ValueOffsets[index + 1];
+            var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.KeyValuePair<long, string>>(end - start);
+            for (var j = start; j < end; j++) x.Add(new global::System.Collections.Generic.KeyValuePair<long, string>(k.GetValue(j).GetValueOrDefault(), e.GetString(j) ?? ""));
+            row.Labels = x;
+        }
+        {
+            var l = (global::Apache.Arrow.ListArray)array.Fields[11];
+            var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>>(l.ValueOffsets[index + 1] - l.ValueOffsets[index]);
+            var e0 = (global::Apache.Arrow.ListArray)l.Values;
+            for (var j0 = l.ValueOffsets[index]; j0 < l.ValueOffsets[index + 1]; j0++)
+            {
+                var x0 = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>(e0.ValueOffsets[j0 + 1] - e0.ValueOffsets[j0]);
+                var e0_ = (global::Apache.Arrow.StructArray)e0.Values;
+                for (var j0_ = e0.ValueOffsets[j0]; j0_ < e0.ValueOffsets[j0 + 1]; j0_++)
+                {
+                    x0.Add(global::Fletcher.Gen.Golden.Accessor.Position.FromArrow(e0_, j0_));
+                }
+                x.Add(x0);
+            }
+            row.Grid = x;
+        }
+        {
+            var l = (global::Apache.Arrow.ListArray)array.Fields[12];
+            var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>>>(l.ValueOffsets[index + 1] - l.ValueOffsets[index]);
+            var e0 = (global::Apache.Arrow.ListArray)l.Values;
+            for (var j0 = l.ValueOffsets[index]; j0 < l.ValueOffsets[index + 1]; j0++)
+            {
+                var x0 = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>>(e0.ValueOffsets[j0 + 1] - e0.ValueOffsets[j0]);
+                var e0_ = (global::Apache.Arrow.ListArray)e0.Values;
+                for (var j0_ = e0.ValueOffsets[j0]; j0_ < e0.ValueOffsets[j0 + 1]; j0_++)
+                {
+                    var x0_ = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>(e0_.ValueOffsets[j0_ + 1] - e0_.ValueOffsets[j0_]);
+                    var e0__ = (global::Apache.Arrow.StructArray)e0_.Values;
+                    for (var j0__ = e0_.ValueOffsets[j0_]; j0__ < e0_.ValueOffsets[j0_ + 1]; j0__++)
+                    {
+                        x0_.Add(global::Fletcher.Gen.Golden.Accessor.Position.FromArrow(e0__, j0__));
+                    }
+                    x0.Add(x0_);
+                }
+                x.Add(x0);
+            }
+            row.Cube = x;
+        }
+        {
+            var l = (global::Apache.Arrow.ListArray)array.Fields[13];
+            var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<int>>(l.ValueOffsets[index + 1] - l.ValueOffsets[index]);
+            var e0 = (global::Apache.Arrow.ListArray)l.Values;
+            for (var j0 = l.ValueOffsets[index]; j0 < l.ValueOffsets[index + 1]; j0++)
+            {
+                var x0 = new global::System.Collections.Generic.List<int>(e0.ValueOffsets[j0 + 1] - e0.ValueOffsets[j0]);
+                var e0_ = (global::Apache.Arrow.Int32Array)e0.Values;
+                for (var j0_ = e0.ValueOffsets[j0]; j0_ < e0.ValueOffsets[j0 + 1]; j0_++)
+                {
+                    x0.Add(e0_.GetValue(j0_).GetValueOrDefault());
+                }
+                x.Add(x0);
+            }
+            row.Matrix = x;
+        }
+        {
+            var l = (global::Apache.Arrow.ListArray)array.Fields[14];
+            var e = (global::Apache.Arrow.StructArray)l.Values;
+            var start = l.ValueOffsets[index];
+            var end = l.ValueOffsets[index + 1];
+            var x = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>(end - start);
+            for (var j = start; j < end; j++) x.Add(global::Fletcher.Gen.Golden.Accessor.Position.FromArrow(e, j));
+            row.MaybePoints = x;
+        }
+        return row;
+    }
+}
+
+public sealed class PositionCube
+{
+    public global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<Position>>> Planes { get; set; } = new();
+    // No Schema: a flatten wrapper is inlined into the messages that use it.
+}
+
+public sealed class Hyper
+{
+    public int Id { get; set; }
+    public global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<Position>>>> Cells { get; set; } = new();
+
+    public static global::Apache.Arrow.Schema Schema { get; } = new global::Apache.Arrow.Schema(
+        new global::Apache.Arrow.Field[]
+        {
+            new global::Apache.Arrow.Field("id", global::Apache.Arrow.Types.Int32Type.Default, false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "1"), new("field_id", "1") }),
+            new global::Apache.Arrow.Field("cells", new global::Apache.Arrow.Types.ListType(new global::Apache.Arrow.Field("item", new global::Apache.Arrow.Types.ListType(new global::Apache.Arrow.Field("item", new global::Apache.Arrow.Types.ListType(new global::Apache.Arrow.Field("item", new global::Apache.Arrow.Types.ListType(new global::Apache.Arrow.Field("item", new global::Apache.Arrow.Types.StructType(new global::Apache.Arrow.Field[] { new global::Apache.Arrow.Field("lat", global::Apache.Arrow.Types.DoubleType.Default, false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "1"), new("field_id", "1") }), new global::Apache.Arrow.Field("lon", global::Apache.Arrow.Types.DoubleType.Default, false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "2"), new("field_id", "2") }), new global::Apache.Arrow.Field("depth", global::Apache.Arrow.Types.FloatType.Default, true, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "3"), new("field_id", "3") }) }), true, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("proto_package", "golden.accessor"), new("proto_message", "Position") })), true)), true)), true)), false, new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("field_number", "2"), new("field_id", "2") }),
+        },
+        new global::System.Collections.Generic.KeyValuePair<string, string>[] { new("proto_package", "golden.accessor"), new("proto_message", "Hyper") });
+
+    public static global::Apache.Arrow.RecordBatch ToArrow(global::System.Collections.Generic.IEnumerable<Hyper> rows)
+    {
+        global::System.ArgumentNullException.ThrowIfNull(rows);
+        var all = rows as global::System.Collections.Generic.IReadOnlyList<Hyper> ?? new global::System.Collections.Generic.List<Hyper>(rows);
+        for (var i = 0; i < all.Count; i++)
+            if (all[i] is null) throw new global::System.ArgumentException($"Hyper row {i} is null.", nameof(rows));
+        return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), all.Count);
+    }
+
+    internal static global::Apache.Arrow.IArrowArray[] ToArrowColumns(global::System.Collections.Generic.IReadOnlyList<Hyper> rows)
+    {
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var row = rows[i];
+            if (row.Cells is null) throw new global::System.ArgumentException($"Hyper.Cells is null in row {i}; use an empty collection instead.", nameof(rows));
+            foreach (var x1 in row.Cells)
+            {
+                if (x1 is null) throw new global::System.ArgumentException($"Hyper.Cells holds a null element in row {i}; an element is never null.", nameof(rows));
+                foreach (var x1_1 in x1)
+                {
+                    if (x1_1 is null) throw new global::System.ArgumentException($"Hyper.Cells holds a null element in row {i}; an element is never null.", nameof(rows));
+                    foreach (var x1_1_2 in x1_1)
+                    {
+                        if (x1_1_2 is null) throw new global::System.ArgumentException($"Hyper.Cells holds a null element in row {i}; an element is never null.", nameof(rows));
+                        foreach (var x1_1_2_3 in x1_1_2)
+                        {
+                            if (x1_1_2_3 is null) throw new global::System.ArgumentException($"Hyper.Cells holds a null element in row {i}; an element is never null.", nameof(rows));
+                        }
+                    }
+                }
+            }
+        }
+        var b0 = new global::Apache.Arrow.Int32Array.Builder();
+        foreach (var row in rows)
+        {
+            b0.Append(row.Id);
+        }
+        var c0 = b0.Build();
+        var v1 = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>>>>>(rows.Count);
+        foreach (var row in rows) v1.Add(row.Cells);
+        var t1 = (global::Apache.Arrow.Types.ListType)Schema.GetFieldByIndex(1).DataType;
+        var o1 = new global::Apache.Arrow.ArrowBuffer.Builder<int>(v1.Count + 1);
+        o1.Append(0);
+        var f1 = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>>>>();
+        foreach (var x1 in v1)
+        {
+            f1.AddRange(x1);
+            o1.Append(f1.Count);
+        }
+        var t1_ = (global::Apache.Arrow.Types.ListType)t1.ValueDataType;
+        var o1_ = new global::Apache.Arrow.ArrowBuffer.Builder<int>(f1.Count + 1);
+        o1_.Append(0);
+        var f1_ = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>>>();
+        foreach (var x1_ in f1)
+        {
+            f1_.AddRange(x1_);
+            o1_.Append(f1_.Count);
+        }
+        var t1__ = (global::Apache.Arrow.Types.ListType)t1_.ValueDataType;
+        var o1__ = new global::Apache.Arrow.ArrowBuffer.Builder<int>(f1_.Count + 1);
+        o1__.Append(0);
+        var f1__ = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>>();
+        foreach (var x1__ in f1_)
+        {
+            f1__.AddRange(x1__);
+            o1__.Append(f1__.Count);
+        }
+        var t1___ = (global::Apache.Arrow.Types.ListType)t1__.ValueDataType;
+        var o1___ = new global::Apache.Arrow.ArrowBuffer.Builder<int>(f1__.Count + 1);
+        o1___.Append(0);
+        var f1___ = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>();
+        foreach (var x1___ in f1__)
+        {
+            f1___.AddRange(x1___);
+            o1___.Append(f1___.Count);
+        }
+        var a1____ = new global::Apache.Arrow.StructArray((global::Apache.Arrow.Types.StructType)t1___.ValueDataType, f1___.Count, global::Fletcher.Gen.Golden.Accessor.Position.ToArrowColumns(f1___), global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var a1___ = new global::Apache.Arrow.ListArray(t1___, f1__.Count, o1___.Build(), a1____, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var a1__ = new global::Apache.Arrow.ListArray(t1__, f1_.Count, o1__.Build(), a1___, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var a1_ = new global::Apache.Arrow.ListArray(t1_, f1.Count, o1_.Build(), a1__, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var a1 = new global::Apache.Arrow.ListArray(t1, v1.Count, o1.Build(), a1_, global::Apache.Arrow.ArrowBuffer.Empty, 0, 0);
+        var c1 = a1;
+        return new global::Apache.Arrow.IArrowArray[] { c0, c1 };
+    }
+
+    public static Hyper FromArrow(global::Apache.Arrow.StructArray array, int index)
+    {
+        global::System.ArgumentNullException.ThrowIfNull(array);
+        var row = new Hyper();
+        row.Id = ((global::Apache.Arrow.Int32Array)array.Fields[0]).GetValue(index).GetValueOrDefault();
+        {
+            var l = (global::Apache.Arrow.ListArray)array.Fields[1];
+            var x = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>>>>(l.ValueOffsets[index + 1] - l.ValueOffsets[index]);
+            var e0 = (global::Apache.Arrow.ListArray)l.Values;
+            for (var j0 = l.ValueOffsets[index]; j0 < l.ValueOffsets[index + 1]; j0++)
+            {
+                var x0 = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>>>(e0.ValueOffsets[j0 + 1] - e0.ValueOffsets[j0]);
+                var e0_ = (global::Apache.Arrow.ListArray)e0.Values;
+                for (var j0_ = e0.ValueOffsets[j0]; j0_ < e0.ValueOffsets[j0 + 1]; j0_++)
+                {
+                    var x0_ = new global::System.Collections.Generic.List<global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>>(e0_.ValueOffsets[j0_ + 1] - e0_.ValueOffsets[j0_]);
+                    var e0__ = (global::Apache.Arrow.ListArray)e0_.Values;
+                    for (var j0__ = e0_.ValueOffsets[j0_]; j0__ < e0_.ValueOffsets[j0_ + 1]; j0__++)
+                    {
+                        var x0__ = new global::System.Collections.Generic.List<global::Fletcher.Gen.Golden.Accessor.Position>(e0__.ValueOffsets[j0__ + 1] - e0__.ValueOffsets[j0__]);
+                        var e0___ = (global::Apache.Arrow.StructArray)e0__.Values;
+                        for (var j0___ = e0__.ValueOffsets[j0__]; j0___ < e0__.ValueOffsets[j0__ + 1]; j0___++)
+                        {
+                            x0__.Add(global::Fletcher.Gen.Golden.Accessor.Position.FromArrow(e0___, j0___));
+                        }
+                        x0_.Add(x0__);
+                    }
+                    x0.Add(x0_);
+                }
+                x.Add(x0);
+            }
+            row.Cells = x;
         }
         return row;
     }

@@ -2,8 +2,10 @@
      Copyright (C) 2026 The Fletcher Authors
 -->
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- The shared model types that generated C# refers to: today exactly the
-       lossless Timestamp and Duration (D-BIND-26, D-BIND-74). They live here and
+  <!-- The shared model types that generated C# refers to: the lossless Timestamp and
+       Duration (D-BIND-26, D-BIND-74), and since BIND-7b the collection windows a
+       generated view returns, ListView and MapView, with their element readers
+       (D-BIND-101). They live here and
        not beside the generated code because generated code is compiled into the
        CONSUMER's assembly, so a type emitted with it would be defined once per
        assembly and collide in an app that references two (CS0433).
@@ -13,7 +15,7 @@
   <PropertyGroup>
     <PackageId>Eiva.Fletcher.Model</PackageId>
     <RootNamespace>Eiva.Fletcher.Model</RootNamespace>
-    <Description>Shared model types for Fletcher-generated C#: lossless Timestamp and Duration. Depends on Apache.Arrow only.</Description>
+    <Description>Shared model types for Fletcher-generated C#: lossless Timestamp and Duration, and the zero-copy ListView and MapView a generated view returns. Depends on Apache.Arrow only.</Description>
     <PackageTags>fletcher;arrow;timestamp;duration</PackageTags>
     <!-- D-BIND-81: safe for trimming and NativeAOT (see Eiva.Fletcher's project). -->
     <IsAotCompatible>true</IsAotCompatible>

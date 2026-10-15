@@ -1162,6 +1162,23 @@ const FileDescriptor* BuildSource(DescriptorPool& pool, const std::string& name,
         wkt->CopyTo(&copy);
         if (pool.BuildFile(copy) == nullptr) return nullptr;
     }
+    // BIND-7b: a golden with a flatten wrapper imports Fletcher's options, which extend
+    // descriptor.proto; both are parsed in first, from the plugin's own copy.
+    if (source.find("\"fletcher/options.proto\"") != std::string::npos &&
+        pool.FindFileByName("fletcher/options.proto") == nullptr) {
+        const FileDescriptor* descriptor = DescriptorProto::descriptor()->file();
+        if (pool.FindFileByName(descriptor->name()) == nullptr) {
+            FileDescriptorProto copy;
+            descriptor->CopyTo(&copy);
+            if (pool.BuildFile(copy) == nullptr) return nullptr;
+        }
+        const std::string options =
+            ReadText(GoldenDir() / ".." / ".." / "include" / "fletcher" / "options.proto");
+        if (options.empty() || BuildSource(pool, "fletcher/options.proto", options) == nullptr) {
+            ADD_FAILURE() << "cannot build fletcher/options.proto";
+            return nullptr;
+        }
+    }
     io::ArrayInputStream input(source.data(), static_cast<int>(source.size()));
     CollectErrors errors;
     io::Tokenizer tokenizer(&input, &errors);
@@ -1500,6 +1517,17 @@ std::string StructBody(const std::string& cs, const std::string& name) {
     return cs.substr(start, end == std::string::npos ? std::string::npos : end + 3 - start);
 }
 
+// The text of `<msg>Accessor`, which implements IArrowRows<<msg>View> (D-BIND-101).
+std::string AccessorBody(const std::string& cs, const std::string& msg) {
+    const std::string head = "public sealed class " + msg +
+                             "Accessor : global::Eiva.Fletcher.Model.IArrowRows<" + msg +
+                             "View>\n{\n";
+    const size_t start = cs.find(head);
+    if (start == std::string::npos) return {};
+    const size_t end = cs.find("\n}\n", start);
+    return cs.substr(start, end == std::string::npos ? std::string::npos : end + 3 - start);
+}
+
 // Every member declared `    public ` in a body, up to its body, initialiser or parameters:
 // `public int Length`, `public static bool TryMake`.
 std::vector<std::string> PublicMembers(const std::string& body) {
@@ -1594,7 +1622,7 @@ TEST(CsAccessor, TheAccessorHasOnlyItsFixedMembers) {
     // D-BIND-98: no per-field member on the accessor, so no field name can collide with one.
     const auto files = AccessorGolden();
     const std::string body =
-        ClassBody(FileOf(files, "csharp_accessor.fletcher.accessor.cs"), "SampleAccessor");
+        AccessorBody(FileOf(files, "csharp_accessor.fletcher.accessor.cs"), "Sample");
     ASSERT_FALSE(body.empty());
     const std::string dict =
         "global::System.Collections.Generic.IReadOnlyDictionary<string, string>";
@@ -1640,7 +1668,7 @@ TEST(CsAccessor, AColumnIsValidatedAgainstTheModelsSchema) {
     // non-nullable columns only (D-RBA-4), and a struct through its own accessor.
     const auto files = AccessorGolden();
     const std::string body =
-        ClassBody(FileOf(files, "csharp_accessor.fletcher.accessor.cs"), "SampleAccessor");
+        AccessorBody(FileOf(files, "csharp_accessor.fletcher.accessor.cs"), "Sample");
     ExpectContains(body,
                    "if (columns[0] is not global::Apache.Arrow.Int32Array c0 || "
                    "!SameType(c0.Data.DataType, "
@@ -1657,17 +1685,90 @@ TEST(CsAccessor, AColumnIsValidatedAgainstTheModelsSchema) {
 }
 
 TEST(CsAccessor, AColumnItCannotReadKeepsTheClassAndRefusesWithTheReason) {
-    // D-BIND-96, at BIND-7a's boundary: a list column arrives in 7b, so Track's TryMake
-    // refuses naming it, and the view says so where its property would be.
+    // D-BIND-96 and Q6: a list nested 4 deep is beyond the cap of 3, so Hyper's TryMake refuses
+    // naming it, and the view says so where its property would be.
     const auto files = AccessorGolden();
     const std::string body =
-        ClassBody(FileOf(files, "csharp_accessor.fletcher.accessor.cs"), "TrackAccessor");
+        AccessorBody(FileOf(files, "csharp_accessor.fletcher.accessor.cs"), "Hyper");
     ExpectContains(body,
-                   "private static readonly string? Refusal = \"Track column 1 'points': a list "
-                   "column, which the C# accessor does not read yet.\";");
+                   "private static readonly string? Refusal = \"Hyper column 1 'cells': a list "
+                   "nested 4 deep, beyond the accessor's cap of 3.\";");
     ExpectContains(body, "if (Refusal is not null)");
     const std::string view =
-        StructBody(FileOf(files, "csharp_accessor.fletcher.arrow.cs"), "TrackView");
+        StructBody(FileOf(files, "csharp_accessor.fletcher.arrow.cs"), "HyperView");
     ExpectContains(view, "    public int Id => ");
-    ExpectContains(view, "    // Not read: field 'points' is a list column");
+    ExpectContains(view, "    // Not read: field 'cells' is a list nested 4 deep");
+}
+
+TEST(CsAccessor, ACollectionPropertyIsAWindowOverItsColumn) {
+    // D-BIND-101: a list, a map and a list of lists read as borrowed windows over the cast
+    // column, a struct element as its view (null on a null element), with the model's names.
+    const auto files = AccessorGolden();
+    const std::string view =
+        StructBody(FileOf(files, "csharp_accessor.fletcher.arrow.cs"), "TrackView");
+    const std::string m = "global::Eiva.Fletcher.Model.";
+    ExpectContains(view, "    public " + m + "ListView<int> Ints => " + m +
+                             "ListView<int>.Of(_accessor._c1, _row, _accessor._e1);\n");
+    ExpectContains(view, "    public " + m + "ListView<PositionView?> Points => ");
+    ExpectContains(view, "    public " + m + "ListView<Quality> Qualities => ");
+    ExpectContains(view, "    public " + m + "MapView<string, int> Scores => " + m +
+                             "MapView<string, int>.Of(_accessor._c8, _row, _accessor._k8, "
+                             "_accessor._e8);\n");
+    ExpectContains(view, "    public " + m + "MapView<string, PositionView?> Places => ");
+    ExpectContains(view, "    public " + m + "MapView<long, string> Labels => ");
+    ExpectContains(view, "    public " + m + "ListView<" + m + "ListView<PositionView?>> Grid => ");
+    ExpectContains(view, "    public " + m + "ListView<" + m + "ListView<" + m +
+                             "ListView<PositionView?>>> Cube => ");
+    ExpectContains(view, "    public " + m + "ListView<" + m + "ListView<int>> Matrix => ");
+    // G-Q4: nullable in its column, not in the model, so a null row reads as an empty window.
+    ExpectContains(view, "    public " + m +
+                             "ListView<PositionView?> MaybePoints => "
+                             "_accessor._c14.IsNull(_row) ? default : ");
+    EXPECT_EQ(view.find("// Not read"), std::string::npos) << view;
+}
+
+TEST(CsAccessor, AListAndAMapAreValidatedByTypeIdThenElementByElement) {
+    // MapArray derives from ListArray, so the class alone would take a map for a list; every
+    // element child is checked against the model Schema's element type, a struct element by its
+    // own accessor.
+    const auto files = AccessorGolden();
+    const std::string body =
+        AccessorBody(FileOf(files, "csharp_accessor.fletcher.accessor.cs"), "Track");
+    ExpectContains(body,
+                   "if (columns[1] is not global::Apache.Arrow.ListArray c1 || "
+                   "c1.Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId.List)");
+    ExpectContains(body,
+                   "if (columns[8] is not global::Apache.Arrow.MapArray c8 || "
+                   "c8.Data.DataType.TypeId != global::Apache.Arrow.Types.ArrowTypeId.Map)");
+    ExpectContains(body,
+                   "if (c1.Values is not global::Apache.Arrow.Int32Array x1 || "
+                   "!SameType(x1.Data.DataType, ((global::Apache.Arrow.Types.ListType)"
+                   "global::Fletcher.Gen.Golden.Accessor.Track.Schema.GetFieldByIndex(1)."
+                   "DataType).ValueDataType))");
+    ExpectContains(body, "error = Mismatch(\"Track column 8 'scores' key\", ");
+    ExpectContains(body,
+                   "if (!global::Fletcher.Gen.Golden.Accessor.PositionAccessor.TryMake(x7, "
+                   "out var a7, out var e7))");
+    ExpectContains(body,
+                   "var l11 = new global::Eiva.Fletcher.Model.ListElements<PositionView?>(x11, "
+                   "l11_);");
+    ExpectContains(body, "result._k8 = l8k;");
+    EXPECT_EQ(body.find("Refusal"), std::string::npos) << "Track reads every column";
+}
+
+TEST(CsAccessor, ACollectionViewKeepsTheModelsPropertyNames) {
+    // D-BIND-98 for names, D-BIND-101 for the types: one name per field across model and view.
+    const auto files = AccessorGolden();
+    const auto names = [](const std::vector<std::string>& members) {
+        std::vector<std::string> out;
+        for (const auto& member : members)
+            if (member.find(" static ") == std::string::npos)
+                out.push_back(member.substr(member.rfind(' ') + 1));
+        return out;
+    };
+    const std::string model = ClassBody(FileOf(files, "csharp_accessor.fletcher.cs"), "Track");
+    const std::string view =
+        StructBody(FileOf(files, "csharp_accessor.fletcher.arrow.cs"), "TrackView");
+    ASSERT_FALSE(model.empty());
+    EXPECT_EQ(names(PublicMembers(view)), names(PublicMembers(model))) << view;
 }
