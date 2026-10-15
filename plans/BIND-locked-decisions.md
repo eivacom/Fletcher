@@ -3007,7 +3007,10 @@ accessor), after a read-only map of the C++ and Rust accessors and the capstone 
   (2026-10-15), refused the same way:** a field named after its own message's view
   (`Track.track_view` would be the property `TrackView` inside the struct `TrackView`, CS0542).
   Only the file and its imports are visible to the plugin, so a clash with an unimported file of
-  the same package is left to the compiler.
+  the same package is left to the compiler. *(Amended 2026-10-15, BIND-7 review B2 and P-D1: the generated names
+  of an IMPORTED file of the namespace are checked too, assuming it is generated with the same
+  tokens; and a field the view has no property for, beyond the depth cap, is not refused for its
+  name.)*
 
 - **D-BIND-101 - a collection property of the C# view returns a borrowed window over the cast
   column, not the model's `List`: `ListView<T>` for a list, `MapView<TKey, TValue>` for a map, a

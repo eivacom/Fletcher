@@ -75,6 +75,10 @@ so on one valid batch `accessor.ToRow(r)` and `accessor.At(r)` disagree.
 
 ### B2 — D-BIND-100 misses a clash with an imported file's generated names
 
+> **FIXED 2026-10-15.** The check now compares the generated names of every visible file of the
+> namespace, imports included, with the types the model declares; the reproduction is refused, naming
+> both messages. `CsAccessor.AClashWithAnImportedFilesNamesIsRefusedBothWays` covers both directions
+> and another package (no clash). D-BIND-100 is amended.
 *Found by the plugin reviewer. Reproduced.*
 
 `CsAccessorNameConflict` compares THIS file's generated `<Msg>View` / `<Msg>Accessor` with every type
@@ -178,7 +182,7 @@ records are corrected at the close as a matter of course.
   on read; `TryMake` validates no offsets. C++ has the same exposure. The three checks also run on
   every read (no allocation).
 - **R-D3 — `default(<Msg>View)` throws NRE on every property** *(runtime reviewer)*; undocumented.
-- **P-D1 — The field rule of D-BIND-100 refuses a field with no getter** *(plugin reviewer)*: a field
+- **P-D1 — FIXED 2026-10-15** (`CsAccessor.AFieldWithoutAGetterIsNotRefusedForItsName`). The field rule of D-BIND-100 refused a field with no getter *(plugin reviewer)*: a field
   named `<msg>_view` beyond the depth cap gets a comment, not a property, yet is refused. Require a
   column.
 - **P-D2 — D-BIND-102 says `ToRow` reads `Fields` once per nested struct LEVEL** *(plugin reviewer)*;

@@ -1829,3 +1829,66 @@ TEST(CsAccessor, FromArrowReadsANullListAsEmptyAtEveryLevel) {
     ExpectContains(track, "(l.IsNull(index) ? l.ValueOffsets[index] : l.ValueOffsets[index + 1])");
     ExpectContains(track, "(e0.IsNull(j0) ? e0.ValueOffsets[j0] : e0.ValueOffsets[j0 + 1])");
 }
+
+namespace {
+
+// Generates `main` (accessor_case.proto, importing dep.proto) with `opts`, `dep` built first.
+bool GenerateWithImport(const std::string& dep, const std::string& main, const std::string& opts,
+                        std::string* error) {
+    DescriptorPool pool;
+    if (BuildSource(pool, "dep.proto", dep) == nullptr) {
+        ADD_FAILURE() << "dep.proto does not build";
+        return false;
+    }
+    const FileDescriptor* file = BuildSource(pool, "accessor_case.proto", main);
+    if (file == nullptr) {
+        ADD_FAILURE() << "accessor_case.proto does not build";
+        return false;
+    }
+    MemoryContext ctx;
+    return fletcher::ArrowRowGenerator().Generate(file, opts, &ctx, error);
+}
+
+}  // namespace
+
+TEST(CsAccessor, AClashWithAnImportedFilesNamesIsRefusedBothWays) {
+    // B2 of BIND-7's review: D-BIND-100 leaves only UNIMPORTED files to the compiler, so an
+    // imported file's generated view clashing with a message here is refused, and the reverse.
+    const std::string header = "syntax = \"proto3\";\npackage a;\n";
+    const std::string import = "import \"dep.proto\";\n";
+    std::string error;
+    EXPECT_FALSE(GenerateWithImport(header + "message A { int32 x = 1; }\n",
+                                    header + import + "message AView { int32 y = 1; }\n",
+                                    "csharp,csharp_accessor", &error));
+    EXPECT_NE(error.find("message 'a.A' would get the type 'AView'"), std::string::npos) << error;
+    EXPECT_NE(error.find("message 'a.AView'"), std::string::npos) << error;
+    error.clear();
+    EXPECT_FALSE(GenerateWithImport(header + "message AView { int32 y = 1; }\n",
+                                    header + import + "message A { int32 x = 1; }\n",
+                                    "csharp,csharp_accessor", &error));
+    EXPECT_NE(error.find("D-BIND-100"), std::string::npos) << error;
+    // Another package is another namespace: no clash.
+    error.clear();
+    EXPECT_TRUE(GenerateWithImport("syntax = \"proto3\";\npackage b;\nmessage A { int32 x = 1; }\n",
+                                   header + import + "message AView { int32 y = 1; }\n",
+                                   "csharp,csharp_accessor", &error))
+        << error;
+}
+
+TEST(CsAccessor, AFieldWithoutAGetterIsNotRefusedForItsName) {
+    // P-D1 of BIND-7's review: a field the view has no property for (a list beyond the cap)
+    // cannot clash with the view's name, so it is not refused.
+    const std::string source =
+        "syntax = \"proto3\";\npackage a;\nimport \"fletcher/options.proto\";\n"
+        "message P { int32 x = 1; }\n"
+        "message W1 { option (fletcher.flatten) = true; repeated P items = 1; }\n"
+        "message W2 { option (fletcher.flatten) = true; repeated W1 rows = 1; }\n"
+        "message W3 { option (fletcher.flatten) = true; repeated W2 planes = 1; }\n"
+        "message Track { repeated W3 track_view = 1; }\n";
+    std::map<std::string, std::string> files;
+    std::string error;
+    ASSERT_TRUE(GenerateSource(source, "csharp,csharp_accessor", &files, &error)) << error;
+    const std::string view =
+        StructBody(FileOf(files, "accessor_case.fletcher.arrow.cs"), "TrackView");
+    ExpectContains(view, "    // Not read: field 'track_view' is a list nested 4 deep");
+}

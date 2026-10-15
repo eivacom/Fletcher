@@ -683,18 +683,29 @@ std::optional<std::string> CsAccessorNameConflict(const FileDescriptor* file) {
     std::set<const FileDescriptor*> seen;
     std::vector<std::pair<std::string, std::string>> declared;
     CollectDeclaredNames(file, ns, seen, declared);
-    const CrossFile cross = CollectCrossFileMessages(file);
-    for (const auto* msg : AccessorMessages(file)) {
-        for (const auto& generated : {CsViewName(msg), CsAccessorName(msg)}) {
-            for (const auto& [name, what] : declared) {
-                if (name != generated) continue;
-                return "csharp_accessor: message '" + msg->full_name() + "' would get the type '" +
-                       generated + "', which is also the C# name of " + what + " in namespace " +
-                       ns + " (D-BIND-100). Rename one of the two.";
+    // B2 of BIND-7's review: the generated names of every visible file of the namespace, the
+    // imported ones too, since `message AView` here clashes with an imported `message A`'s view.
+    // The plugin cannot see whether an import was generated with csharp_accessor; it assumes so,
+    // as one protoc run passes one parameter set to every file.
+    for (const auto* visible : seen) {
+        if (CsNamespace(visible) != ns) continue;
+        for (const auto* msg : AccessorMessages(visible)) {
+            for (const auto& generated : {CsViewName(msg), CsAccessorName(msg)}) {
+                for (const auto& [name, what] : declared) {
+                    if (name != generated) continue;
+                    return "csharp_accessor: message '" + msg->full_name() +
+                           "' would get the type '" + generated +
+                           "', which is also the C# name of " + what + " in namespace " + ns +
+                           " (D-BIND-100). Rename one of the two.";
+                }
             }
         }
+    }
+    const CrossFile cross = CollectCrossFileMessages(file);
+    for (const auto* msg : AccessorMessages(file)) {
         for (const auto& f : FieldsOf(msg, file, cross)) {
-            if (f.property != CsViewName(msg)) continue;
+            // P-D1 of the review: only a field that gets a property can clash with the view.
+            if (!f.column || f.property != CsViewName(msg)) continue;
             return "csharp_accessor: field '" + f.name + "' of message '" + msg->full_name() +
                    "' would be the property '" + f.property +
                    "' of the view struct of the same name, which C# does not allow (D-BIND-100). "

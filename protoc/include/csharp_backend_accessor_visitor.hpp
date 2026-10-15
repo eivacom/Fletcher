@@ -24,12 +24,13 @@
 
 namespace fletcher::csharp_backend {
 
-// D-BIND-100: the reason `file` cannot be generated with `csharp_accessor`, or nullopt. A
-// message's `<Msg>View` or `<Msg>Accessor` may not share its name with a type the model
-// declares in the same C# namespace (`message Track` beside `message TrackView` is CS0101),
-// and a view's property may not share the view's name (`Track.track_view` is CS0542). Only the
-// file and the files it imports are visible here, so a clash with a file of the same package
-// that `file` does not import is left to the compiler.
+// D-BIND-100: the reason `file` cannot be generated with `csharp_accessor`, or nullopt. No
+// `<Msg>View` or `<Msg>Accessor` of this file or of an imported file of the namespace (B2 of
+// BIND-7's review) may share its name with a type the model declares in the same C# namespace
+// (`message Track` beside `message TrackView` is CS0101), and a view's property may not share the
+// view's name (`Track.track_view` is CS0542). Only the file and the files it imports are visible
+// here, so a clash with a file of the same package that `file` does not import is left to the
+// compiler.
 std::optional<std::string> CsAccessorNameConflict(const google::protobuf::FileDescriptor* file);
 
 class CsAccessorVisitor {
