@@ -2057,7 +2057,16 @@ token and names; one request in flight; `PublishAsync` awaits the ack). Slices:
   receive loop with rows that precede the `subscribed` reply kept and replayed, handler faults and
   undecodable rows counted and reported, no reconnect. Tested against an in-memory gateway
   (`FakeGateway`): the TS client file's 6 cases ported plus 15 more; 6 mutants, all killed.
-  Fletcher.GatewayClient.Tests 204. Left in 8b: the live lane.
+  Fletcher.GatewayClient.Tests 204. **The live lane done 2026-10-16:**
+  `integration-tests/gateway-dotnet-end-to-end` builds the gateway exe, generates the model of
+  `proto/fix.proto` (nested message, Timestamp, repeated, map) with the plugin, and runs 6 cases
+  against the real gateway over `inprocess` and `fastdds` (12): a generated round trip field for
+  field, a same-schema re-declaration accepted and a different one refused (C#'s `schemaIpc` read
+  by nanoarrow), a subscriber without a schema, attachments, a refusal, unsubscribe. Announcing
+  the schema as JSON instead fails 10 of the 12. Workflow
+  `ci.integration-test.gateway-dotnet-end-to-end.yml` (Linux in the devcontainer, Windows), wired
+  into `ci.pr.yml` (filter, caller, gate) and `ci.format-check-cs.yml`. **8b is done** once that
+  lane is green on CI.
 - **8c:** the generated gateway pair (D-BIND-109): golden, plugin cases, a live round trip.
 - **8d:** the cross-language rows (C# gateway client ↔ C++, TypeScript and the C# native pair), and
   packaging: `IsAotCompatible`, the `Eiva.Fletcher.Model` reference, the no-`runtimes/` check

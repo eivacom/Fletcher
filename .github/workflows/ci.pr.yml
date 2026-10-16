@@ -43,6 +43,7 @@ jobs:
       xrcedds-pubsub-provider: ${{ steps.filter.outputs.xrcedds-pubsub-provider }}
       integration-fastdds-xrce: ${{ steps.filter.outputs.integration-fastdds-xrce }}
       integration-gateway-e2e: ${{ steps.filter.outputs.integration-gateway-e2e }}
+      integration-gateway-dotnet-e2e: ${{ steps.filter.outputs.integration-gateway-dotnet-e2e }}
       integration-gateway-fastdds-ts: ${{ steps.filter.outputs.integration-gateway-fastdds-ts }}
       integration-protoc-arrow: ${{ steps.filter.outputs.integration-protoc-arrow }}
       integration-binding-abi: ${{ steps.filter.outputs.integration-binding-abi }}
@@ -220,6 +221,27 @@ jobs:
               - 'integration-tests/gateway-end-to-end/**'
               - '.github/workflows/ci.pr.yml'
               - '.github/workflows/ci.integration-test.gateway-end-to-end.yml'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.conan-profiles/**'
+              - '.devcontainer/**'
+            # The C# gateway client against a live gateway (BIND-8b): the gateway and
+            # its dependencies, the plugin that generates the lane's model, and the two
+            # managed packages the lane references.
+            integration-gateway-dotnet-e2e:
+              - 'core/**'
+              - 'pubsub/**'
+              - 'protoc/**'
+              - 'fastdds-pubsub-provider/**'
+              - 'gateway/**'
+              - 'dotnet/src/Fletcher.GatewayClient/**'
+              - 'dotnet/src/Fletcher.Model/**'
+              - 'dotnet/global.json'
+              - 'dotnet/Directory.Build.props'
+              - 'dotnet/Directory.Build.targets'
+              - 'integration-tests/gateway-dotnet-end-to-end/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.integration-test.gateway-dotnet-end-to-end.yml'
               - '.github/actions/pull-devcontainer-image/**'
               - '.github/workflows/ci.setup-devcontainer-image.yml'
               - '.conan-profiles/**'
@@ -529,6 +551,14 @@ jobs:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
 
+  integration-test-gateway-dotnet-end-to-end:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.integration-gateway-dotnet-e2e == 'true' }}
+    uses: ./.github/workflows/ci.integration-test.gateway-dotnet-end-to-end.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
   integration-test-gateway-fastdds-ts:
     needs: [detect-changes, setup-devcontainer]
     if: ${{ needs.detect-changes.outputs.integration-gateway-fastdds-ts == 'true' }}
@@ -649,6 +679,7 @@ jobs:
       - integration-test-fastdds-xrce-interop
       - integration-test-pubsub-transport-conformance
       - integration-test-gateway-end-to-end
+      - integration-test-gateway-dotnet-end-to-end
       - integration-test-gateway-fastdds-ts
       - integration-test-protoc-arrow-bridge
       - integration-test-protoc-coverage
@@ -686,6 +717,7 @@ jobs:
             ${{ needs.integration-test-binding-abi-conformance.result }},
             ${{ needs.integration-test-fastdds-xrce-interop.result }},
             ${{ needs.integration-test-gateway-end-to-end.result }},
+            ${{ needs.integration-test-gateway-dotnet-end-to-end.result }},
             ${{ needs.integration-test-gateway-fastdds-ts.result }},
             ${{ needs.integration-test-protoc-arrow-bridge.result }},
             ${{ needs.integration-test-protoc-coverage.result }},

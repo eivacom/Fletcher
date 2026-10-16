@@ -58,7 +58,8 @@ jobs:
             integration-tests/pubsub-transport-conformance/dotnet/PubSubTransportConformance/PubSubTransportConformance.csproj \
             integration-tests/protoc-dotnet/dotnet/ProtocDotnetShared/ProtocDotnetShared.csproj \
             integration-tests/protoc-dotnet/dotnet/ProtocDotnetBeside/ProtocDotnetBeside.csproj \
-            integration-tests/protoc-dotnet/dotnet/ProtocDotnet/ProtocDotnet.csproj; do
+            integration-tests/protoc-dotnet/dotnet/ProtocDotnet/ProtocDotnet.csproj \
+            integration-tests/gateway-dotnet-end-to-end/dotnet/GatewayDotnetEndToEnd/GatewayDotnetEndToEnd.csproj; do
             echo "::group::dotnet format $PROJECT"
             # ProtocDotnet's model types (Reading, Player, Timed, ...) are written by protoc
             # in its own build target, so format's design-time load, which runs no protoc,
@@ -70,7 +71,7 @@ jobs:
             # own --csharp_out and from Fletcher's, both run in its build target.
             EXTRA=()
             case "$PROJECT" in
-              *ProtocDotnet.csproj|*ProtocDotnetBeside.csproj) EXTRA=(--exclude-diagnostics CS0246) ;;
+              *ProtocDotnet.csproj|*ProtocDotnetBeside.csproj|*GatewayDotnetEndToEnd.csproj) EXTRA=(--exclude-diagnostics CS0246) ;;
             esac
             dotnet format "$PROJECT" --verify-no-changes --severity warn "${EXTRA[@]}"
             echo '::endgroup::'

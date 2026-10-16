@@ -1145,6 +1145,16 @@ case, through a race in the TEST (a request started before the case could own th
 simplified and it is killed. Two mutants first failed to compile on the repo's warnings-as-errors
 (unreachable code, a null argument), the trap the standing rules name.
 
+**8b, the live lane (2026-10-16).** `integration-tests/gateway-dotnet-end-to-end` is the C#
+counterpart of `gateway-end-to-end`: `conan build .` builds the gateway exe, the C# project
+generates the model of `proto/fix.proto` with the plugin as a consumer would, and six cases run
+against the real exe over `inprocess` and over `fastdds`. The one thing only a live gateway shows:
+C#'s `schemaIpc`, written by Apache.Arrow, decodes in the gateway's nanoarrow to a declaration equal
+to itself, so a second client re-declaring the topic is accepted and a different schema is refused.
+It passed 12/12 on the first run and three runs after; announcing the schema as JSON instead fails
+10 of the 12 (the two that pass use no schema). The gateway exe built in about 20 s from a warm
+Conan cache.
+
 **Lessons.**
 
 - **A second implementation is the best test of the first.** The native codec's offset bug went
