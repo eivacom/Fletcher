@@ -3158,3 +3158,23 @@ D-BIND-72 left to BIND-8.
   BIND-8b. **Declined:** completing the JSON parser for nested types (still lossy: units,
   nullability, metadata, so the conflict stays); announcing no schema (a subscriber relying on the
   gateway's schema then gets none).
+
+- **D-BIND-113 - `FletcherClient` delivers a subscription's rows to a handler delegate, called on
+  the client's receive loop with the decoded one-row `RecordBatch` and the `Envelope` it came in;
+  the envelope is BORROWED (valid until the handler returns), as the native `AttachmentsView` is.**
+  *LOCKED BY THE MAINTAINER 2026-10-16 (BIND-8 Q6).* The same style as the native `SubscriberArrow`
+  handler and the TypeScript client's callback, and the cheapest: no copy of the attachments and no
+  queue or thread hop per message, where an async stream would copy every attachment (its items
+  outlive the receive buffer) and add a hop. The price is that a slow handler holds the receive loop,
+  and with it the control replies on that connection; that is documented, and a handler that throws
+  is counted and reported, not fatal, as natively. The generated gateway pair (8c) wraps the handler
+  into a typed row. **Declined:** an `IAsyncEnumerable` stream (can be added later as an adapter over
+  the delegate, paying its copy only where used); both from the start.
+
+- **D-BIND-114 - `FletcherClient` takes a topic as its `string` key, the segments joined with `/`,
+  exactly as the protocol carries it.** *LOCKED BY THE MAINTAINER 2026-10-16 (BIND-8 Q7).* As the
+  TypeScript client does; the generated gateway pair passes the model's `<Svc>_<Method>Topic.Key`
+  (D-BIND-77), so typed callers never spell one. The client refuses only what the gateway cannot
+  route: an empty topic, or one longer than a PUBLISH frame's 65535 UTF-8 bytes. **Declined:** a
+  segment list joined by the client (a second form for one wire string); a `GatewayTopic` type copying
+  the native `TopicPath`'s checks, which this package cannot reference.

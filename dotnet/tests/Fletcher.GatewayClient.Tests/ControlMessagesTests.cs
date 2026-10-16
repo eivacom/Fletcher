@@ -157,11 +157,29 @@ public sealed class ControlMessagesTests
             .Field(f => f.Name("label").DataType(StringType.Default))
             .Build();
 
-        using JsonDocument json = JsonDocument.Parse(ControlMessages.BuildCreateTopic("t", schema));
-        JsonElement[] fields = json.RootElement.GetProperty("schema").GetProperty("fields").EnumerateArray().ToArray();
+        using JsonDocument json = JsonDocument.Parse(ControlMessages.SchemaToJson(schema));
+        JsonElement[] fields = json.RootElement.GetProperty("fields").EnumerateArray().ToArray();
 
         Assert.Equal(new[] { "id", "value", "label" }, fields.Select(f => f.GetProperty("name").GetString()));
         Assert.Equal(new[] { 0x05, 0x0B, 0x0C }, fields.Select(f => f.GetProperty("wireType").GetInt32()));
+    }
+
+    [Theory]
+    [MemberData(nameof(IpcGoldens))]
+    public void BuildCreateTopicAnnouncesTheSchemaAsSchemaIpcAndNotAsJson(string golden)
+    {
+        // D-BIND-112: the schema goes as its Arrow IPC bytes, which read back to the same
+        // fields, types and field numbers; the lossy JSON descriptor is not sent at all.
+        Schema schema = ReadGolden(golden);
+
+        using JsonDocument json = JsonDocument.Parse(ControlMessages.BuildCreateTopic("t", schema));
+
+        Assert.False(json.RootElement.TryGetProperty("schema", out _));
+        Schema back = ControlMessages.ReadSchemaIpc(json.RootElement.GetProperty("schemaIpc").GetString()!);
+        Assert.Equal(schema.FieldsList.Select(f => (f.Name, f.DataType.TypeId, f.IsNullable)),
+            back.FieldsList.Select(f => (f.Name, f.DataType.TypeId, f.IsNullable)));
+        Assert.Equal(schema.FieldsList.Select(f => f.Metadata?[ControlMessages.FieldNumberKey]),
+            back.FieldsList.Select(f => f.Metadata?[ControlMessages.FieldNumberKey]));
     }
 
     [Fact]

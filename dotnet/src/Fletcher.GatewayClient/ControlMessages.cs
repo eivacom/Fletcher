@@ -68,28 +68,45 @@ internal static class ControlMessages
     /// <summary>The metadata key the generator writes each field's proto field number under.</summary>
     public static readonly string FieldNumberKey = "field_number";
 
-    /// <summary><c>create_topic</c>, announcing <paramref name="schema"/> when one is given.</summary>
+    /// <summary><c>create_topic</c>, announcing <paramref name="schema"/> as <c>schemaIpc</c> when one is given.</summary>
     /// <remarks>
-    /// The gateway forwards an announced schema to later subscribers. Note what it accepts
-    /// TODAY (gateway/src/schema_codec.cpp, BuildArrowSchemaFromJson): top-level scalar
-    /// fields only; a struct, list or map field makes it reply <c>error</c>. The descriptor
-    /// written here is nonetheless the whole one, the same shape the gateway itself sends
-    /// in <c>subscribed</c>, so the request says what the topic is rather than what one
-    /// gateway version can parse.
+    /// D-BIND-112: the schema goes as its Arrow IPC bytes in base64, the form the gateway's
+    /// <c>subscribed</c> reply already uses, and NOT as the JSON <c>schema</c> descriptor. The
+    /// gateway declares the topic with the decoded schema, so the declaration equals a native
+    /// publisher's of the same generated schema; the JSON path keeps top-level scalars only and
+    /// drops nullability and field numbers, which made the two conflict (measured in
+    /// gateway/tests/test_schema_codec.cpp, GatewayDeclaredSchemaTest).
     /// </remarks>
     public static string BuildCreateTopic(string topic, Schema? schema = null)
     {
         ArgumentNullException.ThrowIfNull(topic);
+        string? ipc = schema is null ? null : Convert.ToBase64String(WriteSchemaIpc(schema));
         return Write(w =>
         {
             w.WriteString("action", "create_topic");
             w.WriteString("topic", topic);
-            if (schema is not null)
+            if (ipc is not null)
             {
-                w.WritePropertyName("schema");
-                WriteSchema(w, schema);
+                w.WriteString("schemaIpc", ipc);
             }
         });
+    }
+
+    /// <summary>
+    /// <paramref name="schema"/> as an Arrow IPC stream holding the schema alone: the form
+    /// <c>SerializeSchemaIpc</c> writes in C++ and <c>DeserializeSchemaIpc</c> reads.
+    /// </summary>
+    public static byte[] WriteSchemaIpc(Schema schema)
+    {
+        ArgumentNullException.ThrowIfNull(schema);
+        var buffer = new MemoryStream();
+        using (var writer = new ArrowStreamWriter(buffer, schema, leaveOpen: true))
+        {
+            writer.WriteStart();
+            writer.WriteEnd();
+        }
+
+        return buffer.ToArray();
     }
 
     /// <summary><c>subscribe</c>.</summary>

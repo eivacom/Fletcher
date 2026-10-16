@@ -1121,6 +1121,30 @@ the four cases that use it. The wire-format spec now lists `create_topic`'s two 
 `unsubscribed` and `published` replies it never listed. The gateway is this team's component since
 2026-10-16. Next in 8b: `FletcherClient` itself.
 
+**8b, `FletcherClient` (2026-10-16).** Two more rulings came first: a subscription delivers to a
+handler delegate on the receive loop with the decoded one-row batch (the handler's) and a borrowed
+envelope, because an async stream would copy every attachment and add a hop (D-BIND-113); topics are
+the protocol's `string` keys (D-BIND-114). The rest follows the native side and the TS client, as
+listed to and approved by the maintainer: options with a `Uri`, no reconnect, `SubscribeAsync`
+falling back to the gateway's schema, a single-row publish with attachments beside the batch one,
+`GatewayException` for a refusal or a lost connection, handler faults counted and raised as
+`HandlerFaulted`, and the 8a pieces internal but `Envelope`.
+
+The client keeps ONE request in flight (D-BIND-110) with a gate held from send until its reply is
+read, so cancelling stops the caller's wait without freeing the gate early. The subscription is
+registered by the receive loop when the `subscribed` reply is read, and rows for an id not yet known
+that arrive while a subscribe is in flight are kept and replayed, because `ws_session.cpp` posts a
+retained row and the reply separately. Tested against an in-memory gateway built from 8a's frame
+builders and parsers.
+
+**What the tests found.** One real bug on the first run: disposing the client failed the request in
+flight with "the gateway closed the connection", because the gateway's answering close frame was read
+before the client recorded why it closed; it now records its own reason first. Six mutants: four
+killed at once, one (releasing the gate at send) by a hang, and one survived at first, the late-reply
+case, through a race in the TEST (a request started before the case could own the slot); the case was
+simplified and it is killed. Two mutants first failed to compile on the repo's warnings-as-errors
+(unreachable code, a null argument), the trap the standing rules name.
+
 **Lessons.**
 
 - **A second implementation is the best test of the first.** The native codec's offset bug went

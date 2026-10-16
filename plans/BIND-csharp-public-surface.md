@@ -201,11 +201,15 @@ type and schema.
 
 ### 2.8 The gateway client (managed, no native assets)
 
-Mirrors `gateway-client-ts`'s `FletcherClient` one-for-one, with real generics
-where TypeScript uses a phantom type: `ConnectAsync`, `CreateTopicAsync`,
-`SubscribeAsync<T>`, `UnsubscribeAsync`, `PublishAsync<T>`, `ListTopicsAsync`,
-`Dispose`. Subscription ids are parsed from **strings** (a wire contract, not a
-JavaScript detail). `CancellationToken` on every async method.
+Mirrors `gateway-client-ts`'s `FletcherClient` method for method: `ConnectAsync`,
+`CreateTopicAsync`, `SubscribeAsync`, `UnsubscribeAsync`, `PublishAsync`, `ListTopicsAsync`,
+`DisposeAsync`. Subscription ids are parsed from **strings** (a wire contract, not a
+JavaScript detail). `CancellationToken` on every async method. *Settled in BIND-8 (2026-10-16):*
+the client works on Arrow batches, not on `T` (D-BIND-108; the typed surface is the generated
+gateway pair, D-BIND-109); a subscription delivers to a `GatewayRowHandler(RecordBatch row,
+Envelope envelope)` delegate on the receive loop, the envelope borrowed (D-BIND-113); topics are
+`string` keys (D-BIND-114); `CreateTopicAsync` announces the schema as `schemaIpc` (D-BIND-112).
+Drawn in §5.4.
 
 ---
 
@@ -606,44 +610,51 @@ classDiagram
 
 ### 5.4 The gateway client, which shares no code with the above
 
-**SUPERSEDED IN PART 2026-09-29 (D-BIND-72).** The client shares no CODE with the
-native tier, but it consumes the same GENERATED row type and Arrow `Schema`. The
-`TypedSchema<T>` and `SchemaDescriptor` drawn below are the pre-ruling design; BIND-8
-redraws this diagram when it settles the client's typed surface.
+**Redrawn 2026-10-16 (BIND-8, D-BIND-108 and D-BIND-110 to 114).** The client shares no CODE with
+the native tier, but it consumes the same GENERATED row type and Arrow `Schema` (D-BIND-72): it takes
+and delivers Arrow batches, and the generated gateway pair (8c, D-BIND-109) converts them to typed
+rows through the model's `ToArrow` / `FromArrow`. There is no `TypedSchema<T>` and no
+`SchemaDescriptor`. The managed codec is internal; `Envelope` is the one public piece of 8a.
 
 ```mermaid
 classDiagram
     class FletcherClient {
         +FletcherClient(FletcherClientOptions options)
         +ConnectAsync(CancellationToken ct) Task
-        +CreateTopicAsync(string topic, SchemaDescriptor schema, CancellationToken ct) Task
-        +SubscribeAsync~T~(string topic, TypedSchema~T~ schema, Action~T, Envelope~ handler, CancellationToken ct) Task~ulong~
+        +CreateTopicAsync(string topic, Schema schema, CancellationToken ct) Task
+        +SubscribeAsync(string topic, Schema schema, GatewayRowHandler handler, CancellationToken ct) Task~ulong~
         +UnsubscribeAsync(ulong subscriptionId, CancellationToken ct) Task
-        +PublishAsync~T~(string topic, TypedSchema~T~ schema, T row, CancellationToken ct) Task
+        +PublishAsync(string topic, RecordBatch batch, CancellationToken ct) Task
+        +PublishAsync(string topic, RecordBatch batch, int row, IEnumerable~KeyValuePair~ attachments, CancellationToken ct) Task
         +ListTopicsAsync(CancellationToken ct) Task~IReadOnlyList~string~~
-        +Dispose() void
+        +AbsorbedHandlerFailures ulong
+        +HandlerFaulted event
+        +DisposeAsync() ValueTask
     }
-    class TypedSchema~T~ {
-        +SchemaDescriptor Descriptor
-    }
-    class SchemaDescriptor {
-        +IReadOnlyList~FieldDescriptor~ Fields
+    class GatewayRowHandler {
+        <<delegate>>
+        +Invoke(RecordBatch row, Envelope envelope) void
     }
     class Envelope {
         +ReadOnlyMemory~byte~ Row
-        +AttachmentsBuilder Attachments
+        +int Count
+        +KeyAt(int index) ReadOnlySpan~byte~
+        +ValueAt(int index) ReadOnlyMemory~byte~
+        +TryFind(string key, out ReadOnlyMemory~byte~ value) bool
     }
-    class PositionalCodec {
-        <<managed, the one exception>>
-        +Encode~T~(TypedSchema~T~ schema, T row) byte[]
-        +Decode~T~(TypedSchema~T~ schema, ReadOnlySpan~byte~ bytes) T
+    class GatewayRowCodec {
+        <<internal, the one managed codec>>
+        +Bind(RecordBatch batch) BoundBatch
+        +Encode(BoundBatch batch, int row) byte[]
+        +Decode(ReadOnlySpan~byte~ row) RecordBatch
     }
-    FletcherClient ..> TypedSchema~T~ : binds
-    TypedSchema~T~ *-- SchemaDescriptor
-    FletcherClient ..> PositionalCodec : encodes through
+    FletcherClient ..> GatewayRowHandler : calls on the receive loop
+    FletcherClient ..> GatewayRowCodec : encodes and decodes through
     FletcherClient ..> Envelope : frames
-    note for PositionalCodec "The only managed implementation of the wire format. The browser has no native option, so this ports gateway-client-ts."
-    note for FletcherClient "No native assets. CI asserts the package carries no runtimes folder."
+    GatewayRowHandler ..> Envelope : borrows
+    note for FletcherClient "Topics are string keys (D-BIND-114). One control request in flight (D-BIND-110). PublishAsync sends one frame per row and awaits each published (D-BIND-111). create_topic sends schemaIpc (D-BIND-112). No native assets."
+    note for GatewayRowHandler "One decoded row per MESSAGE frame, on the receive loop. The envelope is borrowed until the handler returns (D-BIND-113). A throwing handler is counted and reported, not fatal."
+    note for GatewayRowCodec "The C ABI codec's accept list, in managed code (D-BIND-1, D-BIND-108). Internal."
 ```
 
 ---

@@ -816,7 +816,10 @@ pair is asked for with `csharp_gateway` and named `<Svc>_<Method>GatewayPublishe
 (D-BIND-109); one control request is in flight at a time (D-BIND-110); `PublishAsync` awaits
 `published` (D-BIND-111); and `create_topic` announces the schema as `schemaIpc`, its Arrow IPC,
 because the JSON descriptor the gateway parses today is lossy enough that even a flat message
-conflicts with its native declaration, measured (D-BIND-112). Slices 8a (codec, done 2026-10-16),
+conflicts with its native declaration, measured (D-BIND-112); a subscription delivers to a handler
+delegate on the receive loop, with the decoded `RecordBatch` and a borrowed `Envelope`, not to an
+async stream that would copy every attachment (D-BIND-113); topics are the protocol's `string`
+keys (D-BIND-114). Slices 8a (codec, done 2026-10-16),
 8b (client, live lane, the gateway's `schemaIpc`), 8c (pair), 8d (cross-language rows, packaging),
 8e (review).
 

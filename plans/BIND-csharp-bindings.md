@@ -859,7 +859,7 @@ Kind: 🟪 spec · 🟦 impl · 🔬 proof · ⚙ pipelines · 📓 docs
 | BIND-6 | C# backend on the IR: type table + visitor → `<stem>.fletcher.cs` | B | 🟦 | — (GIR) | `CsVisitor.*`, `CsVisitorPair.*`, `CsVisitorCrossFile.*`, `CsNames.*` and `CsTypeTable.*` in `protoc/tests` (named `CsharpVisitor.*` until review T-D5 corrected it, 2026-10-14); no-drift test unchanged | 🟢 (closed on CI at `63ab057`, `ci.pr` 38575041994, after a fresh-context review whose 5 BLOCKERs were fixed and 10 questions ruled, D-BIND-83 to 93; the minor debt carried as known, listed in BIND-6's section) |
 | BIND-7 | Arrow view + accessor emitters (`csharp_accessor`) + capstone third arm | B | 🟦 | BIND-6, BIND-3 | `accessor-capstone` C# arm `observed == expected`; `StructArray` windowing fixture at non-zero offset | 🟢 (closed on CI at `268dceb`, `ci.pr` 38746753749, after a fresh-context review whose 2 BLOCKERs were fixed and 5 questions ruled, D-BIND-103 to 107; rulings during the round D-BIND-94 to 102; the minor debt carried as known, listed in BIND-7's section) |
 | BIND-T | TS `Publisher`/`Subscriber` emitter | C | 🟦 | — | `TsVisitor.DescriptorByteIdentical` still green + new emitter cases | ⚪ |
-| BIND-8 | `Eiva.Fletcher.GatewayClient` (managed port; the codec exception) | C | 🟦 | — | Bucket 2 green (the Part 4 file set, not a count); `Package.GatewayClientHasNoRuntimesFolder` | 🔴 (started 2026-10-15: rulings D-BIND-108 to 112, slices 8a to 8e; 8a done 2026-10-16) |
+| BIND-8 | `Eiva.Fletcher.GatewayClient` (managed port; the codec exception) | C | 🟦 | — | Bucket 2 green (the Part 4 file set, not a count); `Package.GatewayClientHasNoRuntimesFolder` | 🔴 (started 2026-10-15: rulings D-BIND-108 to 114, slices 8a to 8e; 8a done 2026-10-16) |
 | BIND-9 | CI/CD: RID matrix, publish to `nuget.eiva.com` from a self-hosted job (D-BIND-28), size budget, licence files | D | ⚙ | BIND-0 (skeleton), all for release | `cd.dotnet.yml` dry run; packed-size check; asset-isolation + licence check | ⚪ |
 | BIND-10 | Docs, TD-009, archive to `docs/archive/BIND/` | D | 📓 | all | docs review | ⚪ |
 
@@ -2048,6 +2048,16 @@ token and names; one request in flight; `PublishAsync` awaits the ack). Slices:
   gateway over `inprocess` and `fastdds`. With D-BIND-112: the gateway accepts `schemaIpc` on
   `create_topic` (a gateway case declaring a native schema and the client's IPC on one topic, no
   conflict), the wire-format spec's WebSocket section documents it, and `CreateTopicAsync` sends it.
+  The gateway side is done (`a481f6d`). Subscriptions deliver to a handler delegate with the
+  decoded one-row `RecordBatch` and a borrowed `Envelope`, on the receive loop (D-BIND-113,
+  2026-10-16); topics are `string` keys (D-BIND-114). **`FletcherClient` done 2026-10-16** (in the
+  tree): over `ClientWebSocket` behind an internal transport seam, one request in flight with the
+  gate held until its reply is read (a cancelled call's late reply cannot reach the next call),
+  publish row by row on `published`, `create_topic` with `schemaIpc`, subscriptions registered by the
+  receive loop with rows that precede the `subscribed` reply kept and replayed, handler faults and
+  undecodable rows counted and reported, no reconnect. Tested against an in-memory gateway
+  (`FakeGateway`): the TS client file's 6 cases ported plus 15 more; 6 mutants, all killed.
+  Fletcher.GatewayClient.Tests 204. Left in 8b: the live lane.
 - **8c:** the generated gateway pair (D-BIND-109): golden, plugin cases, a live round trip.
 - **8d:** the cross-language rows (C# gateway client ↔ C++, TypeScript and the C# native pair), and
   packaging: `IsAotCompatible`, the `Eiva.Fletcher.Model` reference, the no-`runtimes/` check
