@@ -1111,6 +1111,16 @@ announced by a gateway client is refused as `kSchemaConflict` against its native
 either order; the same schema re-declared through its Arrow IPC is accepted. Ruled D-BIND-112:
 `create_topic` carries `schemaIpc`, as `subscribed` already does, built in 8b.
 
+**8b begins: the gateway takes `schemaIpc` (2026-10-16, `a481f6d`).** `create_topic` now declares
+the topic through `DeclaredSchemaFromCreateTopic`: `schemaIpc` decoded with `DeserializeSchemaIpc`,
+else the JSON `schema` unchanged, else no schema. The base64 encoder moved from `ws_session.cpp` into
+`schema_codec` beside a strict decoder. Six gateway cases pin it, among them the counterpart of the
+conflict: the same flat message announced as `schemaIpc` is the native declaration's equal in either
+order, and a nested message with a Timestamp declares through it. Ignoring `schemaIpc` fails exactly
+the four cases that use it. The wire-format spec now lists `create_topic`'s two forms, and the
+`unsubscribed` and `published` replies it never listed. The gateway is this team's component since
+2026-10-16. Next in 8b: `FletcherClient` itself.
+
 **Lessons.**
 
 - **A second implementation is the best test of the first.** The native codec's offset bug went
