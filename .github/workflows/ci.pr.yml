@@ -113,13 +113,17 @@ jobs:
             # protoc/tests/golden is not a stray entry: Fletcher.Tests opens a
             # codec over every .ipc the generator emits, so a changed golden has
             # to re-run this lane. It is also in ci.dotnet.yml's sparse checkout,
-            # and the two must move together.
+            # and the two must move together. Likewise the gateway's and the
+            # TypeScript client's wire-type tables: Fletcher.GatewayClient.Tests
+            # reads both and holds the managed client's table to them (BIND-8a).
             dotnet:
               - 'dotnet/**'
               - 'c-abi/**'
               - 'integration-tests/copy-probe/**'
               - 'protoc/tests/golden/**'
               - 'integration-tests/protoc-coverage/golden/**'
+              - 'gateway/src/schema_codec.cpp'
+              - 'gateway-client-ts/src/wire-types.ts'
               - '.github/workflows/ci.pr.yml'
               - '.github/workflows/ci.dotnet.yml'
               - '.github/workflows/ci.setup-devcontainer-image.yml'

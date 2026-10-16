@@ -1057,3 +1057,52 @@ fix is proposed as a separate session.
   it tiers a measured loop up; the tests bound bytes by what one allocating read would cost.
 - **Perl on Windows-shell one-liners:** an escaped `|` inside a `|`-delimited pattern is alternation,
   and `\n` in a double-quoted replacement is a real newline. Prefer the Edit tool for code.
+
+## BIND-8 — the managed gateway client (2026-10-15 to …)
+
+**The rulings (2026-10-15).** A read-only map of the gateway's protocol came first
+(`gateway/src/ws_session.*` is its authority; the spec omits the `unsubscribed` and `published`
+replies and the optional `schema` of `create_topic`). Four questions were then ruled: the client
+works on `RecordBatch`es and the gateway pair goes through the model's `ToArrow` / `FromArrow`
+(D-BIND-108); `csharp_gateway` asks for the pair, named `<Svc>_<Method>GatewayPublisher` /
+`Subscriber` in `<stem>.fletcher.gateway.cs` (D-BIND-109); one control request in flight, so an
+uncorrelated `error` always belongs to it (D-BIND-110); `PublishAsync` awaits `published`
+(D-BIND-111).
+
+**8a, the managed codec (2026-10-16).** Five files in `Eiva.Fletcher.GatewayClient`, all internal
+but `Envelope`, which §2.6 already put on the surface:
+
+- `GatewayRowCodec` is `c-abi/src/nanoarrow_codec.cpp` in managed form: the same accept list (no
+  half float, decimal, interval, fixed-size binary or view types; unions refused), the same
+  refusals naming the field, dictionaries written as their values, composite map keys refused. It
+  reads `ArrayData` (buffers, offsets, children) rather than typed arrays, so one walk serves every
+  type and `StructArray.Fields`' per-read allocation never happens. `Bind` / `Encode` / `Decode` /
+  `DecodeBatch` follow `FletcherCodec`'s shape. Decode builds Arrow's buffers directly and refuses
+  malformed rows where C++'s reader refuses them (short reads, list and map counts, trailing bytes).
+- `Envelope` keeps C++'s two rules: attachments sorted by key bytes (so C# writes C++'s order), a
+  repeated key last-wins, both on decode and from the caller; a zero byte in a key is refused.
+- `GatewayFrames` builds and parses both binary frames, the parsers for 8b's test gateway;
+  `ControlMessages` writes requests and the schema descriptor with `Utf8JsonWriter` (no
+  reflection, AOT-safe) and parses replies, `subId` strictly as a decimal string; `schemaIpc` is read
+  with `Apache.Arrow.Ipc`.
+
+**What the tests found.** The coverage parity (the managed codec against protoc-coverage's 13 C++
+goldens, through the fixture rows now shared with Fletcher.Tests) passed on its first run, so it
+got 14 mutants. Two survived at first, both offset gaps in the TESTS: a sliced struct whose
+children had no nulls, and no list whose child array starts at an offset. Two cases were added and
+all 14 are killed. The differential against the native codec (`ManagedCodecAgreesWithNativeTests`)
+then found a real bug on the NATIVE side: `nanoarrow_codec.cpp` indexes a struct's children at the
+row without the parent's offset, and nanoarrow's `ArrowArrayViewListChildOffset` does not add the
+view's offset either, so a sliced batch's nested columns are written from another row. Generated
+`ToArrow` never slices, so the generated pairs are not affected; `PublisherArrow` with a sliced
+batch is. That case is skipped with the reason until the C ABI is fixed. And a protocol fact for
+8b: the gateway's `create_topic` parser accepts top-level scalar fields only, so a generated
+message with a nested field cannot announce its schema there.
+
+**Lessons.**
+
+- **A second implementation is the best test of the first.** The native codec's offset bug went
+  unnoticed since BIND-2 because every native test builds unsliced batches; comparing two codecs
+  on one sliced batch showed it at once.
+- **An offset test needs a value the offset changes.** A slice over a column with no nulls passes
+  whether the null bits are read at the right index or not.

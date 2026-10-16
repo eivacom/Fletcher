@@ -22,4 +22,12 @@
     <PackageReference Include="Apache.Arrow" Version="[23.0.0]" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The codec, the frames and the control messages are internal until BIND-8b's
+         FletcherClient decides what of them a consumer sees; their tests reach them here. -->
+    <InternalsVisibleTo Include="Fletcher.GatewayClient.Tests" />
+    <!-- ManagedCodecAgreesWithNativeTests: the managed codec against the native one. -->
+    <InternalsVisibleTo Include="Fletcher.Tests" />
+  </ItemGroup>
+
 </Project>

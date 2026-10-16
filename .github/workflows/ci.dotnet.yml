@@ -73,6 +73,8 @@ jobs:
             integration-tests/copy-probe
             protoc/tests/golden
             integration-tests/protoc-coverage/golden
+            gateway/src
+            gateway-client-ts/src
 
       - name: Pull devcontainer image
         uses: ./.github/actions/pull-devcontainer-image
@@ -187,6 +189,8 @@ jobs:
             integration-tests/copy-probe
             protoc/tests/golden
             integration-tests/protoc-coverage/golden
+            gateway/src
+            gateway-client-ts/src
 
       # global-json-file, not a literal version: dotnet/global.json is the single
       # pin, and the runner's own pre-installed SDKs must not be what decides

@@ -859,7 +859,7 @@ Kind: 🟪 spec · 🟦 impl · 🔬 proof · ⚙ pipelines · 📓 docs
 | BIND-6 | C# backend on the IR: type table + visitor → `<stem>.fletcher.cs` | B | 🟦 | — (GIR) | `CsVisitor.*`, `CsVisitorPair.*`, `CsVisitorCrossFile.*`, `CsNames.*` and `CsTypeTable.*` in `protoc/tests` (named `CsharpVisitor.*` until review T-D5 corrected it, 2026-10-14); no-drift test unchanged | 🟢 (closed on CI at `63ab057`, `ci.pr` 38575041994, after a fresh-context review whose 5 BLOCKERs were fixed and 10 questions ruled, D-BIND-83 to 93; the minor debt carried as known, listed in BIND-6's section) |
 | BIND-7 | Arrow view + accessor emitters (`csharp_accessor`) + capstone third arm | B | 🟦 | BIND-6, BIND-3 | `accessor-capstone` C# arm `observed == expected`; `StructArray` windowing fixture at non-zero offset | 🟢 (closed on CI at `268dceb`, `ci.pr` 38746753749, after a fresh-context review whose 2 BLOCKERs were fixed and 5 questions ruled, D-BIND-103 to 107; rulings during the round D-BIND-94 to 102; the minor debt carried as known, listed in BIND-7's section) |
 | BIND-T | TS `Publisher`/`Subscriber` emitter | C | 🟦 | — | `TsVisitor.DescriptorByteIdentical` still green + new emitter cases | ⚪ |
-| BIND-8 | `Eiva.Fletcher.GatewayClient` (managed port; the codec exception) | C | 🟦 | — | Bucket 2 green (the Part 4 file set, not a count); `Package.GatewayClientHasNoRuntimesFolder` | 🔴 (started 2026-10-15: four rulings D-BIND-108 to 111, slices 8a to 8e) |
+| BIND-8 | `Eiva.Fletcher.GatewayClient` (managed port; the codec exception) | C | 🟦 | — | Bucket 2 green (the Part 4 file set, not a count); `Package.GatewayClientHasNoRuntimesFolder` | 🔴 (started 2026-10-15: four rulings D-BIND-108 to 111, slices 8a to 8e; 8a done 2026-10-16) |
 | BIND-9 | CI/CD: RID matrix, publish to `nuget.eiva.com` from a self-hosted job (D-BIND-28), size budget, licence files | D | ⚙ | BIND-0 (skeleton), all for release | `cd.dotnet.yml` dry run; packed-size check; asset-isolation + licence check | ⚪ |
 | BIND-10 | Docs, TD-009, archive to `docs/archive/BIND/` | D | 📓 | all | docs review | ⚪ |
 
@@ -2014,6 +2014,26 @@ token and names; one request in flight; `PublishAsync` awaits the ack). Slices:
   read with `Apache.Arrow.Ipc`. Bucket 2's codec files ported (`test_envelope`, `test_publish_frame`,
   `test_schema_codec`, the TS envelope, wire-encode, object-backend and ws-protocol tests), and byte
   parity with C++-written vectors.
+  **Done 2026-10-16.** `dotnet/src/Fletcher.GatewayClient`: `Envelope` (public, the only new public
+  type; C++'s order and last-wins rules), and internal until 8b decides the client's surface:
+  `GatewayRowCodec` (Bind / Encode / Decode / DecodeBatch over `ArrayData`, the C ABI codec's accept
+  list and refusals), `GatewayFrames`, `ControlMessages` (requests, replies, the schema descriptor,
+  `schemaIpc`), `WireTypeId`. New project `dotnet/tests/Fletcher.GatewayClient.Tests` (173 cases, no
+  native assets): byte parity with protoc-coverage's 13 C++ goldens both ways, through the fixture
+  rows now shared with Fletcher.Tests (`dotnet/tests/Shared/CoverageFixture.cs`); Bucket 2 ported
+  except the TS client file (8b): `test_publish_frame` 9 (`GatewayFramesTests`), `test_schema_codec`
+  11 as properties of the descriptor the client writes (`ControlMessagesTests`, `WireTypeTests`), TS
+  envelope 5 (`EnvelopeTests`, with `test_envelope`'s 11), wire-encode 8 and object-backend 3
+  (`RowCodecTests`), ws-protocol 14 (`ControlMessagesTests`, `GatewayFramesTests`). The wire-type
+  table is read from the gateway's and the TS client's source and held to both. Fletcher.Tests gains
+  `ManagedCodecAgreesWithNativeTests` for the accepted layouts no golden covers. 14 mutants, all
+  killed. **Two findings, for the maintainer:** (1) the native codec mis-encodes a SLICED batch's
+  struct, list, map and fixed-size-list columns (`c-abi/src/nanoarrow_codec.cpp` indexes children
+  without the parent's offset, and `ArrowArrayViewListChildOffset` does not add it): it writes
+  another row's values. The managed codec is right; the differential case is skipped with the
+  reason until the C ABI is fixed. (2) The gateway's `create_topic` accepts a schema of top-level
+  SCALAR fields only (`schema_codec.cpp` `BuildArrowSchemaFromJson`), so a generated message with any
+  nested field cannot announce its schema there; 8b must decide what `CreateTopicAsync` sends.
 - **8b:** `FletcherClient` over `ClientWebSocket` (§2.8's surface, `CancellationToken` on every
   call), the TS client tests ported, and `integration-tests/gateway-dotnet-end-to-end` against a live
   gateway over `inprocess` and `fastdds`.
@@ -2024,7 +2044,9 @@ token and names; one request in flight; `PublishAsync` awaits the ack). Slices:
 - **8e:** fresh-context review and close.
 
 The Fast DDS legs share `gateway-fastdds-ts`'s exposure to Fast DDS 3.4.0's data-sharing defect
-(`fastdds-pubsub-provider/README.md`); its handling is being researched separately.
+(`fastdds-pubsub-provider/README.md`). Ruled by the maintainer 2026-10-16: keep that test as the
+defect's guard, make its failure message name the defect, retry the exchange once; a Fast DDS 3.6.x
+upgrade is planned separately. The change is its own session, off this branch.
 
 ### BIND-9 — CI/CD pipelines and packaging
 

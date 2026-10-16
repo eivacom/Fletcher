@@ -26,6 +26,9 @@
     <!-- The generated model's lossless Timestamp and Duration (D-BIND-74), which the
          compiled C# goldens below refer to. -->
     <ProjectReference Include="../../src/Fletcher.Model/Fletcher.Model.csproj" />
+    <!-- The managed gateway codec, compared with the native one byte for byte
+         (ManagedCodecAgreesWithNativeTests, BIND-8a). -->
+    <ProjectReference Include="../../src/Fletcher.GatewayClient/Fletcher.GatewayClient.csproj" />
   </ItemGroup>
 
   <!-- The plugin's C# goldens, COMPILED into this assembly (BIND-6d). They are the
@@ -48,10 +51,13 @@
        coverage.proto, committed as a golden there and held to the plugin byte for byte by
        that lane's CsGolden.ModelByteIdentical, is compiled here; the .v1.bin goldens
        beside it are the C++ generated class's Encode() of the same fixture rows, pinned
-       by that lane's parity oracle. CoverageWireBytesTests compares the two. -->
+       by that lane's parity oracle. CoverageWireBytesTests compares the two. The fixture
+       rows are shared with Fletcher.GatewayClient.Tests (BIND-8a), which holds the
+       managed codec to the same goldens. -->
   <ItemGroup>
     <Compile Include="../../../integration-tests/protoc-coverage/golden/coverage.fletcher.cs"
              Link="coverage/%(Filename)%(Extension)" />
+    <Compile Include="../Shared/CoverageFixture.cs" Link="Shared/%(Filename)%(Extension)" />
     <None Include="../../../integration-tests/protoc-coverage/golden/*.v1.bin"
           Link="coverage/%(Filename)%(Extension)"
           CopyToOutputDirectory="PreserveNewest" />

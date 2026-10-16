@@ -1,0 +1,58 @@
+<!-- SPDX-License-Identifier: LGPL-3.0-or-later
+     Copyright (C) 2026 The Fletcher Authors
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- References Eiva.Fletcher.GatewayClient and Eiva.Fletcher.Model and NOTHING native.
+       The gateway client is the package a WASM or browser-adjacent app takes because it
+       needs no native assets (D-BIND-14', D-BIND-72); its tests run without the shim for
+       the same reason, which is also what lets them run on any machine with an SDK. -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <!-- A test assembly publishes no API: see Fletcher.Tests for the reasoning. -->
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <RootNamespace>Eiva.Fletcher.GatewayClient.Tests</RootNamespace>
+    <RollForward>LatestMajor</RollForward>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Fletcher.GatewayClient/Fletcher.GatewayClient.csproj" />
+    <ProjectReference Include="../../src/Fletcher.Model/Fletcher.Model.csproj" />
+  </ItemGroup>
+
+  <!-- The managed codec against C++ on the wire, through the same rows and goldens as
+       Fletcher.Tests holds the native codec to (CoverageWireBytesTests there and here). -->
+  <ItemGroup>
+    <Compile Include="../../../integration-tests/protoc-coverage/golden/coverage.fletcher.cs"
+             Link="coverage/%(Filename)%(Extension)" />
+    <Compile Include="../Shared/CoverageFixture.cs" Link="Shared/%(Filename)%(Extension)" />
+    <None Include="../../../integration-tests/protoc-coverage/golden/*.v1.bin"
+          Link="coverage/%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- The plugin's schema goldens: every descriptor the generator emits must open the
+       managed codec, as it opens the native one (SchemaIpcTests in Fletcher.Tests). -->
+  <ItemGroup>
+    <None Include="../../../protoc/tests/golden/*.ipc"
+          Link="golden/%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- The two wire-type tables the managed one must equal, read as source: the
+       gateway's (C++) and the TypeScript client's. Copied, not transcribed, so a change
+       to either reddens WireTypeTests instead of drifting. -->
+  <ItemGroup>
+    <None Include="../../../gateway/src/schema_codec.cpp"
+          Link="tables/%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../../gateway-client-ts/src/wire-types.ts"
+          Link="tables/%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="[18.10.0]" />
+    <PackageReference Include="xunit" Version="[2.9.3]" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="[3.1.5]" />
+  </ItemGroup>
+</Project>
