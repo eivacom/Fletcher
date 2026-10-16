@@ -73,7 +73,14 @@ The reader side of this was `off()` for a time — the one place this provider o
 
 The provider was not the one dropping them: the pre-schema buffer in place when this was measured logged on every discard, and that log never fired. That a 0.5 MB pool is reliable where a 6.6 MB one — the built-in profile's pool at the time, `max_samples` 100 — is not points below the provider as well.
 
-Both ends ship `AUTOMATIC` again. The table above is kept as the historical measurement, and `integration-tests/gateway-fastdds-ts` is the guard going forward: it re-verifies the cross-process case, three runs at a time, because this defect is invisible to the provider's own test suite — that suite is single-process, so Fast DDS serves it over intra-process delivery, which bypasses data-sharing altogether. The `__schema` channel runs on the same Fast DDS default (AUTOMATIC) — see the Fast DDS 3.4.0 data-sharing reader defect in [Known limits of the document](#known-limits-of-the-document).
+Both ends ship `AUTOMATIC` again. The table above is kept as the historical measurement, and `integration-tests/gateway-fastdds-ts` is the guard going forward: it re-verifies the cross-process case, three runs at a time, because this defect is invisible to the provider's own test suite — that suite is single-process, so Fast DDS serves it over intra-process delivery, which bypasses data-sharing altogether. Its TS → C++ case still hits the defect intermittently in CI (`peer RECV lines: []`), so by owner ruling 2026-10-16 it retries the publish → receive exchange **once** with a fresh client and row: a pass on the retry logs that the first attempt hit this defect, and a second loss fails naming it and pointing here. The real fix is a Fast DDS upgrade; when one carries it, drop the retry. The `__schema` channel runs on the same Fast DDS default (AUTOMATIC) — see the Fast DDS 3.4.0 data-sharing reader defect in [Known limits of the document](#known-limits-of-the-document).
+
+**Follow-up, not done — the Fast DDS 3.6.x upgrade** (checked 2026-10-16):
+
+- **Pins.** Every Fast DDS dependency pins `fast-dds/3.4.0`: `fastdds-pubsub-provider/conanfile.py`, `fastdds-pubsub-provider/benchmarks/conanfile.py`, `integration-tests/fastdds-xrce-interop/conanfile.py`, `integration-tests/pubsub-conformance/conanfile.py`. The 3.4 line is end of life since v3.4.3 (2026-06-17).
+- **Likely fix.** eProsima/Fast-DDS#6490, "Fix datasharing infinite loop", merged to master 2026-07-30. Its only release is the 2.14.x backport (#6494, v2.14.7); on the 3.6.x branch it sits 35 commits after v3.6.2 (2026-07-02, the latest 3.x release), so no 3.x release has it yet — 3.6.3 would. It is **not confirmed** to be this defect: confirm by running `gateway-fastdds-ts` repeatedly against a 3.6.x build.
+- **Recipe.** ConanCenter's `fast-dds` recipe stops at 3.4.3, so 3.6 needs a recipe of our own (e.g. published to conan-eiva).
+- **Options.** Wait for 3.6.3; build the 3.6.x branch at a pinned commit; or take 3.6.2 now — off the end-of-life line, but probably without the fix, so the retry stays. Any upgrade moves all four pins together and re-runs the Fast DDS lanes.
 
 What this costs:
 
