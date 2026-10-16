@@ -3141,3 +3141,20 @@ D-BIND-72 left to BIND-8.
   acknowledgement in turn (D-BIND-110); pipelining is a later optimisation, measured first.
   **Declined:** completing when the frame is sent, with errors as an
   event.
+
+- **D-BIND-112 - `create_topic` announces the schema as `schemaIpc`, the topic's Arrow IPC schema
+  in base64, as the gateway's `subscribed` reply already carries it; the gateway declares the topic
+  with that schema decoded by `DeserializeSchemaIpc`.** *LOCKED BY THE MAINTAINER 2026-10-16 (BIND-8
+  Q5).* Measured first (`gateway/tests/test_schema_codec.cpp`, `GatewayDeclaredSchemaTest`): the
+  JSON `schema` member keeps only field names and a short list of scalar types
+  (`BuildArrowSchemaFromJson`), so a struct, list, map, Timestamp or Duration field is refused, and
+  nullability and the `field_number` metadata are dropped. A topic's re-declaration is idempotent
+  only for byte-identical Arrow IPC (`pubsub/internal/schema_conflict.hpp`), so even a FLAT message
+  announced by a gateway client conflicts (`kSchemaConflict`) with the same message declared by a
+  native C++ or C# publisher; the generated schema's own Arrow IPC round-trips to the native
+  declaration. The C# client sends `schemaIpc` and not `schema`. The gateway keeps accepting the JSON
+  `schema` for existing clients (gateway-client-ts) and uses `schemaIpc` when both are present.
+  Changes the gateway (its owner's component) and the wire-format spec's WebSocket section, in
+  BIND-8b. **Declined:** completing the JSON parser for nested types (still lossy: units,
+  nullability, metadata, so the conflict stays); announcing no schema (a subscriber relying on the
+  gateway's schema then gets none).

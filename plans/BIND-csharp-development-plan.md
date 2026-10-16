@@ -810,6 +810,16 @@ BIND-8 emits the gateway pair and derives its wire descriptor from the same Arro
 schema, so C# has no `TypedSchema<T>`. The gap was found reading ADO 18789: nothing
 had generated the gateway client's input.
 
+**BIND-8, the gateway client (rulings 2026-10-15 and 2026-10-16).** The client works on Arrow
+batches and the gateway pair goes through the model's `ToArrow` / `FromArrow` (D-BIND-108); the
+pair is asked for with `csharp_gateway` and named `<Svc>_<Method>GatewayPublisher` / `Subscriber`
+(D-BIND-109); one control request is in flight at a time (D-BIND-110); `PublishAsync` awaits
+`published` (D-BIND-111); and `create_topic` announces the schema as `schemaIpc`, its Arrow IPC,
+because the JSON descriptor the gateway parses today is lossy enough that even a flat message
+conflicts with its native declaration, measured (D-BIND-112). Slices 8a (codec, done 2026-10-16),
+8b (client, live lane, the gateway's `schemaIpc`), 8c (pair), 8d (cross-language rows, packaging),
+8e (review).
+
 **BIND-T, BIND-8, BIND-9, BIND-10** — as in the 2026-08-31 plan, with BIND-9
 carrying the LGPL notice text and the packaging statement (§6 P-1), and BIND-10
 adding **TD-009** (TD-008 is now taken by the seam).
@@ -870,7 +880,7 @@ for f in core/tests/*.cpp pubsub/tests/*.cpp arrow-bridge/tests/*.cpp pubsub-arr
 | Bucket | Files (cases) | Total | Treatment |
 |---|---|---|---|
 | 1 codec / envelope / buffer / status | `test_positional_io` 19, `test_envelope` 11, `test_write_buffer` 11, `test_status_taxonomy` 3, `test_codec` 70, `test_codec_edge` 23, `test_codec_property_fuzz` 2, `test_batch_decoder` 22 | **161** | **NOT a binding port target (D-BIND-39, 2026-09-21).** `test_codec*` (60) is `arrow-bridge`'s **Arrow-native** suite and about half of it exercises unions, decimals, intervals, half-float, view types and fixed-size binary, which no `.proto` can produce; `test_envelope` (11) is BIND-8's by §2.6; `WriteBufferInPlace`'s writer cases are BIND-4's by surface; 13 of `test_positional_io` drive `PositionalWriter`/`AppendTrailingUint64Field`, which §2.5 does not expose. **BIND-3's obligation instead: every type the PROTO MAPPING produces round-trips through the binding.** `test_status_taxonomy` still ports naturally: the C# enum is compared to `core/README.md`'s table. |
-| 2 gateway client | `test_schema_codec` 11, `test_publish_frame` 9, TS 36 | **56** | Port (BIND-8), true parity: managed code both sides. |
+| 2 gateway client | `test_schema_codec` 14, `test_publish_frame` 9, TS 36 | **59** | Port (BIND-8), true parity: managed code both sides. |
 | 3 pub/sub semantics | `test_publisher_subscriber` 44, `test_segments` 5, `test_pubsub_arrow` 33 | **82** | Port over `inprocess` (BIND-4/5); #128's option and schema-watch cases over real Fast DDS where only a provider that knows them can answer (D-BIND-57). 5 excluded. |
 | 4 native providers | Fast DDS: `test_fast_dds_pubsub_provider` 71, `test_profile_document` 33, `test_fletcher_sample_pub_sub_type` 28; XRCE: `test_xrce_provider` 7, `test_xrce_document` 11 | **150** | Port as driver-selection tests where the assertion is seam-visible (122); `test_fletcher_sample_pub_sub_type` (28) excluded as internal to the provider (Q10). |
 | 5 generator | `test_type_mapper` 36, `test_option_metadata` 33, `test_schema_builder` 9, `test_schema_visitor` 9, `test_ir` 8, `test_schema_codec_lockstep` 2, `test_topic_path` 2, `test_ts_visitor` 1, `test_csharp_type_table` 26, `test_csharp_visitor` 58 | **184** | Stay C++; extended with `test_csharp_*`. Needs the Feature owner. |

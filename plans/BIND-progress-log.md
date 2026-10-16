@@ -1102,6 +1102,15 @@ corpus fixture at each start row and holds each row to arrow-bridge's encoding o
 8b: the gateway's `create_topic` parser accepts top-level scalar fields only, so a generated
 message with a nested field cannot announce its schema there.
 
+**The `create_topic` schema, measured and ruled (2026-10-16).** Before 8b, the maintainer asked
+why `create_topic` accepts flat schemas only, and for a test before any protocol change. The limit
+is the gateway's first version (#44, "not yet supported ... today"); no reason was recorded. Three
+gateway cases (`GatewayDeclaredSchemaTest`) measured more than nesting: the JSON path drops
+nullability and field numbers and refuses Timestamp and Duration, so even a flat generated message
+announced by a gateway client is refused as `kSchemaConflict` against its native declaration, in
+either order; the same schema re-declared through its Arrow IPC is accepted. Ruled D-BIND-112:
+`create_topic` carries `schemaIpc`, as `subscribed` already does, built in 8b.
+
 **Lessons.**
 
 - **A second implementation is the best test of the first.** The native codec's offset bug went
