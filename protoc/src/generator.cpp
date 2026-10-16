@@ -23,6 +23,9 @@
 #include "cpp_backend_schema_visitor.hpp"
 #include "cpp_backend_type_table.hpp"
 #include "cpp_backend_view_visitor.hpp"
+#include "csharp_backend_accessor_visitor.hpp"
+#include "csharp_backend_type_table.hpp"
+#include "csharp_backend_visitor.hpp"
 #include "generator_internal.hpp"
 #include "ir.hpp"
 #include "option_metadata.hpp"
@@ -91,19 +94,42 @@ bool WriteToStream(google::protobuf::io::ZeroCopyOutputStream* out, const std::s
 // Cross-file include collection
 // -----------------------------------------------------------------------
 
-// Scan all supported field mappings in a message (and its nested types) and
-// accumulate the include paths of any cross-file generated headers needed.
-void CollectCrossFileIncludesFromMessage(const google::protobuf::Descriptor* msg,
-                                         std::set<std::string>& headers) {
+// Accumulate the messages that `msg`'s fields name from files other than `file`:
+// as a field, a list element at any depth, a map value (where the type mapper
+// sets nested_msg / map_value_msg). A field-level flatten inlines the flattened
+// message's own fields into `msg` (see GatherFieldsImpl), so a message THOSE
+// fields name is named here too: descend exactly as the field walk does, as
+// CollectCrossFileEnumIncludesFromMessage does for enums (D-BIND-87).
+void CollectCrossFileMessagesFromFields(const google::protobuf::Descriptor* msg,
+                                        const google::protobuf::FileDescriptor* file,
+                                        std::set<const google::protobuf::Descriptor*>& out,
+                                        std::set<const google::protobuf::Descriptor*>& flattening) {
+    // A message that flattens itself would never end; it is recursive, and no
+    // backend generates it.
+    if (!flattening.insert(msg).second) return;
     for (int fi = 0; fi < msg->field_count(); ++fi) {
         const auto* fd = msg->field(fi);
         if (auto m = MapField(fd)) {
-            if (!m->nested_header.empty()) headers.insert(m->nested_header);
-            if (!m->map_value_header.empty()) headers.insert(m->map_value_header);
+            if (m->nested_msg != nullptr && m->nested_msg->file() != file)
+                out.insert(m->nested_msg);
+            if (m->map_value_msg != nullptr && m->map_value_msg->file() != file)
+                out.insert(m->map_value_msg);
         }
+        if (fd->type() == google::protobuf::FieldDescriptor::TYPE_MESSAGE && !fd->is_repeated() &&
+            HasFieldFlatten(fd))
+            CollectCrossFileMessagesFromFields(fd->message_type(), file, out, flattening);
     }
+    flattening.erase(msg);
+}
+
+// The same, for a message of `file` and every message nested in it.
+void CollectCrossFileMessagesFromMessage(const google::protobuf::Descriptor* msg,
+                                         const google::protobuf::FileDescriptor* file,
+                                         std::set<const google::protobuf::Descriptor*>& out) {
+    std::set<const google::protobuf::Descriptor*> flattening;
+    CollectCrossFileMessagesFromFields(msg, file, out, flattening);
     for (int ni = 0; ni < msg->nested_type_count(); ++ni)
-        CollectCrossFileIncludesFromMessage(msg->nested_type(ni), headers);
+        CollectCrossFileMessagesFromMessage(msg->nested_type(ni), file, out);
 }
 
 // GIR-9 (#75): the EnumDescriptor a field's generated C++ typed accessors
@@ -243,13 +269,24 @@ std::vector<const google::protobuf::Descriptor*> OrderedMessages(
 // Relocated out of the anonymous namespace (declaration in
 // generator_internal.hpp) so the accessor emitter reuses the SAME cross-file
 // include discovery (D-RBA-10 single source of truth). The recursive walk helper
-// (CollectCrossFileIncludesFromMessage) stays file-local above; only this public
+// (CollectCrossFileMessagesFromMessage) stays file-local above; only this public
 // entry point gains external linkage. Pure linkage move — emitted bytes are
 // unchanged, guarded by the RBA-1 no-drift test.
+//
+// D-BIND-87: the walk itself is CollectCrossFileMessages, which the C# backend
+// reads too; the C++ header path is derived from each message it finds.
+std::set<const google::protobuf::Descriptor*> CollectCrossFileMessages(
+    const google::protobuf::FileDescriptor* file) {
+    std::set<const google::protobuf::Descriptor*> messages;
+    for (int mi = 0; mi < file->message_type_count(); ++mi)
+        CollectCrossFileMessagesFromMessage(file->message_type(mi), file, messages);
+    return messages;
+}
+
 std::set<std::string> CollectCrossFileIncludes(const google::protobuf::FileDescriptor* file) {
     std::set<std::string> headers;
-    for (int mi = 0; mi < file->message_type_count(); ++mi)
-        CollectCrossFileIncludesFromMessage(file->message_type(mi), headers);
+    for (const auto* msg : CollectCrossFileMessages(file))
+        headers.insert(cpp_backend::CppCrossFileHeader(msg, file));
     return headers;
 }
 
@@ -1543,6 +1580,37 @@ bool ValidateNoUnsupportedIr(const google::protobuf::FileDescriptor* file, std::
     return true;
 }
 
+// D-BIND-89 (b): a field-level flatten inlines the flattened message's fields into
+// the host, so an inlined field can carry the name of a host field, or of a field
+// another flatten inlines. Every backend then breaks (two schema columns of one
+// name; C++ `set_x` declared twice), so the file is refused before any output,
+// naming both fields. Same message set as ValidateNoUnsupportedIr.
+std::string FlattenOrigin(const cpp_backend::SchemaFieldRecord& rec) {
+    std::string where = "'" + rec.source_field->full_name() + "'";
+    if (!rec.flatten_chain.empty())
+        where += " (inlined by the field-level flatten '" + rec.flatten_chain.front()->full_name() +
+                 "')";
+    return where;
+}
+
+bool ValidateFlattenedNamesUnique(const google::protobuf::FileDescriptor* file,
+                                  std::string* error) {
+    for (const auto* msg : OrderedMessages(file)) {
+        if (IsRecursive(msg) || IsFlattenedWrapper(msg)) continue;
+        const auto records = cpp_backend::BuildFlattenedFieldList(msg);
+        for (size_t i = 0; i < records.size(); ++i) {
+            for (size_t j = 0; j < i; ++j) {
+                if (records[j].name != records[i].name) continue;
+                *error = "fields " + FlattenOrigin(records[j]) + " and " +
+                         FlattenOrigin(records[i]) + " both become column '" + records[i].name +
+                         "' of '" + msg->full_name() + "'; rename one of them";
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 // GIR-10: locate the first scalar-leaf nested list (List<List<...<Scalar>>>,
 // i.e. a LIST whose element chain is ≥1 more LIST bottoming out in a SCALAR)
 // reachable from `node`, returning its proto field name. Single-level
@@ -1654,6 +1722,10 @@ nanoarrow::UniqueSchema BuildMessageSchema(const google::protobuf::Descriptor* m
 bool ParsePluginParameter(const std::string& parameter, PluginOptions* out, std::string* error) {
     std::istringstream ss(parameter);
     std::string token;
+    // The two C# tokens are read independently, so their order does not matter, and
+    // folded into one CsharpOutput after the loop.
+    bool csharp = false;
+    bool csharp_model_only = false;
     while (std::getline(ss, token, ',')) {
         if (token == "schema_only")
             out->schema_only = true;
@@ -1665,10 +1737,19 @@ bool ParsePluginParameter(const std::string& parameter, PluginOptions* out, std:
             out->accessor = true;
         else if (token == "rust")
             out->rust = true;
+        else if (token == "csharp")
+            csharp = true;
+        else if (token == "csharp_model_only")
+            csharp_model_only = true;
+        else if (token == "csharp_accessor")
+            out->csharp_accessor = true;
         // Unknown tokens are ignored, unchanged from the pre-existing behaviour
         // the RBA-1 no-drift contract depends on. metadata_from_option= tokens
         // are claimed below and MUST parse.
     }
+    out->csharp = !csharp             ? CsharpOutput::None
+                  : csharp_model_only ? CsharpOutput::ModelOnly
+                                      : CsharpOutput::ModelAndPair;
     return ParseMetadataRules(parameter, &out->metadata_rules, error);
 }
 
@@ -1683,6 +1764,8 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
     // GIR-8 (#55): fail fatally on genuinely-unsupported types before writing any
     // artifact (C++ header / view / TS / IPC / RBA). Recursion stays skipped.
     if (!ValidateNoUnsupportedIr(file, error)) return false;
+    // D-BIND-89 (b): no two columns of one message may share a name.
+    if (!ValidateFlattenedNamesUnique(file, error)) return false;
 
     // Parse comma-separated options from --fletcher_opt=... through the ONE
     // tokenizer GenerateAll() also uses.
@@ -1735,6 +1818,30 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
     // view / IPC / TS backends keep supporting it.
     if (!ValidateBackendsSupportFields(file, emit_accessor, emit_rust, error)) return false;
 
+    // BIND-6e: with `csharp`, refuse a file whose protoc C# namespace falls inside Fletcher.Gen,
+    // before any artifact is emitted (CsProtocNamespaceConflict says why).
+    if (opts.csharp != CsharpOutput::None) {
+        if (auto conflict = csharp_backend::CsProtocNamespaceConflict(file)) {
+            *error = std::move(*conflict);
+            return false;
+        }
+    }
+
+    // BIND-7: `csharp_accessor` needs the model (D-BIND-99), and its view and accessor names must
+    // not clash with a type the model declares (D-BIND-100), refused before any output.
+    if (opts.csharp_accessor) {
+        if (opts.csharp == CsharpOutput::None) {
+            *error =
+                "csharp_accessor needs csharp (or csharp,csharp_model_only): the accessor and "
+                "view read into the model class in <stem>.fletcher.cs (D-BIND-99).";
+            return false;
+        }
+        if (auto conflict = csharp_backend::CsAccessorNameConflict(file)) {
+            *error = std::move(*conflict);
+            return false;
+        }
+    }
+
     // Always emit the C++ header (edge-compatible, nanoarrow only).
     {
         const std::string content = GenerateFile(file, schema_only, resolver.get());
@@ -1761,6 +1868,45 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
         std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(
             context->Open(ts_out_name));
         if (!WriteToStream(stream.get(), ts_content, error)) return false;
+    }
+
+    // Optionally emit the C# model (BIND-6), in both C# states. Additive, like `ts`: no
+    // other output changes (CsVisitor.CsharpTokenChangesNoExistingOutputAndAddsOnlyItsOwnFiles).
+    if (opts.csharp != CsharpOutput::None) {
+        const std::string cs_content =
+            csharp_backend::CsVisitor(file, resolver.get()).GenerateFile();
+        std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(
+            context->Open(StripProtoSuffix(file->name()) + ".fletcher.cs"));
+        if (!WriteToStream(stream.get(), cs_content, error)) return false;
+    }
+
+    // The C# native publisher/subscriber pair (D-BIND-76), in its own file beside the
+    // model, always with `csharp`, as C++'s header always carries its pair.
+    // `csharp_model_only` opts out, as C++'s `schema_only` does: a project that compiles
+    // against Apache.Arrow alone (D-BIND-72) then receives no type that needs
+    // Eiva.Fletcher. The model file is the same either way.
+    if (opts.csharp == CsharpOutput::ModelAndPair) {
+        const std::string native_content =
+            csharp_backend::CsVisitor(file, resolver.get()).GenerateNativeFile();
+        std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(
+            context->Open(StripProtoSuffix(file->name()) + ".fletcher.native.cs"));
+        if (!WriteToStream(stream.get(), native_content, error)) return false;
+    }
+
+    // The C# accessor and view (BIND-7), in their own two files, as C++ writes its accessor and
+    // view headers apart from the row class. Additive: no other output changes.
+    if (opts.csharp_accessor) {
+        csharp_backend::CsAccessorVisitor accessor(file);
+        const std::string stem = StripProtoSuffix(file->name());
+        for (const auto& [suffix, content] :
+             {std::pair<std::string, std::string>{".fletcher.accessor.cs",
+                                                  accessor.GenerateAccessorFile()},
+              std::pair<std::string, std::string>{".fletcher.arrow.cs",
+                                                  accessor.GenerateViewFile()}}) {
+            std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(
+                context->Open(stem + suffix));
+            if (!WriteToStream(stream.get(), content, error)) return false;
+        }
     }
 
     // Optionally emit one serialized Arrow IPC schema file per message

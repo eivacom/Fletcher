@@ -38,23 +38,6 @@ void AppendBytes(std::vector<uint8_t>& buf, const uint8_t* data, size_t len) {
     buf.insert(buf.end(), data, data + len);
 }
 
-std::string Base64Encode(const uint8_t* data, size_t len) {
-    static constexpr char kAlphabet[] =
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    std::string out;
-    out.reserve(4 * ((len + 2) / 3));
-    for (size_t i = 0; i < len; i += 3) {
-        uint32_t b = static_cast<uint32_t>(data[i]) << 16;
-        if (i + 1 < len) b |= static_cast<uint32_t>(data[i + 1]) << 8;
-        if (i + 2 < len) b |= static_cast<uint32_t>(data[i + 2]);
-        out.push_back(kAlphabet[(b >> 18) & 0x3F]);
-        out.push_back(kAlphabet[(b >> 12) & 0x3F]);
-        out.push_back((i + 1 < len) ? kAlphabet[(b >> 6) & 0x3F] : '=');
-        out.push_back((i + 2 < len) ? kAlphabet[b & 0x3F] : '=');
-    }
-    return out;
-}
-
 }  // anonymous namespace
 
 // -----------------------------------------------------------------------
@@ -178,14 +161,11 @@ std::vector<std::string> WsSession::SplitTopic(const std::string& topic) {
 
 void WsSession::OnCreateTopic(const nlohmann::json& msg) {
     const auto topic = msg.at("topic").get<std::string>();
-    OwnedSchema schema{};
-    if (msg.contains("schema")) {
-        // Publisher-announced schema. Gateway forwards it verbatim
-        // to subscribers via the subscribed response — it does not
-        // validate semantic meaning, only the wire-type bookkeeping
-        // needed to round-trip JSON ↔ ArrowSchema.
-        schema = gateway::BuildArrowSchemaFromJson(msg["schema"]);
-    }
+    // Publisher-announced schema, forwarded to subscribers via the subscribed
+    // response. `schemaIpc` (Arrow IPC, full fidelity) wins over the JSON
+    // `schema`, which keeps scalar fields only (D-BIND-112); neither means a
+    // byte-routing topic with no schema.
+    OwnedSchema schema = gateway::DeclaredSchemaFromCreateTopic(msg);
     publisher_->CreateTopic(SplitTopic(topic), std::move(schema));
     SendText(json{{"type", "topic_created"}}.dump());
 }
@@ -251,7 +231,7 @@ void WsSession::OnSubscribe(const std::string& topic) {
     SharedSchema schema;
     if (result.schema.Wait(std::chrono::milliseconds(0), &schema) == PubSubStatus::kOk && schema) {
         auto ipc_bytes = SerializeSchemaIpc(schema.get());
-        response["schemaIpc"] = Base64Encode(ipc_bytes.data(), ipc_bytes.size());
+        response["schemaIpc"] = gateway::Base64Encode(ipc_bytes.data(), ipc_bytes.size());
         response["schema"] = gateway::ArrowSchemaToJson(schema.get());
     }
     SendText(response.dump());

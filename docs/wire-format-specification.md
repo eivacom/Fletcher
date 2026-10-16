@@ -184,16 +184,30 @@ The `gateway` component uses a split text/binary WebSocket protocol:
 
 | Direction | Action / Type | Payload |
 |---|---|---|
-| Client to Server | `create_topic` | `{"action":"create_topic","topic":"pkg/svc/method"}` |
+| Client to Server | `create_topic` | `{"action":"create_topic","topic":"pkg/svc/method","schemaIpc":"base64..."}` (`schemaIpc` or `schema` optional) |
 | Client to Server | `subscribe` | `{"action":"subscribe","topic":"pkg/svc/method"}` |
 | Client to Server | `unsubscribe` | `{"action":"unsubscribe","subId":"123"}` |
 | Client to Server | `list_topics` | `{"action":"list_topics"}` |
 | Server to Client | `topic_created` | `{"type":"topic_created"}` |
 | Server to Client | `subscribed` | `{"type":"subscribed","subId":"123","topic":"...","schema":{...},"schemaIpc":"base64..."}` |
+| Server to Client | `unsubscribed` | `{"type":"unsubscribed"}` |
+| Server to Client | `published` | `{"type":"published"}`, one per PUBLISH frame the server accepted |
 | Server to Client | `topics_list` | `{"type":"topics_list","topics":["..."]}` |
-| Server to Client | `error` | `{"type":"error","message":"..."}` |
+| Server to Client | `error` | `{"type":"error","message":"..."}`; carries no request id, so it answers the request in flight |
 
-The `subscribed` response includes the schema in two forms:
+A publisher may announce the topic's schema on `create_topic`, in either of two forms:
+- `schemaIpc` — base64-encoded Arrow IPC bytes of the schema, as `subscribed` carries it. **Use
+  this.** It is full fidelity, so the topic is declared exactly as a native publisher of the same
+  generated schema declares it, and re-declaring the topic is idempotent rather than a schema
+  conflict.
+- `schema` — the JSON descriptor below, kept for existing clients. The server reads top-level
+  SCALAR fields only (no struct, list, map, Timestamp or Duration) and drops nullability and field
+  numbers, so a topic declared this way conflicts with the same topic declared natively.
+
+When both are present `schemaIpc` is used; when neither is, the topic routes bytes with no schema.
+
+The `subscribed` response includes the schema in two forms, when the server has one at the moment of
+subscribing (a late-joining subscriber over a distributed transport may not yet):
 - `schema` — a JSON object with field names, wire types, nullability, and composite structure (for easy JS consumption)
 - `schemaIpc` — base64-encoded Arrow IPC bytes (for full fidelity)
 

@@ -1,0 +1,20 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// BIND-6 review Q7, D-BIND-89 (a): fields of one message whose names PascalCase to one property.
+// proto3 refuses such a pair (their JSON names clash); proto2 accepts it, and C# declared the
+// property twice (CS0102). The later field's property is now suffixed `_` until it is unique, in
+// field order: FooBar, FooBar_, FooBar__. C++ is unaffected (its names are the proto names).
+//
+// test_csharp_visitor's TheCommittedGoldensAreThePluginsOutput holds csharp_proto2.fletcher.cs to
+// the plugin byte for byte, and dotnet/tests/Fletcher.Tests compiles it and runs it
+// (GeneratedNamesTests). Regenerate with FLETCHER_CAPTURE_GOLDENS=1.
+syntax = "proto2";
+
+package golden.proto2;
+
+message Clash {
+  optional int32 foo_bar = 1;
+  optional int32 fooBar = 2;
+  optional int32 FooBar = 3;
+}

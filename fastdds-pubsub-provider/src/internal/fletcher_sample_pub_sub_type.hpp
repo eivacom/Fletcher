@@ -110,13 +110,17 @@ class FletcherSamplePubSubType : public eprosima::fastdds::dds::TopicDataType {
             return true;
         } catch (const std::overflow_error& e) {
             // The row did not fit this transport's bound. That is a capacity outcome of a bounded
-            // type, not a defect in the caller's encoder, and on this path it is dropped and logged
-            // rather than surfaced — see
-            // FastDDSPubSubProviderTest.DataSharingOversizedRowDoesNotThrow. Deliberately NOT
-            // recorded, so Publish does not throw for it. (The loaned path encodes in front of
-            // write() and therefore cannot swallow it — there the same row throws.)
+            // type, not a defect in the caller's encoder - which is exactly the distinction
+            // kPayloadTooLarge exists to carry (seam spec, "one mapping rule, and it is
+            // normative"). So it is RECORDED as an overflow, and Publish throws kPayloadTooLarge
+            // for it after write() returns; the sample is dropped either way.
+            //
+            // Until 2026-09 this was deliberately not recorded, so an oversized row vanished with
+            // only this log line and Publish returned normally - found by the C# binding's review
+            // (BIND D-BIND-53), which could not observe the overflow from any transport.
             payload.length = 0;
-            EPROSIMA_LOG_ERROR(FLETCHER_PUBLICATION, "serialize dropped an oversized row for "
+            d->RecordOverflow(e.what());
+            EPROSIMA_LOG_ERROR(FLETCHER_PUBLICATION, "serialize refused an oversized row for "
                                                          << get_name() << ": " << e.what());
             return false;
         } catch (const std::exception& e) {

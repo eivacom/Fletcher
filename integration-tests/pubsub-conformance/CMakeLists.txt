@@ -4,7 +4,14 @@
 cmake_minimum_required(VERSION 3.15)
 project(pubsub-conformance-integration CXX)
 
+# TEST-ONLY, and only for the copy oracle's binding leg: the shim is the
+# artifact `Eiva.Fletcher.Interop` ships, and measuring it is the whole point
+# of retiring the README's stand-in caveat.
+find_package(fletcher-c-abi CONFIG REQUIRED)
 find_package(fletcher-pubsub CONFIG REQUIRED)
+# The copy oracle's instrument - ledger, Judge(), the probe provider - shared
+# with the binding shim's probe variant (D-BIND-62).
+find_package(fletcher-copy-probe CONFIG REQUIRED)
 find_package(fletcher-fastdds-pubsub-provider CONFIG REQUIRED)
 find_package(GTest REQUIRED)
 
@@ -164,11 +171,19 @@ target_link_libraries(conformance_inprocess_carrying PRIVATE
 #
 # Keeps gtest_main: it spawns no child and opens no pipe, so it has no SIGPIPE
 # hazard to disarm.
+# `binding_producer.cpp` is the ONLY file here that links the binding shim, and
+# it is deliberately not in `copy_accounting.cpp`: that file is compiled into the
+# seam-vocabulary suite as well, and there is no reason for that suite to carry a
+# shared library it never calls. The instrument stays in the harness; the foreign
+# producer stays in one translation unit (BIND-2d, D-BIND-34).
 add_executable(conformance_copy_accounting
     src/copy_accounting.cpp
-    src/copy_clauses.cpp)
+    src/copy_clauses.cpp
+    src/binding_producer.cpp)
 target_link_libraries(conformance_copy_accounting PRIVATE
     conformance_support
+    fletcher-copy-probe::fletcher-copy-probe
+    fletcher-c-abi::fletcher-c-abi
     GTest::gtest_main)
 
 # ── The seam-vocabulary suite ───────────────────────────────────────
@@ -180,7 +195,7 @@ target_link_libraries(conformance_copy_accounting PRIVATE
 # path today (review debt C2-1).
 #
 # It links the copy oracle's instrument, not a second one, so there is exactly
-# one scoring path in this harness.
+# one scoring path in this harness - `fletcher-copy-probe`'s, since D-BIND-62.
 #
 # Keeps gtest_main: it spawns no child and opens no pipe.
 add_executable(conformance_seam_vocabulary
@@ -188,6 +203,7 @@ add_executable(conformance_seam_vocabulary
     src/copy_accounting.cpp)
 target_link_libraries(conformance_seam_vocabulary PRIVATE
     conformance_support
+    fletcher-copy-probe::fletcher-copy-probe
     GTest::gtest_main)
 
 # ── The provider-registry suite ─────────────────────────────────────

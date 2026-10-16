@@ -3,6 +3,8 @@
 //
 #include "schema_codec.hpp"
 
+#include <exception>
+#include <fletcher/pubsub/schema_ipc.hpp>
 #include <ios>
 #include <sstream>
 #include <stdexcept>
@@ -206,6 +208,86 @@ OwnedSchema BuildArrowSchemaFromJson(const json& j) {
         ArrowSchemaSetType(schema->children[i], WireTypeToNanoarrowType(wt));
     }
     return schema;
+}
+
+OwnedSchema DeclaredSchemaFromCreateTopic(const json& msg) {
+    if (msg.contains("schemaIpc")) {
+        if (!msg["schemaIpc"].is_string()) {
+            throw std::invalid_argument("create_topic: 'schemaIpc' must be a base64 string");
+        }
+        const std::vector<uint8_t> ipc = Base64Decode(msg["schemaIpc"].get<std::string>());
+        try {
+            return DeserializeSchemaIpc(ipc.data(), ipc.size());
+        } catch (const std::exception& e) {
+            throw std::invalid_argument(
+                std::string("create_topic: 'schemaIpc' is not an Arrow IPC schema: ") + e.what());
+        }
+    }
+    if (msg.contains("schema")) return BuildArrowSchemaFromJson(msg["schema"]);
+    return OwnedSchema{};
+}
+
+std::string Base64Encode(const uint8_t* data, size_t len) {
+    static constexpr char kAlphabet[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve(4 * ((len + 2) / 3));
+    for (size_t i = 0; i < len; i += 3) {
+        uint32_t b = static_cast<uint32_t>(data[i]) << 16;
+        if (i + 1 < len) b |= static_cast<uint32_t>(data[i + 1]) << 8;
+        if (i + 2 < len) b |= static_cast<uint32_t>(data[i + 2]);
+        out.push_back(kAlphabet[(b >> 18) & 0x3F]);
+        out.push_back(kAlphabet[(b >> 12) & 0x3F]);
+        out.push_back((i + 1 < len) ? kAlphabet[(b >> 6) & 0x3F] : '=');
+        out.push_back((i + 2 < len) ? kAlphabet[b & 0x3F] : '=');
+    }
+    return out;
+}
+
+namespace {
+
+int Base64Value(char c) {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62;
+    if (c == '/') return 63;
+    return -1;
+}
+
+}  // anonymous namespace
+
+std::vector<uint8_t> Base64Decode(const std::string& text) {
+    if (text.size() % 4 != 0) {
+        throw std::invalid_argument("base64: length " + std::to_string(text.size()) +
+                                    " is not a multiple of 4");
+    }
+    std::vector<uint8_t> out;
+    out.reserve(text.size() / 4 * 3);
+    for (size_t i = 0; i < text.size(); i += 4) {
+        const bool last = i + 4 == text.size();
+        // Padding is allowed only in the last group, and only as its final one or two chars.
+        const int pad = (last && text[i + 3] == '=') ? (text[i + 2] == '=' ? 2 : 1) : 0;
+        uint32_t b = 0;
+        for (int k = 0; k < 4; ++k) {
+            const char c = text[i + static_cast<size_t>(k)];
+            int v = 0;
+            if (k >= 4 - pad) {
+                if (c != '=') throw std::invalid_argument("base64: malformed padding");
+            } else {
+                v = Base64Value(c);
+                if (v < 0) {
+                    throw std::invalid_argument("base64: invalid character at offset " +
+                                                std::to_string(i + static_cast<size_t>(k)));
+                }
+            }
+            b = (b << 6) | static_cast<uint32_t>(v);
+        }
+        out.push_back(static_cast<uint8_t>(b >> 16));
+        if (pad < 2) out.push_back(static_cast<uint8_t>((b >> 8) & 0xFF));
+        if (pad < 1) out.push_back(static_cast<uint8_t>(b & 0xFF));
+    }
+    return out;
 }
 
 }  // namespace fletcher::gateway

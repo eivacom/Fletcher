@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+name: ci.check-test-matrix
+
+concurrency:
+  group: ci.check-test-matrix-${{ github.ref }}
+  cancel-in-progress: true
+
+# D-BIND-57. Fails if the BIND test matrix - Part 4 of plans/BIND-csharp-bindings.md
+# and §5 of the development plan - disagrees with the tree: a file's case count, a
+# bucket's total, a test file in no bucket, or the conformance row. BIND's acceptance
+# bullets name those FILE SETS, so a stale table is an acceptance bullet silently
+# claiming less than it says. #128 did exactly that: it grew bucket 3 by 26 cases,
+# reached the branch by a merge of `main`, and nothing noticed for two BIND-4 closes.
+#
+# ── Why EVERY pull request, and no path filter ──────────────────────────────
+# Unlike ci.check-caller-tier-mapping, whose inputs are two files a PR edits on
+# purpose, this check's inputs change when `main` moves. A merge of `main` into a
+# branch brings `main`'s test changes, and those files are NOT in the PR's diff
+# against `main` - they are on `main` too - so a path filter would stay silent on
+# exactly the event this lane exists for. It is a one-second stdlib check.
+#
+# Standalone, like the other check lanes: NOT part of ci.pr.yml's pr_gate. Configure
+# it as a required status check on the branch protection rule if it should block.
+on:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      # Sparse: the tables, the script, and the test directories it counts.
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            scripts
+            plans
+            core/tests
+            pubsub/tests
+            arrow-bridge/tests
+            pubsub-arrow/tests
+            fastdds-pubsub-provider/tests
+            xrcedds-pubsub-provider/tests
+            gateway/tests
+            protoc/tests
+            integration-tests/pubsub-conformance/src
+            integration-tests/pubsub-conformance/subjects
+
+      - name: Check the BIND test matrix against the tree
+        run: python3 scripts/check_test_matrix.py
+
+      # A check that cannot fail proves nothing. The fixture test applies each way a
+      # table can go stale to a scratch tree, requires each to be refused FOR ITS OWN
+      # REASON, and requires the repository's own tables to be accepted.
+      - name: Prove the check refuses every way the matrix can go stale
+        run: python3 scripts/test_check_test_matrix.py

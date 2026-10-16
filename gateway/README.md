@@ -18,7 +18,8 @@ The gateway knows nothing semantically about topic schemas, and nothing about wh
 
 - Topics are established implicitly. A client `subscribe` or `publish` creates the topic slot inside the in-process provider on the fly — there is no pre-declaration, no admin endpoint, no startup config that lists topics.
 - The gateway never generates a schema itself. It does not inspect row bytes and does not understand their structure.
-- **Passthrough only:** when a publisher attaches a `schema` to `create_topic`, the gateway caches it and forwards it to later subscribers via the `subscribed` response (`schema` + base64-encoded `schemaIpc` fields). When no publisher has announced a schema, those fields are simply absent and clients must know the schema another way — typically by generating a `SchemaDescriptor` from a `.proto` via `protoc-gen-fletcher`.
+- **Passthrough only:** when a publisher announces a schema on `create_topic`, the gateway declares the topic with it and forwards it to later subscribers via the `subscribed` response (`schema` + base64-encoded `schemaIpc` fields). When no publisher has announced a schema, those fields are simply absent and clients must know the schema another way — typically by generating a `SchemaDescriptor` from a `.proto` via `protoc-gen-fletcher`.
+- **Announce it as `schemaIpc`.** `create_topic` takes the schema in either of two forms ([wire format, WebSocket protocol](../docs/wire-format-specification.md#websocket-protocol)): `schemaIpc`, the schema's Arrow IPC bytes in base64, or the JSON `schema` descriptor. Only `schemaIpc` is full fidelity. The JSON path keeps top-level scalar fields only (no struct, list, map, Timestamp or Duration) and drops nullability and field numbers, so a topic announced that way is declared differently from the same generated schema declared by a native C++ or C# publisher, and the second of the two declarations is refused as a schema conflict (measured: `GatewayDeclaredSchemaTest` in `tests/test_schema_codec.cpp`; D-BIND-112). `schemaIpc` wins when both are sent; the C# gateway client sends it, and the JSON form stays for existing clients.
 
 This keeps the gateway as a pure byte router: it forwards row bytes between publishers and subscribers without ever inspecting their structure, while still letting clients that need a schema discover one over the wire.
 
@@ -160,7 +161,7 @@ This brings the `gateway` exe target into your build tree without exposing any o
 
 ## Unit tests
 
-`gateway/tests/` holds gtest cases for the pure helpers that handle untrusted input from WebSocket clients — `ParsePublishFrame` (binary frame bounds-checking) and `BuildArrowSchemaFromJson` (JSON schema validation). Everything else in the gateway is covered by the end-to-end integration test against a real `FletcherClient`.
+`gateway/tests/` holds gtest cases for the pure helpers that handle untrusted input from WebSocket clients — `ParsePublishFrame` (binary frame bounds-checking), `BuildArrowSchemaFromJson` (JSON schema validation), and `DeclaredSchemaFromCreateTopic` with its strict base64 decoder (the `schemaIpc` form, and how either form's declaration compares with a native publisher's). Everything else in the gateway is covered by the end-to-end integration test against a real `FletcherClient`.
 
 To build and run them in the devcontainer:
 
