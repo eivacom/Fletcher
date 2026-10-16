@@ -1095,7 +1095,10 @@ then found a real bug on the NATIVE side: `nanoarrow_codec.cpp` indexes a struct
 row without the parent's offset, and nanoarrow's `ArrowArrayViewListChildOffset` does not add the
 view's offset either, so a sliced batch's nested columns are written from another row. Generated
 `ToArrow` never slices, so the generated pairs are not affected; `PublisherArrow` with a sliced
-batch is. That case is skipped with the reason until the C ABI is fixed. And a protocol fact for
+batch is. The maintainer had it fixed the same day, before 8b: the C ABI codec now adds the view's
+own offset wherever it reads children or list and map offsets, a new C ABI case slices every
+corpus fixture at each start row and holds each row to arrow-bridge's encoding of the unsliced row
+(reverting the fix fails exactly that case), and the C# differential case runs again. And a protocol fact for
 8b: the gateway's `create_topic` parser accepts top-level scalar fields only, so a generated
 message with a nested field cannot announce its schema there.
 

@@ -212,20 +212,34 @@ bool IsNull(const ArrowArrayView& view, int64_t index, int64_t row) {
     return ArrowArrayViewIsNull(view.children[index], row) != 0;
 }
 
+/// Where element `index` of `view` sits once `view`'s OWN offset is applied.
+///
+/// Every index this file passes down is logical within the array it is passed
+/// with. nanoarrow's scalar getters and `ArrowArrayViewIsNull` add the view's
+/// offset themselves, but two reads here do not go through them: a struct's
+/// children, which the Arrow format indexes at `parent.offset + i`, and the
+/// offsets buffer of a list or map, which `ArrowArrayViewListChildOffset` reads
+/// raw. Both must start from this. Missing it made a SLICED batch's nested
+/// columns encode another row's values (found by BIND-8a's
+/// ManagedCodecAgreesWithNativeTests; a batch built unsliced has offset 0 and
+/// hid it).
+int64_t Physical(const ArrowArrayView& view, int64_t index) { return view.offset + index; }
+
 void EncodeValue(const ArrowArrayView& view, int64_t index, WriteBuffer& out);
 
 /// A struct's own framing: a null bitfield over its fields, then the payloads of
 /// the ones that are not null, in schema order.
 void EncodeStruct(const ArrowArrayView& view, int64_t index, WriteBuffer& out) {
     const int64_t n = view.n_children;
+    const int64_t child_index = Physical(view, index);
     PositionalWriter writer(out, static_cast<int>(n));
 
     for (int64_t i = 0; i < n; ++i) {
-        if (IsNull(view, i, index)) writer.SetNull(static_cast<int>(i));
+        if (IsNull(view, i, child_index)) writer.SetNull(static_cast<int>(i));
     }
     for (int64_t i = 0; i < n; ++i) {
-        if (IsNull(view, i, index)) continue;
-        EncodeValue(*view.children[i], index, out);
+        if (IsNull(view, i, child_index)) continue;
+        EncodeValue(*view.children[i], child_index, out);
     }
 }
 
@@ -350,8 +364,8 @@ void EncodeValue(const ArrowArrayView& view, int64_t index, WriteBuffer& out) {
 
         case NANOARROW_TYPE_LIST:
         case NANOARROW_TYPE_LARGE_LIST: {
-            const int64_t first = ArrowArrayViewListChildOffset(&view, index);
-            const int64_t last = ArrowArrayViewListChildOffset(&view, index + 1);
+            const int64_t first = ArrowArrayViewListChildOffset(&view, Physical(view, index));
+            const int64_t last = ArrowArrayViewListChildOffset(&view, Physical(view, index) + 1);
             const int64_t count = last - first;
             if (count < 0 || count > static_cast<int64_t>(std::numeric_limits<uint32_t>::max())) {
                 throw std::invalid_argument("NanoarrowCodec: list length exceeds the wire's u32");
@@ -363,15 +377,16 @@ void EncodeValue(const ArrowArrayView& view, int64_t index, WriteBuffer& out) {
         case NANOARROW_TYPE_FIXED_SIZE_LIST: {
             // No COUNT prefix: the size is in the schema, so both sides know it.
             const int64_t size = view.layout.child_size_elements;
-            EncodeElements(*view.children[0], index * size, size, /*write_count=*/false, out);
+            EncodeElements(*view.children[0], Physical(view, index) * size, size,
+                           /*write_count=*/false, out);
             return;
         }
 
         case NANOARROW_TYPE_MAP: {
             // A map's child 0 is a struct of {key, value}; the entry range comes
             // from the list offsets exactly as a list's does.
-            const int64_t first = ArrowArrayViewListChildOffset(&view, index);
-            const int64_t last = ArrowArrayViewListChildOffset(&view, index + 1);
+            const int64_t first = ArrowArrayViewListChildOffset(&view, Physical(view, index));
+            const int64_t last = ArrowArrayViewListChildOffset(&view, Physical(view, index) + 1);
             const int64_t count = last - first;
             if (count < 0 || count > static_cast<int64_t>(std::numeric_limits<uint32_t>::max())) {
                 throw std::invalid_argument("NanoarrowCodec: map size exceeds the wire's u32");
@@ -379,14 +394,17 @@ void EncodeValue(const ArrowArrayView& view, int64_t index, WriteBuffer& out) {
             const ArrowArrayView& entries = *view.children[0];
             const ArrowArrayView& keys = *entries.children[0];
             const ArrowArrayView& values = *entries.children[1];
+            // The offsets name positions in the entries struct; its children are
+            // indexed through the struct's own offset, as any struct's are.
+            const int64_t entry_at = Physical(entries, first);
 
             out.AppendFixed(static_cast<uint32_t>(count));
 
             // Keys first, with NO null bitfield: a null key is not representable.
             for (int64_t i = 0; i < count; ++i) {
-                EncodeValue(keys, first + i, out);
+                EncodeValue(keys, entry_at + i, out);
             }
-            EncodeElements(values, first, count, /*write_count=*/false, out);
+            EncodeElements(values, entry_at, count, /*write_count=*/false, out);
             return;
         }
 

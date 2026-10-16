@@ -147,6 +147,38 @@ TEST(NanoarrowCodec, ByteIdenticalToArrowBridge) {
     EXPECT_EQ(compared, 15) << "the corpus changed size; update this count deliberately";
 }
 
+/// The same comparison through a SLICED batch: row `r` of a window that starts at
+/// `start` must encode as row `start + r` of the whole batch does.
+///
+/// Arrow slices a nested column by its own offset and leaves its children alone,
+/// so a struct's child is read at `parent.offset + i` and a list's offsets buffer
+/// at `offset + i`. The codec once read both at `i`, and every other row in this
+/// file built its batches unsliced, with offset 0, so nothing saw it: a sliced
+/// struct, list, map or fixed-size list wrote ANOTHER row's values. BIND-8a's
+/// ManagedCodecAgreesWithNativeTests found it from C#.
+TEST(NanoarrowCodec, ASlicedBatchEncodesEachRowAsTheWholeBatchDoes) {
+    int compared = 0;
+    for (const Fixture& fixture : Corpus()) {
+        const int64_t rows = fixture.batch->num_rows();
+        ASSERT_GT(rows, 1) << "fixture '" << fixture.name << "' is too short to slice";
+
+        for (int64_t start = 1; start < rows; ++start) {
+            const std::shared_ptr<arrow::RecordBatch> window = fixture.batch->Slice(start);
+            for (int64_t row = 0; row < window->num_rows(); ++row) {
+                const std::vector<uint8_t> expected = OracleEncode(*fixture.batch, start + row);
+                const std::vector<uint8_t> actual = SubjectEncode(*window, row);
+                ++compared;
+                ASSERT_EQ(Hex(expected), Hex(actual))
+                    << "fixture '" << fixture.name << "', window from row " << start << ", row "
+                    << row << ": a sliced batch encodes another row's values";
+            }
+        }
+    }
+
+    // Three rows a fixture: windows from 1 (two rows) and from 2 (one row).
+    EXPECT_EQ(compared, 15) << "the corpus changed size; update this count deliberately";
+}
+
 /// The borrow rule, as its own row rather than as a side effect of the one above.
 ///
 /// `fl_rows_bind` promises the array is borrowed and never consumed: that is what

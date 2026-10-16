@@ -2030,8 +2030,12 @@ token and names; one request in flight; `PublishAsync` awaits the ack). Slices:
   killed. **Two findings, for the maintainer:** (1) the native codec mis-encodes a SLICED batch's
   struct, list, map and fixed-size-list columns (`c-abi/src/nanoarrow_codec.cpp` indexes children
   without the parent's offset, and `ArrowArrayViewListChildOffset` does not add it): it writes
-  another row's values. The managed codec is right; the differential case is skipped with the
-  reason until the C ABI is fixed. (2) The gateway's `create_topic` accepts a schema of top-level
+  another row's values. The managed codec is right. **Fixed 2026-10-16** (maintainer's choice, before
+  8b): `Physical(view, index)` adds the view's own offset where the codec reads children or list and
+  map offsets (struct, list, large list, fixed-size list, map and its entries); the C ABI suite gains
+  `ASlicedBatchEncodesEachRowAsTheWholeBatchDoes` (every corpus fixture sliced at each start, each
+  row against arrow-bridge's encoding of the unsliced row; the reverted fix fails it), and the C#
+  differential case is unskipped. (2) The gateway's `create_topic` accepts a schema of top-level
   SCALAR fields only (`schema_codec.cpp` `BuildArrowSchemaFromJson`), so a generated message with any
   nested field cannot announce its schema there; 8b must decide what `CreateTopicAsync` sends.
 - **8b:** `FletcherClient` over `ClientWebSocket` (§2.8's surface, `CancellationToken` on every

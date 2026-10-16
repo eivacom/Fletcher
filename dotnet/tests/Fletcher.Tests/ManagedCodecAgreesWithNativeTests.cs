@@ -49,11 +49,11 @@ public sealed class ManagedCodecAgreesWithNativeTests
         AssertAgree(Make(name));
     }
 
-    [Fact(Skip = "The native codec ignores a sliced parent's offset in nested columns: nanoarrow_codec.cpp's " +
-        "EncodeStruct indexes the children at the row alone, and ArrowArrayViewListChildOffset does not add the " +
-        "view's offset, so a sliced struct, list, map or fixed-size list writes the wrong row. Found by this " +
-        "test in BIND-8a (2026-10-16); the managed codec is right (RowCodecTests in Fletcher.GatewayClient.Tests). " +
-        "Unskip with the C ABI fix.")]
+    // This case found a native bug (2026-10-16): nanoarrow_codec.cpp indexed a struct's
+    // children at the row alone, and read a list's offsets at it, so a sliced struct,
+    // list, map or fixed-size list wrote ANOTHER row's values. Fixed in the C ABI, where
+    // ASlicedBatchEncodesEachRowAsTheWholeBatchDoes now holds it to arrow-bridge too.
+    [Fact]
     public void BothCodecsAgreeOnASlicedBatch()
     {
         AssertAgree(Sliced());
