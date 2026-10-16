@@ -16,8 +16,12 @@
 
 #include <nanoarrow/nanoarrow.h>
 
+#include <cstddef>
+#include <cstdint>
 #include <fletcher/pubsub/owned_schema.hpp>
 #include <nlohmann/json.hpp>
+#include <string>
+#include <vector>
 
 namespace fletcher::gateway {
 
@@ -47,6 +51,28 @@ nlohmann::json ArrowSchemaToJson(const ArrowSchema* schema);
 ///   * a field's `wireType` is not a scalar covered by
 ///     WireTypeToNanoarrowType.
 OwnedSchema BuildArrowSchemaFromJson(const nlohmann::json& j);
+
+/// The schema a `create_topic` message declares (D-BIND-112):
+///   * `schemaIpc` (a string): base64 of the topic's Arrow IPC schema, decoded
+///     with `DeserializeSchemaIpc`. Full fidelity, so a gateway client's
+///     declaration is byte-identical to a native publisher's of the same
+///     generated schema, and re-declaring the topic is idempotent;
+///   * else `schema`: the JSON descriptor, through `BuildArrowSchemaFromJson`
+///     (scalar fields only, nullability and metadata dropped), kept for
+///     existing clients;
+///   * else no schema (an empty `OwnedSchema`): the topic routes bytes only.
+/// `schemaIpc` wins when both are present. Throws `std::invalid_argument`
+/// when `schemaIpc` is not a string, not base64, or not an Arrow IPC schema.
+OwnedSchema DeclaredSchemaFromCreateTopic(const nlohmann::json& msg);
+
+/// Standard base64 (RFC 4648, `+/`, `=` padding). The `subscribed` reply's
+/// `schemaIpc` is written with it.
+std::string Base64Encode(const uint8_t* data, size_t len);
+
+/// The inverse of `Base64Encode`, strict: the length must be a multiple of 4,
+/// padding only at the end, and every other character from the alphabet.
+/// Throws `std::invalid_argument` otherwise.
+std::vector<uint8_t> Base64Decode(const std::string& text);
 
 }  // namespace fletcher::gateway
 

@@ -3154,7 +3154,7 @@ D-BIND-72 left to BIND-8.
   native C++ or C# publisher; the generated schema's own Arrow IPC round-trips to the native
   declaration. The C# client sends `schemaIpc` and not `schema`. The gateway keeps accepting the JSON
   `schema` for existing clients (gateway-client-ts) and uses `schemaIpc` when both are present.
-  Changes the gateway (its owner's component) and the wire-format spec's WebSocket section, in
+  Changes the gateway (this team's component since 2026-10-16) and the wire-format spec's WebSocket section, in
   BIND-8b. **Declined:** completing the JSON parser for nested types (still lossy: units,
   nullability, metadata, so the conflict stays); announcing no schema (a subscriber relying on the
   gateway's schema then gets none).

@@ -303,3 +303,116 @@ TEST(GatewayDeclaredSchemaTest, TheSchemasArrowIpcRoundTripsToTheNativeDeclarati
     EXPECT_NO_THROW(
         publisher->CreateTopic(topic, fletcher::DeserializeSchemaIpc(ipc.data(), ipc.size())));
 }
+
+// ---------------------------------------------------------------------------
+// D-BIND-112: create_topic announces the schema as `schemaIpc`.
+// ---------------------------------------------------------------------------
+
+using fletcher::gateway::Base64Decode;
+using fletcher::gateway::Base64Encode;
+using fletcher::gateway::DeclaredSchemaFromCreateTopic;
+
+namespace {
+
+// A generated schema the JSON path cannot carry: a nested message and a
+// Timestamp, `message Fix { Position at = 1; google.protobuf.Timestamp when = 2; }`.
+fletcher::OwnedSchema GeneratedNestedSchema() {
+    fletcher::OwnedSchema schema;
+    ArrowSchemaInit(schema.get());
+    EXPECT_EQ(ArrowSchemaSetTypeStruct(schema.get(), 2), NANOARROW_OK);
+
+    ArrowSchema* at = schema->children[0];
+    EXPECT_EQ(ArrowSchemaSetTypeStruct(at, 2), NANOARROW_OK);
+    EXPECT_EQ(ArrowSchemaSetName(at, "at"), NANOARROW_OK);
+    EXPECT_EQ(ArrowSchemaSetType(at->children[0], NANOARROW_TYPE_DOUBLE), NANOARROW_OK);
+    EXPECT_EQ(ArrowSchemaSetName(at->children[0], "lat"), NANOARROW_OK);
+    EXPECT_EQ(ArrowSchemaSetType(at->children[1], NANOARROW_TYPE_DOUBLE), NANOARROW_OK);
+    EXPECT_EQ(ArrowSchemaSetName(at->children[1], "lon"), NANOARROW_OK);
+
+    ArrowSchema* when = schema->children[1];
+    EXPECT_EQ(
+        ArrowSchemaSetTypeDateTime(when, NANOARROW_TYPE_TIMESTAMP, NANOARROW_TIME_UNIT_NANO, "UTC"),
+        NANOARROW_OK);
+    EXPECT_EQ(ArrowSchemaSetName(when, "when"), NANOARROW_OK);
+    when->flags &= ~ARROW_FLAG_NULLABLE;
+    return schema;
+}
+
+json CreateTopicWithIpc(const fletcher::OwnedSchema& schema) {
+    const std::vector<uint8_t> ipc = fletcher::SerializeSchemaIpc(schema.get());
+    return json{{"action", "create_topic"},
+                {"topic", "bind8/x"},
+                {"schemaIpc", Base64Encode(ipc.data(), ipc.size())}};
+}
+
+}  // namespace
+
+TEST(Base64Test, RoundTripsEveryLengthModuloThree) {
+    for (size_t n = 0; n <= 7; ++n) {
+        std::vector<uint8_t> bytes(n);
+        for (size_t i = 0; i < n; ++i) bytes[i] = static_cast<uint8_t>(0xF0 + i);
+        EXPECT_EQ(Base64Decode(Base64Encode(bytes.data(), bytes.size())), bytes) << "length " << n;
+    }
+    const std::string hello = "hello";
+    EXPECT_EQ(Base64Encode(reinterpret_cast<const uint8_t*>(hello.data()), hello.size()),
+              "aGVsbG8=");
+}
+
+TEST(Base64Test, RefusesWhatIsNotStrictBase64) {
+    for (const char* bad : {"abc", "ab=c", "a===", "=abc", "ab!d", "aGVsbG8=aGVs"}) {
+        EXPECT_THROW(static_cast<void>(Base64Decode(bad)), std::invalid_argument) << bad;
+    }
+}
+
+TEST(GatewayDeclaredSchemaTest, ACreateTopicWithSchemaIpcDeclaresTheNativeSchemaItself) {
+    // The counterpart of the conflict above: the same flat message, announced
+    // the D-BIND-112 way, is the native declaration's equal, in either order.
+    const std::vector<std::string> topic = {"bind8", "reading"};
+    {
+        auto publisher = InProcessPublisher();
+        publisher->CreateTopic(topic, GeneratedReadingSchema());
+        EXPECT_NO_THROW(publisher->CreateTopic(
+            topic, DeclaredSchemaFromCreateTopic(CreateTopicWithIpc(GeneratedReadingSchema()))));
+    }
+    {
+        auto publisher = InProcessPublisher();
+        publisher->CreateTopic(
+            topic, DeclaredSchemaFromCreateTopic(CreateTopicWithIpc(GeneratedReadingSchema())));
+        EXPECT_NO_THROW(publisher->CreateTopic(topic, GeneratedReadingSchema()));
+    }
+}
+
+TEST(GatewayDeclaredSchemaTest, SchemaIpcCarriesNestedAndTimestampFields) {
+    const std::vector<std::string> topic = {"bind8", "fix"};
+    auto publisher = InProcessPublisher();
+    publisher->CreateTopic(topic, GeneratedNestedSchema());
+
+    fletcher::OwnedSchema declared =
+        DeclaredSchemaFromCreateTopic(CreateTopicWithIpc(GeneratedNestedSchema()));
+    ASSERT_EQ(declared->n_children, 2);
+    EXPECT_STREQ(declared->children[0]->format, "+s");
+    EXPECT_STREQ(declared->children[1]->format, "tsn:UTC");
+    EXPECT_NO_THROW(publisher->CreateTopic(topic, std::move(declared)));
+}
+
+TEST(GatewayDeclaredSchemaTest, SchemaIpcWinsOverTheJsonSchemaAndNeitherDeclaresNone) {
+    json both = CreateTopicWithIpc(GeneratedReadingSchema());
+    both["schema"] = ClientDescriptorForReading();
+    const std::vector<std::string> topic = {"bind8", "reading"};
+    auto publisher = InProcessPublisher();
+    publisher->CreateTopic(topic, GeneratedReadingSchema());
+    EXPECT_NO_THROW(publisher->CreateTopic(topic, DeclaredSchemaFromCreateTopic(both)));
+
+    fletcher::OwnedSchema none =
+        DeclaredSchemaFromCreateTopic(json{{"action", "create_topic"}, {"topic", "t"}});
+    EXPECT_EQ(none->release, nullptr) << "a create_topic without a schema declared one";
+}
+
+TEST(GatewayDeclaredSchemaTest, AMalformedSchemaIpcIsRefused) {
+    const std::string not_ipc = "aGVsbG8=";  // valid base64 of "hello"
+    for (const json& bad :
+         {json{{"schemaIpc", 42}}, json{{"schemaIpc", "!!!!"}}, json{{"schemaIpc", not_ipc}}}) {
+        EXPECT_THROW(static_cast<void>(DeclaredSchemaFromCreateTopic(bad)), std::invalid_argument)
+            << bad.dump();
+    }
+}
