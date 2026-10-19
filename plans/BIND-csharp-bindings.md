@@ -1966,7 +1966,8 @@ the maintainer's choice, from `plans/reviews/BIND-7-codereview.md`:
   constant (`export const Feed_PushTopic = 'q8/Feed/Push';`, measured). BIND-T's pair
   follows C++ (no pair, C++'s line); whether the constant goes too is BIND-T's to
   rule, since removing it changes existing TS output.
-- **A full-fidelity topic declaration (D-BIND-117, ruled 2026-10-19 at BIND-8d).** The
+- **A full-fidelity topic declaration (D-BIND-117, ruled 2026-10-19 at BIND-8d; MOVED INTO
+  BIND-8e by D-BIND-130, so BIND-T inherits it done and its pair declares with it).** The
   plugin embeds each message's Arrow IPC schema (the bytes its `ipc` output writes,
   `SerializeSchemaIpc` of the generated schema) in the generated `.ts`, as base64 on
   the `TypedSchema`, and `FletcherClient.createTopic(topic, typedSchema)` sends it as
@@ -2128,6 +2129,28 @@ token and names; one request in flight; `PublishAsync` awaits the ack). Slices:
   `.nupkg` (no `runtimes/` entry, no dependency on `Eiva.Fletcher` or `Eiva.Fletcher.Interop`; both
   mutants caught). **8d is done** once the lane is green on CI.
 - **8e:** fresh-context review and close.
+  **Review 2026-10-19** (`plans/reviews/BIND-8-codereview.md`, `BIND-8-conformance.md`, at `89f9a34`):
+  5 BLOCKERs, all checked by the author (TypeScript cross-file imports relative to the include root;
+  a cancelled `SubscribeAsync` installing its handler under an id the caller never gets; the
+  cross-language retry pooling two partial attempts, which happened on the green run; the
+  `test_schema_codec` port testing a JSON descriptor no shipped path writes; a client test that
+  cannot fail), 12 questions, DEBT, NITs. Rulings so far: the client exposes `Completion`, a `Task`
+  that ends with the connection and carries its reason, and still never reconnects (D-BIND-121);
+  TypeScript imports each other file as one namespace, by a path relative to the importing file
+  (D-BIND-122, amends D-BIND-118); the gateway builds a `subscribed` reply before keeping the
+  subscription and reads an unparseable `field_number` as absent (D-BIND-123); a reply the client
+  cannot parse fails only the request it answers, never the connection (D-BIND-124); the handlers
+  stay synchronous and their docs warn about `async` lambdas (D-BIND-125); the options gain a
+  `ConfigureWebSocket` hook and `MaxMessageBytes` (D-BIND-126), and an optional `ReplyTimeout` that
+  ends the connection (D-BIND-127); the client's unreachable JSON-schema code goes, and Bucket 2
+  maps `test_schema_codec` to the client's `schemaIpc` reading back exactly, with the
+  gateway-internal cases recorded as exclusions (D-BIND-128); the lane's peer → C# rows wait for a
+  probe row to arrive first, so they travel live rather than from the Fast DDS backlog (D-BIND-129);
+  TypeScript's `schemaIpc` (D-BIND-117) moves from BIND-T into 8e, so the TypeScript peer declares
+  its own topic (D-BIND-130); the C ABI codec refuses a null map key and a null dictionary entry,
+  as the managed one does (D-BIND-131); the unruled 8a/8b defaults are locked, `HandlerFaulted`
+  gains a `Reason` and the client a `DroppedRows` counter (D-BIND-132). All 12 questions ruled
+  (D-BIND-121 to 132). Left: fix B1 to B5 and implement the rulings, then close.
 
 The Fast DDS legs share `gateway-fastdds-ts`'s exposure to Fast DDS 3.4.0's data-sharing defect
 (`fastdds-pubsub-provider/README.md`). Ruled by the maintainer 2026-10-16: keep that test as the

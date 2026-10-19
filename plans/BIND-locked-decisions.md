@@ -3265,3 +3265,126 @@ of one topic agree; no fix was needed.
   itself, as both live lanes do. The package stays `Apache.Arrow`-only, its one dependency.
   **Declined:** a reference for a one-`PackageReference` gateway consumer (then `Eiva.Fletcher`
   would take the same, a BIND-9 packaging question).
+
+The next ones were ruled at BIND-8e, the review of BIND-8 (`plans/reviews/BIND-8-codereview.md`),
+from 2026-10-19.
+
+- **D-BIND-121 - `FletcherClient.Completion` is a public `Task` that completes when the connection
+  ends: successfully on `DisposeAsync`, faulted with the reason otherwise (the gateway closed, a send
+  or receive failed); the client still never reconnects.** *LOCKED BY THE MAINTAINER 2026-10-19
+  (BIND-8e Q1).* Without it a subscriber-only app could not tell that its subscriptions were gone:
+  the end of the connection failed only a request in flight. An app awaits `Completion`, then builds
+  a new client and subscribes again; reconnecting stays the app's, as in the TypeScript client.
+  **Declined:** a `Disconnected` event (the same information, but a handler attached late misses
+  it); automatic reconnection (backoff, replayed declarations, rows lost in the gap and D-BIND-110's
+  ordering make it a design of its own).
+
+- **D-BIND-122 - the TypeScript backend imports each other file as ONE namespace,
+  `import * as <alias> from '<path relative to the importing file>'`, and names its messages through
+  it (`<alias>.Leaf.fields`, `<alias>.ILeaf`); the alias is the imported file's path with every
+  character that is not a letter or digit made `_`, then `_fletcher` (`dir/dep.proto` →
+  `dir_dep_fletcher`). Amends D-BIND-118.** *LOCKED BY THE MAINTAINER 2026-10-19 (BIND-8e Q2).* The
+  review found D-BIND-118's bare names collide: two imported files declaring `Leaf`, an imported name
+  equal to a local message or to the runtime's `WireTypeId` / `TypedSchema`. A namespace per file
+  makes every such clash impossible. The same fix (review B1) makes the path relative to the importing
+  file's directory, so a file below the include root imports a module that exists. **Declined:** a
+  named import aliased per name (collision-free too, longer lines); refusing a clash at generation
+  (a legal set of `.proto` files could fail to generate).
+
+- **D-BIND-123 - the gateway builds a `subscribed` reply before it keeps the subscription, releasing
+  it if building the reply throws, and reads a `field_number` it cannot parse as absent; `create_topic`
+  keeps accepting any well-formed Arrow IPC schema.** *LOCKED BY THE MAINTAINER 2026-10-19 (BIND-8e
+  Q3).* Since D-BIND-112 any WebSocket client can declare a schema with arbitrary field metadata; a
+  non-numeric `field_number` made `std::stoi` throw out of every later reply for that topic, after the
+  subscription was already registered, so each `subscribe` failed and left a live subscription behind.
+  **Declined:** also refusing such a schema on `create_topic` (native publishers' metadata is not
+  checked so; the reply must survive it either way); recording it as debt.
+
+- **D-BIND-124 - a gateway reply the client cannot parse affects only the request it answers: a
+  `schemaIpc` Apache.Arrow cannot read is treated as absent (a subscriber that passed its own schema
+  is unaffected; one relying on the gateway's gets the existing no-schema error), and an unknown or
+  malformed reply fails the request in flight with a `GatewayException`, or is ignored when none is.
+  The connection stays up.** *LOCKED BY THE MAINTAINER 2026-10-19 (BIND-8e Q4).* Before, any such
+  reply ended the connection and every subscription on it, even when the subscriber never needed the
+  gateway's schema; the TypeScript client ignores replies it cannot use. **Declined:** ending the
+  connection (strict, but one exotic schema from a native publisher would stop every topic).
+
+- **D-BIND-125 - the row handlers stay synchronous (D-BIND-113), and their documentation says so
+  where a caller meets them: an `async` lambda compiles as `async void`, so an exception after its
+  first `await` crashes the process and the envelope is reused; async work copies what it needs and
+  hands it to the app's own queue.** *LOCKED BY THE MAINTAINER 2026-10-19 (BIND-8e Q5).* On
+  `GatewayRowHandler`, `SubscribeAsync`, the generated `<Svc>_<Method>GatewayHandler` and the
+  package README. **Declined:** an async overload (`Func<RecordBatch, Envelope, ValueTask>`): safer,
+  but more surface on the client and the generated pair, for a pattern the docs can steer.
+
+- **D-BIND-126 - `FletcherClientOptions` gains `ConfigureWebSocket`, an `Action<ClientWebSocketOptions>`
+  called before connecting (headers and authentication, proxy, client and server certificates,
+  keep-alive), and `MaxMessageBytes` (default 64 MiB): a frame larger than it ends the connection,
+  with `Completion` (D-BIND-121) faulted naming the size, instead of growing the receive buffer
+  without bound.** *LOCKED BY THE MAINTAINER 2026-10-19 (BIND-8e Q6).* With `Uri` alone the client
+  could not reach a gateway behind an authenticating proxy or on `wss://` with a private CA, and one
+  huge frame pinned a doubled buffer for the client's life (overflowing past 1 GiB). The hook is
+  AOT-safe and adds no option per socket setting. **Declined:** the size cap alone, socket
+  configuration later; deferring both.
+
+- **D-BIND-127 - `FletcherClientOptions.ReplyTimeout`, a `TimeSpan?`, off by default: when set and a
+  request's reply does not come within it, the connection ends and `Completion` faults naming the
+  action and the time.** *LOCKED BY THE MAINTAINER 2026-10-19 (BIND-8e Q7).* The gate is held until
+  the reply (D-BIND-110), so one lost reply would wedge every later call, and cancelling a call only
+  frees its caller. Ending the connection, not just the call, is what keeps D-BIND-110's attribution
+  sound: a late reply can never meet the next request. **Declined:** on by default (a slow publish
+  under backpressure could trip it); documentation only.
+
+- **D-BIND-128 - the client's internal JSON-schema code is deleted with its tests
+  (`ControlMessages.SchemaToJson` and its writers, the wire-type table, `SubscribedReply.SchemaJson`,
+  `GatewayRowCodec.DecodeBatch`), and Bucket 2 maps `test_schema_codec` to what the client owes since
+  D-BIND-112: the `schemaIpc` it writes reads back as the same declaration (a managed test over the
+  C++-written `.ipc` goldens, and the cross-language lane live); the gateway-internal cases (the
+  conflict measurement, base64, `FieldToJson`) are recorded as exclusions with their reason.**
+  *LOCKED BY THE MAINTAINER 2026-10-19 (BIND-8e Q8).* The class is `internal`, so no user could call
+  it, and the client's one public way to announce a schema, `CreateTopicAsync`, always sends
+  `schemaIpc`; its tests were counted as the port while proving nothing about what the client sends.
+  The protocol is unchanged: the gateway keeps accepting and sending both forms (the TypeScript client
+  uses the JSON one until BIND-T). **Declined:** moving the code to the test project as a reference;
+  exposing the JSON form publicly (surface for a lossy form D-BIND-112 moved away from).
+
+- **D-BIND-129 - the cross-language lane makes its peer → C# exchanges live, not replayed: before a
+  peer publishes the fixture rows, the C# side has it publish probe rows (`seq` -1, never compared)
+  until one arrives through the gateway, so the gateway's reader has matched the peer's writer; and a
+  peer prints a row it cannot decode as `ERROR`, so it is never blamed on the Fast DDS defect. The
+  durable profile stays as a safety net, and each retry attempt must deliver all four rows itself
+  (review B3).** *LOCKED BY THE MAINTAINER 2026-10-19 (BIND-8e Q9).* Every peer → C# row went through
+  a TRANSIENT_LOCAL backlog a new gateway reader replays, the very path Fast DDS 3.4's data-sharing
+  defect breaks, and it did once on the green CI run; `gateway-fastdds-ts` remains that defect's
+  guard. **Declined:** keeping the backlog path as a second guard.
+
+- **D-BIND-130 - D-BIND-117's TypeScript half is done in BIND-8e, not BIND-T: the plugin writes each
+  message's Arrow IPC schema (the bytes of its `ipc` output) into the generated `TypedSchema` as
+  base64 `schemaIpc`, and `FletcherClient.createTopic(topic, typedSchema)` sends it as `schemaIpc`
+  (a hand-built descriptor still sends the JSON `schema`); the cross-language lane's TypeScript peer
+  then declares its own topic. Amends D-BIND-117.** *LOCKED BY THE MAINTAINER 2026-10-19 (BIND-8e
+  Q10).* Until then a TypeScript and a C# publisher of one topic conflicted (the JSON declaration's
+  bytes differ from the IPC one's), whichever declared second; BIND-T keeps its pair, which now
+  declares with full fidelity. **Declined:** documenting the conflict until BIND-T.
+
+- **D-BIND-131 - the C ABI codec refuses what the managed gateway codec refuses: a null map key, and
+  a row whose dictionary index points at a null dictionary entry, each with an error naming the
+  field, instead of encoding whatever bytes lie under the null.** *LOCKED BY THE MAINTAINER
+  2026-10-19 (BIND-8e Q11).* Found by the review (`c-abi/src/nanoarrow_codec.cpp`); the managed
+  codec's header claimed the same refusals as the native one, which held only one way. A C ABI case
+  per refusal, and `ManagedCodecAgreesWithNativeTests` asserts both codecs refuse. **Declined:**
+  recording it as debt with the header corrected.
+
+- **D-BIND-132 - the defaults 8a and 8b took without a ruling are locked: (a) the managed codec
+  accepts exactly the C ABI codec's types; (b) it refuses with `ArgumentException` (a schema or value
+  the wire cannot carry) and `InvalidDataException` (bytes that do not decode); (c) a null struct
+  decodes with its children null; (e) subscription ids are parsed from strings only, as the gateway
+  writes and reads them; (g) a row that cannot be decoded is reported and counted, not thrown on the
+  receive loop, and `GatewayHandlerFaultedEventArgs` gains a `Reason` (`HandlerThrew` or
+  `RowUndecodable`), and `FletcherClient.DroppedRows` counts the rows dropped silently until now
+  (early rows past the cap, rows for an unknown subscription, rows after an unsubscribe).** *LOCKED BY
+  THE MAINTAINER 2026-10-19 (BIND-8e Q12).* The review found all five sound; (b) because the package
+  cannot use `Eiva.Fletcher`'s exception types (D-BIND-120), (e) because the gateway requires it. The
+  other three defaults are settled elsewhere: (d) and (h) went with the JSON-schema code (D-BIND-128),
+  (f) "no reconnect" stands with `Completion` (D-BIND-121). **Declined:** (g) unchanged, the drops
+  uncounted and one meaning for both causes.

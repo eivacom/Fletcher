@@ -836,7 +836,20 @@ and describes a singular flatten-wrapper field as the list of its element the wi
 as a list of the wrapper, which no other language could read (D-BIND-119, 2026-10-19).
 `Eiva.Fletcher.GatewayClient` is `IsAotCompatible`, takes no reference on `Eiva.Fletcher.Model`
 (only generated code needs it, and its consumer references it, D-BIND-120, 2026-10-19), and its
-packed package is checked for native assets.
+packed package is checked for native assets. At its review (8e) the client gained `Completion`,
+a `Task` that ends with the connection and carries why; it still never reconnects (D-BIND-121).
+TypeScript imports another file as one namespace, by a path relative to the importer, so no
+imported name can clash (D-BIND-122, amending D-BIND-118). The gateway's `subscribed` reply can
+no longer fail after the subscription is kept, nor on a non-numeric `field_number` (D-BIND-123).
+A reply the client cannot parse fails only its own request (D-BIND-124). Handlers stay
+synchronous, documented against `async` lambdas (D-BIND-125). The options take a socket
+configuration hook and a message-size cap (D-BIND-126), and an optional reply timeout that ends
+the connection (D-BIND-127). Its unreachable JSON-schema code is deleted, and Bucket 2 counts
+what the client actually owes the gateway's schema tests (D-BIND-128). The cross-language lane
+waits for the gateway's reader to match before a peer publishes (D-BIND-129). TypeScript's
+`schemaIpc` declaration moves from BIND-T into BIND-8e (D-BIND-130, amending D-BIND-117). The C
+ABI codec gains the managed codec's two stricter refusals (D-BIND-131). The defaults 8a and 8b
+took unruled are locked, with a reason on `HandlerFaulted` and a count of dropped rows (D-BIND-132).
 
 **BIND-T, BIND-8, BIND-9, BIND-10** — as in the 2026-08-31 plan, with BIND-9
 carrying the LGPL notice text and the packaging statement (§6 P-1), and BIND-10
