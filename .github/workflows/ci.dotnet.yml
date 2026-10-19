@@ -158,7 +158,7 @@ jobs:
         shell: bash
         run: |
           set -e
-          PKG=$(ls dotnet/artifacts/Eiva.Fletcher.GatewayClient.*.nupkg 2>/dev/null | head -1)
+          PKG=$(find dotnet/artifacts -maxdepth 1 -name 'Eiva.Fletcher.GatewayClient.*.nupkg' -print -quit)
           if [ -z "$PKG" ]; then
             echo "::error::Eiva.Fletcher.GatewayClient.*.nupkg was not packed"
             exit 1
