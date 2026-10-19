@@ -30,6 +30,16 @@
           CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- The generated gateway pair (BIND-8c), compiled from the plugin's golden with the model
+       it converts through: csharp_pair.proto's model, and timestamp.proto's, which Marks
+       names. Held to the plugin byte for byte by test_csharp_visitor. -->
+  <ItemGroup>
+    <Compile Include="../../../protoc/tests/golden/csharp_pair.fletcher.cs" Link="golden/%(Filename)%(Extension)" />
+    <Compile Include="../../../protoc/tests/golden/csharp_pair.fletcher.gateway.cs" Link="golden/%(Filename)%(Extension)" />
+    <Compile Include="../../../protoc/tests/golden/google/protobuf/timestamp.fletcher.cs"
+             Link="golden/google/protobuf/%(Filename)%(Extension)" />
+  </ItemGroup>
+
   <!-- The plugin's schema goldens: every descriptor the generator emits must open the
        managed codec, as it opens the native one (SchemaIpcTests in Fletcher.Tests). -->
   <ItemGroup>

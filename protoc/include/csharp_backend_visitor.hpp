@@ -38,6 +38,12 @@ class CsVisitor {
     // `<Svc>_<Method>Subscriber` pair over Eiva.Fletcher's native runtime.
     std::string GenerateNativeFile();
 
+    // The whole <stem>.fletcher.gateway.cs (BIND-8c, D-BIND-109): per pub/sub method, a
+    // `<Svc>_<Method>GatewayHandler` delegate and the `<Svc>_<Method>GatewayPublisher` /
+    // `<Svc>_<Method>GatewaySubscriber` pair over a borrowed Eiva.Fletcher.GatewayClient
+    // FletcherClient (D-BIND-115).
+    std::string GenerateGatewayFile();
+
    private:
     std::string GenerateEnum(const google::protobuf::EnumDescriptor* enm);
     std::string GenerateMessage(const google::protobuf::Descriptor* msg);

@@ -135,7 +135,13 @@ Per `.proto` file, `--fletcher_opt=csharp` emits two files *(updated 2026-10-14,
   `public static class <Svc>_<Method>Topic` per pub/sub method (D-BIND-77);
 - `<stem>.fletcher.native.cs`, the **native pair** over `Eiva.Fletcher`: per pub/sub method a
   `<Svc>_<Method>Handler` delegate and the `<Svc>_<Method>Publisher` / `Subscriber` classes
-  (D-BIND-76, D-BIND-79).
+  (D-BIND-76, D-BIND-79);
+- with `csharp_gateway` (BIND-8c, D-BIND-109), `<stem>.fletcher.gateway.cs`, the **gateway pair**
+  over `Eiva.Fletcher.GatewayClient` alone: per pub/sub method a `<Svc>_<Method>GatewayHandler(Msg
+  row, Envelope envelope)` delegate, a `<Svc>_<Method>GatewayPublisher` created with
+  `CreateAsync(client)` (which declares the topic with the message's schema) and a
+  `<Svc>_<Method>GatewaySubscriber(client)`, both over a BORROWED `FletcherClient` (D-BIND-115). A
+  gateway or WASM project generates it with `csharp,csharp_model_only,csharp_gateway`.
 
 `--fletcher_opt=csharp,csharp_model_only` writes the model alone, for an Arrow-only consumer, as
 C++'s `schema_only` does. `csharp_accessor` (BIND-7, not yet built) is to emit

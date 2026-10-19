@@ -86,6 +86,29 @@ public abstract class EndToEndTests
     }
 
     [Fact]
+    public async Task TheGeneratedGatewayPairRoundTripsTypedRows()
+    {
+        // BIND-8c: the pair csharp_gateway generates for FixFeed.Report, over ONE borrowed client
+        // per side (D-BIND-115), on the method's own topic key.
+        await using FletcherClient publisherClient = await Connect();
+        await using FletcherClient subscriberClient = await Connect();
+        FixFeed_ReportGatewayPublisher publisher = await FixFeed_ReportGatewayPublisher.CreateAsync(publisherClient);
+        var received = new BlockingCollection<Fix>();
+        ulong id = await new FixFeed_ReportGatewaySubscriber(subscriberClient).SubscribeAsync((row, _) => received.Add(row));
+
+        Fix[] sent = { MakeFix(11, "typed"), MakeFix(12, "pair") };
+        await publisher.PublishAsync(sent);
+
+        foreach (Fix expected in sent)
+        {
+            Assert.True(received.TryTake(out var actual, _gateway.RoundTrip), $"row {expected.Id} did not arrive over {_gateway.Provider}");
+            AssertSame(expected, actual!);
+        }
+
+        await subscriberClient.UnsubscribeAsync(id);
+    }
+
+    [Fact]
     public async Task ASecondDeclarationWithTheSameGeneratedSchemaIsAcceptedAndADifferentOneRefused()
     {
         // D-BIND-112 at the real gateway: C#'s schemaIpc decodes, through nanoarrow, to a

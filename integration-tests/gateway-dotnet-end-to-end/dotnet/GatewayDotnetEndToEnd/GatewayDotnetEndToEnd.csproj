@@ -51,9 +51,9 @@
     </PropertyGroup>
     <RemoveDir Directories="$(FletcherGenDir)" />
     <MakeDir Directories="$(FletcherGenDir)" />
-    <Exec Command="&quot;$(FletcherProtoc)&quot; --plugin=protoc-gen-fletcher=&quot;$(FletcherProtocPlugin)&quot; --fletcher_opt=csharp,csharp_model_only --fletcher_out=&quot;$(FletcherGenDir)&quot; -I &quot;$(FletcherProtoDir)&quot; -I &quot;$(_FletcherWkt)&quot; &quot;$(FletcherProtoDir)/fix.proto&quot;" />
+    <Exec Command="&quot;$(FletcherProtoc)&quot; --plugin=protoc-gen-fletcher=&quot;$(FletcherProtocPlugin)&quot; --fletcher_opt=csharp,csharp_model_only,csharp_gateway --fletcher_out=&quot;$(FletcherGenDir)&quot; -I &quot;$(FletcherProtoDir)&quot; -I &quot;$(_FletcherWkt)&quot; &quot;$(FletcherProtoDir)/fix.proto&quot;" />
     <ItemGroup>
-      <Compile Include="$(FletcherGenDir)/*.fletcher.cs" />
+      <Compile Include="$(FletcherGenDir)/*.fletcher.cs;$(FletcherGenDir)/*.fletcher.gateway.cs" />
     </ItemGroup>
     <Error Condition="!Exists('$(FletcherGenDir)/fix.fletcher.cs')"
            Text="protoc ran but wrote no fix.fletcher.cs into $(FletcherGenDir)" />

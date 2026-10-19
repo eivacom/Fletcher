@@ -41,7 +41,10 @@
        so the plugin's model for timestamp.proto is a golden too, compiled beside it, as a
        consumer compiles every file its imports reach. -->
   <ItemGroup>
+    <!-- The gateway pair (BIND-8c) is not the native side's: Fletcher.GatewayClient.Tests
+         compiles and tests it. -->
     <Compile Include="../../../protoc/tests/golden/*.fletcher*.cs"
+             Exclude="../../../protoc/tests/golden/*.fletcher.gateway.cs"
              Link="golden/%(Filename)%(Extension)" />
     <Compile Include="../../../protoc/tests/golden/google/protobuf/timestamp.fletcher.cs"
              Link="golden/google/protobuf/%(Filename)%(Extension)" />

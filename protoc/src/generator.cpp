@@ -1743,6 +1743,8 @@ bool ParsePluginParameter(const std::string& parameter, PluginOptions* out, std:
             csharp_model_only = true;
         else if (token == "csharp_accessor")
             out->csharp_accessor = true;
+        else if (token == "csharp_gateway")
+            out->csharp_gateway = true;
         // Unknown tokens are ignored, unchanged from the pre-existing behaviour
         // the RBA-1 no-drift contract depends on. metadata_from_option= tokens
         // are claimed below and MUST parse.
@@ -1842,6 +1844,15 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
         }
     }
 
+    // BIND-8c: `csharp_gateway` needs the model too (D-BIND-109): its pair publishes through
+    // the model's ToArrow and reads through its FromArrow, and names its topic class.
+    if (opts.csharp_gateway && opts.csharp == CsharpOutput::None) {
+        *error =
+            "csharp_gateway needs csharp (or csharp,csharp_model_only): the gateway pair converts "
+            "rows with the model class in <stem>.fletcher.cs (D-BIND-109).";
+        return false;
+    }
+
     // Always emit the C++ header (edge-compatible, nanoarrow only).
     {
         const std::string content = GenerateFile(file, schema_only, resolver.get());
@@ -1891,6 +1902,17 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
         std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(
             context->Open(StripProtoSuffix(file->name()) + ".fletcher.native.cs"));
         if (!WriteToStream(stream.get(), native_content, error)) return false;
+    }
+
+    // The C# gateway pair (BIND-8c, D-BIND-109), in its own file: it references
+    // Eiva.Fletcher.GatewayClient only, so a gateway or WASM project generates it with
+    // `csharp,csharp_model_only,csharp_gateway` and needs no native assets. Additive.
+    if (opts.csharp_gateway) {
+        const std::string gateway_content =
+            csharp_backend::CsVisitor(file, resolver.get()).GenerateGatewayFile();
+        std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(
+            context->Open(StripProtoSuffix(file->name()) + ".fletcher.gateway.cs"));
+        if (!WriteToStream(stream.get(), gateway_content, error)) return false;
     }
 
     // The C# accessor and view (BIND-7), in their own two files, as C++ writes its accessor and

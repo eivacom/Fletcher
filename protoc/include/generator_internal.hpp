@@ -80,6 +80,9 @@ struct PluginOptions {
     // `csharp_accessor` (BIND-7): <stem>.fletcher.accessor.cs and <stem>.fletcher.arrow.cs, the
     // C# accessor and view. It needs `csharp`, whose model class they read into (D-BIND-99).
     bool csharp_accessor = false;
+    // `csharp_gateway` (BIND-8c, D-BIND-109): <stem>.fletcher.gateway.cs, the typed publisher and
+    // subscriber over Eiva.Fletcher.GatewayClient. It needs `csharp`, whose model it converts with.
+    bool csharp_gateway = false;
     std::vector<MetadataRule> metadata_rules;
 };
 

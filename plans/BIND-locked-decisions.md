@@ -3178,3 +3178,18 @@ D-BIND-72 left to BIND-8.
   route: an empty topic, or one longer than a PUBLISH frame's 65535 UTF-8 bytes. **Declined:** a
   segment list joined by the client (a second form for one wire string); a `GatewayTopic` type copying
   the native `TopicPath`'s checks, which this package cannot reference.
+
+- **D-BIND-115 - a generated gateway pair BORROWS a `FletcherClient` the caller connects and
+  disposes.** *LOCKED BY THE MAINTAINER 2026-10-19 (BIND-8 Q8).* One connection serves every pair of
+  an app, as the gateway protocol and the TypeScript client are meant to be used: one receive loop,
+  one gateway session, and requests from all pairs ordered through the client's one in flight
+  (D-BIND-110). `<Svc>_<Method>GatewayPublisher.CreateAsync(client, ct)` declares the topic
+  (`CreateTopicAsync` with the message's schema, as `schemaIpc`, D-BIND-112) and returns the
+  publisher, with `PublishAsync(row)`, `(row, attachments)` and `(rows)`;
+  `<Svc>_<Method>GatewaySubscriber(client)` has `SubscribeAsync(handler, ct)` returning the
+  subscription's id and `UnsubscribeAsync(id, ct)`; the handler is `<Svc>_<Method>GatewayHandler(Msg
+  row, Envelope envelope)`, the envelope borrowed (D-BIND-113). The pairs are not disposable; the
+  client must outlive them, and handler faults are reported on the client. An app that wants a slow
+  subscriber isolated gives it a client of its own. **Declined:** each pair owning its own client
+  (self-contained and isolated, like the native pair, but one WebSocket per publisher and subscriber,
+  no ordering across topics, and no way back to a shared connection).

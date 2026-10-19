@@ -806,6 +806,144 @@ std::string GenerateSubscriberPair(const PubSubMethod& p, const std::string& msg
     return o.str();
 }
 
+// ── The gateway pair (BIND-8c, D-BIND-109, D-BIND-115) ──
+// Over Eiva.Fletcher.GatewayClient alone: the pair BORROWS a FletcherClient, so one connection
+// serves every pair of an app, and converts rows with the model's ToArrow / FromArrow as the
+// native pair does (D-BIND-108).
+constexpr const char* kGw = "global::Eiva.Fletcher.GatewayClient.";
+
+// The members both halves of the gateway pair share: the topic key and the schema.
+std::string GatewayPairStatics(const PubSubMethod& p, const std::string& msg,
+                               const std::string& msg_expr) {
+    std::ostringstream o;
+    o << "    /// <summary>The topic's key, from <see cref=\"" << p.Base()
+      << "Topic\"/>.</summary>\n"
+      << "    public const string TopicKey = " << p.Base() << "Topic.Key;\n\n"
+      << "    /// <summary>The schema rows travel under: <see cref=\"" << msg
+      << ".Schema\"/>.</summary>\n"
+      << "    public static global::Apache.Arrow.Schema Schema => " << msg_expr << ".Schema;\n\n"
+      << "    private readonly " << kGw << "FletcherClient _client;\n\n";
+    return o.str();
+}
+
+std::string GenerateGatewayPublisher(const PubSubMethod& p, const std::string& msg,
+                                     const std::string& msg_expr) {
+    const std::string cls = p.Base() + "GatewayPublisher";
+    const std::string task = "global::System.Threading.Tasks.Task";
+    const std::string ct = "global::System.Threading.CancellationToken cancellationToken = default";
+    std::ostringstream o;
+    o << "/// <summary>Publishes <see cref=\"" << msg << "\"/> rows on " << p.service << "."
+      << p.method << ", through a gateway.</summary>\n"
+      << "/// <remarks>\n"
+      << "/// Borrows a connected <see cref=\"" << kGw
+      << "FletcherClient\"/>, which must outlive it (D-BIND-115):\n"
+      << "/// one client serves every pair of an application. Create it with <see "
+         "cref=\"CreateAsync\"/>,\n"
+      << "/// which declares the topic with <see cref=\"" << msg << ".Schema\"/>.\n"
+      << "/// </remarks>\n"
+      << "public sealed class " << cls << "\n{\n"
+      << GatewayPairStatics(p, msg, msg_expr) << "    private " << cls << "(" << kGw
+      << "FletcherClient client) => _client = client;\n\n"
+      << "    /// <summary>Declares the topic on the gateway with the row schema, and returns a "
+         "publisher for it.</summary>\n"
+      << "    /// <param name=\"client\">Connected; borrowed, and must outlive the "
+         "publisher.</param>\n"
+      << "    /// <param name=\"cancellationToken\">Stops the wait.</param>\n"
+      << "    public static async " << task << "<" << cls << "> CreateAsync(" << kGw
+      << "FletcherClient client, " << ct << ")\n    {\n"
+      << "        global::System.ArgumentNullException.ThrowIfNull(client);\n"
+      << "        await client.CreateTopicAsync(TopicKey, " << msg_expr
+      << ".Schema, cancellationToken).ConfigureAwait(false);\n"
+      << "        return new " << cls << "(client);\n    }\n\n"
+      << "    /// <summary>Publishes one row, and completes when the gateway has acknowledged "
+         "it.</summary>\n"
+      << "    public " << task << " PublishAsync(" << msg << " row, " << ct
+      << ") => PublishAsync(row, null, cancellationToken);\n\n"
+      << "    /// <summary>Publishes one row with its attachments, and completes when the gateway "
+         "has acknowledged it.</summary>\n"
+      << "    /// <param name=\"row\">The row.</param>\n"
+      << "    /// <param name=\"attachments\">The row's attachments, or <see langword=\"null\"/>; "
+         "keys are UTF-8 on the wire.</param>\n"
+      << "    /// <param name=\"cancellationToken\">Stops the wait.</param>\n"
+      << "    public async " << task << " PublishAsync(" << msg
+      << " row, global::System.Collections.Generic.IEnumerable<global::System.Collections."
+         "Generic.KeyValuePair<string, global::System.ReadOnlyMemory<byte>>>? attachments, "
+      << ct << ")\n    {\n"
+      << "        global::System.ArgumentNullException.ThrowIfNull(row);\n"
+      << "        using var batch = " << msg_expr << ".ToArrow(new[] { row });\n"
+      << "        await _client.PublishAsync(TopicKey, batch, 0, attachments, "
+         "cancellationToken).ConfigureAwait(false);\n    }\n\n"
+      << "    /// <summary>Publishes every row, one frame each, and completes when the gateway has "
+         "acknowledged the last.</summary>\n"
+      << "    /// <remarks>A failure at row k leaves the rows before it published "
+         "(D-BIND-111).</remarks>\n"
+      << "    public async " << task
+      << " PublishAsync(global::System.Collections.Generic."
+         "IEnumerable<"
+      << msg << "> rows, " << ct << ")\n    {\n"
+      << "        global::System.ArgumentNullException.ThrowIfNull(rows);\n"
+      << "        using var batch = " << msg_expr << ".ToArrow(rows);\n"
+      << "        if (batch.Length == 0) return;\n"
+      << "        await _client.PublishAsync(TopicKey, batch, "
+         "cancellationToken).ConfigureAwait(false);\n    }\n"
+      << "}\n";
+    return o.str();
+}
+
+std::string GenerateGatewaySubscriber(const PubSubMethod& p, const std::string& msg,
+                                      const std::string& msg_expr) {
+    const std::string cls = p.Base() + "GatewaySubscriber";
+    const std::string task = "global::System.Threading.Tasks.Task";
+    const std::string ct = "global::System.Threading.CancellationToken cancellationToken = default";
+    std::ostringstream o;
+    o << "/// <summary>Receives <see cref=\"" << msg << "\"/> rows published on " << p.service
+      << "." << p.method << ", through a gateway.</summary>\n"
+      << "/// <remarks>\n"
+      << "/// Borrows a connected <see cref=\"" << kGw
+      << "FletcherClient\"/>, which must outlive it (D-BIND-115).\n"
+      << "/// Each row is decoded with <see cref=\"" << msg
+      << ".Schema\"/> and read with <see cref=\"" << msg << ".FromArrow\"/>.\n"
+      << "/// </remarks>\n"
+      << "public sealed class " << cls << "\n{\n"
+      << GatewayPairStatics(p, msg, msg_expr)
+      << "    /// <summary>A subscriber over <paramref name=\"client\"/>.</summary>\n"
+      << "    /// <param name=\"client\">Connected; borrowed, and must outlive the "
+         "subscriber.</param>\n"
+      << "    public " << cls << "(" << kGw << "FletcherClient client)\n    {\n"
+      << "        global::System.ArgumentNullException.ThrowIfNull(client);\n"
+      << "        _client = client;\n    }\n\n"
+      << "    /// <summary>Begins delivering rows to <paramref name=\"handler\"/>.</summary>\n"
+      << "    /// <remarks>\n"
+      << "    /// The handler runs on the client's receive loop, one row at a time, with the row "
+         "it owns\n"
+      << "    /// and the envelope BORROWED for the call (D-BIND-113). An exception it throws is "
+         "counted and\n"
+      << "    /// raised on the client's <c>HandlerFaulted</c>.\n"
+      << "    /// </remarks>\n"
+      << "    /// <param name=\"handler\">Called once per row.</param>\n"
+      << "    /// <param name=\"cancellationToken\">Stops the wait.</param>\n"
+      << "    /// <returns>The subscription's id, for <see cref=\"UnsubscribeAsync\"/>.</returns>\n"
+      << "    public " << task << "<ulong> SubscribeAsync(" << p.Base()
+      << "GatewayHandler handler, " << ct << ")\n    {\n"
+      << "        global::System.ArgumentNullException.ThrowIfNull(handler);\n"
+      << "        return _client.SubscribeAsync(TopicKey, " << msg_expr
+      << ".Schema, (batch, envelope) =>\n"
+      << "        {\n"
+      << "            using (batch)\n            {\n"
+      << "                var columns = new global::Apache.Arrow.StructArray(\n"
+      << "                    new global::Apache.Arrow.Types.StructType(batch.Schema.FieldsList), "
+         "batch.Length, batch.Arrays,\n"
+      << "                    global::Apache.Arrow.ArrowBuffer.Empty, 0);\n"
+      << "                handler(" << msg_expr << ".FromArrow(columns, 0), envelope);\n"
+      << "            }\n"
+      << "        }, cancellationToken);\n    }\n\n"
+      << "    /// <summary>Ends a subscription; its handler is not called again.</summary>\n"
+      << "    public " << task << " UnsubscribeAsync(ulong subscriptionId, " << ct
+      << ") => _client.UnsubscribeAsync(subscriptionId, cancellationToken);\n"
+      << "}\n";
+    return o.str();
+}
+
 // The opening every generated C# file shares. The <auto-generated> block is what
 // Roslyn's analysers look for to skip a file, as protoc's own C# output does.
 std::string FileHeader(const FileDescriptor* file) {
@@ -975,6 +1113,38 @@ std::string CsVisitor::GenerateNativeFile() {
           << "AttachmentsView attachments);\n\n"
           << GeneratePublisherPair(p, msg, msg_expr) << "\n"
           << GenerateSubscriberPair(p, msg, msg_expr);
+    }
+    return o.str();
+}
+
+std::string CsVisitor::GenerateGatewayFile() {
+    std::ostringstream o;
+    o << FileHeader(file_);
+    for (const auto& p : PubSubMethods(file_)) {
+        o << "\n";
+        if (!p.skip_reason.empty()) {
+            o << "// Skipped: " << p.service << "." << p.method << " — " << p.skip_reason << "\n";
+            continue;
+        }
+        // As the native pair: the gateway pair converts through ToArrow / FromArrow, so a
+        // message whose conversion waits gets no pair, for the same reason.
+        std::set<const Descriptor*> visiting;
+        const std::string blocker = ConversionBlocker(p.input, file_, cross_file_, visiting);
+        const std::string msg = CsTypeName(p.input);
+        const std::string msg_expr = CsTypeExpr(p.input);
+        if (!blocker.empty()) {
+            o << "// Skipped: " << p.service << "." << p.method << " — " << msg
+              << " has no ToArrow / FromArrow: " << blocker << "\n";
+            continue;
+        }
+        o << "/// <summary>Receives one <see cref=\"" << msg << "\"/> published on " << p.service
+          << "." << p.method << " through a gateway, with its envelope.</summary>\n"
+          << "/// <param name=\"row\">The decoded row; the handler owns it.</param>\n"
+          << "/// <param name=\"envelope\">BORROWED: valid until the handler returns.</param>\n"
+          << "public delegate void " << p.Base() << "GatewayHandler(" << msg << " row, " << kGw
+          << "Envelope envelope);\n\n"
+          << GenerateGatewayPublisher(p, msg, msg_expr) << "\n"
+          << GenerateGatewaySubscriber(p, msg, msg_expr);
     }
     return o.str();
 }

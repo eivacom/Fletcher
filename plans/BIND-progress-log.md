@@ -1153,7 +1153,26 @@ C#'s `schemaIpc`, written by Apache.Arrow, decodes in the gateway's nanoarrow to
 to itself, so a second client re-declaring the topic is accepted and a different schema is refused.
 It passed 12/12 on the first run and three runs after; announcing the schema as JSON instead fails
 10 of the 12 (the two that pass use no schema). The gateway exe built in about 20 s from a warm
-Conan cache.
+Conan cache. On CI the lane was green on Linux and Windows at `97852d4` (54/54), which closes 8b.
+
+**8c, the generated gateway pair (2026-10-19).** One more ruling first: the pair BORROWS a
+`FletcherClient` the caller connects and disposes, so one connection serves every pair of an app,
+as the protocol and the TypeScript client are meant to be used; owning a client per pair was
+weighed with the maintainer (isolation, but a WebSocket per publisher and subscriber and no
+ordering across topics) and declined (D-BIND-115). `csharp_gateway` then writes
+`<stem>.fletcher.gateway.cs` beside the model, refused without `csharp` as `csharp_accessor` is:
+per pub/sub method a handler delegate taking the typed row and the borrowed envelope, a publisher
+whose `CreateAsync(client)` declares the topic with the message's schema (so as `schemaIpc`), and a
+subscriber that decodes through `FromArrow`. It names nothing native, so a gateway project generates
+it with `csharp,csharp_model_only,csharp_gateway`.
+
+**What the checks found.** The plugin suite, the golden, the in-memory pair tests and the typed
+live round trip passed first time; two mutants of the compiled golden (the publisher declaring
+nothing, the subscriber dropping the envelope) were both caught. The Linux CI rehearsal caught what
+the Windows build of one project did not: `Fletcher.AotSmoke` and `Fletcher.Tests` compile every
+`*.fletcher*.cs` golden by glob, and AotSmoke does not reference the gateway client, so the new
+golden broke it (CS0234). The native projects now exclude `*.fletcher.gateway.cs`; the lesson is the
+standing one, run the whole-solution rehearsal, not one project, before calling a golden done.
 
 **Lessons.**
 

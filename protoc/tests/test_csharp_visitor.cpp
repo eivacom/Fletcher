@@ -1359,11 +1359,16 @@ TEST(CsVisitorPair, TheCommittedGoldensAreThePluginsOutput) {
     ASSERT_NE(accessor, nullptr);
     for (auto& [name, content] : GenerateWith(accessor, "csharp,csharp_model_only,csharp_accessor"))
         files.emplace(name, content);
-    for (const char* name : {"csharp_pair.fletcher.cs", "csharp_pair.fletcher.native.cs",
-                             "google/protobuf/timestamp.fletcher.cs", "csharp_names.fletcher.cs",
-                             "csharp_names.fletcher.native.cs", "csharp_proto2.fletcher.cs",
-                             "csharp_accessor.fletcher.cs", "csharp_accessor.fletcher.accessor.cs",
-                             "csharp_accessor.fletcher.arrow.cs"}) {
+    // BIND-8c: the gateway pair for the pair fixture's methods, compiled into
+    // Fletcher.GatewayClient.Tests.
+    for (auto& [name, content] : GenerateWith(file, "csharp,csharp_model_only,csharp_gateway"))
+        files.emplace(name, content);
+    for (const char* name :
+         {"csharp_pair.fletcher.cs", "csharp_pair.fletcher.native.cs",
+          "csharp_pair.fletcher.gateway.cs", "google/protobuf/timestamp.fletcher.cs",
+          "csharp_names.fletcher.cs", "csharp_names.fletcher.native.cs",
+          "csharp_proto2.fletcher.cs", "csharp_accessor.fletcher.cs",
+          "csharp_accessor.fletcher.accessor.cs", "csharp_accessor.fletcher.arrow.cs"}) {
         const std::string generated = FileOf(files, name);
         const auto path = GoldenDir() / name;
         if (const char* capture = std::getenv("FLETCHER_CAPTURE_GOLDENS");
@@ -1544,6 +1549,90 @@ std::vector<std::string> PublicMembers(const std::string& body) {
 }
 
 }  // namespace
+
+// ===========================================================================
+// BIND-8c: the gateway pair, `csharp_gateway` (D-BIND-109, D-BIND-115). Its golden is
+// csharp_pair.fletcher.gateway.cs, held above with the others and compiled into
+// Fletcher.GatewayClient.Tests, where it runs against an in-memory gateway.
+// ===========================================================================
+
+TEST(CsGateway, TheTokenIsParsedAndOtherTokensAreUnchanged) {
+    for (const auto& [parameter, expected] : {std::pair<const char*, bool>{"", false},
+                                              {"csharp", false},
+                                              {"csharp_accessor", false},
+                                              {"csharp,csharp_gateway", true},
+                                              {"csharp_gateway,csharp", true}}) {
+        fletcher::PluginOptions options;
+        std::string error;
+        ASSERT_TRUE(fletcher::ParsePluginParameter(parameter, &options, &error)) << error;
+        EXPECT_EQ(options.csharp_gateway, expected) << "'" << parameter << "'";
+        EXPECT_EQ(options.csharp_accessor, std::string(parameter) == "csharp_accessor")
+            << "'" << parameter << "'";
+    }
+}
+
+TEST(CsGateway, WithoutTheModelItIsRefusedBeforeAnyOutput) {
+    // D-BIND-109: the pair converts with the model class, so the token alone is refused.
+    const std::string source = "syntax = \"proto3\";\npackage a;\nmessage M { int32 x = 1; }\n";
+    for (const std::string opts :
+         {"csharp_gateway", "ts,csharp_gateway", "csharp_model_only,csharp_gateway"}) {
+        std::map<std::string, std::string> files;
+        std::string error;
+        EXPECT_FALSE(GenerateSource(source, opts, &files, &error)) << opts;
+        EXPECT_NE(error.find("csharp_gateway needs csharp"), std::string::npos) << error;
+        EXPECT_NE(error.find("D-BIND-109"), std::string::npos) << error;
+        EXPECT_TRUE(files.empty()) << opts << " wrote " << files.size() << " files";
+    }
+    for (const std::string opts :
+         {"csharp,csharp_gateway", "csharp,csharp_model_only,csharp_gateway"}) {
+        std::map<std::string, std::string> files;
+        std::string error;
+        EXPECT_TRUE(GenerateSource(source, opts, &files, &error)) << opts << ": " << error;
+    }
+}
+
+TEST(CsGateway, TheTokenAddsOnlyItsOwnFileAndChangesNoOther) {
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildPairFixture(pool);
+    ASSERT_NE(file, nullptr);
+    for (const std::string base : {"csharp", "csharp,csharp_model_only"}) {
+        const auto without = GenerateWith(file, base);
+        const auto with = GenerateWith(file, base + ",csharp_gateway");
+        ASSERT_EQ(with.count("csharp_pair.fletcher.gateway.cs"), 1u) << base;
+        EXPECT_EQ(with.size(), without.size() + 1) << base;
+        for (const auto& [name, content] : without) {
+            ASSERT_EQ(with.count(name), 1u) << name;
+            EXPECT_EQ(with.at(name), content) << name << " changed under csharp_gateway";
+        }
+    }
+}
+
+TEST(CsGateway, ThePairBorrowsAGatewayClientAndNamesNothingNative) {
+    // D-BIND-109: a gateway or WASM project builds it without Eiva.Fletcher; D-BIND-115: it
+    // borrows the FletcherClient it is given. Skipped methods keep C++'s reason, as the
+    // native pair's do.
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildPairFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const std::string gateway =
+        FileOf(GenerateWith(file, "csharp,csharp_gateway"), "csharp_pair.fletcher.gateway.cs");
+    for (size_t at = gateway.find("global::Eiva.Fletcher."); at != std::string::npos;
+         at = gateway.find("global::Eiva.Fletcher.", at + 1)) {
+        EXPECT_EQ(gateway.compare(at, 36, "global::Eiva.Fletcher.GatewayClient."), 0)
+            << "names a native type: " << gateway.substr(at, 60);
+    }
+    ExpectContains(gateway,
+                   "public delegate void Telemetry_ReportGatewayHandler(Reading row, "
+                   "global::Eiva.Fletcher.GatewayClient.Envelope envelope);\n");
+    ExpectContains(gateway, "public sealed class Telemetry_ReportGatewayPublisher\n");
+    ExpectContains(gateway, "public sealed class Telemetry_ReportGatewaySubscriber\n");
+    ExpectContains(gateway, "    public const string TopicKey = Telemetry_ReportTopic.Key;\n");
+    ExpectContains(gateway,
+                   "CreateAsync(global::Eiva.Fletcher.GatewayClient.FletcherClient client, ");
+    ExpectContains(gateway, "await client.CreateTopicAsync(TopicKey, ");
+    EXPECT_EQ(gateway.find("IDisposable"), std::string::npos) << "the pair borrows its client";
+    ExpectContains(gateway, "// Skipped: Telemetry.Ping — ");
+}
 
 TEST(CsAccessor, TheTokenIsParsedAndOtherTokensAreUnchanged) {
     for (const auto& [parameter, expected] : {std::pair<const char*, bool>{"", false},
