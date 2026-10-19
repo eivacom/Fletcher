@@ -859,7 +859,7 @@ Kind: 🟪 spec · 🟦 impl · 🔬 proof · ⚙ pipelines · 📓 docs
 | BIND-6 | C# backend on the IR: type table + visitor → `<stem>.fletcher.cs` | B | 🟦 | — (GIR) | `CsVisitor.*`, `CsVisitorPair.*`, `CsVisitorCrossFile.*`, `CsNames.*` and `CsTypeTable.*` in `protoc/tests` (named `CsharpVisitor.*` until review T-D5 corrected it, 2026-10-14); no-drift test unchanged | 🟢 (closed on CI at `63ab057`, `ci.pr` 38575041994, after a fresh-context review whose 5 BLOCKERs were fixed and 10 questions ruled, D-BIND-83 to 93; the minor debt carried as known, listed in BIND-6's section) |
 | BIND-7 | Arrow view + accessor emitters (`csharp_accessor`) + capstone third arm | B | 🟦 | BIND-6, BIND-3 | `accessor-capstone` C# arm `observed == expected`; `StructArray` windowing fixture at non-zero offset | 🟢 (closed on CI at `268dceb`, `ci.pr` 38746753749, after a fresh-context review whose 2 BLOCKERs were fixed and 5 questions ruled, D-BIND-103 to 107; rulings during the round D-BIND-94 to 102; the minor debt carried as known, listed in BIND-7's section) |
 | BIND-T | TS `Publisher`/`Subscriber` emitter | C | 🟦 | — | `TsVisitor.DescriptorByteIdentical` still green + new emitter cases | ⚪ |
-| BIND-8 | `Eiva.Fletcher.GatewayClient` (managed port; the codec exception) | C | 🟦 | — | Bucket 2 green (the Part 4 file set, not a count); `Package.GatewayClientHasNoRuntimesFolder` | 🔴 (started 2026-10-15: rulings D-BIND-108 to 120, slices 8a to 8e; 8a to 8c done on CI, 8d in the tree 2026-10-19) |
+| BIND-8 | `Eiva.Fletcher.GatewayClient` (managed port; the codec exception) | C | 🟦 | — | Bucket 2 green (the Part 4 file set, not a count); `Package.GatewayClientHasNoRuntimesFolder` | 🔴 (started 2026-10-15: rulings D-BIND-108 to 133, slices 8a to 8f; 8a to 8d done on CI, 8e and 8f in the tree 2026-10-19) |
 | BIND-9 | CI/CD: RID matrix, publish to `nuget.eiva.com` from a self-hosted job (D-BIND-28), size budget, licence files | D | ⚙ | BIND-0 (skeleton), all for release | `cd.dotnet.yml` dry run; packed-size check; asset-isolation + licence check | ⚪ |
 | BIND-10 | Docs, TD-009, archive to `docs/archive/BIND/` | D | 📓 | all | docs review | ⚪ |
 
@@ -1966,6 +1966,10 @@ the maintainer's choice, from `plans/reviews/BIND-7-codereview.md`:
   constant (`export const Feed_PushTopic = 'q8/Feed/Push';`, measured). BIND-T's pair
   follows C++ (no pair, C++'s line); whether the constant goes too is BIND-T's to
   rule, since removing it changes existing TS output.
+- **Batched delivery, a parity item from D-BIND-133 (2026-10-19).** The C# gateway client
+  gained `SubscribeBatchedAsync` (windows flushed by row count, deadline and close, as native
+  `SubscriberArrow`); `gateway-client-ts` still delivers row by row. BIND-T decides whether its
+  client and pair gain the same shape.
 - **A full-fidelity topic declaration (D-BIND-117, ruled 2026-10-19 at BIND-8d; MOVED INTO
   BIND-8e by D-BIND-130, so BIND-T inherits it done and its pair declares with it).** The
   plugin embeds each message's Arrow IPC schema (the bytes its `ipc` output writes,
@@ -1995,7 +1999,9 @@ client, **so that** I need no native assets at all.
   **As built (D-BIND-108, D-BIND-112, D-BIND-128):** the client is not generic: it works on
   Arrow `RecordBatch`es, and the typing is the generated gateway pair's. It announces a schema
   as its Arrow IPC (`schemaIpc`), not as a descriptor, and its row codec is positional, so no
-  descriptor is derived; the JSON-descriptor code 8a wrote went at the review.
+  descriptor is derived; the JSON-descriptor code 8a wrote went at the review. Rows arrive one
+  at a time (`SubscribeAsync`) or in windows, as native's batched `SubscriberArrow` delivers them
+  (`SubscribeBatchedAsync`, D-BIND-133).
 - **The generated gateway pair (D-BIND-72):** per service method, a typed
   publisher/subscriber over `FletcherClient`, emitted by the C# backend as BIND-T does
   for TypeScript. It references `Eiva.Fletcher.GatewayClient` only, so a WASM
@@ -2165,8 +2171,8 @@ token and names; one request in flight; `PublishAsync` awaits the ack). Slices:
   `MaxMessageBytes` with a buffer that shrinks back, `ReplyTimeout`, `HandlerFaulted.Reason`,
   `DroppedRows`, a call during `ConnectAsync` refused, a locally ended socket aborted, dispose
   safe from a handler, the JSON-schema code deleted while `DecodeBatch` stays (D-BIND-128
-  amended; Fletcher.GatewayClient.Tests 198, 13 new cases; 13 mutants). Plugin: TypeScript namespace imports by a relative path and `schemaIpc` on
-  each `TypedSchema` (the three protoc-coverage TypeScript goldens gain it), and a refusal of two
+  amended; Fletcher.GatewayClient.Tests 198, 13 new cases; 13 mutants). Plugin: TypeScript
+  namespace imports by a relative path and `schemaIpc` on each `TypedSchema` (the three protoc-coverage TypeScript goldens gain it), and a refusal of two
   generated C# types of one name (`test_ts_visitor` 6, `test_csharp_visitor` 63). TypeScript
   client: `createTopic` sends a generated schema's `schemaIpc` (38). Gateway: the `subscribed`
   reply built before the subscription is kept, a tolerant `field_number`, `"schemaIpc": null` as
@@ -2175,6 +2181,17 @@ token and names; one request in flight; `PublishAsync` awaits the ack). Slices:
   end-to-end lane gains a 100 KiB row (in-process) and the odd-`field_number` case, and forwards
   the gateway's stderr (17). `AotSmoke` NativeAOT-compiles the gateway client and its generated
   pair. Left: commit, CI, close.
+- **8f:** a batched gateway subscription (D-BIND-133, ruled 2026-10-19 when the maintainer asked
+  why 8e had deleted `DecodeBatch`: C++ and the native C# pair deliver batches, the gateway client
+  only rows). `FletcherClient.SubscribeBatchedAsync` with `GatewayBatchHandler`,
+  `GatewayBatchOptions` (8000 rows, one minute, as native), `GatewayBatchStatus` and
+  `GatewayBatchReason`; a window is decoded by one `DecodeBatch`, a bad row costs its window a
+  second pass and is counted; flushes at `MaxRows`, at the deadline (anchored to the previous
+  flush), before the byte ceiling, and as `Closing` on unsubscribe, dispose and the end of the
+  connection; one subscription's handler never concurrent with itself.
+  **Done 2026-10-19 (in the tree):** `GatewayBatch.cs`; `BatchedSubscriptionTests` 18
+  (Fletcher.GatewayClient.Tests 216, 16 mutants caught); the end-to-end lane's batched
+  case over both providers (19); `AotSmoke` drives a window through the batcher. Left: CI, with 8e.
 
 The Fast DDS legs share `gateway-fastdds-ts`'s exposure to Fast DDS 3.4.0's data-sharing defect
 (`fastdds-pubsub-provider/README.md`). Ruled by the maintainer 2026-10-16: keep that test as the

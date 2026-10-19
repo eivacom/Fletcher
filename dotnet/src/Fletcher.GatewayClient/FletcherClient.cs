@@ -30,6 +30,8 @@
 // while a subscribe is in flight are kept (copied, bounded) and replayed on registration.
 // A subscribe whose caller stopped waiting before the reply was read is not registered: the
 // loop releases it on the gateway instead, since its caller never got the id to (review B2).
+// A batched subscription (D-BIND-133) hands its rows to a GatewayBatcher, which gathers them
+// into windows and delivers each as one batch; see GatewayBatch.cs.
 //
 // ── What ends the connection ────────────────────────────────────────────────
 // The gateway closing it, the socket failing, a message above MaxMessageBytes, a reply that
@@ -231,8 +233,46 @@ public sealed class FletcherClient : IAsyncDisposable
         CheckTopic(topic);
         ArgumentNullException.ThrowIfNull(handler);
         GatewayRowCodec? codec = schema is null ? null : new GatewayRowCodec(schema);
+        return await SubscribeCoreAsync(topic, new Pending(typeof(SubscribedReply), "subscribe") { Handler = handler, Codec = codec },
+            cancellationToken).ConfigureAwait(false);
+    }
 
-        var pending = new Pending(typeof(SubscribedReply), "subscribe") { Handler = handler, Codec = codec };
+    /// <summary>
+    /// Subscribe to a topic with batched delivery (D-BIND-133): rows are gathered into windows and
+    /// each window reaches <paramref name="handler"/> as one <see cref="RecordBatch"/>, as a native
+    /// <c>SubscriberArrow.SubscribeBatched</c> delivers them.
+    /// </summary>
+    /// <param name="topic">The topic's key.</param>
+    /// <param name="schema">The schema to decode rows with, or null for the gateway's; as <see cref="SubscribeAsync"/>.</param>
+    /// <param name="handler">
+    /// Receives each window. Synchronous, never called concurrently with itself (see
+    /// <see cref="GatewayBatchHandler"/>).
+    /// </param>
+    /// <param name="options">When a window flushes; null for the defaults (8000 rows, one minute).</param>
+    /// <param name="cancellationToken">Stops the wait; as <see cref="SubscribeAsync"/>.</param>
+    /// <returns>The subscription's id, for <see cref="UnsubscribeAsync"/>, which flushes the pending window first.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// <see cref="GatewayBatchOptions.Timeout"/> is negative or above <see cref="GatewayBatchOptions.MaxTimeout"/>,
+    /// and not <see cref="Timeout.InfiniteTimeSpan"/>.
+    /// </exception>
+    /// <exception cref="ArgumentException"><paramref name="schema"/> has a type the wire format does not carry.</exception>
+    /// <exception cref="InvalidOperationException">As <see cref="SubscribeAsync"/>.</exception>
+    /// <exception cref="GatewayException">The gateway refused it, or the connection ended.</exception>
+    public async Task<ulong> SubscribeBatchedAsync(string topic, Schema? schema, GatewayBatchHandler handler,
+        GatewayBatchOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        CheckTopic(topic);
+        ArgumentNullException.ThrowIfNull(handler);
+        options ??= new GatewayBatchOptions();
+        options.Validate();
+        GatewayRowCodec? codec = schema is null ? null : new GatewayRowCodec(schema);
+        return await SubscribeCoreAsync(topic,
+            new Pending(typeof(SubscribedReply), "subscribe") { BatchHandler = handler, BatchOptions = options, Codec = codec },
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<ulong> SubscribeCoreAsync(string topic, Pending pending, CancellationToken cancellationToken)
+    {
         try
         {
             var reply = (SubscribedReply)await RequestAsync(Text(ControlMessages.BuildSubscribe(topic)), WebSocketMessageType.Text,
@@ -250,12 +290,18 @@ public sealed class FletcherClient : IAsyncDisposable
     /// <remarks>
     /// A row already being delivered on the receive loop when this is called may still be in its
     /// handler. Removed from the client at once, so a failed or cancelled unsubscribe still stops
-    /// delivery; the gateway's side then ends with the connection.
+    /// delivery; the gateway's side then ends with the connection. A batched subscription's
+    /// pending window is flushed first, as <see cref="GatewayBatchReason.Closing"/>, on this thread
+    /// unless its handler is already running elsewhere.
     /// </remarks>
     /// <exception cref="GatewayException">The gateway refused it, or the connection ended.</exception>
     public async Task UnsubscribeAsync(ulong subscriptionId, CancellationToken cancellationToken = default)
     {
-        _subscriptions.TryRemove(subscriptionId, out _);
+        if (_subscriptions.TryRemove(subscriptionId, out Subscription? removed))
+        {
+            removed.Batcher?.Close();
+        }
+
         await RequestAsync(Text(ControlMessages.BuildUnsubscribe(subscriptionId)), WebSocketMessageType.Text,
             new Pending(typeof(UnsubscribedReply), "unsubscribe"), cancellationToken).ConfigureAwait(false);
     }
@@ -584,7 +630,7 @@ public sealed class FletcherClient : IAsyncDisposable
             return;
         }
 
-        if (reply is SubscribedReply subscribed && pending.Handler is not null)
+        if (reply is SubscribedReply subscribed && pending.Subscribes)
         {
             // Review B2: the caller stopped waiting before this reply was read, so it never
             // gets the id; the subscription is released instead of registered.
@@ -635,7 +681,10 @@ public sealed class FletcherClient : IAsyncDisposable
             return;
         }
 
-        var subscription = new Subscription(codec, pending.Handler!);
+        var subscription = pending.BatchHandler is null
+            ? new Subscription(codec, pending.Handler, null)
+            : new Subscription(codec, null,
+                new GatewayBatcher(this, reply.SubscriptionId, codec, pending.BatchHandler, pending.BatchOptions!));
         _subscriptions[reply.SubscriptionId] = subscription;
         foreach ((ulong id, byte[] envelope) in _early)
         {
@@ -679,7 +728,7 @@ public sealed class FletcherClient : IAsyncDisposable
         bool subscribing;
         lock (_sync)
         {
-            subscribing = _pending?.Handler is not null;
+            subscribing = _pending?.Subscribes == true;
         }
 
         if (subscribing && _early.Count < MaxEarlyRows)
@@ -696,6 +745,12 @@ public sealed class FletcherClient : IAsyncDisposable
     // reported for that row alone, never the end of the connection.
     private void DeliverBytes(Subscription subscription, ulong id, ReadOnlyMemory<byte> envelopeBytes)
     {
+        if (subscription.Batcher is { } batcher)
+        {
+            batcher.Add(envelopeBytes);
+            return;
+        }
+
         Envelope envelope;
         RecordBatch row;
         try
@@ -714,7 +769,7 @@ public sealed class FletcherClient : IAsyncDisposable
         _delivering = this;
         try
         {
-            subscription.Handler(row, envelope);
+            subscription.Handler!(row, envelope);
         }
         catch (Exception e)
         {
@@ -726,6 +781,35 @@ public sealed class FletcherClient : IAsyncDisposable
             _delivering = outer;
         }
     }
+
+    // Run a batched subscription's handler, as DeliverBytes runs a row's: an exception is
+    // counted and reported, never thrown on.
+    internal void RunHandler(ulong id, Action call)
+    {
+        FletcherClient? outer = _delivering;
+        _delivering = this;
+        try
+        {
+            call();
+        }
+        catch (Exception e)
+        {
+            Interlocked.Increment(ref _absorbed);
+            Report(e, id, GatewayFaultReason.HandlerThrew);
+        }
+        finally
+        {
+            _delivering = outer;
+        }
+    }
+
+    internal void OnRowUndecodable(Exception exception, ulong id)
+    {
+        Interlocked.Increment(ref _undecodable);
+        Report(exception, id, GatewayFaultReason.RowUndecodable);
+    }
+
+    internal void OnRowDropped() => Interlocked.Increment(ref _dropped);
 
     private void Report(Exception exception, ulong id, GatewayFaultReason reason)
     {
@@ -780,11 +864,19 @@ public sealed class FletcherClient : IAsyncDisposable
             _pending = null;
         }
 
-        _subscriptions.Clear();
         if (pending is not null)
         {
             _gate.Release();
             pending.Fail(Ended());
+        }
+
+        // Every subscription ends; a batched one flushes its pending window first (D-BIND-133).
+        foreach (ulong id in _subscriptions.Keys)
+        {
+            if (_subscriptions.TryRemove(id, out Subscription? removed))
+            {
+                removed.Batcher?.Close();
+            }
         }
 
         if (reason is ObjectDisposedException)
@@ -826,7 +918,8 @@ public sealed class FletcherClient : IAsyncDisposable
 
     private static byte[] Text(string json) => Encoding.UTF8.GetBytes(json);
 
-    private sealed record Subscription(GatewayRowCodec Codec, GatewayRowHandler Handler);
+    // Exactly one of Handler (per row) and Batcher (batched) is set.
+    private sealed record Subscription(GatewayRowCodec Codec, GatewayRowHandler? Handler, GatewayBatcher? Batcher);
 
     // A request in flight: what reply it expects and, for a subscribe, what to register.
     private sealed class Pending
@@ -846,6 +939,13 @@ public sealed class FletcherClient : IAsyncDisposable
         public string Action { get; }
 
         public GatewayRowHandler? Handler { get; init; }
+
+        public GatewayBatchHandler? BatchHandler { get; init; }
+
+        public GatewayBatchOptions? BatchOptions { get; init; }
+
+        /// <summary>A subscribe: its reply registers a subscription.</summary>
+        public bool Subscribes => Handler is not null || BatchHandler is not null;
 
         public GatewayRowCodec? Codec { get; init; }
 

@@ -89,6 +89,45 @@ public abstract class EndToEndTests
     }
 
     [Fact]
+    public async Task ABatchedSubscriptionDeliversGeneratedRowsInWindowsFieldForField()
+    {
+        // BIND-8f (D-BIND-133): the same rows through SubscribeBatchedAsync, two windows of
+        // three cut at MaxRows, each decoded by one DecodeBatch, envelopes beside their rows.
+        string topic = Topic();
+        await using FletcherClient publisher = await Connect();
+        await using FletcherClient subscriber = await Connect();
+        await publisher.CreateTopicAsync(topic, Fix.Schema);
+        var windows = new BlockingCollection<(Fix[] Rows, int Envelopes, GatewayBatchStatus Status)>();
+        await subscriber.SubscribeBatchedAsync(topic, Fix.Schema, (batch, envelopes, status) =>
+        {
+            using (batch)
+            {
+                StructArray rows = AsStruct(batch);
+                windows.Add((Enumerable.Range(0, batch.Length).Select(i => Fix.FromArrow(rows, i)).ToArray(), envelopes.Count, status));
+            }
+        }, new GatewayBatchOptions { MaxRows = 3, Timeout = System.Threading.Timeout.InfiniteTimeSpan });
+
+        Fix[] sent = Enumerable.Range(1, 6).Select(i => MakeFix(i, "batched " + i)).ToArray();
+        using RecordBatch batch = Fix.ToArrow(sent);
+        await publisher.PublishAsync(topic, batch);
+
+        var received = new List<Fix>();
+        for (int w = 0; w < 2; ++w)
+        {
+            Assert.True(windows.TryTake(out var window, _gateway.RoundTrip), $"window {w} did not arrive over {_gateway.Provider}");
+            Assert.Equal((3, 3, GatewayBatchReason.RowLimit, 0L),
+                (window.Rows.Length, window.Envelopes, window.Status.Reason, window.Status.RowsDropped));
+            received.AddRange(window.Rows);
+        }
+
+        Assert.Equal(sent.Length, received.Count);
+        for (int i = 0; i < sent.Length; ++i)
+        {
+            AssertSame(sent[i], received[i]);
+        }
+    }
+
+    [Fact]
     public async Task TheGeneratedGatewayPairRoundTripsTypedRows()
     {
         // BIND-8c: the pair csharp_gateway generates for FixFeed.Report, over ONE borrowed client

@@ -1252,3 +1252,17 @@ against the next request, which the client, correctly, handed to that request.
   was right; the review found all three by asking what each test could not see.
 - **Every workflow of a commit, not the umbrella one.** ci.pr green said nothing about the side
   workflows a push also starts.
+
+**8f, a batched gateway subscription (2026-10-19).** Before 8e was committed the maintainer asked
+why its fixes deleted `GatewayRowCodec.DecodeBatch`, since C++ and C# both decode batches. Checked:
+every codec encodes a row at a time, and every publisher sends a batch row by row, the gateway
+client included; but C++ (`BatchDecoder`, the batched `SubscriberArrow::Subscribe`) and the native
+C# pair (`FletcherCodec.DecodeBatch`, `SubscriberArrow.SubscribeBatched`) both DELIVER batches, and
+the gateway client never could. `DecodeBatch` had been swept up with the JSON-schema code only
+because nothing called it yet. It was restored (D-BIND-128 amended) and the gap ruled as D-BIND-133:
+`SubscribeBatchedAsync`, native's options and status in the package's own types, with one
+difference by choice: a subscription's handler is never run concurrently with itself.
+
+**Lesson.** "Reached from tests alone" says nothing is using the code yet, not that nothing
+should; a parity check against the other language arms (does C++ have it? does native C#?) is
+what tells dead code from a missing feature.

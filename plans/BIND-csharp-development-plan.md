@@ -850,6 +850,10 @@ waits for the gateway's reader to match before a peer publishes (D-BIND-129). Ty
 `schemaIpc` declaration moves from BIND-T into BIND-8e (D-BIND-130, amending D-BIND-117). The C
 ABI codec gains the managed codec's two stricter refusals (D-BIND-131). The defaults 8a and 8b
 took unruled are locked, with a reason on `HandlerFaulted` and a count of dropped rows (D-BIND-132).
+Before the close, the client gained a batched subscription, as C++'s and the native pair's
+`SubscriberArrow` deliver: `SubscribeBatchedAsync`, native's options and status in its own types,
+one `DecodeBatch` per window, one handler call at a time per subscription (D-BIND-133, slice 8f;
+`DecodeBatch`, deleted at first with the JSON-schema code, stays: D-BIND-128 amended).
 
 **BIND-T, BIND-8, BIND-9, BIND-10** — as in the 2026-08-31 plan, with BIND-9
 carrying the LGPL notice text and the packaging statement (§6 P-1), and BIND-10

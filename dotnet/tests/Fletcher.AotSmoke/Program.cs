@@ -56,6 +56,26 @@ using (RecordBatch gatewayBatch = Reading.ToArrow(new[] { MakeReading() }))
     seen.Add("gateway " + Describe(Reading.FromArrow(asStruct, 0)));
 }
 
+// BIND-8f (D-BIND-133): a batched subscription's window, cut at MaxRows and decoded by one
+// DecodeBatch, driven through its batcher directly as the receive loop would.
+await using (var batchClient = new FletcherClient(new FletcherClientOptions { Uri = new Uri("ws://127.0.0.1:9") }))
+{
+    var codec = new GatewayRowCodec(Reading.Schema);
+    var batcher = new GatewayBatcher(batchClient, 1, codec, (batch, envelopes, status) =>
+    {
+        using (batch)
+        {
+            seen.Add($"batched {batch.Length} {envelopes.Count} {status.Reason} {status.RowsDropped}");
+        }
+    }, new GatewayBatchOptions { MaxRows = 2, Timeout = System.Threading.Timeout.InfiniteTimeSpan });
+    using RecordBatch rows = Reading.ToArrow(new[] { MakeReading(), MakeReading() });
+    BoundBatch bound = codec.Bind(rows);
+    for (int i = 0; i < 2; ++i)
+    {
+        batcher.Add(new Envelope(codec.Encode(bound, i)).Serialize());
+    }
+}
+
 Schema readBack = ControlMessages.ReadSchemaIpc(Convert.ToBase64String(ControlMessages.WriteSchemaIpc(Reading.Schema)));
 seen.Add("schemaIpc " + (readBack.FieldsList.Count == Reading.Schema.FieldsList.Count));
 
@@ -77,6 +97,7 @@ string[] expected =
     "7 aot 0.5 Happy 1,-2 2 x 1 1700000000123456789",
     "marks 5:6,-1:0",
     "gateway 7 aot 0.5 Happy 1,-2 2 x 1 1700000000123456789",
+    "batched 2 2 RowLimit 0",
     "schemaIpc True",
     "unconnected refused",
 };

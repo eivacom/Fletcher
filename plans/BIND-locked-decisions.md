@@ -3392,3 +3392,28 @@ from 2026-10-19.
   other three defaults are settled elsewhere: (d) and (h) went with the JSON-schema code (D-BIND-128),
   (f) "no reconnect" stands with `Completion` (D-BIND-121). **Declined:** (g) unchanged, the drops
   uncounted and one meaning for both causes.
+
+- **D-BIND-133 - the gateway client gains a batched subscription, matching the native
+  `SubscriberArrow.SubscribeBatched` (D-BIND-25) and C++'s batched `SubscriberArrow::Subscribe`:
+  `FletcherClient.SubscribeBatchedAsync(topic, schema, GatewayBatchHandler handler,
+  GatewayBatchOptions? options, CancellationToken)`, where `GatewayBatchHandler(RecordBatch batch,
+  IReadOnlyList<Envelope> envelopes, GatewayBatchStatus status)`. A window's rows are kept as received
+  and decoded at the flush with `GatewayRowCodec.DecodeBatch`; a window holding an undecodable row is
+  decoded again row by row, and the bad rows are dropped and counted. Slice 8f, before BIND-8
+  closes.** *LOCKED BY THE MAINTAINER 2026-10-19.* (a) Own types in `Eiva.Fletcher.GatewayClient`
+  (`GatewayBatchOptions` with `MaxRows` 8000 and `Timeout` 1 min, `Timeout.InfiniteTimeSpan` for none,
+  the native bounds and refusal; `GatewayBatchStatus` with `Reason` and `RowsDropped`;
+  `GatewayBatchReason` `RowLimit`, `Timeout`, `Closing`), since the package cannot reference
+  `Eiva.Fletcher` (D-BIND-120); names and defaults as native's. (b) The envelopes are parallel to the
+  rows, a dropped row's left out. (c) The handler owns the batch. (d) A window of only dropped rows
+  still delivers a zero-row batch. (e) One decode per window normally, a second pass only for a
+  window with a bad row. (f) A window flushes early (`RowLimit`) before its raw rows pass 2^31-2 bytes
+  (D-BIND-63's ceiling). (g) A `RowLimit` flush runs on the receive loop, a `Timeout` flush on a timer
+  thread, a `Closing` flush on the thread that unsubscribes or ends the connection; ONE subscription's
+  handler never runs concurrently with itself (a queue, no lock held across the handler), which is
+  stricter than native's D-BIND-64. (h) `UnsubscribeAsync`, `DisposeAsync` and the connection ending
+  each flush the pending window as `Closing` first. (i) A handler exception raises `HandlerFaulted`
+  (`HandlerThrew`); an undecodable row raises it (`RowUndecodable`) and counts in `UndecodableRows`.
+  (j) The per-row `SubscribeAsync` is unchanged. (k) TypeScript has no batched shape either: a BIND-T
+  parity item. **Declined:** re-expressing `SubscribeAsync` as `MaxRows` = 1 (as native does) now; a
+  types package shared by `Eiva.Fletcher` and the gateway client.

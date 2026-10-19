@@ -215,6 +215,10 @@ the client works on Arrow batches, not on `T` (D-BIND-108; the typed surface is 
 gateway pair, D-BIND-109); a subscription delivers to a `GatewayRowHandler(RecordBatch row,
 Envelope envelope)` delegate on the receive loop, the envelope borrowed (D-BIND-113); topics are
 `string` keys (D-BIND-114); `CreateTopicAsync` announces the schema as `schemaIpc` (D-BIND-112).
+*Added 2026-10-19 (BIND-8f, D-BIND-133):* `SubscribeBatchedAsync` delivers windows of rows to a
+`GatewayBatchHandler(RecordBatch batch, IReadOnlyList<Envelope> envelopes, GatewayBatchStatus
+status)`, flushed as `GatewayBatchOptions` says (native `BatchOptions`'s members and defaults, in
+the package's own types), the envelopes owned, one handler call at a time per subscription.
 Drawn in §5.4.
 
 ---
@@ -629,6 +633,7 @@ classDiagram
         +ConnectAsync(CancellationToken ct) Task
         +CreateTopicAsync(string topic, Schema schema, CancellationToken ct) Task
         +SubscribeAsync(string topic, Schema schema, GatewayRowHandler handler, CancellationToken ct) Task~ulong~
+        +SubscribeBatchedAsync(string topic, Schema schema, GatewayBatchHandler handler, GatewayBatchOptions options, CancellationToken ct) Task~ulong~
         +UnsubscribeAsync(ulong subscriptionId, CancellationToken ct) Task
         +PublishAsync(string topic, RecordBatch batch, CancellationToken ct) Task
         +PublishAsync(string topic, RecordBatch batch, int row, IEnumerable~KeyValuePair~ attachments, CancellationToken ct) Task
@@ -640,6 +645,20 @@ classDiagram
     class GatewayRowHandler {
         <<delegate>>
         +Invoke(RecordBatch row, Envelope envelope) void
+    }
+    class GatewayBatchHandler {
+        <<delegate>>
+        +Invoke(RecordBatch batch, IReadOnlyList~Envelope~ envelopes, GatewayBatchStatus status) void
+    }
+    class GatewayBatchOptions {
+        +long MaxRows
+        +TimeSpan Timeout
+        +TimeSpan MaxTimeout$
+    }
+    class GatewayBatchStatus {
+        <<struct>>
+        +GatewayBatchReason Reason
+        +long RowsDropped
     }
     class Envelope {
         +ReadOnlyMemory~byte~ Row
@@ -653,13 +672,19 @@ classDiagram
         +Bind(RecordBatch batch) BoundBatch
         +Encode(BoundBatch batch, int row) byte[]
         +Decode(ReadOnlySpan~byte~ row) RecordBatch
+        +DecodeBatch(IReadOnlyList~ReadOnlyMemory~byte~~ rows) RecordBatch
     }
     FletcherClient ..> GatewayRowHandler : calls on the receive loop
+    FletcherClient ..> GatewayBatchHandler : calls per window
+    FletcherClient ..> GatewayBatchOptions : flushes as
+    GatewayBatchHandler ..> GatewayBatchStatus : receives
+    GatewayBatchHandler ..> Envelope : owns
     FletcherClient ..> GatewayRowCodec : encodes and decodes through
     FletcherClient ..> Envelope : frames
     GatewayRowHandler ..> Envelope : borrows
     note for FletcherClient "Topics are string keys (D-BIND-114). One control request in flight (D-BIND-110). PublishAsync sends one frame per row and awaits each published (D-BIND-111). create_topic sends schemaIpc (D-BIND-112). No native assets."
     note for GatewayRowHandler "One decoded row per MESSAGE frame, on the receive loop. The envelope is borrowed until the handler returns (D-BIND-113). A throwing handler is counted and reported, not fatal."
+    note for GatewayBatchHandler "A window per flush: MaxRows, Timeout (anchored to the previous flush), the byte ceiling, or Closing. One DecodeBatch per window, one call at a time per subscription (D-BIND-133)."
     note for GatewayRowCodec "The C ABI codec's accept list, in managed code (D-BIND-1, D-BIND-108). Internal."
 ```
 
