@@ -3,12 +3,14 @@
 //
 #include "csharp_backend_visitor.hpp"
 
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
 #include <sstream>
 #include <string>
 #include <variant>
+#include <vector>
 
 #include "cpp_backend_schema_visitor.hpp"
 #include "csharp_backend_columns.hpp"
@@ -1115,6 +1117,55 @@ std::string CsVisitor::GenerateNativeFile() {
           << GenerateSubscriberPair(p, msg, msg_expr);
     }
     return o.str();
+}
+
+std::optional<std::string> CsPairNameConflict(const FileDescriptor* file, bool native_pair,
+                                              bool gateway_pair) {
+    // Review of BIND-8 (DEBT), refused as D-BIND-100 refuses an accessor's: every type name the
+    // generated C# of this file declares, so `S.M`'s gateway pair and `S.MGateway`'s native one
+    // (both `S_MGatewayPublisher`), or a message named like a pair type, fail here and not as
+    // CS0101 in the consumer's build.
+    std::map<std::string, std::string> declared;  // name -> what declares it
+    auto bare = [](std::string name) { return name.rfind('@', 0) == 0 ? name.substr(1) : name; };
+    auto declare = [&](const std::string& name,
+                       const std::string& what) -> std::optional<std::string> {
+        auto [it, inserted] = declared.emplace(name, what);
+        if (inserted) return std::nullopt;
+        return "csharp: " + what + " and " + it->second + " would both be the C# type '" + name +
+               "' in namespace " + CsNamespace(file) + " (D-BIND-100). Rename one of the two.";
+    };
+    for (const auto* msg : fletcher::OrderedMessages(file)) {
+        if (fletcher::IsRecursive(msg)) continue;
+        if (auto c = declare(bare(CsTypeName(msg)), "message '" + msg->full_name() + "'")) return c;
+    }
+    std::vector<const EnumDescriptor*> enums;
+    for (int i = 0; i < file->enum_type_count(); ++i) enums.push_back(file->enum_type(i));
+    std::vector<const Descriptor*> stack;
+    for (int i = 0; i < file->message_type_count(); ++i) stack.push_back(file->message_type(i));
+    while (!stack.empty()) {
+        const auto* m = stack.back();
+        stack.pop_back();
+        for (int i = 0; i < m->enum_type_count(); ++i) enums.push_back(m->enum_type(i));
+        for (int i = 0; i < m->nested_type_count(); ++i) stack.push_back(m->nested_type(i));
+    }
+    for (const auto* enm : enums)
+        if (auto c = declare(bare(CsTypeName(enm)), "enum '" + enm->full_name() + "'")) return c;
+
+    for (const auto& p : PubSubMethods(file)) {
+        if (!p.skip_reason.empty()) continue;
+        const std::string what = "the pair of " + p.service + "." + p.method;
+        std::vector<std::string> names = {p.Base() + "Topic"};
+        if (native_pair)
+            names.insert(names.end(),
+                         {p.Base() + "Publisher", p.Base() + "Subscriber", p.Base() + "Handler"});
+        if (gateway_pair)
+            names.insert(names.end(),
+                         {p.Base() + "GatewayPublisher", p.Base() + "GatewaySubscriber",
+                          p.Base() + "GatewayHandler"});
+        for (const auto& name : names)
+            if (auto c = declare(name, what)) return c;
+    }
+    return std::nullopt;
 }
 
 std::string CsVisitor::GenerateGatewayFile() {

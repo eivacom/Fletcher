@@ -3,12 +3,15 @@
 //
 #include "schema_codec.hpp"
 
+#include <charconv>
+#include <cstdint>
 #include <exception>
 #include <fletcher/pubsub/schema_ipc.hpp>
 #include <ios>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 
 namespace fletcher::gateway {
 
@@ -154,11 +157,16 @@ json FieldToJson(const ArrowSchema* field) {
         // metadata but no field_number (a list element of a generated schema) used to read
         // whatever the stack held there: a std::bad_alloc or a stoi throw out of a `subscribed`
         // reply, or a wrong number (BIND-8d).
+        // A value that is not a whole int32 is read as absent (D-BIND-123): any WebSocket client
+        // can declare a schema's metadata through `schemaIpc`, and a reply must not throw on it.
         struct ArrowStringView value = {nullptr, 0};
+        int32_t number = 0;
         if (ArrowMetadataGetValue(field->metadata, ArrowCharView("field_number"), &value) ==
                 NANOARROW_OK &&
             value.data != nullptr) {
-            j["fieldNumber"] = std::stoi(std::string(value.data, value.size_bytes));
+            const char* end = value.data + value.size_bytes;
+            const auto [ptr, ec] = std::from_chars(value.data, end, number);
+            if (ec == std::errc() && ptr == end) j["fieldNumber"] = number;
         }
     }
 
@@ -217,7 +225,8 @@ OwnedSchema BuildArrowSchemaFromJson(const json& j) {
 }
 
 OwnedSchema DeclaredSchemaFromCreateTopic(const json& msg) {
-    if (msg.contains("schemaIpc")) {
+    // An explicit null is the member left out, as JSON writers that keep absent optionals emit it.
+    if (msg.contains("schemaIpc") && !msg["schemaIpc"].is_null()) {
         if (!msg["schemaIpc"].is_string()) {
             throw std::invalid_argument("create_topic: 'schemaIpc' must be a base64 string");
         }
@@ -229,7 +238,8 @@ OwnedSchema DeclaredSchemaFromCreateTopic(const json& msg) {
                 std::string("create_topic: 'schemaIpc' is not an Arrow IPC schema: ") + e.what());
         }
     }
-    if (msg.contains("schema")) return BuildArrowSchemaFromJson(msg["schema"]);
+    if (msg.contains("schema") && !msg["schema"].is_null())
+        return BuildArrowSchemaFromJson(msg["schema"]);
     return OwnedSchema{};
 }
 

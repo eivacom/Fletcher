@@ -8,7 +8,8 @@
 //   * CsToNative: subscribes at start; prints `RECV <seq> OK` or `RECV <seq> MISMATCH <diffs>`
 //     for every row, compared field by field with the fixture row its `seq` names.
 //   * NativeToCs: declares the topic at start; publishes the four fixture rows on the stdin
-//     line `publish`, then prints `PUBLISHED 4`.
+//     line `publish`, then prints `PUBLISHED 4`; on `probe` it publishes one row no receiver
+//     compares (seq -1) and prints `PROBED` (D-BIND-129).
 //
 // Prints READY once both endpoints exist, exits on the stdin line `stop`.
 //
@@ -63,6 +64,13 @@ while (Console.In.ReadLine() is { } line)
     if (line == "stop")
     {
         break;
+    }
+
+    if (line == "probe")
+    {
+        // D-BIND-129: a row no receiver compares (seq -1), sent until one arrives.
+        toCs.Publish(new CrossRow { Seq = -1 });
+        PrintLine("PROBED");
     }
 
     if (line == "publish")

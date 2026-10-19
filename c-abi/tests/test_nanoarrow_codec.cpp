@@ -779,3 +779,90 @@ TEST(DecodedSchema, ASchemaWithoutDictionariesIsUnchanged) {
     EXPECT_EQ(std::string(decoded.field().children[0]->name), "item");
     ExpectNoDictionaries(decoded.field());
 }
+
+// ---------------------------------------------------------------------------
+// D-BIND-131 — the managed gateway codec's two stricter refusals, now the C ABI's too
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// The message `EncodeAllRows` failed with, or "" when it encoded.
+std::string EncodeRefusal(const arrow::RecordBatch& batch) {
+    try {
+        static_cast<void>(EncodeAllRows(batch));
+    } catch (const std::exception& e) {
+        return e.what();
+    }
+    return "";
+}
+
+}  // namespace
+
+/// A map key that is null is refused, not encoded from whatever bytes lie under the null: the
+/// wire writes a map's keys with no null bitfield, so a null key is not representable.
+TEST(NanoarrowCodec, ANullMapKeyIsRefused) {
+    // Arrow C++ will not build a map with a null key at all (it CHECK-fails), so the array is
+    // made at the C level, as an exporter that does not validate would hand it over: a valid
+    // one-row map {"a": 1, "b": 2}, whose keys child is then swapped for ["a", null].
+    auto map_type = arrow::map(arrow::utf8(), arrow::int32());
+    arrow::MapBuilder builder(arrow::default_memory_pool(),
+                              std::make_shared<arrow::StringBuilder>(),
+                              std::make_shared<arrow::Int32Builder>());
+    auto* keys = static_cast<arrow::StringBuilder*>(builder.key_builder());
+    auto* items = static_cast<arrow::Int32Builder*>(builder.item_builder());
+    ASSERT_TRUE(builder.Append().ok());
+    ASSERT_TRUE(keys->AppendValues({"a", "b"}).ok());
+    ASSERT_TRUE(items->AppendValues({1, 2}).ok());
+    auto batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("m", map_type)}), 1,
+                                          {builder.Finish().ValueOrDie()});
+
+    ArrowSchema c_schema = {};
+    ArrowArray c_array = {};
+    ASSERT_TRUE(arrow::ExportRecordBatch(*batch, &c_array, &c_schema).ok());
+
+    arrow::StringBuilder null_keys;
+    ASSERT_TRUE(null_keys.Append("a").ok());
+    ASSERT_TRUE(null_keys.AppendNull().ok());
+    ArrowArray swapped = {};
+    ASSERT_TRUE(arrow::ExportArray(*null_keys.Finish().ValueOrDie(), &swapped).ok());
+    ArrowArray* key_child = c_array.children[0]->children[0]->children[0];
+    key_child->release(key_child);
+    *key_child = swapped;  // the parent's release now releases this one
+
+    std::string refusal;
+    try {
+        NanoarrowCodec codec(c_schema);
+        BoundRows rows(codec, c_array);
+        fletcher::VectorWriteBuffer buffer;
+        codec.EncodeRow(rows, 0, buffer);
+    } catch (const std::exception& e) {
+        refusal = e.what();
+    }
+    if (c_array.release != nullptr) c_array.release(&c_array);
+    if (c_schema.release != nullptr) c_schema.release(&c_schema);
+
+    EXPECT_NE(refusal.find("map key must not be null"), std::string::npos)
+        << "a null map key was encoded (or refused for another reason): '" << refusal << "'";
+}
+
+/// A row whose dictionary index names a NULL dictionary entry is refused: the row says the
+/// value is present, the dictionary says it is not, and the bytes under the null are unspecified.
+TEST(NanoarrowCodec, ARowNamingANullDictionaryEntryIsRefused) {
+    arrow::StringBuilder dictionary_builder;
+    ASSERT_TRUE(dictionary_builder.Append("alpha").ok());
+    ASSERT_TRUE(dictionary_builder.AppendNull().ok());
+    arrow::Int32Builder index_builder;
+    ASSERT_TRUE(index_builder.AppendValues({0, 1}).ok());
+    auto column = arrow::DictionaryArray::FromArrays(
+                      arrow::dictionary(arrow::int32(), arrow::utf8()),
+                      index_builder.Finish().ValueOrDie(), dictionary_builder.Finish().ValueOrDie())
+                      .ValueOrDie();
+    auto batch = arrow::RecordBatch::Make(
+        arrow::schema({arrow::field("v", arrow::dictionary(arrow::int32(), arrow::utf8()))}), 2,
+        {column});
+
+    const std::string refusal = EncodeRefusal(*batch);
+    EXPECT_NE(refusal.find("null dictionary entry"), std::string::npos)
+        << "a null dictionary entry was encoded (or refused for another reason): '" << refusal
+        << "'";
+}

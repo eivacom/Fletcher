@@ -14,6 +14,7 @@
 
 #include <google/protobuf/descriptor.h>
 
+#include <optional>
 #include <set>
 #include <string>
 
@@ -52,5 +53,11 @@ class CsVisitor {
     CrossFile cross_file_;
     const OptionMetadataResolver* resolver_ = nullptr;
 };
+
+// A refusal when two types the generated C# of `file` declares would share a name (D-BIND-100):
+// its messages and enums, a topic class per pub/sub method, and the native and gateway pair
+// types when those are generated. nullopt when every name is distinct.
+std::optional<std::string> CsPairNameConflict(const google::protobuf::FileDescriptor* file,
+                                              bool native_pair, bool gateway_pair);
 
 }  // namespace fletcher::csharp_backend

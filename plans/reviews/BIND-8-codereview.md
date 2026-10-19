@@ -46,6 +46,11 @@ The limit BIND-4 named remains: the reviewers are the same model as the author, 
 ## BLOCKERs
 
 ### B1 — TypeScript cross-file imports are relative to the include root, not to the importing file
+
+> **FIXED 2026-10-19** with D-BIND-122: one namespace import per file, by a path relative to the
+> importing file (`test_ts_visitor` `AnImportIsRelativeToTheImportingFile`: the same directory,
+> a parent's and a sibling's; `OneNameInThreeFilesDoesNotClash`).
+
 `protoc/src/ts_backend_visitor.cpp` writes `'./' + StripProtoSuffix(imported) + '.fletcher.js'`, but
 the importing file is written at its own path (`a/user.fletcher.ts`). Any importer not at the root
 imports a module that does not exist; the lane and `AnotherFilesMessageIsImportedByName` both put the
@@ -53,6 +58,11 @@ importer at the root, and the test pins the wrong path. Fix: the path relative t
 directory, with cases for the same and a sibling directory. (Reviewer 2 B1; reviewer 3 Q2.)
 
 ### B2 — a cancelled `SubscribeAsync` still installs its handler, under an id the caller never gets
+
+> **FIXED 2026-10-19:** a request the caller abandoned before its reply was read is not
+> registered; the loop releases the subscription on the gateway, through the gate
+> (`ACancelledSubscribeLeavesNoSubscriptionBehind`, a mutant that registers it anyway is caught).
+
 Cancelled after the frame is sent, the call throws `OperationCanceledException`, and the receive loop
 then registers the subscription when `subscribed` arrives: the handler fires for the life of the
 connection and cannot be unsubscribed. In the no-schema branch the gateway-side release never runs.
@@ -60,11 +70,23 @@ Fix: a reply whose caller has gone is not registered and is unsubscribed through
 B1; reviewer 3 Q3.)
 
 ### B3 — the cross-language lane's retry pools rows from both attempts
+
+> **FIXED 2026-10-19:** each attempt keeps its own lines and rows and must deliver all four; and
+> with D-BIND-129 the rows travel live after a probe row has arrived.
+
 `seen` (C# → peer) and `rows` (peer → C#) span both attempts, so two partial deliveries pass as one
 whole, weaker than the ruling ("retry the exchange once"). It happened on the green run. Fix: each
 attempt must deliver all four rows on its own. (Reviewer 3 B3.)
 
 ### B4 — the `test_schema_codec` port tests code no shipped path runs
+
+> **FIXED 2026-10-19** with D-BIND-128: the JSON-schema code and its tests are deleted; Bucket 2
+> maps `test_schema_codec` to the client's `schemaIpc` reading back as the same declaration at
+> every depth (`BuildCreateTopicAnnouncesTheSchemaAsSchemaIpcAndNotAsJson` over every `.ipc`
+> golden, with `TheSchemaComparisonSeesNestedMetadataAndTimestampUnits` holding the comparison).
+> `GatewayRowCodec.DecodeBatch` was deleted with it at first, then restored by the maintainer's
+> amendment of D-BIND-128: it is row decoding, kept for a batched subscription (slice 8f).
+
 Since D-BIND-112 the client announces `schemaIpc` only; `SchemaToJson` (with `WriteSchema`,
 `WriteField`, the `WireTypes` table, `SubscribedReply.SchemaJson`) and `GatewayRowCodec.DecodeBatch`
 are reached from tests alone, so the Bucket 2 "port" of `test_schema_codec` proves nothing about what
@@ -72,6 +94,10 @@ the client sends, and 8a's Done paragraph ("properties of the descriptor the cli
 longer true. How to resolve it is Q8. (Reviewer 3 B1; reviewer 1 default (h).)
 
 ### B5 — `FletcherClientTests.ClosingClearsSubscriptions` cannot fail
+
+> **FIXED 2026-10-19:** it reads the subscriptions the client holds (an internal count); a mutant
+> that keeps them after the end is caught.
+
 It disposes the client (the loop stops) and then delivers a row, which is never read whether or not
 the subscriptions were cleared. (Reviewer 3 B2.)
 

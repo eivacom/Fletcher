@@ -50,27 +50,69 @@ internal interface IGatewayTransport : IAsyncDisposable
 
     /// <summary>Close the connection politely, if it is still open.</summary>
     public Task CloseAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Drop the connection at once, for a connection the client ended itself (a failed send, an
+    /// oversized or unreadable stream, a reply timeout): the gateway then sees it end and releases
+    /// the session's subscriptions, instead of writing into a socket nobody reads.
+    /// </summary>
+    public void Abort();
+}
+
+/// <summary>A message larger than <see cref="FletcherClientOptions.MaxMessageBytes"/> arrived.</summary>
+internal sealed class MessageTooLargeException : Exception
+{
+    public MessageTooLargeException(int limit)
+        : base("FletcherClient: the gateway sent a message larger than MaxMessageBytes (" + limit + " bytes)")
+    {
+    }
 }
 
 /// <summary>The production transport: <see cref="ClientWebSocket"/>.</summary>
 internal sealed class WebSocketTransport : IGatewayTransport
 {
-    private readonly ClientWebSocket _socket = new();
-    private byte[] _buffer = new byte[64 * 1024];
+    private const int _initialBuffer = 64 * 1024;
 
-    public Task ConnectAsync(Uri uri, CancellationToken cancellationToken) => _socket.ConnectAsync(uri, cancellationToken);
+    private readonly ClientWebSocket _socket = new();
+    private readonly FletcherClientOptions _options;
+    private byte[] _buffer = new byte[_initialBuffer];
+
+    public WebSocketTransport(FletcherClientOptions options)
+    {
+        _options = options;
+    }
+
+    public Task ConnectAsync(Uri uri, CancellationToken cancellationToken)
+    {
+        // D-BIND-126: headers, proxy, certificates, keep-alive; before the socket connects.
+        _options.ConfigureWebSocket?.Invoke(_socket.Options);
+        return _socket.ConnectAsync(uri, cancellationToken);
+    }
 
     public Task SendAsync(ReadOnlyMemory<byte> message, WebSocketMessageType type, CancellationToken cancellationToken) =>
         _socket.SendAsync(message, type, endOfMessage: true, cancellationToken).AsTask();
 
     public async ValueTask<ReceivedFrame> ReceiveAsync(CancellationToken cancellationToken)
     {
+        // The previous message has been handled (its payload was lent until this call): a
+        // buffer an oversized one grew is given back, so one large row does not pin it for good.
+        if (_buffer.Length > _initialBuffer * 4)
+        {
+            _buffer = new byte[_initialBuffer];
+        }
+
+        int limit = _options.MaxMessageBytes;
         int length = 0;
         while (true)
         {
             if (length == _buffer.Length)
             {
-                System.Array.Resize(ref _buffer, _buffer.Length * 2);
+                if (length >= limit)
+                {
+                    throw new MessageTooLargeException(limit);
+                }
+
+                System.Array.Resize(ref _buffer, (int)Math.Min((long)_buffer.Length * 2, limit));
             }
 
             ValueWebSocketReceiveResult result = await _socket.ReceiveAsync(_buffer.AsMemory(length), cancellationToken).ConfigureAwait(false);
@@ -97,6 +139,8 @@ internal sealed class WebSocketTransport : IGatewayTransport
             await _socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "client closed", cancellationToken).ConfigureAwait(false);
         }
     }
+
+    public void Abort() => _socket.Abort();
 
     public ValueTask DisposeAsync()
     {

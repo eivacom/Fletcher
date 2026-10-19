@@ -7,7 +7,8 @@
 // spec does: the spec omits the `unsubscribed` and `published` replies and the optional
 // `schema` of `create_topic`. Requests carry an `action`; replies carry a `type`:
 //
-//   create_topic {topic, schema?}  -> topic_created
+//   create_topic {topic, schemaIpc?} -> topic_created  (the JSON `schema` the gateway also
+//                                     accepts is not sent: D-BIND-112, D-BIND-128)
 //   subscribe    {topic}           -> subscribed {subId, topic, schema?, schemaIpc?}
 //   unsubscribe  {subId}           -> unsubscribed
 //   list_topics                    -> topics_list {topics}
@@ -29,7 +30,6 @@ using System.Text.Json;
 
 using Apache.Arrow;
 using Apache.Arrow.Ipc;
-using Apache.Arrow.Types;
 
 namespace Eiva.Fletcher.GatewayClient;
 
@@ -47,8 +47,12 @@ internal sealed record TopicCreatedReply : GatewayReply;
 /// at the moment it subscribed (a late-joining Fast DDS subscription, a topic created
 /// without one). A typed subscriber brings its own and does not depend on this.
 /// </param>
-/// <param name="SchemaJson">The <c>schema</c> descriptor as raw JSON, or null with <paramref name="Schema"/>.</param>
-internal sealed record SubscribedReply(ulong SubscriptionId, string Topic, Schema? Schema, string? SchemaJson) : GatewayReply;
+/// <param name="SchemaError">
+/// Why the reply's <c>schemaIpc</c> could not be read, when it could not; <paramref name="Schema"/>
+/// is then null (D-BIND-124). The JSON <c>schema</c> the gateway also sends is not read: since
+/// D-BIND-112 this client takes the IPC form only (D-BIND-128).
+/// </param>
+internal sealed record SubscribedReply(ulong SubscriptionId, string Topic, Schema? Schema, string? SchemaError) : GatewayReply;
 
 /// <summary><c>unsubscribed</c>.</summary>
 internal sealed record UnsubscribedReply : GatewayReply;
@@ -198,13 +202,22 @@ internal static class ControlMessages
 
                         string topic = RequiredString(root, "topic", "subscribed");
                         Schema? schema = null;
+                        string? schemaError = null;
                         if (root.TryGetProperty("schemaIpc", out JsonElement ipc) && ipc.ValueKind == JsonValueKind.String)
                         {
-                            schema = ReadSchemaIpc(ipc.GetString()!);
+                            // D-BIND-124: a schema this client cannot read is ABSENT, with the
+                            // reason kept; a subscriber that brought its own does not need it.
+                            try
+                            {
+                                schema = ReadSchemaIpc(ipc.GetString()!);
+                            }
+                            catch (InvalidDataException e)
+                            {
+                                schemaError = e.Message;
+                            }
                         }
 
-                        string? schemaJson = root.TryGetProperty("schema", out JsonElement json) ? json.GetRawText() : null;
-                        return new SubscribedReply(id, topic, schema, schemaJson);
+                        return new SubscribedReply(id, topic, schema, schemaError);
                     }
 
                 default:
@@ -237,85 +250,6 @@ internal static class ControlMessages
         {
             throw new InvalidDataException("schemaIpc is not an Arrow IPC schema: " + e.Message, e);
         }
-    }
-
-    /// <summary>The JSON schema descriptor of <paramref name="schema"/>, as a string.</summary>
-    public static string SchemaToJson(Schema schema)
-    {
-        ArgumentNullException.ThrowIfNull(schema);
-        var buffer = new MemoryStream();
-        using (var w = new Utf8JsonWriter(buffer))
-        {
-            WriteSchema(w, schema);
-        }
-
-        return Encoding.UTF8.GetString(buffer.GetBuffer(), 0, (int)buffer.Length);
-    }
-
-    // {"fields":[...]}, field by field as gateway/src/schema_codec.cpp's FieldToJson writes
-    // it: name, nullable, wireType, fieldNumber (when the field carries one), and the
-    // nested members of a composite: fields / element (+ fixedSize) / mapKey + mapValue.
-    private static void WriteSchema(Utf8JsonWriter w, Schema schema)
-    {
-        w.WriteStartObject();
-        w.WriteStartArray("fields");
-        foreach (Field field in schema.FieldsList)
-        {
-            WriteField(w, field);
-        }
-
-        w.WriteEndArray();
-        w.WriteEndObject();
-    }
-
-    private static void WriteField(Utf8JsonWriter w, Field field)
-    {
-        IArrowType type = field.DataType is DictionaryType dictionary ? dictionary.ValueType : field.DataType;
-
-        w.WriteStartObject();
-        w.WriteString("name", field.Name ?? string.Empty);
-        w.WriteBoolean("nullable", field.IsNullable);
-        w.WriteNumber("wireType", (int)WireTypes.Of(field.DataType));
-        if (field.HasMetadata
-            && field.Metadata.TryGetValue(FieldNumberKey, out string? number)
-            && int.TryParse(number, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out int fieldNumber))
-        {
-            w.WriteNumber("fieldNumber", fieldNumber);
-        }
-
-        switch (type)
-        {
-            case StructType st:
-                w.WriteStartArray("fields");
-                foreach (Field child in st.Fields)
-                {
-                    WriteField(w, child);
-                }
-
-                w.WriteEndArray();
-                break;
-            case MapType map:
-                w.WritePropertyName("mapKey");
-                WriteField(w, map.KeyField);
-                w.WritePropertyName("mapValue");
-                WriteField(w, map.ValueField);
-                break;
-            case ListType list:
-                w.WritePropertyName("element");
-                WriteField(w, list.ValueField);
-                break;
-            case LargeListType largeList:
-                w.WritePropertyName("element");
-                WriteField(w, largeList.ValueField);
-                break;
-            case FixedSizeListType fixedList:
-                w.WritePropertyName("element");
-                WriteField(w, fixedList.ValueField);
-                w.WriteNumber("fixedSize", fixedList.ListSize);
-                break;
-        }
-
-        w.WriteEndObject();
     }
 
     private static string Write(Action<Utf8JsonWriter> members)

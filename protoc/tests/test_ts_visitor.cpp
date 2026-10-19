@@ -114,12 +114,12 @@ TEST(TsVisitor, SingularFlattenWrapperIsAListOfItsElement) {
     EXPECT_EQ(ts.find("INestedStructListWrapper[][]"), std::string::npos) << ts;
 }
 
-// D-BIND-118: a message of ANOTHER file is imported by name, as a value (its TypedSchema,
-// whose `.fields` the descriptor names) and as a type (its interface). Before, the import
-// was an empty placeholder (`import { /* cross-file types */ }`), so the file neither
-// type-checked nor ran. Reached here as a struct, a list element, a map value and a
-// singular flatten wrapper; a struct's own fields are its file's business, not imported.
-TEST(TsVisitor, AnotherFilesMessageIsImportedByName) {
+// D-BIND-118, D-BIND-122: a message of ANOTHER file is named through ONE namespace import of
+// that file, by a path relative to the importing file. Before D-BIND-118 the import was an empty
+// placeholder (`import { /* cross-file types */ }`), so the file neither type-checked nor ran;
+// D-BIND-118's bare names could clash. Reached here as a struct, a list element, a map value and
+// a singular flatten wrapper; a struct's own fields are its file's business, not named.
+TEST(TsVisitor, AnotherFilesMessageIsNamedThroughItsNamespace) {
     DescriptorPool pool;
     FileDescriptorProto dep;
     dep.set_name("dir/dep.proto");
@@ -192,21 +192,101 @@ TEST(TsVisitor, AnotherFilesMessageIsImportedByName) {
 
     const std::string ts = fletcher::ts_backend::TsVisitor(file).GenerateFile();
 
-    // The flatten wrapper is a list of its element (D-BIND-119): it imports Leaf, not Wrapper.
-    EXPECT_NE(ts.find("import { Leaf, Outer, Point } from './dir/dep.fletcher.js';\n"
-                      "import type { ILeaf, IOuter, IPoint } from './dir/dep.fletcher.js';\n"),
+    EXPECT_NE(ts.find("import * as dir_dep_fletcher from './dir/dep.fletcher.js';\n"),
               std::string::npos)
         << ts;
     EXPECT_EQ(ts.find("cross-file types"), std::string::npos) << ts;
-    EXPECT_EQ(ts.find("Inner"), std::string::npos) << "a struct's own fields were imported:\n"
-                                                   << ts;
-    EXPECT_EQ(ts.find("Local }"), std::string::npos) << "a message of this file was imported:\n"
-                                                     << ts;
-    // The names the imports resolve, as the file uses them.
-    EXPECT_NE(ts.find("outer: IOuter;"), std::string::npos) << ts;
-    EXPECT_NE(ts.find("fields: Outer.fields"), std::string::npos) << ts;
-    EXPECT_NE(ts.find("by_name: Map<string, IPoint>;"), std::string::npos) << ts;
-    EXPECT_NE(ts.find("wrapped: ILeaf[];"), std::string::npos) << ts;
+    EXPECT_EQ(ts.find("Inner"), std::string::npos) << "a struct's own fields were named:\n" << ts;
+    // The names, as the file uses them; the flatten wrapper is a list of its element (D-BIND-119).
+    EXPECT_NE(ts.find("outer: dir_dep_fletcher.IOuter;"), std::string::npos) << ts;
+    EXPECT_NE(ts.find("fields: dir_dep_fletcher.Outer.fields"), std::string::npos) << ts;
+    EXPECT_NE(ts.find("leaves: dir_dep_fletcher.ILeaf[];"), std::string::npos) << ts;
+    EXPECT_NE(ts.find("by_name: Map<string, dir_dep_fletcher.IPoint>;"), std::string::npos) << ts;
+    EXPECT_NE(ts.find("wrapped: dir_dep_fletcher.ILeaf[];"), std::string::npos) << ts;
+    EXPECT_NE(ts.find("local: ILocal;"), std::string::npos) << "this file's message qualified:\n"
+                                                            << ts;
+}
+
+namespace {
+
+// `name` declaring `message <msg> { int32 id = 1; }` in `package`.
+FileDescriptorProto OneMessageFile(const char* name, const char* package, const char* msg) {
+    FileDescriptorProto f;
+    f.set_name(name);
+    f.set_package(package);
+    f.set_syntax("proto3");
+    auto* m = f.add_message_type();
+    m->set_name(msg);
+    AddField(m, "id", 1, FieldDescriptorProto::TYPE_INT32);
+    return f;
+}
+
+}  // namespace
+
+// Review B1 (BIND-8e): the module path is relative to the IMPORTING file, which is written at its
+// own `.proto` path, so a file below the include root imports a module that exists: the same
+// directory as `./`, a parent's or a sibling's through `../`.
+TEST(TsVisitor, AnImportIsRelativeToTheImportingFile) {
+    DescriptorPool pool;
+    ASSERT_NE(pool.BuildFile(OneMessageFile("a/dep.proto", "adep", "Leaf")), nullptr);
+    ASSERT_NE(pool.BuildFile(OneMessageFile("y/z/dep.proto", "ydep", "Leaf")), nullptr);
+    FileDescriptorProto user;
+    user.set_name("a/b/user.proto");
+    user.set_package("user");
+    user.set_syntax("proto3");
+    user.add_dependency("a/dep.proto");
+    user.add_dependency("y/z/dep.proto");
+    auto* m = user.add_message_type();
+    m->set_name("Holder");
+    AddField(m, "up", 1, FieldDescriptorProto::TYPE_MESSAGE)->set_type_name(".adep.Leaf");
+    AddField(m, "across", 2, FieldDescriptorProto::TYPE_MESSAGE)->set_type_name(".ydep.Leaf");
+    const FileDescriptor* file = pool.BuildFile(user);
+    ASSERT_NE(file, nullptr);
+
+    const std::string ts = fletcher::ts_backend::TsVisitor(file).GenerateFile();
+    EXPECT_NE(ts.find("import * as a_dep_fletcher from '../dep.fletcher.js';"), std::string::npos)
+        << ts;
+    EXPECT_NE(ts.find("import * as y_z_dep_fletcher from '../../y/z/dep.fletcher.js';"),
+              std::string::npos)
+        << ts;
+
+    FileDescriptorProto sibling;
+    sibling.set_name("a/user2.proto");
+    sibling.set_package("user2");
+    sibling.set_syntax("proto3");
+    sibling.add_dependency("a/dep.proto");
+    auto* s = sibling.add_message_type();
+    s->set_name("Holder");
+    AddField(s, "same", 1, FieldDescriptorProto::TYPE_MESSAGE)->set_type_name(".adep.Leaf");
+    const FileDescriptor* same_dir = pool.BuildFile(sibling);
+    ASSERT_NE(same_dir, nullptr);
+    EXPECT_NE(fletcher::ts_backend::TsVisitor(same_dir).GenerateFile().find(
+                  "import * as a_dep_fletcher from './dep.fletcher.js';"),
+              std::string::npos);
+}
+
+// Review Q2 (D-BIND-122): a name declared in two imported files and locally is three names, one
+// per namespace; bare imports would have clashed (TS2300, TS2440).
+TEST(TsVisitor, OneNameInThreeFilesDoesNotClash) {
+    DescriptorPool pool;
+    ASSERT_NE(pool.BuildFile(OneMessageFile("p.proto", "p", "Leaf")), nullptr);
+    ASSERT_NE(pool.BuildFile(OneMessageFile("q.proto", "q", "Leaf")), nullptr);
+    FileDescriptorProto user = OneMessageFile("user.proto", "user", "Leaf");
+    user.add_dependency("p.proto");
+    user.add_dependency("q.proto");
+    auto* m = user.add_message_type();
+    m->set_name("Holder");
+    AddField(m, "p", 1, FieldDescriptorProto::TYPE_MESSAGE)->set_type_name(".p.Leaf");
+    AddField(m, "q", 2, FieldDescriptorProto::TYPE_MESSAGE)->set_type_name(".q.Leaf");
+    AddField(m, "mine", 3, FieldDescriptorProto::TYPE_MESSAGE)->set_type_name(".user.Leaf");
+    const FileDescriptor* file = pool.BuildFile(user);
+    ASSERT_NE(file, nullptr);
+
+    const std::string ts = fletcher::ts_backend::TsVisitor(file).GenerateFile();
+    EXPECT_NE(ts.find("p: p_fletcher.ILeaf;"), std::string::npos) << ts;
+    EXPECT_NE(ts.find("q: q_fletcher.ILeaf;"), std::string::npos) << ts;
+    EXPECT_NE(ts.find("mine: ILeaf;"), std::string::npos) << ts;
+    EXPECT_EQ(ts.find("import { Leaf"), std::string::npos) << "a named import is back:\n" << ts;
 }
 
 // A file whose messages name only their own file's messages imports nothing.
@@ -216,4 +296,21 @@ TEST(TsVisitor, OneFilesOwnMessagesImportNothing) {
     ASSERT_NE(file, nullptr);
     const std::string ts = fletcher::ts_backend::TsVisitor(file).GenerateFile();
     EXPECT_EQ(ts.find(".fletcher.js'"), std::string::npos) << ts;
+}
+
+// D-BIND-130: a TypedSchema carries the schema IPC it is given, verbatim, and one it is not given
+// carries none (the generator gives every message the `ipc` output covers).
+TEST(TsVisitor, ATypedSchemaCarriesItsSchemaIpcWhenGivenOne) {
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const Descriptor* leaf = file->FindMessageTypeByName("Leaf");
+    ASSERT_NE(leaf, nullptr);
+
+    const std::string ts = fletcher::ts_backend::TsVisitor(file, {{leaf, "QUJD"}}).GenerateFile();
+    EXPECT_NE(ts.find("  protoMessage: 'Leaf',\n  schemaIpc: 'QUJD',\n};"), std::string::npos)
+        << ts;
+    EXPECT_NE(ts.find("  protoMessage: 'Holder',\n};"), std::string::npos) << ts;
+    EXPECT_EQ(fletcher::ts_backend::TsVisitor(file).GenerateFile().find("schemaIpc"),
+              std::string::npos);
 }

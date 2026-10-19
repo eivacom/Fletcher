@@ -20,19 +20,23 @@
 // flight; a binary frame is a MESSAGE and is delivered to its subscription's handler, on
 // this loop, with the envelope lent from the receive buffer (D-BIND-113). Requests complete
 // with RunContinuationsAsynchronously, so a caller's continuation never runs on the loop
-// and cannot stall it.
+// and cannot stall it. A reply the client cannot parse fails only the request in flight
+// (D-BIND-124).
 //
 // ── Subscribing ─────────────────────────────────────────────────────────────
 // The subscription is registered BY THE LOOP when the `subscribed` reply is read, not by
 // the caller afterwards: the gateway may deliver a retained row for the new subscription
 // before its reply (ws_session.cpp posts both), so rows for an id not yet known that arrive
 // while a subscribe is in flight are kept (copied, bounded) and replayed on registration.
+// A subscribe whose caller stopped waiting before the reply was read is not registered: the
+// loop releases it on the gateway instead, since its caller never got the id to (review B2).
 //
 // ── What ends the connection ────────────────────────────────────────────────
-// The gateway closing it, the socket failing, a frame the client cannot parse, or
-// DisposeAsync. The request in flight then fails with a GatewayException naming the cause,
-// later calls fail the same way, and every subscription ends. There is no reconnect, as in
-// the TypeScript client.
+// The gateway closing it, the socket failing, a message above MaxMessageBytes, a reply that
+// does not come within ReplyTimeout, or DisposeAsync. The request in flight then fails with
+// a GatewayException naming the cause, later calls fail the same way, every subscription
+// ends, and Completion completes (faulted with the cause, unless disposed). There is no
+// reconnect, as in the TypeScript client (D-BIND-121).
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -62,7 +66,14 @@ namespace Eiva.Fletcher.GatewayClient;
 /// <b>Cancellation.</b> A token cancelled before the request is sent cancels it. Once it has
 /// been sent, the call stops waiting and throws <see cref="OperationCanceledException"/> at
 /// once, but the request still reaches the gateway and takes effect, and the client still
-/// reads its reply before sending the next request, so no later call is answered with it.
+/// reads its reply before sending the next request, so no later call is answered with it. A
+/// cancelled <see cref="SubscribeAsync"/> leaves no subscription behind: the client releases
+/// it when its reply arrives.
+/// </para>
+/// <para>
+/// <b>The end of the connection.</b> <see cref="Completion"/> completes when the connection
+/// ends; the client never reconnects. To carry on, await it, then connect a new client and
+/// subscribe again.
 /// </para>
 /// </remarks>
 public sealed class FletcherClient : IAsyncDisposable
@@ -72,6 +83,11 @@ public sealed class FletcherClient : IAsyncDisposable
 
     private static readonly TimeSpan CloseGrace = TimeSpan.FromSeconds(2);
 
+    // The client whose handler this thread is running, so DisposeAsync called from inside a
+    // handler does not wait for the loop it is running on.
+    [ThreadStatic]
+    private static FletcherClient? _delivering;
+
     private readonly FletcherClientOptions _options;
     private readonly IGatewayTransport _transport;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -79,18 +95,21 @@ public sealed class FletcherClient : IAsyncDisposable
     private readonly ConcurrentDictionary<ulong, Subscription> _subscriptions = new();
     private readonly CancellationTokenSource _stop = new();
     private readonly List<(ulong Id, byte[] Envelope)> _early = new();
+    private readonly TaskCompletionSource _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private Pending? _pending;
     private Task? _receiveLoop;
     private Exception? _ended;
     private int _state;
+    private volatile bool _connected;
     private long _absorbed;
     private long _undecodable;
+    private long _dropped;
 
     /// <summary>A client for the gateway at <see cref="FletcherClientOptions.Uri"/>; call <see cref="ConnectAsync"/> next.</summary>
     /// <exception cref="ArgumentNullException"><paramref name="options"/> is null.</exception>
     public FletcherClient(FletcherClientOptions options)
-        : this(options, new WebSocketTransport())
+        : this(options, new WebSocketTransport(options ?? throw new ArgumentNullException(nameof(options))))
     {
     }
 
@@ -98,13 +117,34 @@ public sealed class FletcherClient : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(transport);
+        if (options.MaxMessageBytes <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), options.MaxMessageBytes, "MaxMessageBytes must be positive.");
+        }
+
+        if (options.ReplyTimeout is { } timeout && timeout <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), timeout, "ReplyTimeout must be positive, or null for none.");
+        }
+
         _options = options;
         _transport = transport;
     }
 
     /// <summary>Raised when a subscription's handler throws, or a row sent to it does not decode.</summary>
-    /// <remarks>Raised on the receive loop. An exception from a subscriber to this event is ignored.</remarks>
+    /// <remarks>
+    /// Raised on the receive loop; <see cref="GatewayHandlerFaultedEventArgs.Reason"/> says which.
+    /// An exception from a subscriber to this event is ignored.
+    /// </remarks>
     public event EventHandler<GatewayHandlerFaultedEventArgs>? HandlerFaulted;
+
+    /// <summary>
+    /// Completes when the connection ends (D-BIND-121): successfully after
+    /// <see cref="DisposeAsync"/>, faulted with a <see cref="GatewayException"/> naming the cause
+    /// otherwise (the gateway closed it, the socket failed, a message was too large, a reply did
+    /// not come in time). Every subscription has ended by then; the client does not reconnect.
+    /// </summary>
+    public Task Completion => _completion.Task;
 
     /// <summary>How many times a subscription's handler has thrown.</summary>
     public ulong AbsorbedHandlerFailures => (ulong)Interlocked.Read(ref _absorbed);
@@ -112,12 +152,27 @@ public sealed class FletcherClient : IAsyncDisposable
     /// <summary>How many rows did not decode against their subscription's schema, and were dropped.</summary>
     public ulong UndecodableRows => (ulong)Interlocked.Read(ref _undecodable);
 
+    /// <summary>
+    /// How many rows arrived for no subscription the client holds and were dropped (D-BIND-132):
+    /// rows for a subscription already ended, or not yet registered beyond the
+    /// <see cref="MaxEarlyRows"/> kept while a subscribe is in flight.
+    /// </summary>
+    public ulong DroppedRows => (ulong)Interlocked.Read(ref _dropped);
+
+    /// <summary>How many subscriptions the client holds; for tests.</summary>
+    internal int SubscriptionCount => _subscriptions.Count;
+
     /// <summary>Open the connection.</summary>
     /// <exception cref="InvalidOperationException">The client was connected before, or disposed.</exception>
     public async Task ConnectAsync(CancellationToken cancellationToken = default)
     {
         if (Interlocked.CompareExchange(ref _state, 1, 0) != 0)
         {
+            if (Volatile.Read(ref _state) == 2)
+            {
+                throw new ObjectDisposedException(nameof(FletcherClient));
+            }
+
             throw new InvalidOperationException("FletcherClient: ConnectAsync may be called once, on a new client.");
         }
 
@@ -131,7 +186,8 @@ public sealed class FletcherClient : IAsyncDisposable
             throw;
         }
 
-        _receiveLoop = Task.Run(ReceiveLoopAsync, CancellationToken.None);
+        Volatile.Write(ref _receiveLoop, Task.Run(ReceiveLoopAsync, CancellationToken.None));
+        _connected = true;
     }
 
     /// <summary>Create a topic, announcing <paramref name="schema"/> to later subscribers when given.</summary>
@@ -146,7 +202,7 @@ public sealed class FletcherClient : IAsyncDisposable
     {
         CheckTopic(topic);
         await RequestAsync(Text(ControlMessages.BuildCreateTopic(topic, schema)), WebSocketMessageType.Text,
-            new Pending(typeof(TopicCreatedReply)), cancellationToken).ConfigureAwait(false);
+            new Pending(typeof(TopicCreatedReply), "create_topic"), cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Subscribe to a topic; every row published to it reaches <paramref name="handler"/>.</summary>
@@ -155,13 +211,19 @@ public sealed class FletcherClient : IAsyncDisposable
     /// The schema to decode rows with: a generated message's <c>Schema</c>. Null uses the schema
     /// the gateway sends back, which it has only when a publisher announced one.
     /// </param>
-    /// <param name="handler">Receives each row on the receive loop (see <see cref="GatewayRowHandler"/>).</param>
-    /// <param name="cancellationToken">Stops the wait; see the type's remarks on cancellation.</param>
+    /// <param name="handler">
+    /// Receives each row on the receive loop. Synchronous: do not pass an <c>async</c> lambda
+    /// (see <see cref="GatewayRowHandler"/>, D-BIND-125).
+    /// </param>
+    /// <param name="cancellationToken">
+    /// Stops the wait; see the type's remarks on cancellation. A subscribe cancelled after it was
+    /// sent is released by the client when its reply arrives, never left running.
+    /// </param>
     /// <returns>The subscription's id, for <see cref="UnsubscribeAsync"/>.</returns>
     /// <exception cref="ArgumentException"><paramref name="schema"/> has a type the wire format does not carry.</exception>
     /// <exception cref="InvalidOperationException">
-    /// No schema was given and the gateway had none, or had one the wire format does not carry.
-    /// The gateway-side subscription is released before this is thrown.
+    /// No schema was given and the gateway had none, or had one this client cannot read or the
+    /// wire format does not carry. The gateway-side subscription is released before this is thrown.
     /// </exception>
     /// <exception cref="GatewayException">The gateway refused it, or the connection ended.</exception>
     public async Task<ulong> SubscribeAsync(string topic, Schema? schema, GatewayRowHandler handler, CancellationToken cancellationToken = default)
@@ -170,7 +232,7 @@ public sealed class FletcherClient : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(handler);
         GatewayRowCodec? codec = schema is null ? null : new GatewayRowCodec(schema);
 
-        var pending = new Pending(typeof(SubscribedReply)) { Handler = handler, Codec = codec };
+        var pending = new Pending(typeof(SubscribedReply), "subscribe") { Handler = handler, Codec = codec };
         try
         {
             var reply = (SubscribedReply)await RequestAsync(Text(ControlMessages.BuildSubscribe(topic)), WebSocketMessageType.Text,
@@ -179,27 +241,23 @@ public sealed class FletcherClient : IAsyncDisposable
         }
         catch (NoSchemaException e)
         {
-            try
-            {
-                await RequestAsync(Text(ControlMessages.BuildUnsubscribe(e.SubscriptionId)), WebSocketMessageType.Text,
-                    new Pending(typeof(UnsubscribedReply)), CancellationToken.None).ConfigureAwait(false);
-            }
-            catch (GatewayException)
-            {
-                // The subscription is released on the gateway's side when the connection ends anyway.
-            }
-
-            throw new InvalidOperationException(e.Message, e.InnerException);
+            await ReleaseOnGatewayAsync(e.SubscriptionId).ConfigureAwait(false);
+            throw new InvalidOperationException(e.Message, e);
         }
     }
 
-    /// <summary>End a subscription. Its handler is not called again once this has started.</summary>
+    /// <summary>End a subscription. Its handler is not called for rows read after this call starts.</summary>
+    /// <remarks>
+    /// A row already being delivered on the receive loop when this is called may still be in its
+    /// handler. Removed from the client at once, so a failed or cancelled unsubscribe still stops
+    /// delivery; the gateway's side then ends with the connection.
+    /// </remarks>
     /// <exception cref="GatewayException">The gateway refused it, or the connection ended.</exception>
     public async Task UnsubscribeAsync(ulong subscriptionId, CancellationToken cancellationToken = default)
     {
         _subscriptions.TryRemove(subscriptionId, out _);
         await RequestAsync(Text(ControlMessages.BuildUnsubscribe(subscriptionId)), WebSocketMessageType.Text,
-            new Pending(typeof(UnsubscribedReply)), cancellationToken).ConfigureAwait(false);
+            new Pending(typeof(UnsubscribedReply), "unsubscribe"), cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Publish every row of <paramref name="batch"/> to <paramref name="topic"/>.</summary>
@@ -246,11 +304,12 @@ public sealed class FletcherClient : IAsyncDisposable
     public async Task<IReadOnlyList<string>> ListTopicsAsync(CancellationToken cancellationToken = default)
     {
         var reply = (TopicsListReply)await RequestAsync(Text(ControlMessages.BuildListTopics()), WebSocketMessageType.Text,
-            new Pending(typeof(TopicsListReply)), cancellationToken).ConfigureAwait(false);
+            new Pending(typeof(TopicsListReply), "list_topics"), cancellationToken).ConfigureAwait(false);
         return reply.Topics;
     }
 
-    /// <summary>Close the connection. A request in flight fails; every subscription ends.</summary>
+    /// <summary>Close the connection. A request in flight fails; every subscription ends; <see cref="Completion"/> completes.</summary>
+    /// <remarks>Safe to call from a handler: it then does not wait for the receive loop it is running on.</remarks>
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _state, 2) == 2)
@@ -262,38 +321,51 @@ public sealed class FletcherClient : IAsyncDisposable
         // otherwise record that as "the gateway closed the connection".
         End(new ObjectDisposedException(nameof(FletcherClient)));
 
-        if (_receiveLoop is not null)
+        bool fromLoop = ReferenceEquals(_delivering, this);
+        Task? loop = Volatile.Read(ref _receiveLoop);
+        if (loop is not null)
         {
             // Send our close and let the loop read the gateway's; give up after a grace period.
             try
             {
                 using var grace = new CancellationTokenSource(CloseGrace);
                 await _transport.CloseAsync(grace.Token).ConfigureAwait(false);
-                await _receiveLoop.WaitAsync(CloseGrace).ConfigureAwait(false);
+                if (!fromLoop)
+                {
+                    await loop.WaitAsync(CloseGrace).ConfigureAwait(false);
+                }
             }
-            catch (Exception e) when (e is TimeoutException or OperationCanceledException or WebSocketException or ObjectDisposedException)
+            catch (Exception e) when (e is TimeoutException or OperationCanceledException or WebSocketException
+                or ObjectDisposedException or InvalidOperationException)
             {
             }
 
             _stop.Cancel();
-            try
+            if (!fromLoop)
             {
-                await _receiveLoop.ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
+                try
+                {
+                    // Bounded: a handler stuck in I/O must not hang the dispose for ever.
+                    await loop.WaitAsync(CloseGrace).ConfigureAwait(false);
+                }
+                catch (Exception e) when (e is OperationCanceledException or TimeoutException)
+                {
+                }
             }
         }
 
         await _transport.DisposeAsync().ConfigureAwait(false);
-        _stop.Dispose();
+        if (!fromLoop)
+        {
+            _stop.Dispose();
+        }
     }
 
     // ───────────────────────────── Requests ─────────────────────────────
 
     private Task PublishRowAsync(string topic, Envelope envelope, CancellationToken cancellationToken) =>
         RequestAsync(GatewayFrames.BuildPublish(topic, envelope), WebSocketMessageType.Binary,
-            new Pending(typeof(PublishedReply)), cancellationToken);
+            new Pending(typeof(PublishedReply), "publish"), cancellationToken);
 
     private async Task<GatewayReply> RequestAsync(ReadOnlyMemory<byte> frame, WebSocketMessageType type, Pending pending,
         CancellationToken cancellationToken)
@@ -306,6 +378,13 @@ public sealed class FletcherClient : IAsyncDisposable
             {
                 _gate.Release();
                 throw Ended();
+            }
+
+            // A token cancelled while this call waited for the gate: not sent at all.
+            if (cancellationToken.IsCancellationRequested)
+            {
+                _gate.Release();
+                cancellationToken.ThrowIfCancellationRequested();
             }
 
             _pending = pending;
@@ -323,14 +402,74 @@ public sealed class FletcherClient : IAsyncDisposable
             throw failure;
         }
 
-        return await pending.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        if (_options.ReplyTimeout is { } timeout)
+        {
+            _ = WatchReplyAsync(pending, timeout);
+        }
+
+        try
+        {
+            return await pending.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Abandoned before the loop read the reply: the loop then releases what the reply
+            // created (review B2). Read already: the reply is this call's, so return it.
+            if (pending.TryAbandon())
+            {
+                throw;
+            }
+
+            return await pending.Task.ConfigureAwait(false);
+        }
+    }
+
+    // D-BIND-127: a reply that does not come in time ends the connection, independently of the
+    // caller (who may have stopped waiting), so the gate cannot stay held for good.
+    private async Task WatchReplyAsync(Pending pending, TimeSpan timeout)
+    {
+        try
+        {
+            Task finished = await Task.WhenAny(pending.Task, Task.Delay(timeout, _stop.Token)).ConfigureAwait(false);
+            if (finished != pending.Task && !_stop.IsCancellationRequested)
+            {
+                End(new GatewayException("FletcherClient: no reply to " + pending.Action + " within " + timeout.TotalSeconds + " s"));
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    // Release a gateway-side subscription the caller holds no id for, through the gate.
+    private async Task ReleaseOnGatewayAsync(ulong subscriptionId)
+    {
+        try
+        {
+            await RequestAsync(Text(ControlMessages.BuildUnsubscribe(subscriptionId)), WebSocketMessageType.Text,
+                new Pending(typeof(UnsubscribedReply), "unsubscribe"), CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception e) when (e is GatewayException or ObjectDisposedException or InvalidOperationException)
+        {
+            // Released on the gateway's side when the connection ends anyway.
+        }
     }
 
     private void ThrowIfUnusable()
     {
-        if (Volatile.Read(ref _state) == 0)
+        if (!_connected)
         {
-            throw new InvalidOperationException("FletcherClient: call ConnectAsync first.");
+            lock (_sync)
+            {
+                if (_ended is not null)
+                {
+                    throw Ended();
+                }
+            }
+
+            throw new InvalidOperationException(Volatile.Read(ref _state) == 0
+                ? "FletcherClient: call ConnectAsync first."
+                : "FletcherClient: ConnectAsync has not completed; await it before other calls.");
         }
 
         lock (_sync)
@@ -355,13 +494,18 @@ public sealed class FletcherClient : IAsyncDisposable
             while (true)
             {
                 ReceivedFrame frame = await _transport.ReceiveAsync(_stop.Token).ConfigureAwait(false);
+                if (frame.Payload.Length > _options.MaxMessageBytes)
+                {
+                    throw new MessageTooLargeException(_options.MaxMessageBytes);
+                }
+
                 switch (frame.Type)
                 {
                     case WebSocketMessageType.Close:
                         End(new GatewayException("FletcherClient: the gateway closed the connection"));
                         return;
                     case WebSocketMessageType.Text:
-                        OnReply(ControlMessages.ParseReply(Encoding.UTF8.GetString(frame.Payload.Span)));
+                        OnText(frame.Payload);
                         break;
                     default:
                         OnMessage(frame.Payload);
@@ -373,10 +517,43 @@ public sealed class FletcherClient : IAsyncDisposable
         {
             End(new ObjectDisposedException(nameof(FletcherClient)));
         }
+        catch (MessageTooLargeException e)
+        {
+            End(new GatewayException(e.Message, e));
+        }
         catch (Exception e)
         {
             End(new GatewayException("FletcherClient: the connection to the gateway failed: " + e.Message, e));
         }
+    }
+
+    // D-BIND-124: a reply that does not parse fails the request in flight, or is ignored when
+    // none is; the connection stays up.
+    private void OnText(ReadOnlyMemory<byte> payload)
+    {
+        GatewayReply reply;
+        try
+        {
+            reply = ControlMessages.ParseReply(Encoding.UTF8.GetString(payload.Span));
+        }
+        catch (Exception e) when (e is InvalidDataException or DecoderFallbackException)
+        {
+            Pending? waiting;
+            lock (_sync)
+            {
+                waiting = _pending;
+            }
+
+            if (waiting is not null)
+            {
+                Finish(waiting, failure: new GatewayException("FletcherClient: the gateway's reply to " + waiting.Action +
+                    " could not be read: " + e.Message, e));
+            }
+
+            return;
+        }
+
+        OnReply(reply);
     }
 
     private void OnReply(GatewayReply reply)
@@ -409,10 +586,21 @@ public sealed class FletcherClient : IAsyncDisposable
 
         if (reply is SubscribedReply subscribed && pending.Handler is not null)
         {
+            // Review B2: the caller stopped waiting before this reply was read, so it never
+            // gets the id; the subscription is released instead of registered.
+            if (!pending.TryClaim())
+            {
+                _early.Clear();
+                Finish(pending, reply);
+                _ = ReleaseOnGatewayAsync(subscribed.SubscriptionId);
+                return;
+            }
+
             Register(pending, subscribed);
             return;
         }
 
+        pending.TryClaim();
         Finish(pending, reply);
     }
 
@@ -422,8 +610,11 @@ public sealed class FletcherClient : IAsyncDisposable
         string? why = null;
         if (codec is null && reply.Schema is null)
         {
-            why = "FletcherClient: no schema for topic '" + reply.Topic + "': pass one to SubscribeAsync, or have its " +
-                "publisher announce one with CreateTopicAsync";
+            why = reply.SchemaError is null
+                ? "FletcherClient: no schema for topic '" + reply.Topic + "': pass one to SubscribeAsync, or have its " +
+                    "publisher announce one with CreateTopicAsync"
+                : "FletcherClient: the gateway's schema for topic '" + reply.Topic + "' cannot be read (" + reply.SchemaError +
+                    "): pass one to SubscribeAsync";
         }
         else if (codec is null)
         {
@@ -450,7 +641,11 @@ public sealed class FletcherClient : IAsyncDisposable
         {
             if (id == reply.SubscriptionId)
             {
-                Deliver(subscription, id, Envelope.Deserialize(envelope));
+                DeliverBytes(subscription, id, envelope);
+            }
+            else
+            {
+                Interlocked.Increment(ref _dropped);
             }
         }
 
@@ -460,17 +655,27 @@ public sealed class FletcherClient : IAsyncDisposable
 
     private void OnMessage(ReadOnlyMemory<byte> frame)
     {
-        (ulong id, ReadOnlyMemory<byte> envelopeBytes) = GatewayFrames.ParseMessage(frame);
-        Envelope envelope = Envelope.Deserialize(envelopeBytes);
+        ulong id;
+        ReadOnlyMemory<byte> envelopeBytes;
+        try
+        {
+            (id, envelopeBytes) = GatewayFrames.ParseMessage(frame);
+        }
+        catch (InvalidDataException)
+        {
+            // Not even a subscription id: no subscription to report it to.
+            Interlocked.Increment(ref _dropped);
+            return;
+        }
 
         if (_subscriptions.TryGetValue(id, out Subscription? subscription))
         {
-            Deliver(subscription, id, envelope);
+            DeliverBytes(subscription, id, envelopeBytes);
             return;
         }
 
         // Not yet registered: keep it if a subscribe is in flight (the reply may follow it).
-        // Otherwise it belongs to a subscription already ended, and is dropped.
+        // Otherwise it belongs to a subscription already ended, and is dropped (D-BIND-132).
         bool subscribing;
         lock (_sync)
         {
@@ -481,22 +686,32 @@ public sealed class FletcherClient : IAsyncDisposable
         {
             _early.Add((id, envelopeBytes.ToArray()));
         }
+        else
+        {
+            Interlocked.Increment(ref _dropped);
+        }
     }
 
-    private void Deliver(Subscription subscription, ulong id, Envelope envelope)
+    // One row for a subscription: whatever about its bytes does not decode is counted and
+    // reported for that row alone, never the end of the connection.
+    private void DeliverBytes(Subscription subscription, ulong id, ReadOnlyMemory<byte> envelopeBytes)
     {
+        Envelope envelope;
         RecordBatch row;
         try
         {
+            envelope = Envelope.Deserialize(envelopeBytes);
             row = subscription.Codec.Decode(envelope.Row.Span);
         }
-        catch (InvalidDataException e)
+        catch (Exception e)
         {
             Interlocked.Increment(ref _undecodable);
-            Report(e, id);
+            Report(e, id, GatewayFaultReason.RowUndecodable);
             return;
         }
 
+        FletcherClient? outer = _delivering;
+        _delivering = this;
         try
         {
             subscription.Handler(row, envelope);
@@ -504,15 +719,19 @@ public sealed class FletcherClient : IAsyncDisposable
         catch (Exception e)
         {
             Interlocked.Increment(ref _absorbed);
-            Report(e, id);
+            Report(e, id, GatewayFaultReason.HandlerThrew);
+        }
+        finally
+        {
+            _delivering = outer;
         }
     }
 
-    private void Report(Exception exception, ulong id)
+    private void Report(Exception exception, ulong id, GatewayFaultReason reason)
     {
         try
         {
-            HandlerFaulted?.Invoke(this, new GatewayHandlerFaultedEventArgs(exception, id));
+            HandlerFaulted?.Invoke(this, new GatewayHandlerFaultedEventArgs(exception, id, reason));
         }
         catch (Exception)
         {
@@ -544,7 +763,8 @@ public sealed class FletcherClient : IAsyncDisposable
         }
     }
 
-    // The connection is over: record why, fail the request in flight, end every subscription.
+    // The connection is over: record why, fail the request in flight, end every subscription,
+    // complete Completion; a connection the client ended itself is dropped at once.
     private void End(Exception reason)
     {
         Pending? pending;
@@ -565,6 +785,28 @@ public sealed class FletcherClient : IAsyncDisposable
         {
             _gate.Release();
             pending.Fail(Ended());
+        }
+
+        if (reason is ObjectDisposedException)
+        {
+            _completion.TrySetResult();
+        }
+        else
+        {
+            // Dropped BEFORE Completion says so: whoever awaits it finds the socket gone.
+            try
+            {
+                _transport.Abort();
+            }
+            catch (Exception)
+            {
+                // Already closed or disposed: nothing to drop.
+            }
+
+            _completion.TrySetException(reason as GatewayException ?? new GatewayException("FletcherClient: the connection ended", reason));
+
+            // Observed here, so an app that never awaits Completion sees no unobserved-task noise.
+            _ = _completion.Task.Exception;
         }
     }
 
@@ -590,13 +832,18 @@ public sealed class FletcherClient : IAsyncDisposable
     private sealed class Pending
     {
         private readonly TaskCompletionSource<GatewayReply> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _claim; // 0 open, 1 the loop handled the reply, 2 the caller abandoned it
 
-        public Pending(Type expected)
+        public Pending(Type expected, string action)
         {
             Expected = expected;
+            Action = action;
         }
 
         public Type Expected { get; }
+
+        /// <summary>The request's action, for messages.</summary>
+        public string Action { get; }
 
         public GatewayRowHandler? Handler { get; init; }
 
@@ -604,9 +851,21 @@ public sealed class FletcherClient : IAsyncDisposable
 
         public Task<GatewayReply> Task => _completion.Task;
 
+        /// <summary>The loop takes the reply; false when the caller had already abandoned it.</summary>
+        public bool TryClaim() => Interlocked.CompareExchange(ref _claim, 1, 0) != 2;
+
+        /// <summary>The caller stops waiting; false when the loop had already taken the reply.</summary>
+        public bool TryAbandon() => Interlocked.CompareExchange(ref _claim, 2, 0) != 1;
+
         public void Complete(GatewayReply reply) => _completion.TrySetResult(reply);
 
-        public void Fail(Exception failure) => _completion.TrySetException(failure);
+        public void Fail(Exception failure)
+        {
+            _completion.TrySetException(failure);
+
+            // A caller that stopped waiting never observes it; mark it observed here.
+            _ = _completion.Task.Exception;
+        }
     }
 
     // A subscribe the gateway accepted but the client cannot decode: SubscribeAsync releases it.

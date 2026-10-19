@@ -59,6 +59,56 @@ public sealed class ManagedCodecAgreesWithNativeTests
         AssertAgree(Sliced());
     }
 
+    public static TheoryData<string> Refusals => new()
+    {
+        "null map key",
+        "null dictionary entry",
+    };
+
+    // D-BIND-131 (review of BIND-8): the native codec used to encode these from whatever bytes
+    // lay under the null, where the managed codec refuses them; both refuse them now.
+    [Theory]
+    [MemberData(nameof(Refusals))]
+    public void BothCodecsRefuseTheSameRows(string name)
+    {
+        RecordBatch batch = name switch
+        {
+            "null map key" => Batch(("m", NullKeyMap())),
+            "null dictionary entry" => Batch(("d", NullEntryDictionary())),
+            _ => throw new ArgumentOutOfRangeException(nameof(name)),
+        };
+
+        using var native = new FletcherCodec(batch.Schema);
+        using BoundRows nativeRows = native.Bind(batch);
+        Exception nativeRefusal = Assert.ThrowsAny<Exception>(() => native.Encode(nativeRows, 0, new ArrayBufferWriter<byte>()));
+
+        var managed = new GatewayRowCodec(batch.Schema);
+        Exception managedRefusal = Assert.ThrowsAny<ArgumentException>(() => managed.Encode(managed.Bind(batch), 0));
+
+        string expected = name == "null map key" ? "map key must not be null" : "null dictionary entry";
+        Assert.Contains(expected, nativeRefusal.Message, StringComparison.Ordinal);
+        Assert.Contains(expected, managedRefusal.Message, StringComparison.Ordinal);
+    }
+
+    private static MapArray NullKeyMap()
+    {
+        // map<string, int32>, one row {"a": 1, null: 2}: Apache.Arrow builds it without validating.
+        IArrowArray keys = new StringArray.Builder().Append("a").AppendNull().Build();
+        IArrowArray values = new Int32Array.Builder().Append(1).Append(2).Build();
+        var type = new MapType(new Field("key", StringType.Default, false), new Field("value", Int32Type.Default, true), false);
+        var entries = new ArrayData(type.KeyValueType, 2, 0, 0, new[] { ArrowBuffer.Empty }, new[] { keys.Data, values.Data });
+        ArrowBuffer offsets = new ArrowBuffer.Builder<int>().Append(0).Append(2).Build();
+        return (MapArray)ArrowArrayFactory.BuildArray(new ArrayData(type, 1, 0, 0, new[] { ArrowBuffer.Empty, offsets }, new[] { entries }));
+    }
+
+    private static DictionaryArray NullEntryDictionary()
+    {
+        // One row whose index names the dictionary's null entry.
+        IArrowArray dictionary = new StringArray.Builder().Append("alpha").AppendNull().Build();
+        IArrowArray indices = new Int32Array.Builder().Append(1).Build();
+        return new DictionaryArray(new DictionaryType(Int32Type.Default, StringType.Default, false), indices, dictionary);
+    }
+
     private static void AssertAgree(RecordBatch batch)
     {
         using var native = new FletcherCodec(batch.Schema);
@@ -79,7 +129,7 @@ public sealed class ManagedCodecAgreesWithNativeTests
 
             Assert.Equal(Convert.ToHexString(nativeBytes), Convert.ToHexString(managed.Encode(managedRows, row)));
 
-            RecordBatch readByManaged = managed.Decode(nativeBytes);
+            using RecordBatch readByManaged = managed.Decode(nativeBytes);
             using BoundRows again = nativeDecoded.Bind(Retype(readByManaged, nativeDecoded.Schema));
             var reencoded = new ArrayBufferWriter<byte>();
             nativeDecoded.Encode(again, 0, reencoded);

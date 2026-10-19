@@ -52,7 +52,16 @@ public abstract class GatewayProcess : IAsyncLifetime
             UseShellExecute = false,
         };
         _process = Process.Start(start) ?? throw new InvalidOperationException("the gateway did not start");
-        _ = _process.StandardError.ReadToEndAsync();
+        // Forwarded, not discarded (review of BIND-8): a failing case then shows what the gateway
+        // logged in the test run's own output.
+        Process process = _process;
+        _ = Task.Run(async () =>
+        {
+            while (await process.StandardError.ReadLineAsync() is { } line)
+            {
+                await Console.Error.WriteLineAsync($"[gateway {Provider} stderr] {line}");
+            }
+        });
 
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         while (true)

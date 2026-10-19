@@ -76,10 +76,34 @@ public sealed class CoverageWireBytesTests
     }
 
     [Fact]
+    public void OneCodecDecodesSeveralRowsOneAfterAnother()
+    {
+        // The subscriber path: one codec per subscription, decoding row by row as MESSAGE
+        // frames arrive. Three different C++-written rows of one schema, each read back to
+        // exactly its bytes, so no state carries over from one row to the next.
+        string[] names =
+        {
+            "coverage.CompositeCoverage.v1.bin",
+            "coverage.CompositeCoverage.alternate-null-empty.v1.bin",
+            "coverage.CompositeCoverage.defaulted.v1.bin",
+        };
+        (RecordBatch fixture, _) = CoverageFixture.Case(names[0]);
+        using (fixture)
+        {
+            var codec = new GatewayRowCodec(fixture.Schema);
+            foreach (string name in names)
+            {
+                using RecordBatch decoded = codec.Decode(ReadGolden(name));
+                Assert.Equal(Hex(ReadGolden(name)), Hex(codec.Encode(codec.Bind(decoded), 0)));
+            }
+        }
+    }
+
+    [Fact]
     public void SeveralRowsDecodeIntoOneBatchThatReadsBackRowByRow()
     {
-        // The subscriber path decodes row by row as MESSAGE frames arrive; DecodeBatch is
-        // the same walk over several. Three different C++-written rows of one schema.
+        // DecodeBatch is the same walk over several rows, kept for a batched subscription
+        // (D-BIND-128 amended). Three different C++-written rows of one schema.
         string[] names =
         {
             "coverage.CompositeCoverage.v1.bin",

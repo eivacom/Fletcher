@@ -14,18 +14,17 @@
 // cpp_backend::BuildFlattenedFieldList (field-level flatten inlining + the
 // unsupported-field drop set), so it cannot drift from the schema field set.
 //
-// Byte identity vs today's emitter is the ground-truth gate
-// (TsVisitor.DescriptorByteIdentical). One subtlety it guards: a *singular*
-// flatten-wrapper list field (e.g. `StructListWrapper flattened_struct_list`)
-// flattens to List<Struct(Leaf)> in the IR, but today's TS preserves the DECLARED
-// wrapper name (IStructListWrapper[] / StructListWrapper.fields), not the inner
-// leaf identity. The visitor recovers that language-neutral proto fact from
-// SchemaFieldRecord::source_field (see DeclaredWrapperFor). A *repeated*
-// flatten-wrapper (nested list) keeps the leaf name (ILeaf[][]).
+// The committed coverage golden is the ground-truth gate (TsVisitor.DescriptorByteIdentical).
+// A struct is always rendered by its IR identity, the message the wire carries, so a singular
+// flatten-wrapper list field is ILeaf[] / Leaf.fields (D-BIND-119). A message of another file is
+// named through one namespace import of that file, by a path relative to the importing file
+// (D-BIND-122). Each TypedSchema carries its Arrow IPC schema as base64 `schemaIpc` when the
+// generator passes it (D-BIND-130).
 
 #include <google/protobuf/descriptor.h>
 
 #include <cstdint>
+#include <map>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -36,7 +35,10 @@ namespace fletcher::ts_backend {
 
 class TsVisitor {
    public:
-    explicit TsVisitor(const google::protobuf::FileDescriptor* file);
+    // `schema_ipc`: base64 Arrow IPC per message, written as the TypedSchema's `schemaIpc`
+    // (D-BIND-130); a message absent from it gets none.
+    explicit TsVisitor(const google::protobuf::FileDescriptor* file,
+                       std::map<const google::protobuf::Descriptor*, std::string> schema_ipc = {});
 
     // Generate the full .fletcher.ts file (header, cross-file imports,
     // per-message interface + TypedSchema, service topic constants).
@@ -63,7 +65,13 @@ class TsVisitor {
     // Runtime WireTypeId member name for a node.
     std::string WireType(const ir::IrNode& node);
 
+    // A message as this file names it: bare when it is this file's, else through the namespace
+    // its file is imported as (D-BIND-122).
+    std::string SchemaName(const google::protobuf::Descriptor* msg) const;
+    std::string InterfaceName(const google::protobuf::Descriptor* msg) const;
+
     const google::protobuf::FileDescriptor* file_;
+    std::map<const google::protobuf::Descriptor*, std::string> schema_ipc_;
 };
 
 }  // namespace fletcher::ts_backend

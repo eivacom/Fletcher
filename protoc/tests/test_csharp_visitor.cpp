@@ -1634,6 +1634,45 @@ TEST(CsGateway, ThePairBorrowsAGatewayClientAndNamesNothingNative) {
     ExpectContains(gateway, "// Skipped: Telemetry.Ping — ");
 }
 
+TEST(CsGateway, TwoTypesOfOneNameAreRefusedBeforeAnyOutput) {
+    // Review of BIND-8 (D-BIND-100's stance): `S.M`'s gateway pair and `S.MGateway`'s native one
+    // would both be `S_MGatewayPublisher`, and a message can be named like a pair type; both
+    // were CS0101 in the consumer's build, and are refused at generation now.
+    const std::string head =
+        "syntax = \"proto3\";\npackage a;\nimport \"google/protobuf/empty.proto\";\n"
+        "message Row { int32 x = 1; }\n";
+    const std::string two_pairs = head +
+                                  "service S { rpc M(stream Row) returns (google.protobuf.Empty); "
+                                  "rpc MGateway(stream Row) returns (google.protobuf.Empty); }\n";
+    {
+        std::map<std::string, std::string> files;
+        std::string error;
+        EXPECT_FALSE(GenerateSource(two_pairs, "csharp,csharp_gateway", &files, &error));
+        EXPECT_NE(error.find("'S_MGatewayPublisher'"), std::string::npos) << error;
+        EXPECT_NE(error.find("D-BIND-100"), std::string::npos) << error;
+        EXPECT_TRUE(files.empty()) << "wrote " << files.size() << " files";
+    }
+    {
+        // Without the native pair, or without the gateway pair, the names do not meet.
+        for (const std::string opts : {"csharp,csharp_model_only,csharp_gateway", "csharp"}) {
+            std::map<std::string, std::string> files;
+            std::string error;
+            EXPECT_TRUE(GenerateSource(two_pairs, opts, &files, &error)) << opts << ": " << error;
+        }
+    }
+    {
+        const std::string message_like_a_topic =
+            head +
+            "message S_MTopic { int32 y = 1; }\n"
+            "service S { rpc M(stream Row) returns (google.protobuf.Empty); }\n";
+        std::map<std::string, std::string> files;
+        std::string error;
+        EXPECT_FALSE(
+            GenerateSource(message_like_a_topic, "csharp,csharp_model_only", &files, &error));
+        EXPECT_NE(error.find("'S_MTopic'"), std::string::npos) << error;
+    }
+}
+
 TEST(CsAccessor, TheTokenIsParsedAndOtherTokensAreUnchanged) {
     for (const auto& [parameter, expected] : {std::pair<const char*, bool>{"", false},
                                               {"csharp", false},

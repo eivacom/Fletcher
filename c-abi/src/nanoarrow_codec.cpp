@@ -294,6 +294,12 @@ void EncodeValue(const ArrowArrayView& view, int64_t index, WriteBuffer& out) {
                                         std::to_string(code) + " is outside the dictionary's " +
                                         std::to_string(view.dictionary->length) + " values");
         }
+        // D-BIND-131: the managed gateway codec refuses this too; the wire has no null for a
+        // value its row says is present, and the bytes under a null entry are unspecified.
+        if (ArrowArrayViewIsNull(view.dictionary, code) != 0) {
+            throw std::invalid_argument(
+                "NanoarrowCodec: a row names a null dictionary entry; a valid row cannot carry it");
+        }
         EncodeValue(*view.dictionary, code, out);
         return;
     }
@@ -402,6 +408,11 @@ void EncodeValue(const ArrowArrayView& view, int64_t index, WriteBuffer& out) {
 
             // Keys first, with NO null bitfield: a null key is not representable.
             for (int64_t i = 0; i < count; ++i) {
+                // D-BIND-131: refused, as the managed gateway codec does, rather than writing
+                // whatever bytes lie under the null.
+                if (ArrowArrayViewIsNull(&keys, entry_at + i) != 0) {
+                    throw std::invalid_argument("NanoarrowCodec: a map key must not be null");
+                }
                 EncodeValue(keys, entry_at + i, out);
             }
             EncodeElements(values, entry_at, count, /*write_count=*/false, out);

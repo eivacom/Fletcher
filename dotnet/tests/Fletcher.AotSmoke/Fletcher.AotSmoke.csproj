@@ -33,14 +33,16 @@
   <ItemGroup>
     <ProjectReference Include="../../src/Fletcher/Fletcher.csproj" />
     <ProjectReference Include="../../src/Fletcher.Model/Fletcher.Model.csproj" />
+    <!-- The gateway client and its generated pair too (review of BIND-8): IsAotCompatible
+         alone is the analysers; this publish is ILC compiling them. -->
+    <ProjectReference Include="../../src/Fletcher.GatewayClient/Fletcher.GatewayClient.csproj" />
     <PackageReference Include="Apache.Arrow" Version="[23.0.0]" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The gateway pair (BIND-8c) is not the native side's: Fletcher.GatewayClient.Tests
-         compiles and tests it. -->
+    <!-- Every golden: the native pair, and the gateway pair (BIND-8c), which this app
+         references the gateway client for. -->
     <Compile Include="../../../protoc/tests/golden/*.fletcher*.cs"
-             Exclude="../../../protoc/tests/golden/*.fletcher.gateway.cs"
              Link="golden/%(Filename)%(Extension)" />
     <Compile Include="../../../protoc/tests/golden/google/protobuf/timestamp.fletcher.cs"
              Link="golden/google/protobuf/%(Filename)%(Extension)" />

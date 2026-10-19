@@ -1,21 +1,18 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-// BIND-8a: the JSON control messages, the schema descriptor and schemaIpc (Bucket 2).
+// BIND-8a: the JSON control messages and schemaIpc (Bucket 2).
 //
 // gateway-client-ts/test/ws-protocol.test.ts's text cases, ported: four request builders,
 // seven reply parses. Then gateway/tests/test_schema_codec.cpp from the other side of the
-// wire: that file tests the GATEWAY's parser of a create_topic schema, and what a client
-// owes it is a descriptor that parser accepts. So each of its cases becomes a property of
-// the descriptor C# writes (the accepted shape for its two building cases, "never the
-// shape it refuses" for its seven refusals, and its one documented gap: a nested field,
-// which C# describes in full and today's gateway refuses). Its eleventh case, the
-// wire-type round trip, is WireTypeTests.
+// wire, as D-BIND-128 re-mapped it: since D-BIND-112 the client announces a schema as
+// schemaIpc only, so what it owes that file is that its schemaIpc reads back as the same
+// declaration, at every depth. (8a's JSON descriptor and its wire-type table, which the
+// client no longer sends, went with D-BIND-128.)
 //
 // Last, the generator's own schemas (protoc/tests/golden/*.ipc): each opens the managed
-// codec (as SchemaIpcTests opens the native one over them), each reads back from base64
-// as a subscribed reply carries it, and each describes itself with the field numbers its
-// metadata holds (D-BIND-72 point 2).
+// codec (as SchemaIpcTests opens the native one over them) and each reads back from base64
+// as a subscribed reply carries it, unchanged.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -87,7 +84,7 @@ public sealed class ControlMessagesTests
         Assert.Equal(9_007_199_254_740_993ul, reply.SubscriptionId);
         Assert.Equal("a/b", reply.Topic);
         Assert.Null(reply.Schema);
-        Assert.Null(reply.SchemaJson);
+        Assert.Null(reply.SchemaError);
     }
 
     [Fact]
@@ -132,7 +129,6 @@ public sealed class ControlMessagesTests
         "{\"type\":\"subscribed\",\"subId\":\"-1\",\"topic\":\"a\"}",
         "{\"type\":\"subscribed\",\"subId\":\"18446744073709551616\",\"topic\":\"a\"}",
         "{\"type\":\"subscribed\",\"subId\":\"1\"}",
-        "{\"type\":\"subscribed\",\"subId\":\"1\",\"topic\":\"a\",\"schemaIpc\":\"%%%\"}",
         "{\"type\":\"topics_list\"}",
         "{\"type\":\"topics_list\",\"topics\":[1]}",
     };
@@ -146,103 +142,60 @@ public sealed class ControlMessagesTests
         Assert.Throws<InvalidDataException>(() => ControlMessages.ParseReply(text));
     }
 
-    // ── gateway/tests/test_schema_codec.cpp, from the client's side ──
-
     [Fact]
-    public void BuildsStructWithScalarFields()
+    public void AnUnreadableSchemaIpcIsAbsentWithItsReason()
     {
-        Schema schema = new Schema.Builder()
-            .Field(f => f.Name("id").DataType(Int64Type.Default))
-            .Field(f => f.Name("value").DataType(DoubleType.Default))
-            .Field(f => f.Name("label").DataType(StringType.Default))
-            .Build();
+        // D-BIND-124: a subscribed reply whose schema this client cannot read is not a broken
+        // reply; the schema is absent and the reason kept, so a subscriber that brought its own
+        // schema is unaffected and one that did not is told why.
+        var reply = Assert.IsType<SubscribedReply>(
+            ControlMessages.ParseReply("{\"type\":\"subscribed\",\"subId\":\"1\",\"topic\":\"a\",\"schemaIpc\":\"%%%\"}"));
 
-        using JsonDocument json = JsonDocument.Parse(ControlMessages.SchemaToJson(schema));
-        JsonElement[] fields = json.RootElement.GetProperty("fields").EnumerateArray().ToArray();
-
-        Assert.Equal(new[] { "id", "value", "label" }, fields.Select(f => f.GetProperty("name").GetString()));
-        Assert.Equal(new[] { 0x05, 0x0B, 0x0C }, fields.Select(f => f.GetProperty("wireType").GetInt32()));
+        Assert.Null(reply.Schema);
+        Assert.Contains("not base64", reply.SchemaError, StringComparison.Ordinal);
     }
+
+    // ── gateway/tests/test_schema_codec.cpp, from the client's side (D-BIND-128) ──
+    //
+    // What the client owes the gateway's schema handling since D-BIND-112 is one thing: the
+    // schemaIpc it writes reads back as the same declaration. The C++ goldens are the native
+    // declarations' own bytes; read by the client and written again, each must be the same
+    // schema at every depth: names, types with their parameters, nullability, and every
+    // metadata entry, the schema's and each field's. That the C++ reader then gives back the
+    // native declaration's exact bytes is integration-tests/gateway-dotnet-crosslang's, live.
+    // The rest of test_schema_codec tests the gateway's own C++ (the JSON parser, the conflict
+    // measurement, base64, FieldToJson) and has no managed counterpart; Bucket 2 records it.
 
     [Theory]
     [MemberData(nameof(IpcGoldens))]
     public void BuildCreateTopicAnnouncesTheSchemaAsSchemaIpcAndNotAsJson(string golden)
     {
-        // D-BIND-112: the schema goes as its Arrow IPC bytes, which read back to the same
-        // fields, types and field numbers; the lossy JSON descriptor is not sent at all.
         Schema schema = ReadGolden(golden);
 
         using JsonDocument json = JsonDocument.Parse(ControlMessages.BuildCreateTopic("t", schema));
 
         Assert.False(json.RootElement.TryGetProperty("schema", out _));
         Schema back = ControlMessages.ReadSchemaIpc(json.RootElement.GetProperty("schemaIpc").GetString()!);
-        Assert.Equal(schema.FieldsList.Select(f => (f.Name, f.DataType.TypeId, f.IsNullable)),
-            back.FieldsList.Select(f => (f.Name, f.DataType.TypeId, f.IsNullable)));
-        Assert.Equal(schema.FieldsList.Select(f => f.Metadata?[ControlMessages.FieldNumberKey]),
-            back.FieldsList.Select(f => f.Metadata?[ControlMessages.FieldNumberKey]));
+        AssertSameSchema(schema, back, golden);
     }
 
     [Fact]
-    public void BuildsEmptyStruct()
+    public void TheSchemaComparisonSeesNestedMetadataAndTimestampUnits()
     {
-        using JsonDocument json = JsonDocument.Parse(ControlMessages.SchemaToJson(new Schema.Builder().Build()));
-
-        Assert.Equal(0, json.RootElement.GetProperty("fields").GetArrayLength());
-    }
-
-    [Theory]
-    [MemberData(nameof(IpcGoldens))]
-    public void NeverWritesADescriptorTheGatewaysParserRefusesForItsShape(string golden)
-    {
-        // test_schema_codec's seven malformed-descriptor refusals (no fields array, fields
-        // not an array, a field without a string name or an integer wireType, an unknown
-        // wireType): the descriptor C# writes has none of them, at any depth.
-        using JsonDocument json = JsonDocument.Parse(ControlMessages.SchemaToJson(ReadGolden(golden)));
-
-        Assert.Equal(JsonValueKind.Array, json.RootElement.GetProperty("fields").ValueKind);
-        foreach (JsonElement field in json.RootElement.GetProperty("fields").EnumerateArray())
-        {
-            AssertWellFormed(field);
-        }
-    }
-
-    [Fact]
-    public void ANestedFieldIsDescribedInFullThoughTodaysGatewayRefusesIt()
-    {
-        // test_schema_codec ThrowsOnUnsupportedWireType: the gateway's create_topic parser
-        // takes top-level SCALARS only and refuses 0x20 (struct) and the other composites.
-        // C# still describes the topic as it is - the same shape the gateway itself sends
-        // in a subscribed reply - and BIND-8b decides what CreateTopicAsync announces.
-        var point = new StructType(new List<Field> { new("x", DoubleType.Default, false), new("y", DoubleType.Default, false) });
-        Schema schema = new Schema.Builder()
-            .Field(f => f.Name("at").DataType(point))
-            .Field(f => f.Name("tags").DataType(new MapType(StringType.Default, Int32Type.Default)))
-            .Field(f => f.Name("grid").DataType(new FixedSizeListType(new Field("item", FloatType.Default, false), 9)))
+        // The comparison the golden cases rest on, held to the differences it must see: a
+        // nested field's metadata, a Timestamp's unit and its zone.
+        Schema Make(TimeUnit unit, string zone, string nestedNumber) => new Schema.Builder()
+            .Field(new Field("at", new StructType(new List<Field>
+            {
+                new("lat", DoubleType.Default, false, new Dictionary<string, string> { ["field_number"] = nestedNumber }),
+            }), false))
+            .Field(new Field("when", new TimestampType(unit, zone), false))
             .Build();
 
-        using JsonDocument json = JsonDocument.Parse(ControlMessages.SchemaToJson(schema));
-        JsonElement[] fields = json.RootElement.GetProperty("fields").EnumerateArray().ToArray();
-
-        Assert.Equal(0x20, fields[0].GetProperty("wireType").GetInt32());
-        Assert.Equal(new[] { "x", "y" }, fields[0].GetProperty("fields").EnumerateArray().Select(f => f.GetProperty("name").GetString()));
-        Assert.Equal(0x24, fields[1].GetProperty("wireType").GetInt32());
-        Assert.Equal(0x0C, fields[1].GetProperty("mapKey").GetProperty("wireType").GetInt32());
-        Assert.Equal(0x04, fields[1].GetProperty("mapValue").GetProperty("wireType").GetInt32());
-        Assert.Equal(0x23, fields[2].GetProperty("wireType").GetInt32());
-        Assert.Equal(9, fields[2].GetProperty("fixedSize").GetInt32());
-        Assert.Equal(0x0A, fields[2].GetProperty("element").GetProperty("wireType").GetInt32());
-    }
-
-    [Fact]
-    public void ADictionaryFieldIsDescribedByItsValueType()
-    {
-        Schema schema = new Schema.Builder()
-            .Field(f => f.Name("heading").DataType(new DictionaryType(Int8Type.Default, StringType.Default, false)))
-            .Build();
-
-        using JsonDocument json = JsonDocument.Parse(ControlMessages.SchemaToJson(schema));
-
-        Assert.Equal(0x0C, json.RootElement.GetProperty("fields")[0].GetProperty("wireType").GetInt32());
+        AssertSameSchema(Make(TimeUnit.Nanosecond, "UTC", "1"), Make(TimeUnit.Nanosecond, "UTC", "1"), "same");
+        Assert.ThrowsAny<Exception>(() => AssertSameSchema(Make(TimeUnit.Nanosecond, "UTC", "1"), Make(TimeUnit.Microsecond, "UTC", "1"), "unit"));
+        Assert.ThrowsAny<Exception>(() => AssertSameSchema(Make(TimeUnit.Nanosecond, "UTC", "1"), Make(TimeUnit.Nanosecond, "+01:00", "1"), "zone"));
+        Assert.ThrowsAny<Exception>(() => AssertSameSchema(Make(TimeUnit.Nanosecond, "UTC", "1"), Make(TimeUnit.Nanosecond, "UTC", "2"), "nested metadata"));
     }
 
     // ── The generator's schemas ──
@@ -282,49 +235,70 @@ public sealed class ControlMessagesTests
 
         var reply = Assert.IsType<SubscribedReply>(ControlMessages.ParseReply(text));
 
-        Schema expected = ReadGolden(golden);
         Assert.NotNull(reply.Schema);
-        Assert.Equal(expected.FieldsList.Select(f => (f.Name, f.DataType.TypeId)), reply.Schema!.FieldsList.Select(f => (f.Name, f.DataType.TypeId)));
-        Assert.Equal("{\"fields\":[]}", reply.SchemaJson);
+        Assert.Null(reply.SchemaError);
+        AssertSameSchema(ReadGolden(golden), reply.Schema!, golden);
     }
 
-    [Theory]
-    [MemberData(nameof(IpcGoldens))]
-    public void TheDescriptorCarriesEachFieldsNumberFromItsMetadata(string golden)
+    // Every field at every depth: name, nullability, type with its parameters, metadata.
+    private static void AssertSameSchema(Schema expected, Schema actual, string what)
     {
-        Schema schema = ReadGolden(golden);
-        using JsonDocument json = JsonDocument.Parse(ControlMessages.SchemaToJson(schema));
-        JsonElement[] fields = json.RootElement.GetProperty("fields").EnumerateArray().ToArray();
+        AssertSameMetadata(expected.Metadata, actual.Metadata, what + ": the schema");
+        AssertSameFields(expected.FieldsList, actual.FieldsList, what);
+    }
 
-        for (int i = 0; i < fields.Length; ++i)
+    private static void AssertSameFields(IReadOnlyList<Field> expected, IReadOnlyList<Field> actual, string path)
+    {
+        Assert.True(expected.Count == actual.Count, path + ": " + expected.Count + " fields, got " + actual.Count);
+        for (int i = 0; i < expected.Count; ++i)
         {
-            Field field = schema.FieldsList[i];
-            Assert.True(field.HasMetadata && field.Metadata.ContainsKey(ControlMessages.FieldNumberKey),
-                golden + ": the generator wrote no field_number for '" + field.Name + "'");
-            Assert.Equal(int.Parse(field.Metadata[ControlMessages.FieldNumberKey], System.Globalization.CultureInfo.InvariantCulture),
-                fields[i].GetProperty("fieldNumber").GetInt32());
+            AssertSameField(expected[i], actual[i], path + "." + expected[i].Name);
         }
     }
 
-    private static void AssertWellFormed(JsonElement field)
+    private static void AssertSameField(Field expected, Field actual, string path)
     {
-        Assert.Equal(JsonValueKind.String, field.GetProperty("name").ValueKind);
-        Assert.Equal(JsonValueKind.Number, field.GetProperty("wireType").ValueKind);
-        Assert.NotEqual(0, field.GetProperty("wireType").GetInt32());
-        foreach (string nested in new[] { "element", "mapKey", "mapValue" })
-        {
-            if (field.TryGetProperty(nested, out JsonElement child))
-            {
-                AssertWellFormed(child);
-            }
-        }
+        Assert.True(expected.Name == actual.Name, path + ": named '" + actual.Name + "'");
+        Assert.True(expected.IsNullable == actual.IsNullable, path + ": nullable " + actual.IsNullable);
+        AssertSameMetadata(expected.Metadata, actual.Metadata, path);
+        AssertSameType(expected.DataType, actual.DataType, path);
+    }
 
-        if (field.TryGetProperty("fields", out JsonElement children))
+    private static void AssertSameType(IArrowType expected, IArrowType actual, string path)
+    {
+        Assert.True(expected.TypeId == actual.TypeId, path + ": " + expected.TypeId + ", got " + actual.TypeId);
+        switch (expected)
         {
-            foreach (JsonElement child in children.EnumerateArray())
-            {
-                AssertWellFormed(child);
-            }
+            case TimestampType ts:
+                Assert.True(ts.Unit == ((TimestampType)actual).Unit, path + ": unit " + ((TimestampType)actual).Unit);
+                Assert.True(ts.Timezone == ((TimestampType)actual).Timezone, path + ": zone '" + ((TimestampType)actual).Timezone + "'");
+                break;
+            case DurationType d:
+                Assert.True(d.Unit == ((DurationType)actual).Unit, path + ": unit " + ((DurationType)actual).Unit);
+                break;
+            case DictionaryType dict:
+                AssertSameType(dict.IndexType, ((DictionaryType)actual).IndexType, path + "<index>");
+                AssertSameType(dict.ValueType, ((DictionaryType)actual).ValueType, path + "<value>");
+                break;
+            case FixedSizeListType fixedList:
+                Assert.True(fixedList.ListSize == ((FixedSizeListType)actual).ListSize, path + ": size");
+                AssertSameField(fixedList.ValueField, ((FixedSizeListType)actual).ValueField, path + "[]");
+                break;
+            case NestedType nested:
+                AssertSameFields(nested.Fields, ((NestedType)actual).Fields, path);
+                break;
+        }
+    }
+
+    private static void AssertSameMetadata(IReadOnlyDictionary<string, string>? expected, IReadOnlyDictionary<string, string>? actual, string path)
+    {
+        var e = expected ?? new Dictionary<string, string>();
+        var a = actual ?? new Dictionary<string, string>();
+        Assert.True(e.Count == a.Count, path + ": " + e.Count + " metadata entries, got " + a.Count);
+        foreach (KeyValuePair<string, string> entry in e)
+        {
+            Assert.True(a.TryGetValue(entry.Key, out string? value) && value == entry.Value,
+                path + ": metadata '" + entry.Key + "' = '" + entry.Value + "', got '" + value + "'");
         }
     }
 

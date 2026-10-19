@@ -3336,8 +3336,8 @@ from 2026-10-19.
   under backpressure could trip it); documentation only.
 
 - **D-BIND-128 - the client's internal JSON-schema code is deleted with its tests
-  (`ControlMessages.SchemaToJson` and its writers, the wire-type table, `SubscribedReply.SchemaJson`,
-  `GatewayRowCodec.DecodeBatch`), and Bucket 2 maps `test_schema_codec` to what the client owes since
+  (`ControlMessages.SchemaToJson` and its writers, the wire-type table, `SubscribedReply.SchemaJson`),
+  and Bucket 2 maps `test_schema_codec` to what the client owes since
   D-BIND-112: the `schemaIpc` it writes reads back as the same declaration (a managed test over the
   C++-written `.ipc` goldens, and the cross-language lane live); the gateway-internal cases (the
   conflict measurement, base64, `FieldToJson`) are recorded as exclusions with their reason.**
@@ -3347,6 +3347,10 @@ from 2026-10-19.
   The protocol is unchanged: the gateway keeps accepting and sending both forms (the TypeScript client
   uses the JSON one until BIND-T). **Declined:** moving the code to the test project as a reference;
   exposing the JSON form publicly (surface for a lossy form D-BIND-112 moved away from).
+  *AMENDED BY THE MAINTAINER 2026-10-19:* `GatewayRowCodec.DecodeBatch` stays (internal, with its
+  tests). It is row decoding, not JSON-schema code; review B4 listed it only because nothing called
+  it yet. It is the building block of a batched gateway subscription, the parity the C++ and native
+  C# batched `SubscriberArrow` have (slice 8f, ruled as D-BIND-133).
 
 - **D-BIND-129 - the cross-language lane makes its peer → C# exchanges live, not replayed: before a
   peer publishes the fixture rows, the C# side has it publish probe rows (`seq` -1, never compared)

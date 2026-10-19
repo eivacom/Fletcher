@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
@@ -1258,8 +1259,36 @@ std::string TsOutputFilename(const std::string& proto_name) {
 // visitor (ts_backend::TsVisitor); all TypeScript type text and WireTypeId member
 // names live in ts_backend, never on an IR node (locked decision #1). Output is
 // byte-identical to the pre-migration emitter (TsVisitor.DescriptorByteIdentical).
-std::string GenerateTypeScriptFile(const google::protobuf::FileDescriptor* file) {
-    return ts_backend::TsVisitor(file).GenerateFile();
+std::string Base64(const std::vector<uint8_t>& bytes) {
+    static constexpr char kAlphabet[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve((bytes.size() + 2) / 3 * 4);
+    for (size_t i = 0; i < bytes.size(); i += 3) {
+        const uint32_t n = (uint32_t{bytes[i]} << 16) |
+                           (i + 1 < bytes.size() ? uint32_t{bytes[i + 1]} << 8 : 0u) |
+                           (i + 2 < bytes.size() ? uint32_t{bytes[i + 2]} : 0u);
+        out += kAlphabet[(n >> 18) & 63];
+        out += kAlphabet[(n >> 12) & 63];
+        out += i + 1 < bytes.size() ? kAlphabet[(n >> 6) & 63] : '=';
+        out += i + 2 < bytes.size() ? kAlphabet[n & 63] : '=';
+    }
+    return out;
+}
+
+// D-BIND-130: each message's TypedSchema carries its Arrow IPC schema as base64, the bytes the
+// `ipc` output writes (the native declaration's own), so `createTopic` announces it as
+// `schemaIpc` with full fidelity. The same message set as the `ipc` output: a recursive message or
+// a flatten wrapper has no schema of its own and keeps the JSON descriptor alone.
+std::string GenerateTypeScriptFile(const google::protobuf::FileDescriptor* file,
+                                   const OptionMetadataResolver* resolver) {
+    std::map<const google::protobuf::Descriptor*, std::string> schema_ipc;
+    for (const auto* msg : OrderedMessages(file)) {
+        if (IsRecursive(msg) || IsFlattenedWrapper(msg)) continue;
+        nanoarrow::UniqueSchema schema = BuildMessageSchema(msg, resolver);
+        schema_ipc[msg] = Base64(SerializeSchemaIpc(schema.get()));
+    }
+    return ts_backend::TsVisitor(file, std::move(schema_ipc)).GenerateFile();
 }
 
 // -----------------------------------------------------------------------
@@ -1853,6 +1882,16 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
         return false;
     }
 
+    // Review of BIND-8: the C# types one file declares (model, topics, both pairs) must not share
+    // a name, refused before any output as the accessor's are (D-BIND-100).
+    if (opts.csharp != CsharpOutput::None) {
+        if (auto conflict = csharp_backend::CsPairNameConflict(
+                file, opts.csharp == CsharpOutput::ModelAndPair, opts.csharp_gateway)) {
+            *error = std::move(*conflict);
+            return false;
+        }
+    }
+
     // Always emit the C++ header (edge-compatible, nanoarrow only).
     {
         const std::string content = GenerateFile(file, schema_only, resolver.get());
@@ -1874,7 +1913,7 @@ bool ArrowRowGenerator::Generate(const google::protobuf::FileDescriptor* file,
 
     // Optionally emit the TypeScript file.
     if (emit_ts) {
-        const std::string ts_content = GenerateTypeScriptFile(file);
+        const std::string ts_content = GenerateTypeScriptFile(file, resolver.get());
         const std::string ts_out_name = TsOutputFilename(file->name());
         std::unique_ptr<google::protobuf::io::ZeroCopyOutputStream> stream(
             context->Open(ts_out_name));

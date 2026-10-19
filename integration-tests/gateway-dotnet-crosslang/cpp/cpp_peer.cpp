@@ -7,7 +7,8 @@
 //   * CsToCpp: subscribes at start; compares every row it receives, field by field, with the
 //     fixture row its `seq` names, and prints `RECV <seq> OK` or `RECV <seq> MISMATCH <diffs>`.
 //   * CppToCs: declares the topic at start; publishes the four fixture rows on the stdin line
-//     `publish` and then prints `PUBLISHED 4`.
+//     `publish` and then prints `PUBLISHED 4`; on `probe` it publishes one row no receiver
+//     compares (seq -1) and prints `PROBED`, so the C# side can wait for a live match (D-BIND-129).
 //
 // Prints READY once both endpoints exist, exits on the stdin line `stop`. The fixture rows are
 // protoc-coverage's (tests/coverage_fixture.hpp), the ones its goldens pin.
@@ -76,6 +77,14 @@ int main(int argc, char* argv[]) {
     std::string line;
     while (std::getline(std::cin, line)) {
         if (line == "stop") break;
+        if (line == "probe") {
+            // D-BIND-129: one row no receiver compares (seq -1); the C# side sends this until
+            // one arrives, so the fixture rows that follow travel live.
+            xl::CrossRow probe;
+            probe.set_seq(-1);
+            to_cs.Publish(probe);
+            PrintLine("PROBED");
+        }
         if (line == "publish") {
             for (int32_t seq = 0; seq < crosslang::kRowCount; ++seq) {
                 xl::CrossRow row;

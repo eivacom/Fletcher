@@ -69,9 +69,11 @@ OwnedSchema DeclaredSchemaFromCreateTopic(const nlohmann::json& msg);
 /// `schemaIpc` is written with it.
 std::string Base64Encode(const uint8_t* data, size_t len);
 
-/// The inverse of `Base64Encode`, strict: the length must be a multiple of 4,
-/// padding only at the end, and every other character from the alphabet.
-/// Throws `std::invalid_argument` otherwise.
+/// The inverse of `Base64Encode`: the length must be a multiple of 4, padding
+/// only at the end, and every other character from the alphabet. Throws
+/// `std::invalid_argument` otherwise. Non-zero bits after the last whole byte of
+/// a padded group are not refused (RFC 4648 §3.5 allows either); the bytes go to
+/// the IPC decoder, which refuses what is not a schema.
 std::vector<uint8_t> Base64Decode(const std::string& text);
 
 }  // namespace fletcher::gateway

@@ -7,10 +7,10 @@
 //
 //   * CsToTs: subscribes at start; prints `RECV <seq> OK` or `RECV <seq> MISMATCH <diffs>` for
 //     every row, compared field by field with the fixture row its `seq` names.
-//   * TsToCs: publishes the four fixture rows on the stdin line `publish`, then prints
-//     `PUBLISHED 4`. It does NOT declare the topic: the TypeScript client can announce only the
-//     JSON schema, which cannot carry CrossRow's nested and Timestamp fields, so the C# client
-//     declares it with `schemaIpc` first (D-BIND-117; BIND-T makes TypeScript declare its own).
+//   * TsToCs: declares the topic at start, with the Arrow IPC schema the generated CrossRow
+//     carries (D-BIND-130), and publishes the four fixture rows on the stdin line `publish`, then
+//     prints `PUBLISHED 4`; on `probe` it publishes one row no receiver compares (seq -1) and
+//     prints `PROBED` (D-BIND-129).
 //
 // Prints READY once subscribed, exits on the stdin line `stop`. A handler or publish failure is
 // printed as `ERROR <message>`, so the C# side sees it instead of a timeout.
@@ -36,8 +36,17 @@ function print(line: string): void {
   process.stdout.write(line + '\n');
 }
 
+// A row the client cannot decode throws inside its message handler, outside any code here:
+// reported as ERROR so the C# side names it rather than waiting for a row that never comes.
+process.on('uncaughtException', (e) => print(`ERROR ${e.message}`));
+process.on('unhandledRejection', (e) => print(`ERROR ${(e as Error)?.message ?? String(e)}`));
+
 const client = new FletcherClient({ url: arg('--url') });
 await client.connect();
+
+// D-BIND-130: the generated CrossRow carries its schema as Arrow IPC, so the topic is declared
+// with full fidelity, exactly as a native publisher of CrossRow declares it.
+await client.createTopic(CrossLang_TsToCsTopic, CrossRow);
 
 await client.subscribe(CrossLang_CsToTsTopic, CrossRow, (row) => {
   try {
@@ -52,6 +61,15 @@ print('READY');
 const lines = createInterface({ input: process.stdin });
 for await (const line of lines) {
   if (line === 'stop') break;
+  if (line === 'probe') {
+    // D-BIND-129: a row no receiver compares (seq -1), sent until one arrives.
+    try {
+      await client.publish(CrossLang_TsToCsTopic, CrossRow, { seq: -1, row: fixtureRow(3) });
+      print('PROBED');
+    } catch (e) {
+      print(`ERROR probing: ${(e as Error).message}`);
+    }
+  }
   if (line === 'publish') {
     try {
       for (let seq = 0; seq < ROW_COUNT; ++seq) {

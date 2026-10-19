@@ -17,3 +17,11 @@ and MET (no `runtimes/`).**
 | 7 | `schemaIpc` parsed via `Apache.Arrow.Ipc`, metadata preserved | MET (thin) | `ASubscribedReplyCarriesTheSchemaAsBase64Ipc`, `TheDescriptorCarriesEachFieldsNumberFromItsMetadata` over the C++ `.ipc` goldens; nested and schema-level metadata are not asserted (review DEBT). |
 | 8 | Cross-language rows: the C# gateway client with C++, TypeScript and the C# native pair, both directions, field by field | **PARTIAL** | All six rows, through the generated gateway pair, compared on the receiving side. PARTIAL: the one retry pools rows of both attempts (review B3), and on the green CI run Linux C++ → C# passed only on its retry (rows 0 and 1 on attempt 1). |
 | T | Tracker forcing tests: Bucket 2 green; `Package.GatewayClientHasNoRuntimesFolder` | PARTIAL / MET | As rows 6 and 5. |
+
+**After the review's fixes (2026-10-19, in the tree):** row 6 is met by D-BIND-128's re-mapping:
+`test_schema_codec` is recorded as gateway-internal and the client's obligation (its `schemaIpc`
+reads back as the same declaration, at every depth) is held over every C++ `.ipc` golden and live
+by the cross-language lane. Row 7's "thin" is answered by the same comparison (nested and
+schema-level metadata, Timestamp unit and zone). Row 8 is met: each retry attempt must deliver all
+four rows by itself, and the rows travel live after a probe row (D-BIND-129). Row 2's stale wording
+is annotated in the tracker. Grades become final when the fixes are green on CI.

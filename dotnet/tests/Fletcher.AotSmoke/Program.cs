@@ -12,9 +12,11 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
+using Apache.Arrow;
 using Apache.Arrow.Types;
 
 using Eiva.Fletcher;
+using Eiva.Fletcher.GatewayClient;
 using Eiva.Fletcher.Model;
 
 using Fletcher.Gen.Golden.Pair;
@@ -26,26 +28,14 @@ using PubSubProviderHandle provider = ProviderRegistry.Create(ProviderSelector.P
 var seen = new List<string>();
 using var readings = new Telemetry_ReportSubscriber(provider);
 using Subscription readingSubscription = readings.Subscribe((row, attachments) =>
-    seen.Add($"{row.Id} {row.Name} {row.Value} {row.Mood} {string.Join(',', row.Samples)} "
-        + $"{row.Tags.Count} {row.Stamp?.By} {row.History.Count} {row.At.WithUnit(TimeUnit.Nanosecond).Value}"));
+    seen.Add(Describe(row)));
 using var marks = new Telemetry_MarkSubscriber(provider);
 using Subscription marksSubscription = marks.Subscribe((row, attachments) =>
     seen.Add("marks " + string.Join(',', row.At.ConvertAll(t => $"{t.Seconds}:{t.Nanos}"))));
 
 using (var publisher = new Telemetry_ReportPublisher(provider))
 {
-    publisher.Publish(new Reading
-    {
-        Id = 7,
-        Name = "aot",
-        Value = 0.5,
-        Mood = Mood.Happy,
-        Samples = { 1, -2 },
-        Tags = { new("a", 1), new("a", 2) },
-        Stamp = new Stamp { By = "x" },
-        History = { new Stamp { By = "h" } },
-        At = new Timestamp(1_700_000_000_123_456_789L, TimeUnit.Nanosecond),
-    });
+    publisher.Publish(MakeReading());
 }
 
 using (var publisher = new Telemetry_MarkPublisher(provider))
@@ -53,10 +43,42 @@ using (var publisher = new Telemetry_MarkPublisher(provider))
     publisher.Publish(new[] { new Marks { At = { new PbTimestamp { Seconds = 5, Nanos = 6 }, new PbTimestamp { Seconds = -1, Nanos = 0 } } } });
 }
 
+// ── BIND-8e (review of BIND-8): the gateway client and its generated pair under NativeAOT ──
+// No gateway runs here, so the managed codec and the schema IPC reader are reached directly
+// (InternalsVisibleTo), and the generated gateway publisher is driven on a client that never
+// connected: it writes its schemaIpc, then is refused, which is the path a trimmer could break.
+using (RecordBatch gatewayBatch = Reading.ToArrow(new[] { MakeReading() }))
+{
+    var codec = new GatewayRowCodec(Reading.Schema);
+    byte[] encoded = codec.Encode(codec.Bind(gatewayBatch), 0);
+    using RecordBatch decoded = codec.Decode(encoded);
+    var asStruct = new StructArray(new StructType(decoded.Schema.FieldsList), decoded.Length, decoded.Arrays, ArrowBuffer.Empty, 0);
+    seen.Add("gateway " + Describe(Reading.FromArrow(asStruct, 0)));
+}
+
+Schema readBack = ControlMessages.ReadSchemaIpc(Convert.ToBase64String(ControlMessages.WriteSchemaIpc(Reading.Schema)));
+seen.Add("schemaIpc " + (readBack.FieldsList.Count == Reading.Schema.FieldsList.Count));
+
+await using (var gatewayClient = new FletcherClient(new FletcherClientOptions { Uri = new Uri("ws://127.0.0.1:9") }))
+{
+    try
+    {
+        await Telemetry_ReportGatewayPublisher.CreateAsync(gatewayClient);
+        seen.Add("an unconnected client declared a topic");
+    }
+    catch (InvalidOperationException)
+    {
+        seen.Add("unconnected refused");
+    }
+}
+
 string[] expected =
 {
     "7 aot 0.5 Happy 1,-2 2 x 1 1700000000123456789",
     "marks 5:6,-1:0",
+    "gateway 7 aot 0.5 Happy 1,-2 2 x 1 1700000000123456789",
+    "schemaIpc True",
+    "unconnected refused",
 };
 
 foreach (string line in seen)
@@ -72,3 +94,20 @@ if (!seen.SequenceEqual(expected))
 
 Console.WriteLine("AotSmoke: OK");
 return 0;
+
+static Reading MakeReading() => new()
+{
+    Id = 7,
+    Name = "aot",
+    Value = 0.5,
+    Mood = Mood.Happy,
+    Samples = { 1, -2 },
+    Tags = { new("a", 1), new("a", 2) },
+    Stamp = new Stamp { By = "x" },
+    History = { new Stamp { By = "h" } },
+    At = new Timestamp(1_700_000_000_123_456_789L, TimeUnit.Nanosecond),
+};
+
+static string Describe(Reading row) =>
+    $"{row.Id} {row.Name} {row.Value} {row.Mood} {string.Join(',', row.Samples)} "
+    + $"{row.Tags.Count} {row.Stamp?.By} {row.History.Count} {row.At.WithUnit(TimeUnit.Nanosecond).Value}";

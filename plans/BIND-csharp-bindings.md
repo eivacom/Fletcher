@@ -557,10 +557,10 @@ tests between two implementations.
 | Bucket | Files (cases) | Total | Treatment (ruled 2026-09-11, Q10) |
 |---|---|---|---|
 | 1 codec / envelope / buffer / status | `test_positional_io` 19, `test_envelope` 11, `test_write_buffer` 11, `test_status_taxonomy` 3, `test_codec` 70, `test_codec_edge` 23, `test_codec_property_fuzz` 2, `test_batch_decoder` 22 | **161** | **Not a case-by-case port target since D-BIND-39**: BIND-3's obligation is that every type the PROTO MAPPING produces round-trips through the binding, because `test_codec*` is `arrow-bridge`'s Arrow-native suite. #128 doubled `test_codec` and added `test_batch_decoder` (`arrow-bridge`'s own batch decoder); both stay out of scope for that reason. `test_status_taxonomy` ports as "the C# enum matches `core/README.md`'s published table". |
-| 2 gateway client | `test_schema_codec` 21, `test_publish_frame` 9, TS 36 | **66** | Port (BIND-8), true parity: managed code both sides. |
+| 2 gateway client | `test_schema_codec` 23, `test_publish_frame` 9, TS 38 | **70** | Port (BIND-8), true parity: managed code both sides. **Re-mapped at the BIND-8 review (D-BIND-128):** `test_schema_codec` tests the GATEWAY's own C++ (its JSON schema parser, the declared-schema measurement, base64, `FieldToJson`), all 23 recorded as gateway-internal; what the client owes it since D-BIND-112 is that its `schemaIpc` reads back as the same declaration, held by `ControlMessagesTests.BuildCreateTopicAnnouncesTheSchemaAsSchemaIpcAndNotAsJson` over every C++ `.ipc` golden and live by `gateway-dotnet-crosslang`. `test_publish_frame` and the TypeScript cases (two added by D-BIND-130) port one for one. |
 | 3 pub/sub semantics | `test_publisher_subscriber` 44, `test_segments` 5, `test_pubsub_arrow` 33 | **82** | Port over `inprocess`. **Split confirmed 2026-09-24: the `pubsub` cases are BIND-4's; `test_pubsub_arrow`'s are BIND-5's, whose acceptance row claims them and whose `SubscriberArrow` did not exist before it.** **#128 added 26 `pubsub` cases and 18 `pubsub-arrow` ones (D-BIND-57)**; of the 49 `pubsub` cases, **44 are mapped** - 12 of #128's over `inprocess`, 11 over real Fast DDS in the transport lane, because only a provider that knows options or has a schema channel can answer them - **and 5 are EXCLUDED**, 2 by D-BIND-47 and 3 by D-BIND-57. D-BIND-47's two: `UnsubscribeLastSubscriberUnsubscribesFromProvider` and `UnsubscribeWithRemainingSubscribersKeepsProviderSubscription` assert `mock->unsubscribe_count`, the fan-out's provider-level bookkeeping, which lives in the C++ `Subscriber` the binding WRAPS and does not reimplement - porting them would run that C++ a second time and call it a test of the binding, and the managed surface has no view of provider-level subscriptions by design (D-BIND-24). Reasoning and the full case-by-case mapping: `dotnet/tests/Fletcher.Tests/BucketThreeConformanceTests.cs`. |
 | 4 native providers | Fast DDS: `test_fast_dds_pubsub_provider` 71, `test_profile_document` 33; XRCE: `test_xrce_provider` 7, `test_xrce_document` 11 — **port as driver-selection tests (122)**; `test_fletcher_sample_pub_sub_type` 28 — **excluded**, provider-internal (the Fast DDS `TypeSupport`, a C++ type no managed code touches) | **150** | 122 by driver selection - ONE body over every transport (`integration-tests/pubsub-transport-conformance`), not a port per case; 28 excluded, documented. #128 added 45 of these. |
-| 5 generator | `test_type_mapper` 36, `test_option_metadata` 33, `test_schema_builder` 9, `test_schema_visitor` 9, `test_ir` 8, `test_schema_codec_lockstep` 2, `test_topic_path` 2, `test_ts_visitor` 3, `test_csharp_type_table` 26, `test_csharp_visitor` 62 | **190** | **Stay in C++** — they test a C++ generator; **extended** with `test_csharp_visitor`, `test_csharp_type_table` and the TS pub/sub emitter cases. |
+| 5 generator | `test_type_mapper` 36, `test_option_metadata` 33, `test_schema_builder` 9, `test_schema_visitor` 9, `test_ir` 8, `test_schema_codec_lockstep` 2, `test_topic_path` 2, `test_ts_visitor` 6, `test_csharp_type_table` 26, `test_csharp_visitor` 63 | **194** | **Stay in C++** — they test a C++ generator; **extended** with `test_csharp_visitor`, `test_csharp_type_table` and the TS pub/sub emitter cases. |
 | 6 no managed analogue | `test_owned_schema` 1 | **1** | Excluded, documented (an `ArrowSchemaDeepCopy` ENOMEM path). |
 | Conformance (inherited, not a port target) | `integration-tests/pubsub-conformance` 95 cases; `CallerTier` 22 of them | — | The **oracle** seam §9 hands BIND. BIND writes a C# arm of `CallerTier` and adds cases to the C++ suite (§12.1 expects it); each C# case names the C++ case it mirrors and a script checks the mapping is total. |
 
@@ -1992,6 +1992,10 @@ client, **so that** I need no native assets at all.
   **Amended 2026-09-29 (D-BIND-72):** the client consumes the GENERATED row type and
   its Arrow `Schema`, the same ones the native path uses, and derives its wire
   descriptor from that schema's `field_number` metadata. There is no C# `TypedSchema<T>`.
+  **As built (D-BIND-108, D-BIND-112, D-BIND-128):** the client is not generic: it works on
+  Arrow `RecordBatch`es, and the typing is the generated gateway pair's. It announces a schema
+  as its Arrow IPC (`schemaIpc`), not as a descriptor, and its row codec is positional, so no
+  descriptor is derived; the JSON-descriptor code 8a wrote went at the review.
 - **The generated gateway pair (D-BIND-72):** per service method, a typed
   publisher/subscriber over `FletcherClient`, emitted by the C# backend as BIND-T does
   for TypeScript. It references `Eiva.Fletcher.GatewayClient` only, so a WASM
@@ -2150,12 +2154,32 @@ token and names; one request in flight; `PublishAsync` awaits the ack). Slices:
   its own topic (D-BIND-130); the C ABI codec refuses a null map key and a null dictionary entry,
   as the managed one does (D-BIND-131); the unruled 8a/8b defaults are locked, `HandlerFaulted`
   gains a `Reason` and the client a `DroppedRows` counter (D-BIND-132). All 12 questions ruled
-  (D-BIND-121 to 132). Left: fix B1 to B5 and implement the rulings, then close.
+  (D-BIND-121 to 132). DEBT the maintainer chose to fix in 8e: the cheap fixes (CI filters,
+  `"schemaIpc": null`, the e2e lane's gateway stderr, stale comments and one-line NITs), client
+  robustness (a call during `ConnectAsync`, a locally ended connection's socket, `DisposeAsync`'s
+  edges, any decode exception per row, a token cancelled before the send), and tests and AOT
+  (AotSmoke links the gateway client and golden, deeper metadata assertions, a frame above 64 KiB,
+  a gateway-pair name-clash check); performance is carried as known debt.
+  **Fixed 2026-10-19 (in the tree):** all five blockers, all twelve rulings and the chosen debt.
+  Client: `Completion`, abandoned subscribes released, replies contained, `ConfigureWebSocket`,
+  `MaxMessageBytes` with a buffer that shrinks back, `ReplyTimeout`, `HandlerFaulted.Reason`,
+  `DroppedRows`, a call during `ConnectAsync` refused, a locally ended socket aborted, dispose
+  safe from a handler, the JSON-schema code deleted while `DecodeBatch` stays (D-BIND-128
+  amended; Fletcher.GatewayClient.Tests 198, 13 new cases; 13 mutants). Plugin: TypeScript namespace imports by a relative path and `schemaIpc` on
+  each `TypedSchema` (the three protoc-coverage TypeScript goldens gain it), and a refusal of two
+  generated C# types of one name (`test_ts_visitor` 6, `test_csharp_visitor` 63). TypeScript
+  client: `createTopic` sends a generated schema's `schemaIpc` (38). Gateway: the `subscribed`
+  reply built before the subscription is kept, a tolerant `field_number`, `"schemaIpc": null` as
+  absent (`test_schema_codec` 23). C ABI: the two refusals (96). Lanes: the cross-language lane
+  live after a probe, each retry whole, the TypeScript peer declaring its own topic; the
+  end-to-end lane gains a 100 KiB row (in-process) and the odd-`field_number` case, and forwards
+  the gateway's stderr (17). `AotSmoke` NativeAOT-compiles the gateway client and its generated
+  pair. Left: commit, CI, close.
 
 The Fast DDS legs share `gateway-fastdds-ts`'s exposure to Fast DDS 3.4.0's data-sharing defect
 (`fastdds-pubsub-provider/README.md`). Ruled by the maintainer 2026-10-16: keep that test as the
 defect's guard, make its failure message name the defect, retry the exchange once; a Fast DDS 3.6.x
-upgrade is planned separately. The change is its own session, off this branch.
+upgrade is planned separately. The change was made in a session of its own and taken onto this branch (`fccbac6`, 2026-10-16).
 
 ### BIND-9 — CI/CD pipelines and packaging
 

@@ -417,6 +417,19 @@ TEST(GatewayDeclaredSchemaTest, AMalformedSchemaIpcIsRefused) {
     }
 }
 
+TEST(GatewayDeclaredSchemaTest, AnExplicitNullIsTheMemberLeftOut) {
+    // Review of BIND-8: the spec calls both members optional, and a client whose JSON writer
+    // keeps absent optionals sends them as null; that was refused as "must be a base64 string".
+    json null_ipc = json{{"schemaIpc", nullptr}, {"schema", ClientDescriptorForReading()}};
+    fletcher::OwnedSchema from_json = DeclaredSchemaFromCreateTopic(null_ipc);
+    ASSERT_NE(from_json->release, nullptr) << "the JSON schema beside a null schemaIpc was ignored";
+    EXPECT_EQ(from_json->n_children, ClientDescriptorForReading()["fields"].size());
+
+    fletcher::OwnedSchema none =
+        DeclaredSchemaFromCreateTopic(json{{"schemaIpc", nullptr}, {"schema", nullptr}});
+    EXPECT_EQ(none->release, nullptr) << "two nulls declared a schema";
+}
+
 // ---------------------------------------------------------------------------
 // The schema a `subscribed` reply describes (ArrowSchemaToJson), BIND-8d.
 // ---------------------------------------------------------------------------
@@ -454,4 +467,22 @@ TEST(ArrowSchemaToJsonTest, AFieldWithMetadataButNoFieldNumberHasNone) {
     ASSERT_EQ(j["fields"].size(), 2u) << j.dump();
     EXPECT_EQ(j["fields"][0]["fieldNumber"], 1) << j.dump();
     EXPECT_FALSE(j["fields"][1].contains("fieldNumber")) << j.dump();
+}
+
+TEST(ArrowSchemaToJsonTest, AFieldNumberThatIsNotAWholeInt32IsReadAsAbsent) {
+    // D-BIND-123: since D-BIND-112 any WebSocket client declares a schema's metadata through
+    // `schemaIpc`; the old std::stoi threw out of every `subscribed` reply for that topic.
+    for (const char* bad : {"abc", "99999999999", "7x", "", " 7"}) {
+        fletcher::OwnedSchema schema;
+        ArrowSchemaInit(schema.get());
+        ASSERT_EQ(ArrowSchemaSetTypeStruct(schema.get(), 1), NANOARROW_OK);
+        ASSERT_EQ(ArrowSchemaSetType(schema->children[0], NANOARROW_TYPE_INT32), NANOARROW_OK);
+        ASSERT_EQ(ArrowSchemaSetName(schema->children[0], "x"), NANOARROW_OK);
+        SetOneMetadata(schema->children[0], "field_number", bad);
+
+        json j;
+        ASSERT_NO_THROW(j = fletcher::gateway::ArrowSchemaToJson(schema.get()))
+            << "'" << bad << "'";
+        EXPECT_FALSE(j["fields"][0].contains("fieldNumber")) << "'" << bad << "': " << j.dump();
+    }
 }

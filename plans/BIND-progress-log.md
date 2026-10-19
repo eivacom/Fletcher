@@ -1207,7 +1207,32 @@ C++ → C# row needed its retry (the Fast DDS late-joiner defect the retry exist
 mutants, each caught by exactly the rows it should: the C++ fixture's leaf label (both C++ rows),
 the TypeScript fixture's `int64` (both TypeScript rows), the C# native peer sending its map in
 reverse order (that row alone, so entry order crosses too). The gateway case fails on the reverted
-fix, the package check fails on a packed `runtimes/` file and on an `Interop` dependency.
+fix, the package check fails on a packed `runtimes/` file and on an `Interop` dependency. On CI
+(`bba189f`) ci.pr was green 56/56 but two side workflows failed (shellcheck on an `ls`, and the
+lane's `tsconfig.json` without its licence header); `89f9a34` fixed both. Reading only ci.pr had
+hidden them for a turn.
+
+**8e, the review (2026-10-19).** Three reviewers with fresh context, one per area (the client
+library; the plugin and the gateway; tests, CI and acceptance), at `89f9a34`. Five blockers, each
+checked by the author before anything was fixed: TypeScript's new cross-file import was relative to
+the include root, not to the importing file, so it held only for files at the root, which is
+where both the lane and its unit test happened to put them; a `SubscribeAsync` cancelled after it
+was sent still installed its handler, under an id its caller never got; the lane's retry added up
+rows of two partial attempts, which the green CI run had in fact done; the Bucket 2 "port" of
+`test_schema_codec` tested a JSON descriptor no shipped path writes any more; and one client test
+could not fail. The maintainer ruled twelve questions (D-BIND-121 to 132), several from a
+re-asked, more detailed question with an example, and one (whether the client should keep the
+JSON form) answered by checking the public surface: the gateway keeps both forms, the C# client
+only ever sent the IPC one. Two rulings widened 8e beyond C#: TypeScript's `schemaIpc` was pulled
+forward from BIND-T, and the C ABI codec gained the managed codec's two refusals.
+
+**What the fixes found.** A test against Arrow C++ cannot build a map with a null key at all (it
+CHECK-fails), so that refusal is tested on an array assembled at the C level. The new gateway-pair
+name check and the TypeScript `schemaIpc` moved no C# golden, but all three protoc-coverage
+TypeScript goldens, two of which the golden script did not regenerate until the coverage lane
+failed on them. A message larger than the client's first buffer cannot cross Fast DDS (its 64 KiB
+payload bound), so that case runs in process only. And a new test raced its own injected frames
+against the next request, which the client, correctly, handed to that request.
 
 **Lessons.**
 
@@ -1222,3 +1247,8 @@ fix, the package check fails on a packed `runtimes/` file and on an `Interop` de
 - **"Unchanged on a miss" is an uninitialised read waiting for its shape.** nanoarrow's
   `ArrowMetadataGetValue` documents it; the gateway's reply only met a field with metadata and no
   `field_number` when a nested generated schema reached it.
+- **A fixture placed where everything works proves only that.** The cross-file import, the retry
+  and the closing test each passed because of where or when their input sat, not because the code
+  was right; the review found all three by asking what each test could not see.
+- **Every workflow of a commit, not the umbrella one.** ci.pr green said nothing about the side
+  workflows a push also starts.

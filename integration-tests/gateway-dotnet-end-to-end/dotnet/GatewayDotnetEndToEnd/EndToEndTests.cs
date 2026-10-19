@@ -45,6 +45,9 @@ public sealed class InProcessEndToEndTests : EndToEndTests, IClassFixture<InProc
         : base(gateway)
     {
     }
+
+    [Fact]
+    public Task ARowLargerThanTheReceiveBufferArrivesWhole() => RowLargerThanTheReceiveBufferArrivesWholeAsync();
 }
 
 public sealed class FastDdsEndToEndTests : EndToEndTests, IClassFixture<FastDdsGateway>
@@ -122,6 +125,57 @@ public abstract class EndToEndTests
 
         GatewayException conflict = await Assert.ThrowsAsync<GatewayException>(() => second.CreateTopicAsync(topic, Position.Schema));
         Assert.Contains("conflict", conflict.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // In-process only (InProcessEndToEndTests): Fast DDS bounds a payload at 64 KiB by default,
+    // so a message larger than the client's first buffer cannot cross it.
+    protected async Task RowLargerThanTheReceiveBufferArrivesWholeAsync()
+    {
+        // Review of BIND-8 (DEBT): the real transport starts with a 64 KiB buffer and grows it
+        // while a message arrives in fragments; no other case sends a message that large.
+        string topic = Topic();
+        await using FletcherClient publisher = await Connect();
+        await using FletcherClient subscriber = await Connect();
+        await publisher.CreateTopicAsync(topic, Fix.Schema);
+        var received = new BlockingCollection<Fix>();
+        await subscriber.SubscribeAsync(topic, Fix.Schema, (row, _) => { using (row) { received.Add(Fix.FromArrow(AsStruct(row), 0)); } });
+
+        Fix big = MakeFix(21, new string('x', 100 * 1024));
+        using RecordBatch batch = Fix.ToArrow(new[] { big });
+        await publisher.PublishAsync(topic, batch);
+
+        Assert.True(received.TryTake(out var actual, _gateway.RoundTrip), $"the 100 KiB row did not arrive over {_gateway.Provider}");
+        AssertSame(big, actual!);
+    }
+
+    [Fact]
+    public async Task ASchemaWhoseFieldNumberIsNotANumberCanStillBeSubscribedTo()
+    {
+        // D-BIND-123 (review of BIND-8, Q3): schemaIpc lets any client declare arbitrary field
+        // metadata. The gateway's subscribed reply used to std::stoi it, so every subscribe to
+        // such a topic failed, after the subscription was already live on the gateway.
+        string topic = Topic();
+        Schema odd = new Schema.Builder()
+            .Field(new Field("x", Int32Type.Default, nullable: false,
+                new Dictionary<string, string> { ["field_number"] = "not-a-number" }))
+            .Build();
+        await using FletcherClient publisher = await Connect();
+        await using FletcherClient subscriber = await Connect();
+        await publisher.CreateTopicAsync(topic, odd);
+
+        var received = new BlockingCollection<int>();
+        await subscriber.SubscribeAsync(topic, odd, (row, _) =>
+        {
+            using (row)
+            {
+                received.Add(((Int32Array)row.Column(0)).GetValue(0)!.Value);
+            }
+        });
+
+        using RecordBatch batch = new RecordBatch.Builder().Append("x", false, c => c.Int32(b => b.Append(42))).Build();
+        await publisher.PublishAsync(topic, batch);
+        Assert.True(received.TryTake(out int x, _gateway.RoundTrip), $"the row did not arrive over {_gateway.Provider}");
+        Assert.Equal(42, x);
     }
 
     [Fact]

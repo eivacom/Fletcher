@@ -193,7 +193,7 @@ The `gateway` component uses a split text/binary WebSocket protocol:
 | Server to Client | `unsubscribed` | `{"type":"unsubscribed"}` |
 | Server to Client | `published` | `{"type":"published"}`, one per PUBLISH frame the server accepted |
 | Server to Client | `topics_list` | `{"type":"topics_list","topics":["..."]}` |
-| Server to Client | `error` | `{"type":"error","message":"..."}`; carries no request id, so it answers the request in flight |
+| Server to Client | `error` | `{"type":"error","message":"..."}`; carries no request id: a client with one request in flight can attribute it to that request (the C# client keeps one, D-BIND-110) |
 
 A publisher may announce the topic's schema on `create_topic`, in either of two forms:
 - `schemaIpc` — base64-encoded Arrow IPC bytes of the schema, as `subscribed` carries it. **Use

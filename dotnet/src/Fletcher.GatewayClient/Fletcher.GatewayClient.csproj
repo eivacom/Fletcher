@@ -33,6 +33,9 @@
     <InternalsVisibleTo Include="Fletcher.GatewayClient.Tests" />
     <!-- ManagedCodecAgreesWithNativeTests: the managed codec against the native one. -->
     <InternalsVisibleTo Include="Fletcher.Tests" />
+    <!-- The NativeAOT smoke app drives the codec and the schema IPC reader directly, as no
+         gateway runs there (review of BIND-8). -->
+    <InternalsVisibleTo Include="Fletcher.AotSmoke" />
   </ItemGroup>
 
 </Project>

@@ -207,11 +207,27 @@ void WsSession::OnSubscribe(const std::string& topic) {
         });
 
     uint64_t sub_id = result.subscription_id;
-    subscriptions_[sub_id] = topic;
 
     // Routing always; schema only when a publisher announced one. The
     // gateway is schema-agnostic — it forwards whatever schema was
     // attached on create_topic but never generates one itself.
+    //
+    // D-BIND-123: the subscription is kept only once its reply is built. If building it
+    // throws, the subscription is released before the error reply goes out, so a client that
+    // is told "error" never has a live subscription it was given no id for.
+    json response;
+    try {
+        response = BuildSubscribedReply(sub_id, topic, result.schema);
+    } catch (...) {
+        subscriber_->Unsubscribe(sub_id);
+        throw;
+    }
+    subscriptions_[sub_id] = topic;
+    SendText(response.dump());
+}
+
+nlohmann::json WsSession::BuildSubscribedReply(uint64_t sub_id, const std::string& topic,
+                                               const SchemaArrival& schema_future) {
     json response = {
         {"type", "subscribed"},
         {"subId", std::to_string(sub_id)},
@@ -229,12 +245,12 @@ void WsSession::OnSubscribe(const std::string& topic) {
     // else (not yet, or this subscription is already over). Only the first has
     // anything to send.
     SharedSchema schema;
-    if (result.schema.Wait(std::chrono::milliseconds(0), &schema) == PubSubStatus::kOk && schema) {
+    if (schema_future.Wait(std::chrono::milliseconds(0), &schema) == PubSubStatus::kOk && schema) {
         auto ipc_bytes = SerializeSchemaIpc(schema.get());
         response["schemaIpc"] = gateway::Base64Encode(ipc_bytes.data(), ipc_bytes.size());
         response["schema"] = gateway::ArrowSchemaToJson(schema.get());
     }
-    SendText(response.dump());
+    return response;
 }
 
 void WsSession::OnUnsubscribe(uint64_t sub_id) {

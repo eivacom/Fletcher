@@ -56,12 +56,19 @@ A peer reports each row it receives as `RECV <seq> OK` or `RECV <seq> MISMATCH <
   `field_number`, which failed a subscription with `std::bad_alloc` once the topic's schema was
   already declared (fixed in `gateway/src/schema_codec.cpp`).
 
-## Not yet: TypeScript declaring the topic
+## Every publisher declares its own topic
 
-The TypeScript client can announce only the JSON `schema`, which cannot carry `CrossRow`'s nested
-and Timestamp fields, so in `TypeScriptToCSharpGateway` the C# client declares the topic with
-`schemaIpc` and the TypeScript peer publishes on it undeclared (D-BIND-117). BIND-T gives
-TypeScript `schemaIpc`; then the peer declares its own topic.
+Each publisher declares its topic with the schema's Arrow IPC bytes, the TypeScript peer included:
+its generated `CrossRow` carries them (`schemaIpc`, D-BIND-130), so its declaration is a native
+publisher's, byte for byte. (Until BIND-8e, TypeScript could announce only the lossy JSON schema,
+and the C# client declared the topic for it, D-BIND-117.)
+
+## Live, not replayed
+
+Before the fixture rows, the publisher sends probe rows (`seq` -1, which every receiver reports as
+`RECV -1 UNKNOWN` and nobody compares) until one arrives, so the receiving reader has matched the
+writer and the rows travel live rather than through a Fast DDS backlog replay (D-BIND-129). A retry
+attempt must deliver all four rows by itself.
 
 ## Fast DDS
 

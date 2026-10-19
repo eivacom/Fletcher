@@ -61,6 +61,12 @@ internal sealed class FakeGateway
     /// <summary>On subscribe, deliver these envelopes to the new subscription BEFORE the subscribed reply.</summary>
     public List<Envelope> RetainedBeforeSubscribed { get; } = new();
 
+    /// <summary>The next request is answered with exactly this text frame instead of its reply.</summary>
+    public string? NextReplyText { get; set; }
+
+    /// <summary>A subscribed reply carries this as its schemaIpc instead of the topic's real one.</summary>
+    public string? SchemaIpcOverride { get; set; }
+
     /// <summary>The schema the topic was declared with, decoded from schemaIpc.</summary>
     public Schema? DeclaredSchema(string topic)
     {
@@ -136,6 +142,12 @@ internal sealed class FakeGateway
             return;
         }
 
+        if (TakeReplyText() is string raw)
+        {
+            ReplyText(raw);
+            return;
+        }
+
         JsonElement root = json.RootElement;
         switch (action)
         {
@@ -167,7 +179,11 @@ internal sealed class FakeGateway
 
                     string reply = "{\"type\":\"subscribed\",\"subId\":\"" + id.ToString(CultureInfo.InvariantCulture) +
                         "\",\"topic\":" + JsonSerializer.Serialize(topic);
-                    if (schema is not null)
+                    if (SchemaIpcOverride is not null)
+                    {
+                        reply += ",\"schemaIpc\":\"" + SchemaIpcOverride + "\"";
+                    }
+                    else if (schema is not null)
                     {
                         reply += ",\"schemaIpc\":\"" + Convert.ToBase64String(ControlMessages.WriteSchemaIpc(schema)) + "\"";
                     }
@@ -231,6 +247,16 @@ internal sealed class FakeGateway
         ReplyText("{\"type\":\"published\"}");
     }
 
+    private string? TakeReplyText()
+    {
+        lock (_sync)
+        {
+            string? raw = NextReplyText;
+            NextReplyText = null;
+            return raw;
+        }
+    }
+
     private string? TakeRefusal()
     {
         lock (_sync)
@@ -282,10 +308,32 @@ internal sealed class FakeTransport : IGatewayTransport
 
     public bool Disposed { get; private set; }
 
+    /// <summary>Set once the client dropped the connection (a connection it ended itself).</summary>
+    public bool Aborted { get; private set; }
+
+    /// <summary>When set, ConnectAsync completes only when this does.</summary>
+    public Task? ConnectGate { get; set; }
+
     public void ToClient(WebSocketMessageType type, byte[] payload) => _toClient.Writer.TryWrite((type, payload));
 
-    public Task ConnectAsync(Uri uri, CancellationToken cancellationToken) =>
-        ConnectFailure is null ? Task.CompletedTask : Task.FromException(ConnectFailure);
+    public async Task ConnectAsync(Uri uri, CancellationToken cancellationToken)
+    {
+        if (ConnectGate is not null)
+        {
+            await ConnectGate.ConfigureAwait(false);
+        }
+
+        if (ConnectFailure is not null)
+        {
+            throw ConnectFailure;
+        }
+    }
+
+    public void Abort()
+    {
+        Aborted = true;
+        _toClient.Writer.TryComplete(new System.Net.WebSockets.WebSocketException("aborted"));
+    }
 
     public async Task SendAsync(ReadOnlyMemory<byte> message, WebSocketMessageType type, CancellationToken cancellationToken)
     {
