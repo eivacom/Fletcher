@@ -159,6 +159,20 @@ internal static class CoverageFixture
 
     private static ServiceRequest MakeServiceRequest() => new() { Payload = MakeComposite() };
 
+    /// <summary>The four CompositeCoverage rows, by the <c>seq</c> the cross-language lane sends
+    /// them under (integration-tests/gateway-dotnet-crosslang, BIND-8d); its C++ peer numbers
+    /// coverage_fixture.hpp's the same way.</summary>
+    internal const int CompositeRowCount = 4;
+
+    internal static CompositeCoverage CompositeRow(int seq) => seq switch
+    {
+        0 => MakeComposite(),
+        1 => MakeCompositeWithAlternateNullsAndEmpties(),
+        2 => MakeCompositeWithMapsNonSorted(),
+        3 => MakeCompositeDefaulted(),
+        _ => throw new ArgumentOutOfRangeException(nameof(seq), seq, "the lane sends rows 0 to 3"),
+    };
+
     // ── One case per committed golden, as test_parity_oracle.cpp pairs them ──
 
     public static TheoryData<string> Goldens => new()

@@ -185,10 +185,10 @@ export interface ICompositeCoverage {
   repeated_struct: ILeaf[];
   map_scalar: Map<string, number>;
   map_struct: Map<string, ILeaf>;
-  flattened_struct_list: IStructListWrapper[];
+  flattened_struct_list: ILeaf[];
   nested_struct_lists: ILeaf[][];
   depth3_struct_lists: ILeaf[][][];
-  optional_flattened_struct_list: IStructListWrapper[] | null;
+  optional_flattened_struct_list: ILeaf[] | null;
   message_flattened_point: IFlattenedPoint;
   field_flattened_position: IFieldFlattenedPosition;
 }
@@ -205,10 +205,10 @@ export const CompositeCoverage: TypedSchema<ICompositeCoverage> = {
     { name: 'repeated_struct', fieldNumber: 8, wireType: WireTypeId.LIST, nullable: false, element: { name: '', fieldNumber: 0, wireType: WireTypeId.STRUCT, nullable: false, fields: Leaf.fields } },
     { name: 'map_scalar', fieldNumber: 9, wireType: WireTypeId.MAP, nullable: false, mapKey: { name: '', fieldNumber: 0, wireType: WireTypeId.STRING, nullable: false }, mapValue: { name: '', fieldNumber: 0, wireType: WireTypeId.INT32, nullable: false } },
     { name: 'map_struct', fieldNumber: 10, wireType: WireTypeId.MAP, nullable: false, mapKey: { name: '', fieldNumber: 0, wireType: WireTypeId.STRING, nullable: false }, mapValue: { name: '', fieldNumber: 0, wireType: WireTypeId.STRUCT, nullable: false, fields: Leaf.fields } },
-    { name: 'flattened_struct_list', fieldNumber: 12, wireType: WireTypeId.LIST, nullable: false, element: { name: '', fieldNumber: 0, wireType: WireTypeId.STRUCT, nullable: false, fields: StructListWrapper.fields } },
+    { name: 'flattened_struct_list', fieldNumber: 12, wireType: WireTypeId.LIST, nullable: false, element: { name: '', fieldNumber: 0, wireType: WireTypeId.STRUCT, nullable: false, fields: Leaf.fields } },
     { name: 'nested_struct_lists', fieldNumber: 14, wireType: WireTypeId.LIST, nullable: false, element: { name: '', fieldNumber: 0, wireType: WireTypeId.LIST, nullable: false, element: { name: '', fieldNumber: 0, wireType: WireTypeId.STRUCT, nullable: false, fields: Leaf.fields } } },
     { name: 'depth3_struct_lists', fieldNumber: 16, wireType: WireTypeId.LIST, nullable: false, element: { name: '', fieldNumber: 0, wireType: WireTypeId.LIST, nullable: false, element: { name: '', fieldNumber: 0, wireType: WireTypeId.LIST, nullable: false, element: { name: '', fieldNumber: 0, wireType: WireTypeId.STRUCT, nullable: false, fields: Leaf.fields } } } },
-    { name: 'optional_flattened_struct_list', fieldNumber: 18, wireType: WireTypeId.LIST, nullable: true, element: { name: '', fieldNumber: 0, wireType: WireTypeId.STRUCT, nullable: false, fields: StructListWrapper.fields } },
+    { name: 'optional_flattened_struct_list', fieldNumber: 18, wireType: WireTypeId.LIST, nullable: true, element: { name: '', fieldNumber: 0, wireType: WireTypeId.STRUCT, nullable: false, fields: Leaf.fields } },
     { name: 'message_flattened_point', fieldNumber: 19, wireType: WireTypeId.STRUCT, nullable: false, fields: FlattenedPoint.fields },
     { name: 'field_flattened_position', fieldNumber: 20, wireType: WireTypeId.STRUCT, nullable: false, fields: FieldFlattenedPosition.fields },
   ],

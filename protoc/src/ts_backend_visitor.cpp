@@ -3,6 +3,7 @@
 //
 #include "ts_backend_visitor.hpp"
 
+#include <map>
 #include <optional>
 #include <set>
 #include <string>
@@ -19,7 +20,6 @@ namespace fletcher::ts_backend {
 namespace {
 
 using google::protobuf::Descriptor;
-using google::protobuf::FieldDescriptor;
 using ir::IrNode;
 using ir::NodeKind;
 
@@ -36,21 +36,6 @@ std::string StripProtoSuffix(const std::string& proto_name) {
     return base;
 }
 
-// The declared wrapper name to render for a field, or nullptr to use the IR's own
-// struct identity. Recovers today's byte output for SINGULAR flatten-wrapper list
-// fields: `StructListWrapper foo = N;` flattens to List<Struct(Leaf)> in the IR,
-// but the TS emits the declared IStructListWrapper[] / StructListWrapper.fields.
-// A REPEATED flatten-wrapper (a nested list) keeps the inner leaf name (ILeaf[][]),
-// so it is gated out here. The name comes from Descriptor::name() (a
-// language-neutral proto fact), never from a TS/C++ string on an IR node.
-const Descriptor* DeclaredWrapperFor(const FieldDescriptor* source_field) {
-    if (source_field == nullptr) return nullptr;
-    if (source_field->type() != FieldDescriptor::TYPE_MESSAGE) return nullptr;
-    if (source_field->is_repeated()) return nullptr;
-    if (!fletcher::IsFlattenedWrapper(source_field->message_type())) return nullptr;
-    return source_field->message_type();
-}
-
 const IrNode* ListElement(const IrNode& node) {
     if (node.kind == NodeKind::LIST) return std::get<ir::ListNode>(node.node).element.get();
     return std::get<ir::FixedSizeListNode>(node.node).element.get();
@@ -60,36 +45,45 @@ const Descriptor* StructIdentity(const IrNode& node) {
     return std::get<ir::StructNode>(node.node).identity.descriptor;
 }
 
-// IR-native cross-file import discovery (no flat-bridge projection). Recursively
-// find every struct message referenced by `node` whose file differs from
-// `context_file` and record that file's name. WKT/wrapper scalars carry no struct
-// identity, so they contribute nothing (matching today's scan, which only imports
-// STRUCT/REPEATED_STRUCT/NESTED_LIST-leaf/MAP-value message files). Cross-file
-// symbol resolution itself is GIR-8 scope; this only feeds the placeholder import
-// lines and must yield the same (empty, for the coverage fixture) set as before.
-void CollectStructImportFiles(const IrNode& node,
-                              const google::protobuf::FileDescriptor* context_file,
-                              std::set<std::string>& imports) {
+// The messages of OTHER files a field's emitted TypeScript names, by file (D-BIND-118). It
+// walks `node` as InterfaceType and AppendComposite render it. A struct is named by reference
+// (`I<Msg>` and `<Msg>.fields`), so its own fields are not walked: the imported file resolves
+// those. WKT/wrapper scalars carry no struct identity and import nothing. Before D-BIND-118
+// this kept file names only and the import listed no symbol.
+void CollectCrossFileStructs(const IrNode& node,
+                             const google::protobuf::FileDescriptor* context_file,
+                             std::map<std::string, std::set<std::string>>& imports) {
     switch (node.kind) {
         case NodeKind::SCALAR:
         case NodeKind::UNSUPPORTED:
             return;
         case NodeKind::LIST:
         case NodeKind::FIXED_SIZE_LIST:
-            CollectStructImportFiles(*ListElement(node), context_file, imports);
+            CollectCrossFileStructs(*ListElement(node), context_file, imports);
             return;
         case NodeKind::STRUCT: {
             const Descriptor* d = StructIdentity(node);
-            if (d->file() != context_file) imports.insert(d->file()->name());
+            if (d->file() != context_file) imports[d->file()->name()].insert(TsSchemaConstName(d));
             return;
         }
         case NodeKind::MAP: {
             const auto& mp = std::get<ir::MapNode>(node.node);
-            CollectStructImportFiles(*mp.key, context_file, imports);
-            CollectStructImportFiles(*mp.value, context_file, imports);
+            CollectCrossFileStructs(*mp.key, context_file, imports);
+            CollectCrossFileStructs(*mp.value, context_file, imports);
             return;
         }
     }
+}
+
+// `a, b, c` with `prefix` before each name.
+std::string JoinNames(const std::set<std::string>& names, std::string_view prefix) {
+    std::string out;
+    for (const auto& name : names) {
+        if (!out.empty()) out += ", ";
+        out += prefix;
+        out += name;
+    }
+    return out;
 }
 
 }  // namespace
@@ -115,32 +109,25 @@ std::string TsVisitor::WireType(const IrNode& node) {
     return "WireTypeId.UNKNOWN";
 }
 
-std::string TsVisitor::InterfaceType(const IrNode& node, const Descriptor* declared_struct) {
+// A struct is always rendered by its IR identity, the message the wire carries (D-BIND-119).
+// A singular flatten wrapper (`StructListWrapper foo = N;`) is List<Struct(Leaf)> in the IR and
+// on the wire, so it is ILeaf[] / Leaf.fields; naming the wrapper there (IStructListWrapper[] /
+// StructListWrapper.fields, as GIR-7 did to keep the pre-IR output) described a list of the
+// WRAPPER, which no other language writes or reads.
+std::string TsVisitor::InterfaceType(const IrNode& node) {
     switch (node.kind) {
         case NodeKind::SCALAR: {
             const auto& s = std::get<ir::ScalarNode>(node.node);
             return TsLookupScalar(s.logical_type, s.enum_identity).ts_type_text;
         }
         case NodeKind::LIST:
-        case NodeKind::FIXED_SIZE_LIST: {
-            // The recovered wrapper name applies ONLY at the outer singular-wrapper
-            // level: a singular flatten wrapper that collapses to List<Struct> emits
-            // the wrapper name (IStructListWrapper[]), but one that collapses to a
-            // NESTED list keeps the leaf identity (ILeaf[][]). So only thread
-            // declared_struct into a DIRECT struct element; drop it for deeper lists.
-            const IrNode& elem = *ListElement(node);
-            const Descriptor* elem_declared =
-                elem.kind == NodeKind::STRUCT ? declared_struct : nullptr;
-            return InterfaceType(elem, elem_declared) + "[]";
-        }
-        case NodeKind::STRUCT: {
-            const Descriptor* d = declared_struct ? declared_struct : StructIdentity(node);
-            return TsInterfaceName(d);
-        }
+        case NodeKind::FIXED_SIZE_LIST:
+            return InterfaceType(*ListElement(node)) + "[]";
+        case NodeKind::STRUCT:
+            return TsInterfaceName(StructIdentity(node));
         case NodeKind::MAP: {
             const auto& mp = std::get<ir::MapNode>(node.node);
-            return "Map<" + InterfaceType(*mp.key, nullptr) + ", " +
-                   InterfaceType(*mp.value, nullptr) + ">";
+            return "Map<" + InterfaceType(*mp.key) + ", " + InterfaceType(*mp.value) + ">";
         }
         case NodeKind::UNSUPPORTED:
             return "unknown";
@@ -148,52 +135,42 @@ std::string TsVisitor::InterfaceType(const IrNode& node, const Descriptor* decla
     return "unknown";
 }
 
-void TsVisitor::AppendComposite(std::ostringstream& o, const IrNode& node,
-                                const Descriptor* declared_struct) {
+void TsVisitor::AppendComposite(std::ostringstream& o, const IrNode& node) {
     switch (node.kind) {
         case NodeKind::SCALAR:
         case NodeKind::UNSUPPORTED:
             return;
         case NodeKind::LIST:
-        case NodeKind::FIXED_SIZE_LIST: {
-            // See InterfaceType: declared_struct applies only to a DIRECT struct
-            // element (List<Struct>), never through a nested list.
-            const IrNode& elem = *ListElement(node);
-            const Descriptor* elem_declared =
-                elem.kind == NodeKind::STRUCT ? declared_struct : nullptr;
-            o << ", element: " << ElementDescriptor(elem, elem_declared);
+        case NodeKind::FIXED_SIZE_LIST:
+            o << ", element: " << ElementDescriptor(*ListElement(node));
             return;
-        }
-        case NodeKind::STRUCT: {
-            const Descriptor* d = declared_struct ? declared_struct : StructIdentity(node);
-            o << ", fields: " << TsSchemaConstName(d) << ".fields";
+        case NodeKind::STRUCT:
+            o << ", fields: " << TsSchemaConstName(StructIdentity(node)) << ".fields";
             return;
-        }
         case NodeKind::MAP: {
             const auto& mp = std::get<ir::MapNode>(node.node);
-            o << ", mapKey: " << ElementDescriptor(*mp.key, nullptr)
-              << ", mapValue: " << ElementDescriptor(*mp.value, nullptr);
+            o << ", mapKey: " << ElementDescriptor(*mp.key)
+              << ", mapValue: " << ElementDescriptor(*mp.value);
             return;
         }
     }
 }
 
-std::string TsVisitor::ElementDescriptor(const IrNode& node, const Descriptor* declared_struct) {
+std::string TsVisitor::ElementDescriptor(const IrNode& node) {
     std::ostringstream o;
     o << "{ name: '', fieldNumber: 0, wireType: " << WireType(node) << ", nullable: false";
-    AppendComposite(o, node, declared_struct);
+    AppendComposite(o, node);
     o << " }";
     return o.str();
 }
 
 std::string TsVisitor::DescriptorLiteral(const IrNode& node, std::string_view name,
-                                         int32_t field_number, const Descriptor* declared_struct,
-                                         std::string_view indent) {
+                                         int32_t field_number, std::string_view indent) {
     std::ostringstream o;
     o << indent << "{ name: '" << name << "', fieldNumber: " << field_number
       << ", wireType: " << WireType(node)
       << ", nullable: " << (node.facts.nullable ? "true" : "false");
-    AppendComposite(o, node, declared_struct);
+    AppendComposite(o, node);
     o << " },\n";
     return o.str();
 }
@@ -212,8 +189,7 @@ std::string TsVisitor::GenerateMessage(const Descriptor* msg) {
 
     o << "export interface " << iface << " {\n";
     for (const auto& rec : fields) {
-        const Descriptor* declared = DeclaredWrapperFor(rec.source_field);
-        std::string ts_type = InterfaceType(*rec.node, declared);
+        std::string ts_type = InterfaceType(*rec.node);
         if (rec.node->facts.nullable) ts_type += " | null";
         o << "  " << rec.name << ": " << ts_type << ";\n";
     }
@@ -222,8 +198,7 @@ std::string TsVisitor::GenerateMessage(const Descriptor* msg) {
     o << "export const " << schema_name << ": TypedSchema<" << iface << "> = {\n"
       << "  fields: [\n";
     for (const auto& rec : fields) {
-        const Descriptor* declared = DeclaredWrapperFor(rec.source_field);
-        o << DescriptorLiteral(*rec.node, rec.name, rec.field_number, declared, "    ");
+        o << DescriptorLiteral(*rec.node, rec.name, rec.field_number, "    ");
     }
     o << "  ],\n"
       << "  protoPackage: '" << msg->file()->package() << "',\n"
@@ -241,20 +216,21 @@ std::string TsVisitor::GenerateFile() {
       << "import type { TypedSchema } from '@eiva/fletcher-gateway-client';\n"
       << "import { WireTypeId } from '@eiva/fletcher-gateway-client';\n\n";
 
-    // Cross-file placeholder imports (GIR-8 owns real symbol resolution). Fully
-    // IR-native: walk the shared flattened field list and inspect each IR node for
-    // referenced struct message files — no flat-bridge projection. Ordered
-    // lexically by the std::set, as before.
-    std::set<std::string> ts_imports;
+    // Cross-file imports (D-BIND-118): each message of another file a field names, its
+    // TypedSchema as a value (`<Msg>.fields`) and its interface as a type (`I<Msg>`), from
+    // that file's generated module. Walks the shared flattened field list, IR-native.
+    // Ordered lexically by file, then by name.
+    std::map<std::string, std::set<std::string>> ts_imports;
     auto messages = fletcher::OrderedMessages(file_);
     for (const auto* msg : messages) {
         if (fletcher::IsRecursive(msg)) continue;
         for (const auto& rec : cpp_backend::BuildFlattenedFieldList(msg))
-            CollectStructImportFiles(*rec.node, file_, ts_imports);
+            CollectCrossFileStructs(*rec.node, file_, ts_imports);
     }
-    for (const auto& proto_file : ts_imports) {
-        o << "import { " << "/* cross-file types */ " << "} from './"
-          << StripProtoSuffix(proto_file) << ".fletcher.js';\n";
+    for (const auto& [proto_file, names] : ts_imports) {
+        const std::string module = "'./" + StripProtoSuffix(proto_file) + ".fletcher.js'";
+        o << "import { " << JoinNames(names, "") << " } from " << module << ";\n"
+          << "import type { " << JoinNames(names, "I") << " } from " << module << ";\n";
     }
     if (!ts_imports.empty()) o << "\n";
 

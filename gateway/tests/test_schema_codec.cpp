@@ -416,3 +416,42 @@ TEST(GatewayDeclaredSchemaTest, AMalformedSchemaIpcIsRefused) {
             << bad.dump();
     }
 }
+
+// ---------------------------------------------------------------------------
+// The schema a `subscribed` reply describes (ArrowSchemaToJson), BIND-8d.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+void SetOneMetadata(ArrowSchema* field, const char* key, const char* value) {
+    ArrowBuffer metadata;
+    ASSERT_EQ(ArrowMetadataBuilderInit(&metadata, nullptr), NANOARROW_OK);
+    ASSERT_EQ(ArrowMetadataBuilderAppend(&metadata, ArrowCharView(key), ArrowCharView(value)),
+              NANOARROW_OK);
+    ASSERT_EQ(ArrowSchemaSetMetadata(field, reinterpret_cast<const char*>(metadata.data)),
+              NANOARROW_OK);
+    ArrowBufferReset(&metadata);
+}
+
+}  // namespace
+
+TEST(ArrowSchemaToJsonTest, AFieldWithMetadataButNoFieldNumberHasNone) {
+    // nanoarrow's ArrowMetadataGetValue leaves its out-value unchanged, and returns OK, for an
+    // absent key. `b` has metadata but no field_number, like a generated list element; it is
+    // `a`'s sibling, so the old uninitialised read in FieldToJson found `a`'s "1" in the same
+    // stack slot (or garbage: a std::bad_alloc out of a `subscribed` reply, measured live).
+    fletcher::OwnedSchema schema;
+    ArrowSchemaInit(schema.get());
+    ASSERT_EQ(ArrowSchemaSetTypeStruct(schema.get(), 2), NANOARROW_OK);
+    ASSERT_EQ(ArrowSchemaSetType(schema->children[0], NANOARROW_TYPE_INT32), NANOARROW_OK);
+    ASSERT_EQ(ArrowSchemaSetName(schema->children[0], "a"), NANOARROW_OK);
+    SetOneMetadata(schema->children[0], "field_number", "1");
+    ASSERT_EQ(ArrowSchemaSetType(schema->children[1], NANOARROW_TYPE_INT32), NANOARROW_OK);
+    ASSERT_EQ(ArrowSchemaSetName(schema->children[1], "b"), NANOARROW_OK);
+    SetOneMetadata(schema->children[1], "fletcher.note", "no field number here");
+
+    const json j = fletcher::gateway::ArrowSchemaToJson(schema.get());
+    ASSERT_EQ(j["fields"].size(), 2u) << j.dump();
+    EXPECT_EQ(j["fields"][0]["fieldNumber"], 1) << j.dump();
+    EXPECT_FALSE(j["fields"][1].contains("fieldNumber")) << j.dump();
+}

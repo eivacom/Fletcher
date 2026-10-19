@@ -1174,6 +1174,41 @@ the Windows build of one project did not: `Fletcher.AotSmoke` and `Fletcher.Test
 golden broke it (CS0234). The native projects now exclude `*.fletcher.gateway.cs`; the lesson is the
 standing one, run the whole-solution rehearsal, not one project, before calling a golden done.
 
+**8d, the cross-language rows and packaging (2026-10-19).** The risk named at 8b came first: the
+gateway's re-declaration check compares exact Arrow IPC bytes, and a C# client's `schemaIpc` is
+written by Apache.Arrow, not nanoarrow. Measured with a probe over 21 generated messages of five
+`.proto` files: the raw C# bytes differed from C++'s every time, and after the gateway's
+`DeserializeSchemaIpc` and re-encode they were identical every time, so no fix was needed. The lane
+was then ruled (D-BIND-116): `integration-tests/gateway-dotnet-crosslang`, a gateway over
+`fastdds`, the C# gateway client as the test process, and a C++ native peer, a C# native peer and a
+TypeScript peer as child processes, one topic per direction, `protoc-coverage`'s four
+`CompositeCoverage` fixture rows inside a local `CrossRow { seq, row }`, each receiver comparing
+field by field with its own transcription of the fixture.
+
+Building it found four things, each ruled or fixed in turn. The TypeScript client cannot declare a
+topic of that shape, its JSON schema being scalar-only, so the C# client declares it for the
+TypeScript publisher and BIND-T gives TypeScript `schemaIpc` (D-BIND-117). Every backend skips a
+pub/sub method whose message is in another file, hence the local wrapper; and the TypeScript backend
+could not reference another file's message at all, writing an empty placeholder import (D-BIND-118,
+fixed). With that, the four native rows passed at once, and the two TypeScript rows failed in two
+different places. The TypeScript peer crashed decoding: TypeScript had described a singular
+flatten-wrapper field as a list of the WRAPPER, where the wire carries a list of its element, kept
+on purpose to reproduce the pre-IR output byte for byte and never exchanged with another language
+(D-BIND-119, fixed; protoc-coverage's own C++ goldens did not decode in TypeScript until the element
+was right). And the gateway refused the C# subscription with `std::bad_alloc`: its `subscribed`
+reply read an `ArrowStringView` that nanoarrow leaves untouched for a missing key, and a generated
+list element has metadata without `field_number`; ASan showed the stale read on a probe, and the
+fix initialises the value and requires a found key. Packaging: `IsAotCompatible` on the client (an
+AOT-unsafe call now fails its build), no reference to `Eiva.Fletcher.Model` (D-BIND-120), and the
+packed package checked in `ci.dotnet` for a `runtimes/` entry or a native dependency.
+
+**What the checks found.** Six rows green, three runs in a row; once in eighteen exchanges the
+C++ → C# row needed its retry (the Fast DDS late-joiner defect the retry exists for). Three lane
+mutants, each caught by exactly the rows it should: the C++ fixture's leaf label (both C++ rows),
+the TypeScript fixture's `int64` (both TypeScript rows), the C# native peer sending its map in
+reverse order (that row alone, so entry order crosses too). The gateway case fails on the reverted
+fix, the package check fails on a packed `runtimes/` file and on an `Interop` dependency.
+
 **Lessons.**
 
 - **A second implementation is the best test of the first.** The native codec's offset bug went
@@ -1181,3 +1216,9 @@ standing one, run the whole-solution rehearsal, not one project, before calling 
   on one sliced batch showed it at once.
 - **An offset test needs a value the offset changes.** A slice over a column with no nulls passes
   whether the null bits are read at the right index or not.
+- **A golden pins what a backend writes, not that another language can read it.** TypeScript's
+  flatten-wrapper descriptor and its empty cross-file import were both byte-pinned for months; one
+  row sent to another language showed both in an afternoon.
+- **"Unchanged on a miss" is an uninitialised read waiting for its shape.** nanoarrow's
+  `ArrowMetadataGetValue` documents it; the gateway's reply only met a field with metadata and no
+  `field_number` when a nested generated schema reached it.

@@ -3193,3 +3193,75 @@ D-BIND-72 left to BIND-8.
   subscriber isolated gives it a client of its own. **Declined:** each pair owning its own client
   (self-contained and isolated, like the native pair, but one WebSocket per publisher and subscriber,
   no ordering across topics, and no way back to a shared connection).
+
+The next ones were ruled during BIND-8d (the cross-language rows and packaging), from 2026-10-19.
+First a measurement: for all 21 generated messages of five `.proto` files (`coverage.proto`'s
+`CompositeCoverage` among them), the C# client's `schemaIpc` (Apache.Arrow's writer), decoded by the
+gateway's `DeserializeSchemaIpc` and encoded again, gives exactly the bytes a native C++ publisher
+declares (`SerializeSchemaIpc` of the generated schema). The raw C# bytes differ from C++'s in every
+case, so the gateway's decode and re-encode is what makes a C# gateway declaration and a native one
+of one topic agree; no fix was needed.
+
+- **D-BIND-116 - the gateway-client rows of the cross-language matrix run in a lane of their own,
+  `integration-tests/gateway-dotnet-crosslang`: a gateway over `fastdds`, the C# gateway client in
+  the test process, and a C++ peer, a C# native peer and a TypeScript peer as child processes, all
+  generated from one `.proto` over `coverage.proto`'s `CompositeCoverage`, one topic per
+  direction.** *LOCKED BY THE MAINTAINER 2026-10-19 (BIND-8d Q1).* The C++ and C# native peers are
+  other processes, so the gateway's provider is `fastdds`; the TypeScript peer joins the same gateway,
+  so the whole matrix row of BIND-8 is read in one place. `CompositeCoverage` already reaches every
+  mapped shape, and its fixture rows are already transcribed in C++ and C#. **Declined:** adding the
+  peers to `gateway-dotnet-end-to-end` (mixes the client's own cases with the matrix, and makes that
+  lane need the native shim and Node); the TypeScript row there over `inprocess` and the native rows
+  in a new lane (two places to read one matrix row from).
+
+- **D-BIND-117 - in the lane's TypeScript → C# row, the C# gateway client declares the topic with
+  `schemaIpc` and the TypeScript peer publishes on it without declaring it; BIND-T gives TypeScript
+  a full-fidelity declaration: the plugin embeds each message's Arrow IPC schema in the generated
+  `.ts`, and `createTopic` sends it as `schemaIpc`.** *LOCKED BY THE MAINTAINER 2026-10-19 (BIND-8d
+  Q2).* The TypeScript client announces only the JSON `schema`, which the gateway refuses for a
+  struct, list, map, Timestamp or Duration field and which drops nullability and `field_number`
+  (D-BIND-112), and over `fastdds` a topic declared with no schema never announces one, so native
+  subscribers would never decode its rows. The gateway's one `Publisher` serves every WebSocket
+  session, so a declaration by the C# client holds for the TypeScript publisher. The plugin already
+  computes `SerializeSchemaIpc` of each schema (the `ipc` output), so the bytes TypeScript sends are
+  the native declaration's exactly and its runtime needs no Arrow IPC writer (BIND-T's "no new
+  runtime dependency"). When BIND-T lands, the lane's TypeScript peer declares its own topic.
+  **Declined:** the fix inside 8d, or as its own slice before 8d's TypeScript row (BIND-T's area,
+  and the workaround proves the rows meanwhile); a flat message for the TypeScript rows (misses
+  nested, list, map and Timestamp shapes); the TypeScript client writing IPC with `apache-arrow`
+  (a heavy runtime dependency); a complete JSON parser in the gateway (still lossy, D-BIND-112).
+
+- **D-BIND-118 - the TypeScript backend imports a message of another `.proto` file by name: the
+  generated `.ts` writes `import { <Msg> } from './<stem>.fletcher.js'` and `import type { I<Msg> }`
+  for each message of another file its fields reach, where it wrote an empty placeholder
+  (`import { /* cross-file types */ }`).** *LOCKED BY THE MAINTAINER 2026-10-19 (BIND-8d Q3).* Found
+  building the lane's one `.proto`: every backend skips a pub/sub method whose message is declared
+  in another file, so the lane streams a local `CrossRow { int32 seq = 1;
+  integration.coverage.CompositeCoverage row = 2; }`, a field of another file's message, which C++
+  and C# map (D-BIND-87) and TypeScript did not: the placeholder left `ICompositeCoverage` and
+  `CompositeCoverage.fields` unresolved, so the file neither type-checks nor runs. No golden or test
+  held a cross-file TypeScript import. Fixed in the plugin with a `test_ts_visitor` case; the lane is
+  its end-to-end proof. **Declined:** a self-contained lane `.proto` (three new fixture
+  transcriptions, and the TypeScript gap stays); the TypeScript row waiting for BIND-T.
+
+- **D-BIND-119 - the TypeScript backend describes a singular flatten-wrapper field by what it
+  carries, a list of the wrapper's element (`ILeaf[]`, `element: ... Leaf.fields`), not as a list
+  of the wrapper (`IStructListWrapper[]`, `StructListWrapper.fields`).** *LOCKED BY THE MAINTAINER
+  2026-10-19 (BIND-8d Q4).* Found by the lane: `StructListWrapper flattened_struct_list = 12;` is
+  `list<Leaf>` in the schema and on the wire in C++ and C#, but TypeScript's descriptor said
+  `list<struct<list<Leaf>>>`, so its decoder cannot read any non-empty such row a C++ or C# peer
+  writes ("Offset is outside the bounds of the DataView" on protoc-coverage's own C++ goldens, which
+  decode once the element is `Leaf`), and what it writes cannot be read back by them. The wrapper's
+  name had been kept on purpose (GIR-7, `DeclaredWrapperFor`) to reproduce the TypeScript output of
+  before the IR rewrite byte for byte; no test ever exchanged the shape. TypeScript now renders the
+  IR's own struct identity, as C++ and C# do; the protoc-coverage TypeScript golden and
+  `test_ts_visitor`'s first case move with it. **Declined:** sending those two fields empty in the
+  TypeScript rows and carrying the fix as BIND-T debt; dropping the TypeScript rows until BIND-T.
+
+- **D-BIND-120 - `Eiva.Fletcher.GatewayClient` takes no reference on `Eiva.Fletcher.Model`.**
+  *LOCKED BY THE MAINTAINER 2026-10-19 (BIND-8d Q5).* The client's code uses nothing from it, and
+  `Eiva.Fletcher` does not reference it either: only the GENERATED model needs `Model` (its
+  `Timestamp` and `Duration`, D-BIND-74), and the consumer that generates it references `Model`
+  itself, as both live lanes do. The package stays `Apache.Arrow`-only, its one dependency.
+  **Declined:** a reference for a one-`PackageReference` gateway consumer (then `Eiva.Fletcher`
+  would take the same, a BIND-9 packaging question).

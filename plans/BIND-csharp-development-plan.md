@@ -822,7 +822,21 @@ async stream that would copy every attachment (D-BIND-113); topics are the proto
 keys (D-BIND-114); a generated gateway pair borrows a `FletcherClient`, one connection per app
 (D-BIND-115). Slices 8a (codec, done 2026-10-16),
 8b (client, live lane, the gateway's `schemaIpc`), 8c (pair), 8d (cross-language rows, packaging),
-8e (review).
+8e (review). The cross-language rows run in a lane of their own, `gateway-dotnet-crosslang`: a
+gateway over `fastdds`, the C# gateway client in the test process, C++, C# native and TypeScript
+peers as child processes, one `.proto` over `coverage.proto`'s `CompositeCoverage` (D-BIND-116,
+2026-10-19). A C# `schemaIpc` and the native declaration of one topic agree after the gateway's
+decode and re-encode, measured for 21 generated messages, so no conflict stands in the way.
+TypeScript cannot declare such a topic yet (its JSON `schema` is scalar-only and lossy), so in the
+TypeScript → C# row the C# client declares it; BIND-T makes the plugin embed the schema's Arrow IPC
+in the generated `.ts` and `createTopic` send it as `schemaIpc` (D-BIND-117, 2026-10-19). The
+TypeScript backend imports another file's message by name instead of an empty placeholder, so one
+`.proto` can stream a local wrapper of `CompositeCoverage` in every language (D-BIND-118, 2026-10-19),
+and describes a singular flatten-wrapper field as the list of its element the wire carries, not
+as a list of the wrapper, which no other language could read (D-BIND-119, 2026-10-19).
+`Eiva.Fletcher.GatewayClient` is `IsAotCompatible`, takes no reference on `Eiva.Fletcher.Model`
+(only generated code needs it, and its consumer references it, D-BIND-120, 2026-10-19), and its
+packed package is checked for native assets.
 
 **BIND-T, BIND-8, BIND-9, BIND-10** — as in the 2026-08-31 plan, with BIND-9
 carrying the LGPL notice text and the packaging statement (§6 P-1), and BIND-10
@@ -884,10 +898,10 @@ for f in core/tests/*.cpp pubsub/tests/*.cpp arrow-bridge/tests/*.cpp pubsub-arr
 | Bucket | Files (cases) | Total | Treatment |
 |---|---|---|---|
 | 1 codec / envelope / buffer / status | `test_positional_io` 19, `test_envelope` 11, `test_write_buffer` 11, `test_status_taxonomy` 3, `test_codec` 70, `test_codec_edge` 23, `test_codec_property_fuzz` 2, `test_batch_decoder` 22 | **161** | **NOT a binding port target (D-BIND-39, 2026-09-21).** `test_codec*` (60) is `arrow-bridge`'s **Arrow-native** suite and about half of it exercises unions, decimals, intervals, half-float, view types and fixed-size binary, which no `.proto` can produce; `test_envelope` (11) is BIND-8's by §2.6; `WriteBufferInPlace`'s writer cases are BIND-4's by surface; 13 of `test_positional_io` drive `PositionalWriter`/`AppendTrailingUint64Field`, which §2.5 does not expose. **BIND-3's obligation instead: every type the PROTO MAPPING produces round-trips through the binding.** `test_status_taxonomy` still ports naturally: the C# enum is compared to `core/README.md`'s table. |
-| 2 gateway client | `test_schema_codec` 20, `test_publish_frame` 9, TS 36 | **65** | Port (BIND-8), true parity: managed code both sides. |
+| 2 gateway client | `test_schema_codec` 21, `test_publish_frame` 9, TS 36 | **66** | Port (BIND-8), true parity: managed code both sides. |
 | 3 pub/sub semantics | `test_publisher_subscriber` 44, `test_segments` 5, `test_pubsub_arrow` 33 | **82** | Port over `inprocess` (BIND-4/5); #128's option and schema-watch cases over real Fast DDS where only a provider that knows them can answer (D-BIND-57). 5 excluded. |
 | 4 native providers | Fast DDS: `test_fast_dds_pubsub_provider` 71, `test_profile_document` 33, `test_fletcher_sample_pub_sub_type` 28; XRCE: `test_xrce_provider` 7, `test_xrce_document` 11 | **150** | Port as driver-selection tests where the assertion is seam-visible (122); `test_fletcher_sample_pub_sub_type` (28) excluded as internal to the provider (Q10). |
-| 5 generator | `test_type_mapper` 36, `test_option_metadata` 33, `test_schema_builder` 9, `test_schema_visitor` 9, `test_ir` 8, `test_schema_codec_lockstep` 2, `test_topic_path` 2, `test_ts_visitor` 1, `test_csharp_type_table` 26, `test_csharp_visitor` 62 | **188** | Stay C++; extended with `test_csharp_*`. Needs the Feature owner. |
+| 5 generator | `test_type_mapper` 36, `test_option_metadata` 33, `test_schema_builder` 9, `test_schema_visitor` 9, `test_ir` 8, `test_schema_codec_lockstep` 2, `test_topic_path` 2, `test_ts_visitor` 3, `test_csharp_type_table` 26, `test_csharp_visitor` 62 | **190** | Stay C++; extended with `test_csharp_*`. Needs the Feature owner. |
 | 6 no managed analogue | `test_owned_schema` 1 | **1** | Excluded, documented. |
 | Conformance (new since plan) | `integration-tests/pubsub-conformance` 95 cases; `CallerTier` 22 of them | — | Inherited **oracle**, not a port target. BIND writes a C# arm of `CallerTier` and adds cases to the C++ suite. |
 

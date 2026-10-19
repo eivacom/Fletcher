@@ -1,0 +1,40 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// The ONE .proto of the cross-language rows of the C# gateway client (BIND-8d, D-BIND-116).
+//
+// Every peer publishes and subscribes coverage.proto's CompositeCoverage, which reaches every
+// mapped shape (all scalar kinds, optional and wrapped scalars, Timestamp and Duration, enums,
+// nested and optional messages, lists of scalars, bytes and structs, maps of scalars and structs,
+// flattened lists to depth 3 and flattened messages), with the fixture rows the protoc-coverage
+// goldens already pin in C++ and C#. One method per direction, so each topic has one publisher
+// language and one subscriber language.
+//
+// The rows travel as CrossRow, a message of THIS file: every backend skips a pub/sub method whose
+// message is declared in another file (its pair would name a type this file does not map), so
+// the service cannot stream CompositeCoverage itself. A field of another file's message is
+// supported (D-BIND-87), so CrossRow carries it whole. `seq` names the fixture row, so a
+// receiver compares each row with the one it was built from, whatever the delivery order.
+syntax = "proto3";
+
+package gateway.crosslang;
+
+import "coverage.proto";
+import "google/protobuf/empty.proto";
+
+message CrossRow {
+  int32 seq = 1;
+  integration.coverage.CompositeCoverage row = 2;
+}
+
+service CrossLang {
+  // C# gateway client <-> C++ native pair (Fast DDS, through the gateway's provider).
+  rpc CsToCpp(stream CrossRow) returns (google.protobuf.Empty);
+  rpc CppToCs(stream CrossRow) returns (google.protobuf.Empty);
+  // C# gateway client <-> TypeScript gateway client (both over the gateway's WebSocket).
+  rpc CsToTs(stream CrossRow) returns (google.protobuf.Empty);
+  rpc TsToCs(stream CrossRow) returns (google.protobuf.Empty);
+  // C# gateway client <-> C# native pair (Fast DDS, through the gateway's provider).
+  rpc CsToNative(stream CrossRow) returns (google.protobuf.Empty);
+  rpc NativeToCs(stream CrossRow) returns (google.protobuf.Empty);
+}

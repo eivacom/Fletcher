@@ -13,6 +13,11 @@
     <RootNamespace>Eiva.Fletcher.GatewayClient</RootNamespace>
     <Description>Managed WebSocket client for the Fletcher gateway. No native dependencies.</Description>
     <PackageTags>fletcher;arrow;gateway;websocket</PackageTags>
+    <!-- D-BIND-81: safe for trimming and NativeAOT, as the other three packages are (BIND-8d).
+         Warnings are errors (Directory.Build.props), so a trim or AOT warning fails the build.
+         No reference to Eiva.Fletcher.Model (D-BIND-120): nothing here uses it; the consumer's
+         generated model references it. -->
+    <IsAotCompatible>true</IsAotCompatible>
   </PropertyGroup>
 
   <ItemGroup>

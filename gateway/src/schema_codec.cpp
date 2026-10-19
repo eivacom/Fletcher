@@ -149,9 +149,15 @@ json FieldToJson(const ArrowSchema* field) {
     j["wireType"] = NanoarrowTypeToWireType(view.type);
 
     if (field->metadata) {
-        struct ArrowStringView value;
+        // nanoarrow leaves `value` UNCHANGED and still returns NANOARROW_OK when the key is
+        // absent, so it starts empty and only a found key (non-null data) is read. A field with
+        // metadata but no field_number (a list element of a generated schema) used to read
+        // whatever the stack held there: a std::bad_alloc or a stoi throw out of a `subscribed`
+        // reply, or a wrong number (BIND-8d).
+        struct ArrowStringView value = {nullptr, 0};
         if (ArrowMetadataGetValue(field->metadata, ArrowCharView("field_number"), &value) ==
-            NANOARROW_OK) {
+                NANOARROW_OK &&
+            value.data != nullptr) {
             j["fieldNumber"] = std::stoi(std::string(value.data, value.size_bytes));
         }
     }

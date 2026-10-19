@@ -38,7 +38,7 @@ class TsVisitor {
    public:
     explicit TsVisitor(const google::protobuf::FileDescriptor* file);
 
-    // Generate the full .fletcher.ts file (header, cross-file placeholder imports,
+    // Generate the full .fletcher.ts file (header, cross-file imports,
     // per-message interface + TypedSchema, service topic constants).
     std::string GenerateFile();
 
@@ -47,23 +47,18 @@ class TsVisitor {
     std::string GenerateMessage(const google::protobuf::Descriptor* msg);
 
     // TypeScript interface type text for a node (no top-level " | null" suffix).
-    std::string InterfaceType(const ir::IrNode& node,
-                              const google::protobuf::Descriptor* declared_struct);
+    std::string InterfaceType(const ir::IrNode& node);
 
     // A top-level field's descriptor literal line (indented, trailing ",\n").
     std::string DescriptorLiteral(const ir::IrNode& node, std::string_view name,
-                                  int32_t field_number,
-                                  const google::protobuf::Descriptor* declared_struct,
-                                  std::string_view indent);
+                                  int32_t field_number, std::string_view indent);
 
     // A nested anonymous descriptor object ({ name: '', fieldNumber: 0, ...,
     // nullable: false, ... }); used for list elements and map key/value.
-    std::string ElementDescriptor(const ir::IrNode& node,
-                                  const google::protobuf::Descriptor* declared_struct);
+    std::string ElementDescriptor(const ir::IrNode& node);
 
     // Append the composite tail (element / fields / mapKey+mapValue) for a node.
-    void AppendComposite(std::ostringstream& o, const ir::IrNode& node,
-                         const google::protobuf::Descriptor* declared_struct);
+    void AppendComposite(std::ostringstream& o, const ir::IrNode& node);
 
     // Runtime WireTypeId member name for a node.
     std::string WireType(const ir::IrNode& node);

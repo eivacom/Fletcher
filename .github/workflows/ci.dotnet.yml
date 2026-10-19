@@ -150,6 +150,34 @@ jobs:
               dotnet pack Fletcher.slnx -c Release --no-build -o /workspace/dotnet/artifacts
             '
 
+      # D-BIND-13 for the managed client (BIND-8d): a gateway or WASM consumer of
+      # Eiva.Fletcher.GatewayClient takes no native asset. Asserted on the PACKED package,
+      # not the project: no runtimes/ entry of its own, and no dependency on the two packages
+      # that would bring one transitively (Eiva.Fletcher, Eiva.Fletcher.Interop).
+      - name: Package.GatewayClientHasNoRuntimesFolder
+        shell: bash
+        run: |
+          set -e
+          PKG=$(ls dotnet/artifacts/Eiva.Fletcher.GatewayClient.*.nupkg 2>/dev/null | head -1)
+          if [ -z "$PKG" ]; then
+            echo "::error::Eiva.Fletcher.GatewayClient.*.nupkg was not packed"
+            exit 1
+          fi
+          ENTRIES=$(unzip -Z1 "$PKG")
+          if ! echo "$ENTRIES" | grep -q '^lib/net'; then
+            echo "::error::$PKG has no lib/ assembly: $ENTRIES"
+            exit 1
+          fi
+          if echo "$ENTRIES" | grep '^runtimes/'; then
+            echo "::error::$PKG carries native assets (runtimes/ above); the gateway client must not (D-BIND-13)"
+            exit 1
+          fi
+          if unzip -p "$PKG" '*.nuspec' | grep -E 'id="Eiva\.Fletcher(\.Interop)?"'; then
+            echo "::error::$PKG depends on a package that carries native assets (above)"
+            exit 1
+          fi
+          echo "$PKG: no runtimes/ entry, no native dependency"
+
       # The packages are the release artifact, and at BIND-0 they are also the
       # proof that packing works before there is anything in them. BIND-9 adds
       # the native assets, the LICENSE / THIRD-PARTY-LICENSES.txt staging that

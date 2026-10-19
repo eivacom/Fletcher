@@ -557,10 +557,10 @@ tests between two implementations.
 | Bucket | Files (cases) | Total | Treatment (ruled 2026-09-11, Q10) |
 |---|---|---|---|
 | 1 codec / envelope / buffer / status | `test_positional_io` 19, `test_envelope` 11, `test_write_buffer` 11, `test_status_taxonomy` 3, `test_codec` 70, `test_codec_edge` 23, `test_codec_property_fuzz` 2, `test_batch_decoder` 22 | **161** | **Not a case-by-case port target since D-BIND-39**: BIND-3's obligation is that every type the PROTO MAPPING produces round-trips through the binding, because `test_codec*` is `arrow-bridge`'s Arrow-native suite. #128 doubled `test_codec` and added `test_batch_decoder` (`arrow-bridge`'s own batch decoder); both stay out of scope for that reason. `test_status_taxonomy` ports as "the C# enum matches `core/README.md`'s published table". |
-| 2 gateway client | `test_schema_codec` 20, `test_publish_frame` 9, TS 36 | **65** | Port (BIND-8), true parity: managed code both sides. |
+| 2 gateway client | `test_schema_codec` 21, `test_publish_frame` 9, TS 36 | **66** | Port (BIND-8), true parity: managed code both sides. |
 | 3 pub/sub semantics | `test_publisher_subscriber` 44, `test_segments` 5, `test_pubsub_arrow` 33 | **82** | Port over `inprocess`. **Split confirmed 2026-09-24: the `pubsub` cases are BIND-4's; `test_pubsub_arrow`'s are BIND-5's, whose acceptance row claims them and whose `SubscriberArrow` did not exist before it.** **#128 added 26 `pubsub` cases and 18 `pubsub-arrow` ones (D-BIND-57)**; of the 49 `pubsub` cases, **44 are mapped** - 12 of #128's over `inprocess`, 11 over real Fast DDS in the transport lane, because only a provider that knows options or has a schema channel can answer them - **and 5 are EXCLUDED**, 2 by D-BIND-47 and 3 by D-BIND-57. D-BIND-47's two: `UnsubscribeLastSubscriberUnsubscribesFromProvider` and `UnsubscribeWithRemainingSubscribersKeepsProviderSubscription` assert `mock->unsubscribe_count`, the fan-out's provider-level bookkeeping, which lives in the C++ `Subscriber` the binding WRAPS and does not reimplement - porting them would run that C++ a second time and call it a test of the binding, and the managed surface has no view of provider-level subscriptions by design (D-BIND-24). Reasoning and the full case-by-case mapping: `dotnet/tests/Fletcher.Tests/BucketThreeConformanceTests.cs`. |
 | 4 native providers | Fast DDS: `test_fast_dds_pubsub_provider` 71, `test_profile_document` 33; XRCE: `test_xrce_provider` 7, `test_xrce_document` 11 — **port as driver-selection tests (122)**; `test_fletcher_sample_pub_sub_type` 28 — **excluded**, provider-internal (the Fast DDS `TypeSupport`, a C++ type no managed code touches) | **150** | 122 by driver selection - ONE body over every transport (`integration-tests/pubsub-transport-conformance`), not a port per case; 28 excluded, documented. #128 added 45 of these. |
-| 5 generator | `test_type_mapper` 36, `test_option_metadata` 33, `test_schema_builder` 9, `test_schema_visitor` 9, `test_ir` 8, `test_schema_codec_lockstep` 2, `test_topic_path` 2, `test_ts_visitor` 1, `test_csharp_type_table` 26, `test_csharp_visitor` 62 | **188** | **Stay in C++** — they test a C++ generator; **extended** with `test_csharp_visitor`, `test_csharp_type_table` and the TS pub/sub emitter cases. |
+| 5 generator | `test_type_mapper` 36, `test_option_metadata` 33, `test_schema_builder` 9, `test_schema_visitor` 9, `test_ir` 8, `test_schema_codec_lockstep` 2, `test_topic_path` 2, `test_ts_visitor` 3, `test_csharp_type_table` 26, `test_csharp_visitor` 62 | **190** | **Stay in C++** — they test a C++ generator; **extended** with `test_csharp_visitor`, `test_csharp_type_table` and the TS pub/sub emitter cases. |
 | 6 no managed analogue | `test_owned_schema` 1 | **1** | Excluded, documented (an `ArrowSchemaDeepCopy` ENOMEM path). |
 | Conformance (inherited, not a port target) | `integration-tests/pubsub-conformance` 95 cases; `CallerTier` 22 of them | — | The **oracle** seam §9 hands BIND. BIND writes a C# arm of `CallerTier` and adds cases to the C++ suite (§12.1 expects it); each C# case names the C++ case it mirrors and a script checks the mapping is total. |
 
@@ -859,7 +859,7 @@ Kind: 🟪 spec · 🟦 impl · 🔬 proof · ⚙ pipelines · 📓 docs
 | BIND-6 | C# backend on the IR: type table + visitor → `<stem>.fletcher.cs` | B | 🟦 | — (GIR) | `CsVisitor.*`, `CsVisitorPair.*`, `CsVisitorCrossFile.*`, `CsNames.*` and `CsTypeTable.*` in `protoc/tests` (named `CsharpVisitor.*` until review T-D5 corrected it, 2026-10-14); no-drift test unchanged | 🟢 (closed on CI at `63ab057`, `ci.pr` 38575041994, after a fresh-context review whose 5 BLOCKERs were fixed and 10 questions ruled, D-BIND-83 to 93; the minor debt carried as known, listed in BIND-6's section) |
 | BIND-7 | Arrow view + accessor emitters (`csharp_accessor`) + capstone third arm | B | 🟦 | BIND-6, BIND-3 | `accessor-capstone` C# arm `observed == expected`; `StructArray` windowing fixture at non-zero offset | 🟢 (closed on CI at `268dceb`, `ci.pr` 38746753749, after a fresh-context review whose 2 BLOCKERs were fixed and 5 questions ruled, D-BIND-103 to 107; rulings during the round D-BIND-94 to 102; the minor debt carried as known, listed in BIND-7's section) |
 | BIND-T | TS `Publisher`/`Subscriber` emitter | C | 🟦 | — | `TsVisitor.DescriptorByteIdentical` still green + new emitter cases | ⚪ |
-| BIND-8 | `Eiva.Fletcher.GatewayClient` (managed port; the codec exception) | C | 🟦 | — | Bucket 2 green (the Part 4 file set, not a count); `Package.GatewayClientHasNoRuntimesFolder` | 🔴 (started 2026-10-15: rulings D-BIND-108 to 115, slices 8a to 8e; 8a done 2026-10-16) |
+| BIND-8 | `Eiva.Fletcher.GatewayClient` (managed port; the codec exception) | C | 🟦 | — | Bucket 2 green (the Part 4 file set, not a count); `Package.GatewayClientHasNoRuntimesFolder` | 🔴 (started 2026-10-15: rulings D-BIND-108 to 120, slices 8a to 8e; 8a to 8c done on CI, 8d in the tree 2026-10-19) |
 | BIND-9 | CI/CD: RID matrix, publish to `nuget.eiva.com` from a self-hosted job (D-BIND-28), size budget, licence files | D | ⚙ | BIND-0 (skeleton), all for release | `cd.dotnet.yml` dry run; packed-size check; asset-isolation + licence check | ⚪ |
 | BIND-10 | Docs, TD-009, archive to `docs/archive/BIND/` | D | 📓 | all | docs review | ⚪ |
 
@@ -1966,6 +1966,14 @@ the maintainer's choice, from `plans/reviews/BIND-7-codereview.md`:
   constant (`export const Feed_PushTopic = 'q8/Feed/Push';`, measured). BIND-T's pair
   follows C++ (no pair, C++'s line); whether the constant goes too is BIND-T's to
   rule, since removing it changes existing TS output.
+- **A full-fidelity topic declaration (D-BIND-117, ruled 2026-10-19 at BIND-8d).** The
+  plugin embeds each message's Arrow IPC schema (the bytes its `ipc` output writes,
+  `SerializeSchemaIpc` of the generated schema) in the generated `.ts`, as base64 on
+  the `TypedSchema`, and `FletcherClient.createTopic(topic, typedSchema)` sends it as
+  `schemaIpc` (the JSON `schema` stays for hand-built descriptors). Today TypeScript
+  can declare only a flat message, and even that conflicts with the same message's
+  native declaration (D-BIND-112's measurement). Then `gateway-dotnet-crosslang`'s
+  TypeScript peer declares its own topic instead of relying on the C# client's.
 
 ### BIND-8 — `Eiva.Fletcher.GatewayClient`
 
@@ -2082,6 +2090,43 @@ token and names; one request in flight; `PublishAsync` awaits the ack). Slices:
 - **8d:** the cross-language rows (C# gateway client ↔ C++, TypeScript and the C# native pair), and
   packaging: `IsAotCompatible`, the `Eiva.Fletcher.Model` reference, the no-`runtimes/` check
   (`Package.GatewayClientHasNoRuntimesFolder`).
+  **Measured first, 2026-10-19:** the risk that a C# gateway client's `create_topic` conflicts with a
+  native declaration of the same topic (the check compares exact Arrow IPC bytes,
+  `pubsub/internal/schema_conflict.hpp`). For all 21 generated messages of `fix.proto`,
+  `coverage.proto`, `csharp_pair`, `csharp_proto2` and `csharp_accessor`, the C# `schemaIpc` decoded by
+  the gateway's `DeserializeSchemaIpc` and encoded again equals the plugin's C++ `.ipc` (the native
+  declaration's bytes) byte for byte; the raw C# bytes differ in every case, so the gateway's
+  re-encode is what makes them agree. No fix needed. The lane is ruled D-BIND-116 (2026-10-19):
+  `integration-tests/gateway-dotnet-crosslang`, a gateway over `fastdds`, the C# gateway client in the
+  test process, C++, C# native and TypeScript peers as child processes, one `.proto` over
+  `coverage.proto`'s `CompositeCoverage`, one topic per direction. The TypeScript client cannot
+  declare such a topic (its JSON `schema` refuses nested and Timestamp fields, D-BIND-112), so in the
+  TypeScript → C# row the C# client declares it with `schemaIpc` and the TypeScript peer publishes
+  on it undeclared; BIND-T gives TypeScript `schemaIpc` (D-BIND-117, 2026-10-19). Every backend
+  skips a pub/sub method whose message is in another file, so the lane streams a local `CrossRow {
+  seq, CompositeCoverage row }`; TypeScript could not reference another file's message at all (an
+  empty placeholder import), fixed in the plugin (D-BIND-118, 2026-10-19). The lane then found two
+  more defects, both fixed here: TypeScript described a singular flatten-wrapper field as a list of
+  the wrapper where the wire carries a list of its element, so it could not exchange such a row
+  with C++ or C# (D-BIND-119, 2026-10-19); and the gateway's `subscribed` reply read an
+  uninitialised `ArrowStringView` for a field with metadata but no `field_number`
+  (`schema_codec.cpp` `FieldToJson`; nanoarrow leaves the value unchanged for a missing key), which
+  failed a subscription with `std::bad_alloc` once the topic's schema was already declared.
+  **Done 2026-10-19 (in the tree):** `integration-tests/gateway-dotnet-crosslang` (CrossLang tests
+  6: C# gateway ↔ C++, ↔ C# native, ↔ TypeScript, each direction; C++ peer `cpp/`, C# native peer
+  `dotnet/NativePeer`, TypeScript peer `ts/`; the receiving side compares, `RowCompare.cs`,
+  `row_compare.hpp`, `compare.ts`), workflow `ci.integration-test.gateway-dotnet-crosslang.yml`
+  (Linux in the devcontainer, Windows) wired into `ci.pr.yml` and `ci.format-check-cs.yml`. Green
+  three runs in a row in the devcontainer; three lane mutants each caught by exactly their rows.
+  This closes the matrix rows "C# gateway client ↔ C++ / TypeScript / C# native" of BIND-6's open
+  note. Plugin: real cross-file TypeScript imports (D-BIND-118) and flatten-wrapper lists
+  (D-BIND-119), `test_ts_visitor` 3, the protoc-coverage TypeScript golden moved by those two
+  fields; gateway: `FieldToJson` fixed, `test_schema_codec` 21 (the new case fails on the old code).
+  Packaging: `IsAotCompatible` on `Eiva.Fletcher.GatewayClient` (an AOT-unsafe call fails its
+  build), no `Eiva.Fletcher.Model` reference (D-BIND-120; the packed package's one dependency is
+  `Apache.Arrow`), and `ci.dotnet`'s step `Package.GatewayClientHasNoRuntimesFolder` on the packed
+  `.nupkg` (no `runtimes/` entry, no dependency on `Eiva.Fletcher` or `Eiva.Fletcher.Interop`; both
+  mutants caught). **8d is done** once the lane is green on CI.
 - **8e:** fresh-context review and close.
 
 The Fast DDS legs share `gateway-fastdds-ts`'s exposure to Fast DDS 3.4.0's data-sharing defect

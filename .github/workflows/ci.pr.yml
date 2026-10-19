@@ -44,6 +44,7 @@ jobs:
       integration-fastdds-xrce: ${{ steps.filter.outputs.integration-fastdds-xrce }}
       integration-gateway-e2e: ${{ steps.filter.outputs.integration-gateway-e2e }}
       integration-gateway-dotnet-e2e: ${{ steps.filter.outputs.integration-gateway-dotnet-e2e }}
+      integration-gateway-dotnet-crosslang: ${{ steps.filter.outputs.integration-gateway-dotnet-crosslang }}
       integration-gateway-fastdds-ts: ${{ steps.filter.outputs.integration-gateway-fastdds-ts }}
       integration-protoc-arrow: ${{ steps.filter.outputs.integration-protoc-arrow }}
       integration-binding-abi: ${{ steps.filter.outputs.integration-binding-abi }}
@@ -242,6 +243,32 @@ jobs:
               - 'integration-tests/gateway-dotnet-end-to-end/**'
               - '.github/workflows/ci.pr.yml'
               - '.github/workflows/ci.integration-test.gateway-dotnet-end-to-end.yml'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.conan-profiles/**'
+              - '.devcontainer/**'
+            # The C# gateway client's cross-language rows (BIND-8d): the gateway, the C++ and C#
+            # native peers (the shim and both providers), the TypeScript peer, the plugin that
+            # generates all three, and the protoc-coverage fixture and proto the rows come from.
+            integration-gateway-dotnet-crosslang:
+              - 'core/**'
+              - 'pubsub/**'
+              - 'protoc/**'
+              - 'fastdds-pubsub-provider/**'
+              - 'xrcedds-pubsub-provider/**'
+              - 'c-abi/**'
+              - 'gateway/**'
+              - 'gateway-client-ts/src/**'
+              - 'dotnet/src/**'
+              - 'dotnet/tests/Shared/**'
+              - 'dotnet/global.json'
+              - 'dotnet/Directory.Build.props'
+              - 'dotnet/Directory.Build.targets'
+              - 'integration-tests/gateway-dotnet-crosslang/**'
+              - 'integration-tests/protoc-coverage/proto/**'
+              - 'integration-tests/protoc-coverage/tests/coverage_fixture.hpp'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.integration-test.gateway-dotnet-crosslang.yml'
               - '.github/actions/pull-devcontainer-image/**'
               - '.github/workflows/ci.setup-devcontainer-image.yml'
               - '.conan-profiles/**'
@@ -559,6 +586,14 @@ jobs:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
 
+  integration-test-gateway-dotnet-crosslang:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.integration-gateway-dotnet-crosslang == 'true' }}
+    uses: ./.github/workflows/ci.integration-test.gateway-dotnet-crosslang.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
   integration-test-gateway-fastdds-ts:
     needs: [detect-changes, setup-devcontainer]
     if: ${{ needs.detect-changes.outputs.integration-gateway-fastdds-ts == 'true' }}
@@ -680,6 +715,7 @@ jobs:
       - integration-test-pubsub-transport-conformance
       - integration-test-gateway-end-to-end
       - integration-test-gateway-dotnet-end-to-end
+      - integration-test-gateway-dotnet-crosslang
       - integration-test-gateway-fastdds-ts
       - integration-test-protoc-arrow-bridge
       - integration-test-protoc-coverage
@@ -718,6 +754,7 @@ jobs:
             ${{ needs.integration-test-fastdds-xrce-interop.result }},
             ${{ needs.integration-test-gateway-end-to-end.result }},
             ${{ needs.integration-test-gateway-dotnet-end-to-end.result }},
+            ${{ needs.integration-test-gateway-dotnet-crosslang.result }},
             ${{ needs.integration-test-gateway-fastdds-ts.result }},
             ${{ needs.integration-test-protoc-arrow-bridge.result }},
             ${{ needs.integration-test-protoc-coverage.result }},

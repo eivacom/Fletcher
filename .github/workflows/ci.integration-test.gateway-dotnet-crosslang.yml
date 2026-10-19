@@ -1,0 +1,166 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+# The C# gateway client's rows of the cross-language matrix (BIND-8d, D-BIND-116): the gateway
+# over Fast DDS, the C# gateway client in the test process, and three peers as child processes
+# (the generated C++ native pair, the generated C# native pair over the native shim, and the
+# TypeScript gateway client), exchanging protoc-coverage's CompositeCoverage rows in both
+# directions and comparing them field by field on the receiving side.
+name: ci.integration-test.gateway-dotnet-crosslang
+
+concurrency:
+  group: ci.integration-test.gateway-dotnet-crosslang-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_call:
+    inputs:
+      devcontainer-image:
+        description: >-
+          Pre-built devcontainer image reference (e.g.
+          eivaorg/fletcher-devcontainer:<sha>), from ci.setup-devcontainer-image.yml via
+          ci.pr.yml. Only the Linux job needs it; the Windows job runs natively.
+        required: true
+        type: string
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            core
+            pubsub
+            protoc
+            fastdds-pubsub-provider
+            xrcedds-pubsub-provider
+            c-abi
+            gateway
+            gateway-client-ts
+            dotnet
+            integration-tests/gateway-dotnet-crosslang
+            integration-tests/protoc-coverage/proto
+            integration-tests/protoc-coverage/tests
+            .conan-profiles
+            .github
+
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
+        with:
+          image: ${{ inputs.devcontainer-image }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build components, the gateway and the C++ peer, then dotnet test
+        run: |
+          # The gateway and the C++ peer link Fast DDS statically, so the spawned exes need no
+          # Conan run environment; the C# native peer gets the shim staged beside it.
+          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace \
+            fletcher-build \
+            bash -c "set -e && \
+                     PROFILE=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release && \
+                     for COMPONENT in core pubsub protoc fastdds-pubsub-provider xrcedds-pubsub-provider c-abi; do \
+                       echo '::group::conan create '\$COMPONENT && \
+                       (cd \$COMPONENT && conan create . --build=missing -pr:a=\$PROFILE) && \
+                       echo '::endgroup::'; \
+                     done && \
+                     cd integration-tests/gateway-dotnet-crosslang && \
+                     echo '::group::conan build (the gateway exe, the C++ peer, the TypeScript module)' && \
+                       conan build . --build=missing -pr:a=\$PROFILE && \
+                     echo '::endgroup::' && \
+                     echo '::group::npm ci (the TypeScript peer)' && \
+                       (cd ts && npm ci && npx tsc --noEmit) && \
+                     echo '::endgroup::' && \
+                     echo '::group::locate the plugin, protoc and the shim' && \
+                       BIN=\$(find ~/.conan2/p -path '*/p/bin/fletcher-protoc' -type f -print -quit) && \
+                       if [ -z \"\$BIN\" ]; then echo '::error::fletcher-protoc binary not found in Conan cache'; exit 1; fi && \
+                       PROTOC=\$(find ~/.conan2 \( -name protoc -o -name 'protoc-[0-9]*' \) \( -type f -o -type l \) -print -quit 2>/dev/null || true) && \
+                       if [ -z \"\$PROTOC\" ]; then echo '::error::protoc not found in the Conan cache'; exit 1; fi && \
+                       SHIM=\$(find ~/.conan2/p -path '*/p/lib/libfletcher-c-abi.so' -type f -print -quit) && \
+                       if [ -z \"\$SHIM\" ]; then echo '::error::libfletcher-c-abi.so not found in the Conan cache'; exit 1; fi && \
+                       export FLETCHER_PROTOC_PLUGIN=\"\$BIN\" PROTOC && \
+                       echo \"plugin=\$FLETCHER_PROTOC_PLUGIN  protoc=\$PROTOC  shim=\$SHIM\" && \
+                     echo '::endgroup::' && \
+                     echo '::group::dotnet test' && \
+                       (cd dotnet/CrossLang && dotnet test -c Release -p:FletcherNativeShim=\"\$SHIM\" --logger 'console;verbosity=detailed') && \
+                     echo '::endgroup::'"
+
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            core
+            pubsub
+            protoc
+            fastdds-pubsub-provider
+            xrcedds-pubsub-provider
+            c-abi
+            gateway
+            gateway-client-ts
+            dotnet
+            integration-tests/gateway-dotnet-crosslang
+            integration-tests/protoc-coverage/proto
+            integration-tests/protoc-coverage/tests
+            .conan-profiles
+            .github
+
+      - name: Install Conan
+        uses: ./.github/actions/conan-install
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: dotnet/global.json
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24.15.0"
+
+      - name: Build components into the local Conan cache
+        shell: bash
+        run: |
+          set -e
+          PROFILE=.conan-profiles/Windows-msvc194-x86_64-Release
+          for COMPONENT in core pubsub protoc fastdds-pubsub-provider xrcedds-pubsub-provider c-abi; do
+            echo "::group::conan create $COMPONENT"
+            (cd "$COMPONENT" && conan create . --build=missing -pr:a="../$PROFILE")
+            echo "::endgroup::"
+          done
+
+      - name: conan build (the gateway exe, the C++ peer, the TypeScript module)
+        shell: bash
+        working-directory: integration-tests/gateway-dotnet-crosslang
+        run: conan build . --build=missing -pr:a=../../.conan-profiles/Windows-msvc194-x86_64-Release
+
+      - name: npm ci (the TypeScript peer)
+        shell: bash
+        working-directory: integration-tests/gateway-dotnet-crosslang/ts
+        run: npm ci && npx tsc --noEmit
+
+      - name: Locate the plugin, protoc and the shim, then dotnet test
+        shell: bash
+        working-directory: integration-tests/gateway-dotnet-crosslang/dotnet/CrossLang
+        run: |
+          set -e
+          BIN=$(find ~/.conan2/p -path '*/p/bin/fletcher-protoc.exe' -type f -print -quit)
+          if [ -z "$BIN" ]; then
+            echo "::error::fletcher-protoc.exe not found in Conan cache"
+            exit 1
+          fi
+          PROTOC=$(find ~/.conan2 \( -name protoc.exe -o -name 'protoc-[0-9]*.exe' \) -type f -print -quit 2>/dev/null || true)
+          if [ -z "$PROTOC" ]; then
+            echo "::error::protoc.exe not found in the Conan cache"
+            exit 1
+          fi
+          SHIM=$(find ~/.conan2/p -path '*/p/bin/fletcher-c-abi.dll' -type f -print -quit)
+          if [ -z "$SHIM" ]; then
+            echo "::error::fletcher-c-abi.dll not found in the Conan cache"
+            exit 1
+          fi
+          FLETCHER_PROTOC_PLUGIN=$(cygpath -w "$BIN")
+          PROTOC=$(cygpath -w "$PROTOC")
+          SHIM=$(cygpath -w "$SHIM")
+          export FLETCHER_PROTOC_PLUGIN PROTOC
+          echo "plugin=$FLETCHER_PROTOC_PLUGIN  protoc=$PROTOC  shim=$SHIM"
+          dotnet test -c Release -p:FletcherNativeShim="$SHIM" --logger "console;verbosity=detailed"
