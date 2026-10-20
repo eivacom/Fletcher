@@ -1284,3 +1284,28 @@ records commit before them (`058755b`) had its run superseded. Carried as known 
 review's IDs (audited against the code 2026-10-20): C-D7 performance (per-row allocation in the
 managed decode, a codec planned per `PublishAsync`), G-D2, G-D4, T-D4, T-D6, T-D7, N6, N9 and N14;
 TypeScript batched delivery is a BIND-T parity item.
+
+## BIND-9a — a preview for testers (2026-10-20 to …)
+
+**The rulings (2026-10-20).** Eight, one at a time, after checking the tree (D-BIND-134 to 141):
+all four packages; nothing released before the merge; one preview bundle per push to the branch,
+a 30-day CI artifact with the NuGet packages, the gateway and the plugin; `0.6.0-pr.129.<run>`
+until the merge, `0.6.0-alpha` after it; the shared-shim relinking route for the public bundle;
+the shim shipped as built with its floors stated. Two were revised the same day, when the
+maintainer ruled that nothing but the bundle is published before the merge. The merge-time
+release (lockstep bump, CD from `main`, the bundle job retired) went into BIND-9b's acceptance and
+the round's definition of done. A question about the packages' unmanaged parts turned "the
+shim" into a measured statement: it is self-contained, and on Linux it loads only the C/C++
+runtime and libc (glibc 2.38, `GLIBCXX_3.4.32`).
+
+**9a-0, the shim in the package.** A `pack` job in `ci.dotnet` packs once with both legs' shims,
+each checked for its load-time dependencies, and both licence files in every package, then checks
+the packed packages. Building it found a gap older than the round: the third-party notice is read
+off the Conan graph, and four Apache-2.0 libraries compiled in from source (nanoarrow with flatcc,
+Micro-CDR, the Micro XRCE-DDS Client) are not in it, so every notice that links them, the released
+gateway's included, omitted them. The two recipes that compile them in now package their licence
+texts, and the deployer lists them.
+
+**Lesson.** A notice derived from the dependency graph is exactly as complete as the graph; code
+vendored or fetched by CMake is invisible to it, so the check names the libraries that must be
+there rather than trusting the derivation.

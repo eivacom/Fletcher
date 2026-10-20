@@ -126,6 +126,11 @@ jobs:
               - 'integration-tests/protoc-coverage/golden/**'
               - 'gateway/src/schema_codec.cpp'
               - 'gateway-client-ts/src/wire-types.ts'
+              # BIND-9a-0: the shim's notice is written by the gateway's deployer, and
+              # the shim and the packages are checked by these two scripts.
+              - 'gateway/deployers/**'
+              - 'scripts/check_shim_dependencies.sh'
+              - 'scripts/check_dotnet_packages.sh'
               - '.github/workflows/ci.pr.yml'
               - '.github/workflows/ci.dotnet.yml'
               - '.github/workflows/ci.setup-devcontainer-image.yml'

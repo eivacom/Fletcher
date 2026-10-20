@@ -49,4 +49,15 @@
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
   </PropertyGroup>
 
+  <!-- BIND-9a-0 (D-BIND-134, D-BIND-140): every package carries the repository's
+       LICENSE and the THIRD-PARTY-LICENSES.txt derived from the shim's Conan graph,
+       at the package root, when CI hands the folder holding both in:
+         dotnet pack -p:FletcherLicenceDir=<dir>
+       A local pack without it still builds; ci.dotnet's pack checks refuse a
+       package without both files. -->
+  <ItemGroup Condition="'$(FletcherLicenceDir)' != '' And '$(IsPackable)' != 'false'">
+    <None Include="$(FletcherLicenceDir)/LICENSE" Pack="true" PackagePath="" Visible="false" />
+    <None Include="$(FletcherLicenceDir)/THIRD-PARTY-LICENSES.txt" Pack="true" PackagePath="" Visible="false" />
+  </ItemGroup>
+
 </Project>

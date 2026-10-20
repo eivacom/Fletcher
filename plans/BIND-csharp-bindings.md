@@ -2269,6 +2269,24 @@ before the round merges.
   the per-build version, the 30-day artifact with `README-preview.md`); 9a-2 package READMEs and
   the consumer tests over the bundle; 9a-3 a short tester note pointing at the newest bundle.
   `cd.dotnet.yml` and the feed are BIND-9b.
+- **9a-0 in the tree 2026-10-20:** `ci.dotnet` gains a `pack` job that needs both legs. Each leg
+  checks its shim's load-time dependencies (`scripts/check_shim_dependencies.sh`: Linux measured
+  `libstdc++`, `libgcc_s`, `libm`, `libc` only; Windows by `dumpbin /dependents`, first measured on
+  CI), writes its notice with the gateway's deployer and hands both on. The pack job requires the
+  two notices to list the same libraries, packs the four projects once with both shims in
+  `Interop` (`FletcherShimLinuxX64`, `FletcherShimWinX64`, both or neither) and both licence files
+  in every package (`FletcherLicenceDir`), takes an optional `package-version`, and runs
+  `scripts/check_dotnet_packages.sh` (which absorbs `Package.GatewayClientHasNoRuntimesFolder`).
+  **Found on the way:** the deployer read only the Conan graph, so four Apache-2.0 libraries
+  compiled in from source were missing from every notice that links them, the released gateway's
+  included: nanoarrow (with flatcc) vendored in `fletcher-pubsub`, Micro-CDR and the Micro
+  XRCE-DDS Client fetched by `fletcher-xrcedds-pubsub-provider`. Those recipes now package each
+  one's licence under `licenses/vendored/<name>/` with a `vendored.json` (versions read from
+  `nanoarrow.h` and the `GIT_TAG` pins), the deployer gives each a section naming the package
+  that compiled it in, and the pack job requires nanoarrow, Micro-CDR, Micro XRCE-DDS and Fast
+  DDS in the notice. Rehearsed in the devcontainer: the real Linux shim and notice, a real pack
+  with a stand-in Windows shim, all checks green; four mutants caught (no licence files, no
+  shims, one shim, a shim loading an extra library).
 
 **BIND-9b — the rest**, the acceptance below: the `nuget.eiva.com` publish job and its
 self-hosted runner, the packed-size budget, lowering the glibc floor if wanted, the Windows and

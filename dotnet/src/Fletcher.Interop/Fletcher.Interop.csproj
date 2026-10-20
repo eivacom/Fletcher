@@ -17,10 +17,14 @@
     <IsAotCompatible>true</IsAotCompatible>
   </PropertyGroup>
 
-  <!-- BIND-3a: the declarations have arrived. The NATIVE ASSETS still have not -
-       they are packaged in BIND-9 - so this package is not yet installable and
-       runnable from a feed; what a source build produces is an assembly that
-       knows how to find a shim staged beside it. -->
+  <!-- BIND-3a: the declarations have arrived. BIND-9a-0 (D-BIND-134): the NATIVE
+       ASSETS are packed when CI hands both shims in, one per RID, from the two legs
+       of ci.dotnet's pack job:
+         dotnet pack -p:FletcherShimLinuxX64=<libfletcher-c-abi.so>
+                     -p:FletcherShimWinX64=<fletcher-c-abi.dll>
+       A source build sets neither and produces an assembly that finds a shim
+       staged beside it, as before. Both or neither: a package with one RID would
+       install and then fail at the first P/Invoke on the other platform. -->
   <PropertyGroup>
     <!-- `LibraryImport`'s generated marshalling stubs are unsafe code by
          construction: they take addresses and pin. This is the only project in
@@ -42,5 +46,20 @@
          score (D-BIND-61). A test assembly, never shipped. -->
     <InternalsVisibleTo Include="Fletcher.CopyOracle.Tests" />
   </ItemGroup>
+
+  <!-- The shim's file names are what .NET probes for LibraryName "fletcher-c-abi"
+       under runtimes/<rid>/native/; only the shipped shim, never the test-only probe. -->
+  <ItemGroup Condition="'$(FletcherShimLinuxX64)' != '' And '$(FletcherShimWinX64)' != ''">
+    <None Include="$(FletcherShimLinuxX64)" Pack="true" PackagePath="runtimes/linux-x64/native/libfletcher-c-abi.so" Visible="false" />
+    <None Include="$(FletcherShimWinX64)" Pack="true" PackagePath="runtimes/win-x64/native/fletcher-c-abi.dll" Visible="false" />
+  </ItemGroup>
+
+  <Target Name="FletcherCheckShims" BeforeTargets="GenerateNuspec"
+          Condition="'$(FletcherShimLinuxX64)' != '' Or '$(FletcherShimWinX64)' != ''">
+    <Error Condition="'$(FletcherShimLinuxX64)' == '' Or '$(FletcherShimWinX64)' == ''"
+           Text="Eiva.Fletcher.Interop packs both shims or none: set FletcherShimLinuxX64 and FletcherShimWinX64 together." />
+    <Error Condition="!Exists('$(FletcherShimLinuxX64)')" Text="FletcherShimLinuxX64 does not exist: $(FletcherShimLinuxX64)" />
+    <Error Condition="!Exists('$(FletcherShimWinX64)')" Text="FletcherShimWinX64 does not exist: $(FletcherShimWinX64)" />
+  </Target>
 
 </Project>

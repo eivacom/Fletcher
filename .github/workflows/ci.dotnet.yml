@@ -22,6 +22,15 @@ on:
           windows-2022 runner.
         required: true
         type: string
+      package-version:
+        description: >-
+          The packages' full version, replacing Directory.Build.props'
+          VersionPrefix and VersionSuffix (BIND-9a: the per-push preview bundle
+          passes 0.6.0-pr.129.<run>, so every build has a version of its own,
+          D-BIND-138). Empty keeps the props' version.
+        required: false
+        type: string
+        default: ''
 
 # The two-job split is the one ci.integration-test.protoc-gen-fletcher-rust.yml
 # uses: Linux inside the devcontainer image (the same environment every other
@@ -74,6 +83,8 @@ jobs:
             protoc/tests/golden
             integration-tests/protoc-coverage/golden
             gateway/src
+            gateway/deployers
+            scripts
             gateway-client-ts/src
 
       - name: Pull devcontainer image
@@ -99,7 +110,7 @@ jobs:
       # Fletcher.Tests fail rather than skip when the shim is absent, so an empty
       # path here would surface as two confusing test failures instead of one
       # clear lane failure naming the real cause.
-      - name: Build the native shim, then restore, build, test, pack
+      - name: Build and check the native shim, then restore, build, test
         shell: bash
         run: |
           docker run --rm             -v "${GITHUB_WORKSPACE}:/workspace"             -w /workspace             -e CI=true             fletcher-build             bash -c '
@@ -126,6 +137,19 @@ jobs:
               fi
               echo "staging probe shim: $PROBE"
 
+              # BIND-9a-0 (D-BIND-134): the shim must load nothing but the OS and the
+              # C/C++ runtime; then its third-party notice, read off the same graph
+              # (with_probe_shim, as built above: it adds only first-party packages),
+              # and both handed to the pack job.
+              NATIVE=/workspace/dotnet/native/linux-x64
+              mkdir -p "$NATIVE"
+              bash /workspace/scripts/check_shim_dependencies.sh "$SHIM"
+              cp "$SHIM" "$NATIVE/"
+              conan install --requires="fletcher-c-abi/[*, include_prerelease]" -o "fletcher-c-abi/*:with_probe_shim=True" \
+                --deployer=/workspace/gateway/deployers/third_party_licenses.py --deployer-folder="$NATIVE" \
+                -c tools.graph:skip_binaries=False -pr:a=$PROFILE
+              test -s "$NATIVE/THIRD-PARTY-LICENSES.txt"
+
               cd /workspace/dotnet
               echo "::group::dotnet --info"
               dotnet --info
@@ -146,51 +170,15 @@ jobs:
                 "$OUT/Fletcher.AotSmoke"
                 echo "::endgroup::"
               done
-
-              dotnet pack Fletcher.slnx -c Release --no-build -o /workspace/dotnet/artifacts
             '
 
-      # D-BIND-13 for the managed client (BIND-8d): a gateway or WASM consumer of
-      # Eiva.Fletcher.GatewayClient takes no native asset. Asserted on the PACKED package,
-      # not the project: no runtimes/ entry of its own, and no dependency on the two packages
-      # that would bring one transitively (Eiva.Fletcher, Eiva.Fletcher.Interop).
-      - name: Package.GatewayClientHasNoRuntimesFolder
-        shell: bash
-        run: |
-          set -e
-          PKG=$(find dotnet/artifacts -maxdepth 1 -name 'Eiva.Fletcher.GatewayClient.*.nupkg' -print -quit)
-          if [ -z "$PKG" ]; then
-            echo "::error::Eiva.Fletcher.GatewayClient.*.nupkg was not packed"
-            exit 1
-          fi
-          ENTRIES=$(unzip -Z1 "$PKG")
-          if ! echo "$ENTRIES" | grep -q '^lib/net'; then
-            echo "::error::$PKG has no lib/ assembly: $ENTRIES"
-            exit 1
-          fi
-          if echo "$ENTRIES" | grep '^runtimes/'; then
-            echo "::error::$PKG carries native assets (runtimes/ above); the gateway client must not (D-BIND-13)"
-            exit 1
-          fi
-          if unzip -p "$PKG" '*.nuspec' | grep -E 'id="Eiva\.Fletcher(\.Interop)?"'; then
-            echo "::error::$PKG depends on a package that carries native assets (above)"
-            exit 1
-          fi
-          echo "$PKG: no runtimes/ entry, no native dependency"
-
-      # The packages are the release artifact, and at BIND-0 they are also the
-      # proof that packing works before there is anything in them. BIND-9 adds
-      # the native assets, the LICENSE / THIRD-PARTY-LICENSES.txt staging that
-      # #127 introduced for the gateway archive, and the asset-isolation check.
-      - name: Upload packages
-        if: always()
+      # Handed to the pack job, which packs once for both RIDs (BIND-9a-0).
+      - name: Upload the Linux shim and its notice
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: dotnet-packages
-          path: |
-            dotnet/artifacts/*.nupkg
-            dotnet/artifacts/*.snupkg
-          retention-days: 5
+          name: dotnet-native-linux-x64
+          path: dotnet/native/linux-x64/
+          retention-days: 1
 
       - name: Upload test results
         if: always()
@@ -218,6 +206,8 @@ jobs:
             protoc/tests/golden
             integration-tests/protoc-coverage/golden
             gateway/src
+            gateway/deployers
+            scripts
             gateway-client-ts/src
 
       # global-json-file, not a literal version: dotnet/global.json is the single
@@ -270,6 +260,35 @@ jobs:
           echo "staging probe shim: $PROBE"
           echo "probe=$PROBE" >> "$GITHUB_OUTPUT"
 
+      # BIND-9a-0 (D-BIND-134): as the Linux leg. dumpbin comes with the MSVC toolset
+      # the shim was built with; vswhere finds it. The notice is read off the same graph.
+      - name: Check the shim's dependencies, stage it and its notice
+        shell: bash
+        run: |
+          set -e
+          VS=$("/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe" -latest -products '*' \
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | tr -d '\r')
+          DUMPBIN=$(find "$VS/VC/Tools/MSVC" -path '*/bin/Hostx64/x64/dumpbin.exe' -print -quit)
+          if [ -z "$DUMPBIN" ]; then
+            echo "::error::dumpbin.exe not found under $VS"
+            exit 1
+          fi
+          bash scripts/check_shim_dependencies.sh "${{ steps.shim.outputs.path }}" "$DUMPBIN"
+          NATIVE="$PWD/dotnet/native/win-x64"
+          mkdir -p "$NATIVE"
+          cp "${{ steps.shim.outputs.path }}" "$NATIVE/"
+          conan install --requires="fletcher-c-abi/[*, include_prerelease]" -o "fletcher-c-abi/*:with_probe_shim=True" \
+            --deployer=gateway/deployers/third_party_licenses.py --deployer-folder="$NATIVE" \
+            -c tools.graph:skip_binaries=False -pr:a="$PWD/.conan-profiles/Windows-msvc194-x86_64-Release"
+          test -s "$NATIVE/THIRD-PARTY-LICENSES.txt"
+
+      - name: Upload the Windows shim and its notice
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: dotnet-native-win-x64
+          path: dotnet/native/win-x64/
+          retention-days: 1
+
       - name: Restore, build, test
         shell: bash
         working-directory: dotnet
@@ -282,9 +301,9 @@ jobs:
           dotnet build Fletcher.slnx -c Release --no-restore -p:FletcherNativeShim="${{ steps.shim.outputs.path }}" -p:FletcherProbeShim="${{ steps.shim.outputs.probe }}"
           dotnet test Fletcher.slnx -c Release --no-build --logger "trx;LogFileName=windows.trx"
 
-      # No pack here: the packages are platform-neutral managed assemblies, and
-      # packing them twice would produce two artifacts claiming to be the same
-      # thing. Windows earns its place in this lane by RUNNING the tests — it is
+      # No pack here: the packages are packed ONCE, by the pack job below, from both
+      # legs' shims; packing per leg would produce two artifacts claiming to be the
+      # same thing. Windows earns its place in this lane by RUNNING the tests — it is
       # the primary development platform, and the P/Invoke surface these packages
       # will carry is the part most likely to differ between the two.
       - name: Upload test results
@@ -293,4 +312,93 @@ jobs:
         with:
           name: dotnet-test-results-windows
           path: dotnet/**/TestResults/*.trx
+          retention-days: 5
+
+  # BIND-9a-0 (D-BIND-134): the packages are packed ONCE, here, with both legs' shims
+  # inside Eiva.Fletcher.Interop (runtimes/linux-x64/native/, runtimes/win-x64/native/)
+  # and LICENSE + THIRD-PARTY-LICENSES.txt in every package (D-BIND-140). The two legs'
+  # notices are read off the same recipe on two platforms; they must name the same
+  # libraries, or the one notice shipped would be wrong for one of the shims.
+  pack:
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            dotnet
+            .github
+            scripts
+
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
+        with:
+          image: ${{ inputs.devcontainer-image }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Download the Linux shim and its notice
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: dotnet-native-linux-x64
+          path: dotnet/native/linux-x64
+
+      - name: Download the Windows shim and its notice
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: dotnet-native-win-x64
+          path: dotnet/native/win-x64
+
+      - name: Stage one notice and the LICENSE
+        shell: bash
+        run: |
+          set -e
+          # The notice's own list of libraries: the bullets between its first two rules,
+          # not the licence texts after them, which have bullets of their own.
+          listed() { awk '/^=+$/ {n++; next} n == 1 && /^  \* / {print}' "$1" | sort; }
+          if ! diff <(listed dotnet/native/linux-x64/THIRD-PARTY-LICENSES.txt) <(listed dotnet/native/win-x64/THIRD-PARTY-LICENSES.txt); then
+            echo "::error::the Linux and Windows shims are built from different third-party libraries (above); one notice cannot cover both"
+            exit 1
+          fi
+          mkdir -p dotnet/native/licences
+          cp dotnet/native/linux-x64/THIRD-PARTY-LICENSES.txt dotnet/native/licences/
+          cp LICENSE dotnet/native/licences/
+          listed dotnet/native/licences/THIRD-PARTY-LICENSES.txt
+          # Compiled into the shim from source, so not in the Conan graph: their texts
+          # come from the fletcher-* packages that vendor them, and must be here.
+          for lib in nanoarrow micro-cdr micro-xrce-dds-client fast-dds; do
+            listed dotnet/native/licences/THIRD-PARTY-LICENSES.txt | grep -q "^  \* $lib " \
+              || { echo "::error::THIRD-PARTY-LICENSES.txt does not cover $lib, which is linked into the shim"; exit 1; }
+          done
+
+      - name: Pack
+        shell: bash
+        run: |
+          VERSION_ARG=""
+          if [ -n "${{ inputs.package-version }}" ]; then VERSION_ARG="-p:Version=${{ inputs.package-version }}"; fi
+          docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace/dotnet -e CI=true fletcher-build bash -c "
+              set -e
+              dotnet restore Fletcher.slnx --locked-mode
+              for P in Fletcher Fletcher.Interop Fletcher.Model Fletcher.GatewayClient; do
+                dotnet pack src/\$P/\$P.csproj -c Release --no-restore -o /workspace/dotnet/artifacts $VERSION_ARG \
+                  -p:FletcherShimLinuxX64=/workspace/dotnet/native/linux-x64/libfletcher-c-abi.so \
+                  -p:FletcherShimWinX64=/workspace/dotnet/native/win-x64/fletcher-c-abi.dll \
+                  -p:FletcherLicenceDir=/workspace/dotnet/native/licences
+              done
+            "
+
+      # D-BIND-13 and D-BIND-134 on the PACKED packages: Interop carries exactly the two
+      # shims, nothing else carries native assets or depends on a package that does (the
+      # gateway client's former Package.GatewayClientHasNoRuntimesFolder step), no probe
+      # shim, both licence files in every package.
+      - name: Check the packages
+        shell: bash
+        run: bash scripts/check_dotnet_packages.sh dotnet/artifacts
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: dotnet-packages
+          path: |
+            dotnet/artifacts/*.nupkg
+            dotnet/artifacts/*.snupkg
           retention-days: 5

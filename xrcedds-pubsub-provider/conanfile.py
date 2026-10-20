@@ -3,8 +3,11 @@
 #
 from conan import ConanFile
 from conan.tools.cmake import CMake, CMakeToolchain, CMakeDeps, cmake_layout
-from conan.tools.files import copy
+from conan.errors import ConanException
+from conan.tools.files import copy, save
+import json
 import os
+import re
 
 
 class FletcherPubsubConan(ConanFile):
@@ -97,6 +100,28 @@ class FletcherPubsubConan(ConanFile):
              src=os.path.join(self.source_folder, "cmake"),
              dst=os.path.join(self.package_folder, "cmake"),
              keep_path=False)
+        # Micro-CDR and the Micro XRCE-DDS Client (both Apache-2.0) are fetched by
+        # CMakeLists.txt with FetchContent and compiled into this package, so they are
+        # not in the Conan graph: their licence texts travel here for the third-party
+        # notice deployer (gateway/deployers/third_party_licenses.py, BIND-9a-0,
+        # D-BIND-140). The versions are the GIT_TAG pins the build fetched.
+        with open(os.path.join(self.source_folder, "CMakeLists.txt"), encoding="utf-8") as handle:
+            cmake = handle.read()
+        for name, fetched, repo, homepage in (
+                ("micro-cdr", "microcdr", "Micro-CDR", "https://github.com/eProsima/Micro-CDR"),
+                ("micro-xrce-dds-client", "microxrcedds_client", "Micro-XRCE-DDS-Client",
+                 "https://github.com/eProsima/Micro-XRCE-DDS-Client")):
+            match = re.search(rf"{repo}\.git\s+GIT_TAG\s+v?(\S+?)\)", cmake)
+            if not match:
+                raise ConanException(f"no GIT_TAG for {repo} in CMakeLists.txt")
+            vendored = os.path.join(self.package_folder, "licenses", "vendored", name)
+            copy(self, "LICENSE", src=os.path.join(self.build_folder, "_deps", f"{fetched}-src"),
+                 dst=vendored, keep_path=False)
+            if not os.path.isfile(os.path.join(vendored, "LICENSE")):
+                raise ConanException(f"{fetched}'s LICENSE was not fetched into {self.build_folder}/_deps")
+            save(self, os.path.join(vendored, "vendored.json"), json.dumps({
+                "name": name, "version": match.group(1), "license": "Apache-2.0",
+                "homepage": homepage}, indent=2))
 
     def package_info(self):
         # The xrce_dds_pubsub_provider static library links privately
