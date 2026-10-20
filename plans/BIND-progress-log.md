@@ -1280,6 +1280,7 @@ interleaving was the very one a real socket produces.
 **Closed on CI** at `750d79d`, `ci.pr` 39375700668, 56/56, every side workflow green, all on the
 first attempt. The review's fixes and 8f went in one push (`cac7626` and `7e2acca`, the maintainer
 chose one pipeline run over two for the long build), green at `7e2acca` (`ci.pr` 39281811974); the
-records commit before them (`058755b`) had its run superseded. Carried as known debt: performance
-(per-row allocation in the managed decode, a codec planned per `PublishAsync`) and the NITs 8e did
-not touch; TypeScript batched delivery is a BIND-T parity item.
+records commit before them (`058755b`) had its run superseded. Carried as known debt, by the
+review's IDs (audited against the code 2026-10-20): C-D7 performance (per-row allocation in the
+managed decode, a codec planned per `PublishAsync`), G-D2, G-D4, T-D4, T-D6, T-D7, N6, N9 and N14;
+TypeScript batched delivery is a BIND-T parity item.

@@ -13,13 +13,13 @@ DEBT, NITs.** BIND-8 does not close until the blockers are fixed and the questio
 > **CLOSED 2026-10-20, on CI at `750d79d` (`ci.pr` 39375700668, 56/56, every side workflow
 > green).** All five blockers fixed and all twelve questions ruled and implemented (records
 > `058755b`, fixes `cac7626`, green at `7e2acca`, `ci.pr` 39281811974), and the DEBT the maintainer
-> chose fixed (the cheap fixes, client robustness, tests and AOT); performance and the NITs 8e did
-> not touch are carried as KNOWN debt, listed in the tracker's BIND-8 section. Two things came out
-> of the close itself: the maintainer's question why 8e deleted `DecodeBatch` showed the gateway
-> client could not deliver batches as C++ and the native pair do, so `DecodeBatch` stays (D-BIND-128
-> amended) and slice 8f added `SubscribeBatchedAsync` (D-BIND-133, `7e2acca`); and verifying 8f
-> turned a one-in-25 test failure into A1 below, two writes reaching the socket at once, fixed in
-> `750d79d`.
+> chose fixed (the cheap fixes, client robustness, tests and AOT); C-D7 (performance), G-D2, G-D4,
+> T-D4, T-D6, T-D7, N6, N9 and N14 are carried as KNOWN debt (audited below), listed in the tracker's
+> BIND-8 section. Two things came out of the close itself: the maintainer's question why 8e deleted
+> `DecodeBatch` showed the gateway client could not deliver batches as C++ and the native pair do,
+> so `DecodeBatch` stays (D-BIND-128 amended) and slice 8f added `SubscribeBatchedAsync`
+> (D-BIND-133, `7e2acca`); and verifying 8f turned a one-in-25 test failure into A1 below, two
+> writes reaching the socket at once, fixed in `750d79d`.
 
 > **ALL TWELVE QUESTIONS RULED 2026-10-19 (D-BIND-121 to 132):** Q1 `Completion` (121); Q2 one
 > namespace import per file, path relative to the importer (122, amends 118); Q3 reply before keeping
@@ -171,27 +171,75 @@ CI saw it; the client then failed the request and ended the connection.
 
 ## DEBT (reported, not verified unless marked)
 
-- Client: a call during `ConnectAsync` ends the client for good; a locally ended connection never
-  closes its socket; `DisposeAsync` edge cases (exception filter, unbounded wait on the loop, a handler
-  disposing deadlocks); the receive buffer grows without cap and never shrinks; silent drops counted
-  nowhere (early rows past the cap, unknown ids, rows after a failed unsubscribe); `Deliver` catches
-  only `InvalidDataException`; per-row allocation in decode and a codec planned per `PublishAsync`;
-  the AOT claim is analyzer-deep (AotSmoke does not link the gateway client).
-- Generator and gateway: gateway-pair names are not clash-checked as D-BIND-100 does the accessor's;
-  no size cap on `schemaIpc`; `"schemaIpc": null` refused; a struct-mapped WKT import would name a
-  module TypeScript users do not generate (uncertain).
-- Tests and CI: the Windows jobs' filters miss `.github/actions/conan-install/**`; schema metadata
-  only lightly asserted; the real WebSocket transport never sees a frame above 64 KiB; the C++
-  comparer is hand-written (a new field is skipped there); the end-to-end lane discards the gateway's
-  stderr; fixed ports and DDS domains; `ArrowSchemaToJsonTest` guards the old bug by stack layout only.
+> **AUDITED 2026-10-20 against the code at `e9f37fe`:** each item now has an ID and a state. Of 19
+> DEBT items, 13 are FIXED and 6 OPEN; of 15 NITs, 12 are FIXED and 3 OPEN. The OPEN ones are the
+> known debt BIND-8 carries, listed by ID in the tracker's BIND-8 section. "8e" = `cac7626`.
+
+Client:
+
+- **C-D1** a call during `ConnectAsync` ends the client for good. FIXED in 8e: the call is refused
+  and the client stays usable.
+- **C-D2** a locally ended connection never closes its socket. FIXED in 8e: the socket is aborted
+  before `Completion` says so.
+- **C-D3** `DisposeAsync` edge cases (exception filter, unbounded wait on the loop, a handler disposing
+  deadlocks). FIXED in 8e (bounded, safe from a handler); its close no longer overlaps a send since A1
+  (`750d79d`).
+- **C-D4** the receive buffer grows without cap and never shrinks. FIXED in 8e: `MaxMessageBytes`
+  (D-BIND-126), and the buffer shrinks back after a large message.
+- **C-D5** silent drops counted nowhere. FIXED in 8e: `DroppedRows` (D-BIND-132).
+- **C-D6** `Deliver` catches only `InvalidDataException`. FIXED in 8e: any decode failure is one row's.
+- **C-D7** per-row allocation in decode and a codec planned per `PublishAsync`. **OPEN** (performance,
+  carried by the maintainer's choice at 8e).
+- **C-D8** the AOT claim is analyzer-deep. FIXED in 8e: `AotSmoke` NativeAOT-compiles the client and
+  its generated pair (and, since 8f, a batched window).
+
+Generator and gateway:
+
+- **G-D1** gateway-pair names are not clash-checked as D-BIND-100 does the accessor's. FIXED in 8e:
+  `CsGateway.TwoTypesOfOneNameAreRefusedBeforeAnyOutput`.
+- **G-D2** no size cap on `schemaIpc`. **OPEN**: the gateway still decodes a `schemaIpc` of any size
+  its WebSocket accepts.
+- **G-D3** `"schemaIpc": null` refused. FIXED in 8e: read as absent.
+- **G-D4** a struct-mapped WKT import would name a module TypeScript users do not generate (reported
+  as uncertain). **OPEN, unverified**: no case exercises it yet; BIND-T is the natural place.
+
+Tests and CI:
+
+- **T-D1** the Windows jobs' filters miss `.github/actions/conan-install/**`. FIXED in 8e (`ci.pr`).
+- **T-D2** schema metadata only lightly asserted. FIXED in 8e:
+  `TheSchemaComparisonSeesNestedMetadataAndTimestampUnits` over every `.ipc` golden.
+- **T-D3** the real WebSocket transport never sees a frame above 64 KiB. FIXED in 8e: a 100 KiB row in
+  the end-to-end lane, in process (Fast DDS caps a sample at 64 KiB).
+- **T-D4** the C++ comparer is hand-written, so a new field is skipped there. **OPEN**: still
+  `integration-tests/gateway-dotnet-crosslang/cpp/row_compare.hpp`, field by field.
+- **T-D5** the end-to-end lane discards the gateway's stderr. FIXED in 8e: forwarded.
+- **T-D6** fixed ports and DDS domains. **OPEN**: ports 19194 and 19196 are fixed; the domains can be
+  overridden by `DDS_DOMAIN_ID`.
+- **T-D7** `ArrowSchemaToJsonTest` guards the old bug by stack layout only. **OPEN**:
+  `AFieldWithMetadataButNoFieldNumberHasNone` still depends on the sibling's stack slot.
 
 ## NITs
 
-Stale header comment in `ts_backend_visitor.hpp`; base64 accepts non-canonical trailing bits though
-called strict; the wire spec's `error` row assumes one request in flight; a token cancelled between
-gate and send still sends; unobserved faulted tasks on abandoned calls; `NoSchemaException` loses its
-cause; `UnsubscribeAsync`'s doc overpromises; `ConnectAsync` after dispose throws the wrong type;
-undocumented `ObjectDisposedException`; `SchemaJson` computed for nothing; the acceptance bullet's
-`SubscribeAsync<T>` wording and the "own session" note on the Fast DDS retry are stale;
-`OneRequestIsInFlightAtATime` proves less than its name; `AssertAgree` never disposes a batch;
-`WireTypeTests`' regex skips stacked cases.
+- **N1** stale header comment in `ts_backend_visitor.hpp`. FIXED in 8e.
+- **N2** base64 accepts non-canonical trailing bits though called strict. FIXED in 8e: the comment
+  now says what holds (behaviour unchanged).
+- **N3** the wire spec's `error` row assumes one request in flight. FIXED in 8e: the row says when a
+  client can attribute it.
+- **N4** a token cancelled between gate and send still sends. FIXED in 8e: nothing is sent.
+- **N5** unobserved faulted tasks on abandoned calls. FIXED in 8e: observed.
+- **N6** `NoSchemaException` loses its cause. **OPEN**: an `ArgumentException` from the gateway's
+  schema reaches the caller as text only, not as an inner exception.
+- **N7** `UnsubscribeAsync`'s doc overpromises. FIXED in 8e: it says a row already in its handler may
+  still be there.
+- **N8** `ConnectAsync` after dispose throws the wrong type. FIXED in 8e: `ObjectDisposedException`.
+- **N9** undocumented `ObjectDisposedException`. **OPEN**: no `<exception>` entry for it on the
+  client's methods.
+- **N10** `SchemaJson` computed for nothing. FIXED: deleted with the JSON-schema code (D-BIND-128).
+- **N11** the acceptance bullet's `SubscribeAsync<T>` wording is stale. FIXED in 8e: annotated in the
+  tracker.
+- **N12** the "own session" note on the Fast DDS retry is stale. FIXED in 8e.
+- **N13** `OneRequestIsInFlightAtATime` proves less than its name. FIXED: its comment says what it
+  proves (8e), and A1's `TheNextRequestIsNotSentWhileThePreviousSendIsStillReturning` holds the rest.
+- **N14** `AssertAgree` never disposes a batch. **OPEN**: its input batch is still not disposed
+  (`ManagedCodecAgreesWithNativeTests`).
+- **N15** `WireTypeTests`' regex skips stacked cases. FIXED: the file is deleted (D-BIND-128).

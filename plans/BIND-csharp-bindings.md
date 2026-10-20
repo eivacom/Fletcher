@@ -2199,10 +2199,21 @@ token and names; one request in flight; `PublishAsync` awaits the ack). Slices:
   cases, a mutant per lock caught; on CI at `750d79d` (`ci.pr` 39375700668, 56/56).
 
 **BIND-8 CLOSED 2026-10-20** on CI at `750d79d` (`ci.pr` 39375700668, 56/56, every side workflow
-green). **Known debt carried:** performance, which the maintainer chose not to fix in 8e: per-row
-allocation in the managed decode, and a codec planned per `PublishAsync` call; and the review's
-remaining NITs (`plans/reviews/BIND-8-codereview.md`). TypeScript batched delivery is a BIND-T
-parity item (D-BIND-133 k).
+green). **Known debt carried**, by the review's IDs (`plans/reviews/BIND-8-codereview.md`, audited
+2026-10-20; every other DEBT and NIT item is fixed):
+
+- **C-D7** performance, which the maintainer chose not to fix in 8e: per-row allocation in the
+  managed decode, and a codec planned per `PublishAsync` call.
+- **G-D2** no size cap on a `schemaIpc` the gateway decodes.
+- **G-D4** (unverified) a struct-mapped WKT import in generated TypeScript may name a module users
+  do not generate; to check in BIND-T.
+- **T-D4** the cross-language lane's C++ comparer is hand-written, so a new field is skipped there.
+- **T-D6** the two gateway lanes use fixed ports (19194, 19196).
+- **T-D7** the gateway test for the old uninitialised read depends on stack layout.
+- **N6** `NoSchemaException` drops the `ArgumentException` it is built from; **N9** the client's
+  `ObjectDisposedException` is not in its XML docs; **N14** `AssertAgree` does not dispose its batch.
+
+TypeScript batched delivery is a BIND-T parity item (D-BIND-133 k).
 
 The Fast DDS legs share `gateway-fastdds-ts`'s exposure to Fast DDS 3.4.0's data-sharing defect
 (`fastdds-pubsub-provider/README.md`). Ruled by the maintainer 2026-10-16: keep that test as the
