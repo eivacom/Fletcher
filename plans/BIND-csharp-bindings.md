@@ -2192,6 +2192,10 @@ token and names; one request in flight; `PublishAsync` awaits the ack). Slices:
   **Done 2026-10-19 (in the tree):** `GatewayBatch.cs`; `BatchedSubscriptionTests` 18
   (Fletcher.GatewayClient.Tests 216, 16 mutants caught); the end-to-end lane's batched
   case over both providers (19); `AotSmoke` drives a window through the batcher. Left: CI, with 8e.
+  **Found after the review, fixed 2026-10-20 (review A1):** two writes could reach the socket at
+  once (the next request's send over one still returning, `DisposeAsync`'s close over a send);
+  every write now takes a write lock. Fletcher.GatewayClient.Tests 219, three new deterministic
+  cases, a mutant per lock caught.
 
 The Fast DDS legs share `gateway-fastdds-ts`'s exposure to Fast DDS 3.4.0's data-sharing defect
 (`fastdds-pubsub-provider/README.md`). Ruled by the maintainer 2026-10-16: keep that test as the

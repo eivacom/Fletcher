@@ -15,6 +15,13 @@
 // next request can never be handed the previous one's answer. Rows to subscribers are not
 // requests and are never held back by the gate.
 //
+// ── One write at a time ─────────────────────────────────────────────────────
+// ClientWebSocket allows ONE write at a time (SendAsync or CloseOutputAsync) and throws on a
+// second. The gate does not ensure it: it is released when a reply is READ, and a reply can be
+// read before its send has returned. So every write takes a second lock, _write: a request's
+// send (never cancelled, like the send itself) and DisposeAsync's close (bounded by the close
+// grace; a send that never returns leaves the socket to be dropped instead).
+//
 // ── The receive loop ────────────────────────────────────────────────────────
 // One task reads the connection. A text frame is a reply and completes the request in
 // flight; a binary frame is a MESSAGE and is delivered to its subscription's handler, on
@@ -93,6 +100,7 @@ public sealed class FletcherClient : IAsyncDisposable
     private readonly FletcherClientOptions _options;
     private readonly IGatewayTransport _transport;
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly SemaphoreSlim _write = new(1, 1);
     private readonly object _sync = new();
     private readonly ConcurrentDictionary<ulong, Subscription> _subscriptions = new();
     private readonly CancellationTokenSource _stop = new();
@@ -375,7 +383,18 @@ public sealed class FletcherClient : IAsyncDisposable
             try
             {
                 using var grace = new CancellationTokenSource(CloseGrace);
-                await _transport.CloseAsync(grace.Token).ConfigureAwait(false);
+
+                // A close is a write: not while a send is still running (a publish in flight).
+                await _write.WaitAsync(grace.Token).ConfigureAwait(false);
+                try
+                {
+                    await _transport.CloseAsync(grace.Token).ConfigureAwait(false);
+                }
+                finally
+                {
+                    _write.Release();
+                }
+
                 if (!fromLoop)
                 {
                     await loop.WaitAsync(CloseGrace).ConfigureAwait(false);
@@ -439,7 +458,16 @@ public sealed class FletcherClient : IAsyncDisposable
         try
         {
             // Never cancel a send: cancelling ClientWebSocket.SendAsync aborts the connection.
-            await _transport.SendAsync(frame, type, CancellationToken.None).ConfigureAwait(false);
+            // The previous request's send may still be returning although its reply was read.
+            await _write.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+            try
+            {
+                await _transport.SendAsync(frame, type, CancellationToken.None).ConfigureAwait(false);
+            }
+            finally
+            {
+                _write.Release();
+            }
         }
         catch (Exception e)
         {

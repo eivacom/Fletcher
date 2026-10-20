@@ -103,6 +103,24 @@ the subscriptions were cleared. (Reviewer 3 B2.)
 
 ---
 
+## Found after the review
+
+### A1 — two writes can reach the socket at once (since 8b)
+
+> **FIXED 2026-10-20:** every write takes a second lock, `_write`: a request's send, and
+> `DisposeAsync`'s close (bounded by the close grace). Three deterministic cases
+> (`TheNextRequestIsNotSentWhileThePreviousSendIsStillReturning`,
+> `DisposingWaitsForASendStillRunningBeforeClosing`,
+> `DisposingDoesNotWaitForeverForASendThatNeverReturns`), the fake transport able to hold a send
+> open after the gateway has answered and counting the close as a write; a mutant per lock caught.
+
+`ClientWebSocket` allows one write at a time (`SendAsync` or `CloseOutputAsync`) and throws on a
+second. The one-request gate (D-BIND-110) is released when a reply is READ, and a reply can be read
+before its send has returned, so the next request's send could start over it; and `DisposeAsync`
+closed without regard to a send in flight. Found while verifying 8f: `OneRequestIsInFlightAtATime`
+failed about one run in 25 (two sends at once on the fake transport). Neither the reviewers nor
+CI saw it; the client then failed the request and ended the connection.
+
 ## Questions for a ruling
 
 1. **A disconnect signal** (reviewer 1 B2): when the gateway closes, every subscription is dropped

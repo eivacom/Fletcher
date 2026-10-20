@@ -205,6 +205,73 @@ public sealed class FletcherClientTests
     }
 
     [Fact]
+    public async Task TheNextRequestIsNotSentWhileThePreviousSendIsStillReturning()
+    {
+        // A reply can be read before its send has returned (the socket reports completion
+        // after the frame left). The gate is released on the reply, so the next request's send
+        // must still wait for the previous send: ClientWebSocket refuses two at once.
+        var gateway = new FakeGateway();
+        await using FletcherClient client = await Connected(gateway);
+        var sendsReturn = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        gateway.Transport.SendCompletionGate = sendsReturn.Task;
+
+        Task first = client.CreateTopicAsync("first");
+        await WaitUntil(() => gateway.Received.Count == 1);
+        Task second = client.CreateTopicAsync("second");
+        await Task.Delay(200); // ample for a second send to start, were it allowed to
+
+        Assert.Single(gateway.Received);
+        sendsReturn.SetResult();
+        await Task.WhenAll(first, second).WaitAsync(Wait);
+        Assert.Equal(2, gateway.Received.Count);
+        Assert.Equal(1, gateway.Transport.MaxConcurrentSends);
+    }
+
+    [Fact]
+    public async Task DisposingWaitsForASendStillRunningBeforeClosing()
+    {
+        // The close is a write too: a dispose while a publish's send is still returning must
+        // not close over it.
+        var gateway = new FakeGateway();
+        FletcherClient client = await Connected(gateway);
+        var sendsReturn = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        gateway.Transport.SendCompletionGate = sendsReturn.Task;
+        using RecordBatch batch = Batch((1, "a"));
+
+        Task publish = client.PublishAsync("t", batch);
+        await WaitUntil(() => gateway.Received.Count == 1);
+        Task dispose = client.DisposeAsync().AsTask();
+        await Task.Delay(200); // ample for a close to start, were it allowed to
+
+        Assert.Equal(0, gateway.Transport.Closes);
+        sendsReturn.SetResult();
+        await dispose.WaitAsync(Wait);
+        AssertPublishEnded(await Record.ExceptionAsync(() => publish.WaitAsync(Wait)));
+        Assert.Equal(1, gateway.Transport.Closes);
+        Assert.Equal(1, gateway.Transport.MaxConcurrentSends);
+    }
+
+    [Fact]
+    public async Task DisposingDoesNotWaitForeverForASendThatNeverReturns()
+    {
+        // Bounded by the close grace: the close is skipped and the socket dropped instead.
+        var gateway = new FakeGateway();
+        FletcherClient client = await Connected(gateway);
+        var never = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        gateway.Transport.SendCompletionGate = never.Task;
+        using RecordBatch batch = Batch((1, "a"));
+
+        Task publish = client.PublishAsync("t", batch);
+        await WaitUntil(() => gateway.Received.Count == 1);
+        await client.DisposeAsync().AsTask().WaitAsync(Wait);
+
+        Assert.Equal(0, gateway.Transport.Closes);
+        Assert.True(gateway.Transport.Disposed);
+        never.SetResult();
+        AssertPublishEnded(await Record.ExceptionAsync(() => publish.WaitAsync(Wait)));
+    }
+
+    [Fact]
     public async Task ARefusalFailsTheCallItAnswersAndTheNextCallWorks()
     {
         var gateway = new FakeGateway();
@@ -628,6 +695,11 @@ public sealed class FletcherClientTests
         var codec = new GatewayRowCodec(batch.Schema);
         return codec.Encode(codec.Bind(batch), 0);
     }
+
+    // A publish whose send outlived a dispose either finished (its reply was read first) or
+    // failed as disposed; it never hangs and never fails otherwise.
+    private static void AssertPublishEnded(Exception? outcome) =>
+        Assert.True(outcome is null or ObjectDisposedException, "the publish ended with " + outcome);
 
     private static async Task WaitUntil(Func<bool> condition)
     {

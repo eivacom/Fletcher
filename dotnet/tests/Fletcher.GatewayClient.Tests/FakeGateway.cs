@@ -294,6 +294,7 @@ internal sealed class FakeTransport : IGatewayTransport
         Channel.CreateUnbounded<(WebSocketMessageType, byte[])>(new UnboundedChannelOptions { SingleReader = true });
 
     private int _sends;
+    private int _closes;
 
     public FakeTransport(FakeGateway gateway)
     {
@@ -303,8 +304,11 @@ internal sealed class FakeTransport : IGatewayTransport
     /// <summary>Make ConnectAsync fail with this.</summary>
     public Exception? ConnectFailure { get; set; }
 
-    /// <summary>The most sends ever outstanding at once (the transport allows one).</summary>
+    /// <summary>The most writes (sends and the close) ever outstanding at once (the transport allows one).</summary>
     public int MaxConcurrentSends { get; private set; }
+
+    /// <summary>How many times the client closed its side.</summary>
+    public int Closes => Volatile.Read(ref _closes);
 
     public bool Disposed { get; private set; }
 
@@ -313,6 +317,12 @@ internal sealed class FakeTransport : IGatewayTransport
 
     /// <summary>When set, ConnectAsync completes only when this does.</summary>
     public Task? ConnectGate { get; set; }
+
+    /// <summary>
+    /// When set, a send completes only when this does, AFTER the gateway has answered it: the
+    /// reply can then be read before the send returns, as it can over a real socket.
+    /// </summary>
+    public Task? SendCompletionGate { get; set; }
 
     public void ToClient(WebSocketMessageType type, byte[] payload) => _toClient.Writer.TryWrite((type, payload));
 
@@ -343,6 +353,10 @@ internal sealed class FakeTransport : IGatewayTransport
         try
         {
             _gateway.OnClientFrame(type, message.ToArray());
+            if (SendCompletionGate is { } gate)
+            {
+                await gate.ConfigureAwait(false);
+            }
         }
         finally
         {
@@ -358,8 +372,20 @@ internal sealed class FakeTransport : IGatewayTransport
 
     public Task CloseAsync(CancellationToken cancellationToken)
     {
-        // The gateway answers a close with its own.
-        ToClient(WebSocketMessageType.Close, System.Array.Empty<byte>());
+        // A close is a write, as on a real socket: counted with the sends.
+        int now = Interlocked.Increment(ref _sends);
+        MaxConcurrentSends = Math.Max(MaxConcurrentSends, now);
+        Interlocked.Increment(ref _closes);
+        try
+        {
+            // The gateway answers a close with its own.
+            ToClient(WebSocketMessageType.Close, System.Array.Empty<byte>());
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _sends);
+        }
+
         return Task.CompletedTask;
     }
 

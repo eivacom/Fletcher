@@ -1266,3 +1266,13 @@ difference by choice: a subscription's handler is never run concurrently with it
 **Lesson.** "Reached from tests alone" says nothing is using the code yet, not that nothing
 should; a parity check against the other language arms (does C++ have it? does native C#?) is
 what tells dead code from a missing feature.
+
+**A1, two writes at once (2026-10-20).** Verifying 8f showed `OneRequestIsInFlightAtATime` failing
+about one run in 25: two sends at once on the fake transport. The one-request gate is released when
+a reply is read, and a reply can be read before its send returns, so the next send could start over
+it; `DisposeAsync`'s close had the same exposure to a publish in flight. `ClientWebSocket` throws on
+a second write, and the client would have ended the connection. Every write now takes a write lock;
+the fake transport can hold a send open after answering it, which makes the race deterministic.
+
+**Lesson.** A test that fails one run in 25 is reporting a race, not noise: here the rare
+interleaving was the very one a real socket produces.
