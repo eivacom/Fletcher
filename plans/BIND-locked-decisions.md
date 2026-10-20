@@ -3417,3 +3417,110 @@ from 2026-10-19.
   (j) The per-row `SubscribeAsync` is unchanged. (k) TypeScript has no batched shape either: a BIND-T
   parity item. **Declined:** re-expressing `SubscribeAsync` as `MaxRows` = 1 (as native does) now; a
   types package shared by `Eiva.Fletcher` and the gateway client.
+
+## Rulings of 2026-10-20 — BIND-9a, a preview for testers
+
+BIND-9 is split: **BIND-9a** delivers a preview bundle to testers (the NuGet packages, the gateway and the plugin, as a per-push CI artifact; nothing released before the merge); **BIND-9b** is the rest of
+BIND-9 as written (the `nuget.eiva.com` publish job and its self-hosted runner, the glibc floor
+lowered if wanted, `Eiva.Fletcher.Protoc`, the packed-size budget, the Windows and `fastdds`
+NativeAOT runs, the null-in-a-non-nullable-column question, the C#-native cross-language rows).
+Facts checked before the questions were put: `ci.dotnet` already packs all four packages but
+`Eiva.Fletcher.Interop` carries no shim yet; the released gateway (`gateway-v0.5.0-alpha`) cannot
+accept `schemaIpc` on `create_topic` (D-BIND-112 exists on this branch only); the released plugin
+(`protoc-v0.5.1-alpha`) has no C# backend; every release tag sits on `main`; the repository is
+public.
+
+- **D-BIND-134 - the first preview carries all four packages: `Eiva.Fletcher`,
+  `Eiva.Fletcher.Interop`, `Eiva.Fletcher.Model` and `Eiva.Fletcher.GatewayClient`.** *LOCKED BY
+  THE MAINTAINER 2026-10-20 (BIND-9a Q1).* So 9a owns what makes `Interop` usable from a package:
+  the shim under `runtimes/win-x64/native/` and `runtimes/linux-x64/native/`, built per RID and
+  packed once (D-BIND-27), and `LICENSE` + `THIRD-PARTY-LICENSES.txt` in every package. **The
+  shim is the only unmanaged file, and it is self-contained:** Fletcher's core, pubsub and both
+  providers, Fast DDS, Fast CDR, foonathan-memory, tinyxml2, Micro XRCE-DDS and nanoarrow are all
+  linked into it (`c-abi/conanfile.py` forces the eProsima chain static). Measured on the Linux
+  shim 2026-10-20: it loads only `libstdc++.so.6`, `libgcc_s.so.1`, `libm.so.6`, `libc.so.6` and the
+  loader. The Windows shim is expected to load only the VC++ runtime, `psapi.dll` and Windows system
+  DLLs, not yet measured. Checked on every pack: the shim's dependency list (`objdump -p` on Linux,
+  `dumpbin /dependents` on Windows) names only system libraries and the C/C++ runtime; the
+  test-only probe shim (`fletcher-c-abi-probe`) is never packed; `THIRD-PARTY-LICENSES.txt` lists
+  the libraries linked into the shim. **Declined:** `GatewayClient` and `Model` alone first (the
+  managed pair, ready today).
+
+- **D-BIND-135 - testers get a gateway that speaks to the C# client as gateway BINARIES in the
+  per-push preview bundle (D-BIND-139), built from this branch exactly as `cd.gateway.yml` would
+  release them (`gateway-linux.tar.gz`, `gateway-windows.zip`); no gateway release before the
+  merge.** *LOCKED BY THE MAINTAINER 2026-10-20 (BIND-9a Q2, revised the same day).* First ruled as
+  a gateway preview release through `cd.gateway.yml`; revised when the maintainer ruled that before
+  the merge nothing but the per-push bundle is published. **Declined:** a preview release; testers
+  building the gateway themselves.
+
+- **D-BIND-136 - testers generate C# code with the plugin BINARIES in the per-push preview bundle:
+  the standalone static `protoc-gen-fletcher` for Linux and Windows, as `cd.protoc.yml` would
+  release them, and `fletcher/options.proto`; no plugin release (npm, Conan or GitHub) before the
+  merge; `Eiva.Fletcher.Protoc` (D-BIND-71) stays in BIND-9b.** *LOCKED BY THE MAINTAINER
+  2026-10-20 (BIND-9a Q3, revised the same day).* First ruled as a plugin preview through
+  `cd.protoc.yml`, which would have put a version on the public npmjs.com that cannot be freely
+  removed after 72 hours. **Declined:** a preview release; testers without generated code.
+
+- **D-BIND-137 - no release tag of any kind is cut from `feature/csharp-bindings` before PR #129
+  merges.** *LOCKED BY THE MAINTAINER 2026-10-20 (BIND-9a Q4, revised the same day).* First ruled
+  as "`-preview.N` tags only"; with nothing released before the merge, no tag is needed. The CD
+  workflows (`cd.dotnet`, `cd.gateway`, `cd.protoc`) run from `main` after the merge, as today.
+  Stands beside D-BIND-30 (one PR for the round). **Declined:** prerelease tags from the branch.
+
+- **D-BIND-138 - before the merge the only version is the per-build `0.6.0-pr.129.<run number>`
+  (NuGet packages and the bundle); every Fletcher package moves to 0.6 together when PR #129
+  merges, and the first release is `0.6.0-alpha`.** *LOCKED BY THE MAINTAINER 2026-10-20 (BIND-9a
+  Q5, revised the same day).* MINOR moves because the gateway protocol changed across components
+  (`schemaIpc` on `create_topic`, sent by the C# and TypeScript clients): a 0.5 gateway does not
+  serve the new clients. Until the merge the bundle builds against the 0.5 core and pubsub, a
+  recorded and temporary exception to "same MAJOR.MINOR everywhere". Amends decision #13's "`0.5.x`
+  series". Semver ranks `0.6.0-pr.129.N` ABOVE `0.6.0-alpha`, so before the first `-alpha` is
+  published the maintainer deletes the remaining preview bundles (they expire after 30 days anyway)
+  and the testers are told to clear their NuGet caches; the bundle README says so from the start.
+  **Declined:** the 0.5 line; a `0.6.0-preview.1` tag (first ruled, dropped with D-BIND-137); a first
+  post-merge release that sorts above the previews (`0.6.1-alpha`).
+
+- **D-BIND-139 - every push to `feature/csharp-bindings` publishes ONE preview bundle, a 30-day
+  workflow artifact (served by GitHub as a zip) named `fletcher-preview-0.6.0-pr.129.<run>`, and
+  nothing else before the merge.** *LOCKED BY THE MAINTAINER 2026-10-20 (BIND-9a, replacing the Q6
+  recommendation of a runner with a manual-push fallback, then widened from NuGet-only the same
+  day).* Contents: `nuget/` the four packages (the shim for both RIDs inside `Interop`, D-BIND-134);
+  `gateway/` the gateway binaries (D-BIND-135); `protoc/` the plugin binaries and
+  `fletcher/options.proto` (D-BIND-136); `README-preview.md` (versions and commit, the floors, the
+  relinking route, how to use a local NuGet folder, "delete and clear caches when `0.6.0-alpha`
+  ships"); `LICENSE` and `THIRD-PARTY-LICENSES.txt`. On this branch `ci.pr` builds dotnet, gateway
+  and protoc on every push whatever the push touched (the path filters stay for other branches),
+  which lengthens every run. A version unique to each build, because NuGet caches a package by
+  version and a tester would otherwise keep an old build silently. No tag, GitHub release, npm,
+  Conan or NuGet-feed push before the merge; the `nuget.eiva.com` feed and its self-hosted runner
+  (D-BIND-28) follow in BIND-9b. The repository is public, so the bundle is downloadable by anyone
+  with a GitHub account: external publication, which is why D-BIND-140 came before the first
+  bundle. **The bundle is a development aid for this branch, not a release channel:** BIND-9b
+  prepares the merge-time release on the branch (the lockstep bump to `0.6.0-alpha`, `cd.dotnet.yml`
+  to `nuget.eiva.com`, every supported package released by its CD workflow from `main`) and the
+  merge removes the bundle job (tracker, BIND-9). **Declined:** a rolling GitHub prerelease as the
+  carrier; building the bundle on request only (`workflow_dispatch` or a label); a NuGet-only bundle
+  (testers need the gateway and the plugin).
+
+- **D-BIND-140 - LGPL, for the preview: the shared-shim relinking route.** *LOCKED BY THE MAINTAINER
+  2026-10-20 (BIND-9a Q7; answers Q9 for the preview).* The shim is a shared library the .NET
+  assembly loads at run time, so an application is a combined work using a shared-library mechanism
+  and LGPL-3.0 §4(d)(1) is met when a user can replace the shim with one rebuilt from the
+  corresponding source, the public repository at the commit the build names; Fast DDS and XRCE
+  inside the shim are Apache-2.0 and do not change that (development plan P-1). Every package
+  carries `LICENSE` and the graph-derived `THIRD-PARTY-LICENSES.txt` (#127's deployer); each package
+  README states the relinking route (replace `runtimes/{rid}/native/` with a shim built from the
+  named commit, with the command) and the NativeAOT static-linking caveat (N-8); the artifact names
+  its commit. An engineering route chosen by the maintainer, not a legal opinion. **Declined:**
+  managed packages only until a legal answer exists.
+
+- **D-BIND-141 - the shim ships as CI builds it, and the package README states both floors:
+  linux-x64 needs glibc 2.38 (measured by `ci.c-abi` at `e268f1a`) and libstdc++ `GLIBCXX_3.4.32`,
+  the GCC 13 runtime (measured on the shim 2026-10-20): Ubuntu 24.04, Debian 13, RHEL 10 or newer;
+  win-x64 needs the VC++ 2015-2022 redistributable (the dynamic CRT, D-BIND-38) and the Windows
+  system DLLs its measured dependency list names.** *LOCKED BY THE MAINTAINER 2026-10-20 (BIND-9a
+  Q8; the libstdc++ floor and the Windows list added the same day, when the maintainer asked
+  whether the packages hold every unmanaged part).* Lowering the glibc floor (building the shim on
+  an older image) stays BIND-9b work (D-BIND-41). **Declined:** lowering the floor before the first
+  preview.

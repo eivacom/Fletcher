@@ -68,8 +68,8 @@ All nineteen ruled. ✅ = settled.
 | 9 | **"Make C# emit Rust-native accessor classes" (16353)** — confirm the reading | ✅ **agreed 2026-09-11** (Q19): read as *C# accessor classes equivalent to the Rust-native ones*; BIND-7 scope; ADO 16353 wording to be corrected | — |
 | 10 | Is **BIND-Rust** in this round or the next? | ✅ **agreed 2026-09-11** (Q12): **next round** | — |
 | 11 | **RID matrix** for `Eiva.Fletcher.Interop` | ✅ **agreed 2026-09-11** (Q8): `win-x64`, `linux-x64` at first release; `linux-arm64` first addition; macOS on demand | — |
-| 12 | **LGPL relinking review** for shipping prebuilt native binaries | ✅ **owner assigned 2026-09-11** (Q9): the maintainer; decision due before BIND-9. The notice half is mechanised by #127's deployer | maintainer |
-| 13 | **Component granularity & versioning** (one `dotnet/` component, `dotnet-v` tag, **`0.5.x`** series, **three** managed packages) | ✅ **agreed 2026-09-11** (Q2) | — |
+| 12 | **LGPL relinking review** for shipping prebuilt native binaries | ✅ **owner assigned 2026-09-11** (Q9): the maintainer; decision due before BIND-9. The notice half is mechanised by #127's deployer. **Ruled for the preview 2026-10-20 (D-BIND-140):** the shared-shim relinking route, licence files in every package, the route and the NativeAOT caveat in each README | — |
+| 13 | **Component granularity & versioning** (one `dotnet/` component, `dotnet-v` tag, **`0.5.x`** series, **three** managed packages) | ✅ **agreed 2026-09-11** (Q2). **Amended 2026-10-20 (D-BIND-138):** before the merge only per-build `0.6.0-pr.129.<run>` bundles; every package moves to 0.6 together when #129 merges, first released as `0.6.0-alpha` | — |
 | 14 | **Landing order against PR #128** (P-7): does BIND wait for the FastDDS modernization branch? | ✅ **ruled 2026-09-15** (Q20, D-BIND-29): **no** — #129 lands first; BIND-1 specs the schema-watch pair as `kNotSupported`; the order is re-examined at the BIND-1 → BIND-2 boundary. **Schema-watch clause superseded 2026-09-25 (D-BIND-52): the shim forwards to the seam's pair, ABI 0.5** | — |
 | 15 | **PR granularity for the round** — one PR, or one per stage boundary? | ✅ **ruled 2026-09-16** (D-BIND-30): **one PR for the round** (#129), matching #125 and #126; a fix unrelated to the bindings goes to `main` on its own, as #130 did |
 | 21 | **The composite map-key refusal** — 2b narrowed what 2a's encoder accepted | ✅ **ruled 2026-09-18** (D-BIND-36): **map keys are scalar only**, refused at `fl_codec_open` by field name. A statement about the wire format's reach, not one codec's convenience — BIND-Rust inherits it. No code change; the refusal and its test already exist | — |
@@ -79,8 +79,8 @@ All nineteen ruled. ✅ = settled.
 | 17 | **Who frees a message a CALLBACK puts in an `fl_error`** | ✅ **ruled 2026-09-17** (D-BIND-32): the callback **borrows** it — keeps the bytes alive until it returns, the shim copies and frees nothing. Stated on `fl_error`, not on `fl_grow_fn`. Answers B1 of BIND-1's spec review |
 | 16 | **Who implements the shim's ~40 entry points** — BIND-2c, or BIND-4 as `builtins.cpp` says? | ✅ **ruled 2026-09-17** (D-BIND-31): **2c takes the codec surface + the publisher chain**; the subscriber half, attachments, blobs and schema arrival stay with BIND-4. Forced by 2d's copy-oracle acceptance, which needs a live publisher | — |
 
-Nothing gates kickoff. The one open non-engineering item is the LGPL relinking
-decision (#12), which gates BIND-9's packaging design only.
+Nothing gates kickoff. The one open non-engineering item was the LGPL relinking
+decision (#12); it is ruled for the preview (D-BIND-140, 2026-10-20).
 
 ---
 
@@ -790,7 +790,9 @@ versions are opt-in there exactly as on NuGet.org.
 Publishing (OIDC: `id-token: write`, `NuGet/login@v1`, the analogue of the npm
 `--provenance` flow in `cd.gateway-client.yml`) and request the `Eiva.Fletcher.*`
 prefix; nothing else in the workflow changes. The LGPL relinking decision (Q9) is due
-before *that* step, not before this one (D-BIND-28).
+before *that* step, not before this one (D-BIND-28). **Moved forward 2026-10-20:** the
+repository is public, so BIND-9a's per-push bundle (D-BIND-139) is already external; Q9 is
+ruled for it (D-BIND-140).
 
 Also in `cd.dotnet.yml`:
 
@@ -838,7 +840,7 @@ fewer and larger than in the first draft.
 Track A (native + managed core)   BIND-0 → BIND-1 → BIND-2 → BIND-3 → BIND-4 → BIND-5
 Track B (generator, protoc/)      BIND-6 → BIND-7        (BIND-7 needs BIND-3's Arrow import)
 Track C (managed-only)            BIND-T · BIND-8         (independent; can start day one)
-Track D (pipelines, docs)         BIND-9 (starts with BIND-0, closes last) · BIND-10
+Track D (pipelines, docs)         BIND-9a (preview) → BIND-9b (starts with BIND-0, closes last) · BIND-10
 ```
 
 Critical path: **BIND-0 → BIND-1 → BIND-2 → BIND-3 → BIND-4**. BIND-2 is the long
@@ -860,7 +862,8 @@ Kind: 🟪 spec · 🟦 impl · 🔬 proof · ⚙ pipelines · 📓 docs
 | BIND-7 | Arrow view + accessor emitters (`csharp_accessor`) + capstone third arm | B | 🟦 | BIND-6, BIND-3 | `accessor-capstone` C# arm `observed == expected`; `StructArray` windowing fixture at non-zero offset | 🟢 (closed on CI at `268dceb`, `ci.pr` 38746753749, after a fresh-context review whose 2 BLOCKERs were fixed and 5 questions ruled, D-BIND-103 to 107; rulings during the round D-BIND-94 to 102; the minor debt carried as known, listed in BIND-7's section) |
 | BIND-T | TS `Publisher`/`Subscriber` emitter | C | 🟦 | — | `TsVisitor.DescriptorByteIdentical` still green + new emitter cases | ⚪ |
 | BIND-8 | `Eiva.Fletcher.GatewayClient` (managed port; the codec exception) | C | 🟦 | — | Bucket 2 green (the Part 4 file set, not a count); `Package.GatewayClientHasNoRuntimesFolder` | 🟢 (closed on CI at `750d79d`, `ci.pr` 39375700668, 56/56, every side workflow green, after a fresh-context review whose 5 BLOCKERs were fixed and 12 questions ruled, D-BIND-121 to 132; rulings during the round D-BIND-108 to 120, and D-BIND-133 (slice 8f, batched delivery); one finding after the review fixed (A1); performance carried as known debt, listed in BIND-8's section) |
-| BIND-9 | CI/CD: RID matrix, publish to `nuget.eiva.com` from a self-hosted job (D-BIND-28), size budget, licence files | D | ⚙ | BIND-0 (skeleton), all for release | `cd.dotnet.yml` dry run; packed-size check; asset-isolation + licence check | ⚪ |
+| BIND-9a | A preview for testers (split from BIND-9 2026-10-20): one bundle per push to this branch, a 30-day CI artifact with the four NuGet packages (shim for both RIDs), the gateway binaries and the plugin binaries; nothing released before the merge (D-BIND-134 to 141) | D | ⚙ | BIND-3, BIND-8 | A consumer test using only the bundle publishes natively, generates code with the bundled plugin and reaches the bundled gateway, on Linux and Windows; `Interop` carries exactly the two shims; licence files in every package | 🔴 (rulings D-BIND-134 to 141, 2026-10-20) |
+| BIND-9b | The rest of BIND-9: publish to `nuget.eiva.com` from a self-hosted job (D-BIND-28), size budget, glibc floor, `Eiva.Fletcher.Protoc`, NativeAOT on Windows and `fastdds`, C#-native cross-language rows | D | ⚙ | BIND-9a, all for release | `cd.dotnet.yml` dry run; packed-size check; asset-isolation + licence check | ⚪ |
 | BIND-10 | Docs, TD-009, archive to `docs/archive/BIND/` | D | 📓 | all | docs review | ⚪ |
 
 ---
@@ -2225,6 +2228,74 @@ upgrade is planned separately. The change was made in a session of its own and t
 **As** a maintainer, **I want** the .NET tier built, tested and published by the
 same machinery as everything else, **so that** it cannot rot.
 
+**Split 2026-10-20 into BIND-9a and BIND-9b** (rulings D-BIND-134 to 141). Testers are
+waiting for packages, so **BIND-9a** delivers a preview first; **BIND-9b** is everything in the
+acceptance below that 9a does not do.
+
+**BIND-9a — a preview for testers.** *As* a tester, *I want* the C# packages, a gateway that
+speaks to them and a plugin that generates C# code, *so that* I can build against the bindings
+before the round merges.
+
+- **What it ships** (D-BIND-134 to 136, 139): ONE preview bundle per push to this branch, a
+  30-day workflow artifact (a zip) `fletcher-preview-0.6.0-pr.129.<run>`: `nuget/` the four
+  packages; `gateway/` the gateway binaries for Linux and Windows, as `cd.gateway.yml` would
+  release them; `protoc/` the standalone plugin binaries for Linux and Windows and
+  `fletcher/options.proto`, as `cd.protoc.yml` would release them; `README-preview.md`; `LICENSE`
+  and `THIRD-PARTY-LICENSES.txt`. On this branch `ci.pr` builds dotnet, gateway and protoc on every
+  push, whatever the push touched. `Eiva.Fletcher.Protoc` stays in 9b.
+- **Nothing released before the merge** (D-BIND-137, 138): no tag, GitHub release, npm, Conan or
+  NuGet-feed push; the only version is the per-build `0.6.0-pr.129.<run>`. **Temporary:** after
+  the merge the release is `0.6.0-alpha`, which semver ranks BELOW those builds, so the remaining
+  bundles are deleted first (they expire after 30 days anyway) and testers clear their NuGet caches;
+  the bundle README says so.
+- **The unmanaged part** (D-BIND-134): the shim is the only native file, and it is
+  self-contained: Fletcher's core, pubsub and providers, the eProsima chain, Micro XRCE-DDS and
+  nanoarrow are linked into it. On Linux it loads only `libstdc++`, `libgcc_s`, `libm`, `libc`
+  (measured 2026-10-20); on Windows the VC++ runtime, `psapi.dll` and system DLLs (to be measured).
+- **Licence and floors** (D-BIND-140, 141): `LICENSE` and `THIRD-PARTY-LICENSES.txt` in every
+  package; each README states the relinking route, the NativeAOT caveat, glibc 2.38 and libstdc++
+  `GLIBCXX_3.4.32` (GCC 13) for linux-x64, and the VC++ redistributable for win-x64; the bundle
+  names its commit.
+- **Forcing tests:** a consumer project using only the unpacked bundle generates its C# code with
+  the bundled plugin, restores from the bundled packages alone, publishes and subscribes natively
+  through `Eiva.Fletcher` (the shim loaded from the package) and reaches the bundled gateway
+  through `Eiva.Fletcher.GatewayClient`, on Linux and Windows; `Interop` carries
+  exactly `runtimes/win-x64/native/` and `runtimes/linux-x64/native/`, and `GatewayClient` and
+  `Model` carry none; the shim's dependency list (`objdump -p`, `dumpbin /dependents`) names only
+  system libraries and the C/C++ runtime; the probe shim is in no package; every package carries
+  both licence files, and `THIRD-PARTY-LICENSES.txt` lists the libraries linked into the shim.
+- **Slices:** 9a-0 the shim for both RIDs in one pack, the licence files and the package checks;
+  9a-1 the bundle job in `ci.pr` (dotnet, gateway and protoc built on every push to this branch,
+  the per-build version, the 30-day artifact with `README-preview.md`); 9a-2 package READMEs and
+  the consumer tests over the bundle; 9a-3 a short tester note pointing at the newest bundle.
+  `cd.dotnet.yml` and the feed are BIND-9b.
+
+**BIND-9b — the rest**, the acceptance below: the `nuget.eiva.com` publish job and its
+self-hosted runner, the packed-size budget, lowering the glibc floor if wanted, the Windows and
+`fastdds` NativeAOT runs, the null-in-a-non-nullable-column question, `Eiva.Fletcher.Protoc`, and
+the C#-native cross-language rows.
+
+**How test builds reach testers during development, and what changes at the merge** (recorded
+2026-10-20 at the maintainer's request, D-BIND-137 to 139). Until PR #129 merges, the per-push
+preview bundle is the ONLY way anything built here reaches a tester: a 30-day CI artifact, never
+a tag, a release or a registry push. It is a development aid for this branch, not a release
+channel. **BIND-9b's acceptance includes the merge-time release, prepared on the branch and run
+from `main` after the merge:**
+
+- **Version bump in lockstep to `0.6.0-alpha`** (D-BIND-138): every `conanfile.py` version and
+  cross-reference pin, `gateway/VERSION`, the `package.json` files (`gateway-client-ts`,
+  `protoc/npm`) and `dotnet/Directory.Build.props`, together, in the merge.
+- **Every supported package published by its CD workflow from a tag on `main`**: `cd.dotnet.yml`
+  (new in 9b) pushes the four NuGet packages and their `.snupkg` to `nuget.eiva.com` from the
+  self-hosted runner and attaches them to a GitHub Release; `cd.gateway.yml`, `cd.protoc.yml`, the
+  npm client and the Conan components release `0.6.0-alpha` as they do today, `cd.protoc.yml`
+  also publishing `Eiva.Fletcher.Protoc`. Each workflow's dry run is green before its tag.
+- **The preview bundle retired:** the `ci.pr` bundle job and its "build dotnet, gateway and
+  protoc on every push to this branch" condition are removed in the merge, so `main` keeps only
+  the path-filtered CI.
+- **Previews cleared before the first `-alpha`:** the remaining bundles deleted and testers told to
+  clear their NuGet caches (D-BIND-138).
+
 **Acceptance**
 
 - Part 5 as written: `ci.c-abi.yml`, `ci.dotnet.yml`, `ci.format-check-cs.yml`,
@@ -2361,7 +2432,7 @@ worth reading first:
 | **N-5 — two `release` protocols** (C Data Interface vs owner-handle retain/release) | Received schemas deep-copied natively before import; `BoundRows.Dispose` unbinds before releasing; tested with a schema received twice. |
 | **S-2 — the re-entrant `Unsubscribe` carve-out** and sibling handlers | The in-flight counter (D-BIND-18); a test mirroring `CallerTier.CancellingASiblingRunningOnAnotherThreadKeepsItPublished`. **Amended 2026-09-25 (D-BIND-50):** the counter alone did not cover a sibling between the gate and its increment, so a carve-out cancel now frees only after a second cancel has waited for the drain. |
 | **N-3 — `async` handlers** whose continuation outlives the borrowed arguments | Span/ref-struct delegate signature so an `async` lambda cannot compile; documented. |
-| **P-1 — LGPL relinking** | Owner: the maintainer (Q9); the notice half is mechanised by #127; packaging waits for the decision, development does not. |
+| **P-1 — LGPL relinking** | Owner: the maintainer (Q9); the notice half is mechanised by #127. **Ruled for the preview 2026-10-20 (D-BIND-140):** the shared-shim relinking route. |
 | **P-7 — `protoc/` and `arrow-bridge/` contended** with PR #128 (FastDDS modernization) | **Ruled 2026-09-15 (D-BIND-29): BIND does not wait.** Re-derived against the branch as it stands: the `protoc` collision has shrunk to +416/−56 (its work was rebased onto the IR), `SubscribeSchema` now returns a `SchemaArrival` rather than a `shared_future`, and the live collision is instead #128's version bump to `0.5.1-alpha` against `c-abi`'s exact pins. #129 lands first; BIND-1 specs the schema-watch pair as `kNotSupported` (superseded 2026-09-25 by D-BIND-52: the shim forwards to the seam's pair); the order is re-examined at the BIND-1 → BIND-2 boundary. The no-drift test, `TsVisitor.DescriptorByteIdentical` and BIND-2's byte-identity oracle prove neither party moved wire bytes. |
 | **N-7 — runtime `DllNotFoundException`** on a missing RID or an older glibc | `SetDllImportResolver` naming the RID; the ABI version handshake; the glibc floor stated. |
 
@@ -2402,9 +2473,9 @@ mirrored. Two lines to fix, and it belongs to BIND-2 rather than to BIND-3.
 
 Three actions remain besides, none an engineering one:
 
-1. **LGPL relinking decision** (owner: the maintainer) before the first *external*
-   publication (D-BIND-28: the first target is EIVA's internal feed, so it no longer
-   gates BIND-9's packaging). BIND supplies the brief.
+1. **LGPL relinking decision** (owner: the maintainer): **ruled for the preview 2026-10-20
+   (D-BIND-140)**, since the repository is public and BIND-9a's per-push bundle is already
+   external (D-BIND-139).
 2. **The self-hosted publish runner** in the EIVA network and the `NUGET_EIVA_API_KEY`
    secret on `nuget.eiva.com` (user actions outside a PR, D-BIND-28). NuGet.org Trusted
    Publishing and the `Eiva.Fletcher.*` prefix are deferred until the packages go external.
@@ -2441,3 +2512,7 @@ Three actions remain besides, none an engineering one:
 - `GatewayClient` verified to carry **no** native assets; the shim within its size
   budget; both licence files in the package.
 - Docs updated incl. TD-009; round archived to `docs/archive/BIND/`.
+- **Released properly after the merge** (2026-10-20, BIND-9b): every package at `0.6.0-alpha`,
+  bumped in lockstep; each supported package published by its CD workflow from `main` (the NuGet
+  packages to `nuget.eiva.com`); the per-push preview bundle job retired and the preview bundles
+  deleted.

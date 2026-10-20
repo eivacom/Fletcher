@@ -855,6 +855,20 @@ Before the close, the client gained a batched subscription, as C++'s and the nat
 one `DecodeBatch` per window, one handler call at a time per subscription (D-BIND-133, slice 8f;
 `DecodeBatch`, deleted at first with the JSON-schema code, stays: D-BIND-128 amended).
 
+**BIND-9a, a preview for testers (2026-10-20).** BIND-9 is split: 9a ships a preview, 9b the
+rest. Every push to this branch publishes one preview bundle, a 30-day CI artifact (a zip), and
+nothing else before the merge (D-BIND-139, 137): the four NuGet packages (D-BIND-134), and the
+gateway and plugin binaries built from this branch as their CD workflows would release them,
+since the released gateway cannot accept `schemaIpc` and the released plugin has no C# backend
+(D-BIND-135, 136). The only pre-merge version is the per-build `0.6.0-pr.129.<run>`; every package
+moves to 0.6 together at the merge, released as `0.6.0-alpha` after the remaining bundles are
+deleted (D-BIND-138). The internal feed and its runner follow in 9b. The repository is public, so
+the bundle is external publication:
+the LGPL question is ruled for the preview as the shared-shim relinking route (D-BIND-140), and
+the shim, self-contained with every native dependency linked in, ships as built with its floors
+stated: glibc 2.38 and the GCC 13 libstdc++ on Linux, the VC++ redistributable on Windows
+(D-BIND-134, 141).
+
 **BIND-T, BIND-8, BIND-9, BIND-10** — as in the 2026-08-31 plan, with BIND-9
 carrying the LGPL notice text and the packaging statement (§6 P-1), and BIND-10
 adding **TD-009** (TD-008 is now taken by the seam).
@@ -1284,7 +1298,11 @@ blocking or architectural, **S** = inherited from the seam, **N** = .NET interop
   2026-09-14 (D-BIND-28):** the first publication target is EIVA's internal feed, and
   distribution to EIVA's own applications is not distribution to third parties, so the
   relinking answer is needed before the first *external* publication rather than
-  before BIND-9. The licence files ship in the packages either way.
+  before BIND-9. The licence files ship in the packages either way. **Ruled 2026-10-20
+  (D-BIND-140):** BIND-9a's per-push bundle is external, the repository being public, so the
+  maintainer took this route for the preview: the replaceable shared shim, the public source
+  at the commit the build names, both licence files in every package, and the route and N-8 in
+  each README.
 
 - **P-2 — RID matrix.** `win-x64` and `linux-x64` are the ones the tree already
   builds. `linux-arm64` needs cross-compilation or an ARM runner; `osx-arm64` needs
@@ -1385,7 +1403,7 @@ the numbering is shared so a ruling can cite one number.
 | Q6 | Accessor depth cap: match RBA's 2/3 (G-4) | ✅ **LOCKED 2026-09-11**: match (D-BIND-9 amended) | BIND-7 |
 | Q7 | Toolchain: .NET 10 LTS SDK; TFMs `net8.0;net10.0` (D-BIND-21) | ✅ **LOCKED 2026-09-11** | BIND-0 |
 | Q8 | RID matrix at first release (P-2) | ✅ **LOCKED 2026-09-11**: `win-x64`, `linux-x64` (D-BIND-27) | BIND-9 |
-| Q9 | Owner for the LGPL relinking review (P-1) | ✅ **Assigned 2026-09-11: the maintainer.** Decision due before BIND-9 designs packaging; BIND supplies the engineering brief (P-1's argument, the #127 notice mechanism, the NativeAOT caveat N-8) | BIND-9 |
+| Q9 | Owner for the LGPL relinking review (P-1) | ✅ **Assigned 2026-09-11: the maintainer.** Decision due before BIND-9 designs packaging; BIND supplies the engineering brief (P-1's argument, the #127 notice mechanism, the NativeAOT caveat N-8). **Ruled for the preview 2026-10-20 (D-BIND-140):** the shared-shim relinking route | BIND-9a |
 | Q10 | 18786 exclusion classes: generator tests and provider-internal tests stay in C++ (P-5) | ✅ **LOCKED 2026-09-11**: both classes, documented | closing 18786 |
 | Q11 | Are any Flight (20061) consumers C++ processes hosting .NET, or hosting two bindings? (B-4) | ✅ **Answered 2026-09-11: no** — consumers are .NET processes with this binding only. D-BIND-17's check covers the detectable case; a future C++ host is a STOP-AND-ASK under P1 | BIND-2 design |
 | Q12 | Is BIND-Rust in this round? (plan open decision 5) | ✅ **Ruled 2026-09-11: next round** | scope |
@@ -1414,3 +1432,5 @@ the numbering is shared so a ruling can cite one number.
   `Publisher`/`Subscriber`; no existing output byte changed.
 - `GatewayClient` carries no `runtimes/`; the shim is within its size budget.
 - Docs incl. TD-009; round archived to `docs/archive/BIND/`.
+- Released after the merge (2026-10-20): every package at `0.6.0-alpha` in lockstep, each
+  published by its CD workflow from `main`; the per-push preview bundle retired (BIND-9b).
