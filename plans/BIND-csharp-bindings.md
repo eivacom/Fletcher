@@ -2251,7 +2251,8 @@ before the round merges.
 - **The unmanaged part** (D-BIND-134): the shim is the only native file, and it is
   self-contained: Fletcher's core, pubsub and providers, the eProsima chain, Micro XRCE-DDS and
   nanoarrow are linked into it. On Linux it loads only `libstdc++`, `libgcc_s`, `libm`, `libc`
-  (measured 2026-10-20); on Windows the VC++ runtime, `psapi.dll` and system DLLs (to be measured).
+  (measured 2026-10-20); on Windows only system DLLs (`KERNEL32`, `ADVAPI32`, `WS2_32`, `MSWSOCK`,
+  `IPHLPAPI`, `SHLWAPI`), the VC++ runtime and the UCRT (measured by CI at `9d214c9`).
 - **Licence and floors** (D-BIND-140, 141): `LICENSE` and `THIRD-PARTY-LICENSES.txt` in every
   package; each README states the relinking route, the NativeAOT caveat, glibc 2.38 and libstdc++
   `GLIBCXX_3.4.32` (GCC 13) for linux-x64, and the VC++ redistributable for win-x64; the bundle
@@ -2269,8 +2270,9 @@ before the round merges.
   the per-build version, the 30-day artifact with `README-preview.md`); 9a-2 package READMEs and
   the consumer tests over the bundle; 9a-3 a short tester note pointing at the newest bundle.
   `cd.dotnet.yml` and the feed are BIND-9b.
-- **9a-0 in the tree 2026-10-20:** `ci.dotnet` gains a `pack` job that needs both legs. Each leg
-  checks its shim's load-time dependencies (`scripts/check_shim_dependencies.sh`: Linux measured
+- **9a-0 done on CI 2026-10-20** (`9d214c9`, `ci.pr` 39490321322, 57/57, every side workflow
+  green, first attempt): `ci.dotnet` gains a `pack` job that needs both legs. Each leg checks its
+  shim's load-time dependencies (`scripts/check_shim_dependencies.sh`: Linux measured
   `libstdc++`, `libgcc_s`, `libm`, `libc` only; Windows by `dumpbin /dependents`, first measured on
   CI), writes its notice with the gateway's deployer and hands both on. The pack job requires the
   two notices to list the same libraries, packs the four projects once with both shims in
@@ -2286,7 +2288,10 @@ before the round merges.
   that compiled it in, and the pack job requires nanoarrow, Micro-CDR, Micro XRCE-DDS and Fast
   DDS in the notice. Rehearsed in the devcontainer: the real Linux shim and notice, a real pack
   with a stand-in Windows shim, all checks green; four mutants caught (no licence files, no
-  shims, one shim, a shim loading an extra library).
+  shims, one shim, a shim loading an extra library). On CI the Windows shim's list was measured
+  for the first time (system DLLs, the VC++ runtime, the UCRT; no `psapi.dll`), both legs' notices
+  named the same eight libraries, and `Interop` carries both shims (the packages artifact grew
+  from 0.4 to 8.9 MB).
 
 **BIND-9b — the rest**, the acceptance below: the `nuget.eiva.com` publish job and its
 self-hosted runner, the packed-size budget, lowering the glibc floor if wanted, the Windows and

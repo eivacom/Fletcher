@@ -3439,9 +3439,12 @@ public.
   providers, Fast DDS, Fast CDR, foonathan-memory, tinyxml2, Micro XRCE-DDS and nanoarrow are all
   linked into it (`c-abi/conanfile.py` forces the eProsima chain static). Measured on the Linux
   shim 2026-10-20: it loads only `libstdc++.so.6`, `libgcc_s.so.1`, `libm.so.6`, `libc.so.6` and the
-  loader. The Windows shim is expected to load only the VC++ runtime, `psapi.dll` and Windows system
-  DLLs, not yet measured. Checked on every pack: the shim's dependency list (`objdump -p` on Linux,
-  `dumpbin /dependents` on Windows) names only system libraries and the C/C++ runtime; the
+  loader. Measured on the Windows shim by CI at `9d214c9` (`ci.pr` 39490321322): it loads only
+  Windows system DLLs (`KERNEL32`, `ADVAPI32`, `WS2_32`, `MSWSOCK`, `IPHLPAPI`, `SHLWAPI`), the VC++
+  runtime (`MSVCP140`, `MSVCP140_ATOMIC_WAIT`, `VCRUNTIME140`, `VCRUNTIME140_1`) and the UCRT
+  (`api-ms-win-crt-*`); `psapi.dll`, expected from the link line, is not among them. Checked on
+  every pack: the shim's dependency list (`objdump -p` on Linux, `dumpbin /dependents` on Windows)
+  names only system libraries and the C/C++ runtime; the
   test-only probe shim (`fletcher-c-abi-probe`) is never packed; `THIRD-PARTY-LICENSES.txt` lists
   the libraries linked into the shim. **Declined:** `GatewayClient` and `Model` alone first (the
   managed pair, ready today).
@@ -3518,8 +3521,9 @@ public.
 - **D-BIND-141 - the shim ships as CI builds it, and the package README states both floors:
   linux-x64 needs glibc 2.38 (measured by `ci.c-abi` at `e268f1a`) and libstdc++ `GLIBCXX_3.4.32`,
   the GCC 13 runtime (measured on the shim 2026-10-20): Ubuntu 24.04, Debian 13, RHEL 10 or newer;
-  win-x64 needs the VC++ 2015-2022 redistributable (the dynamic CRT, D-BIND-38) and the Windows
-  system DLLs its measured dependency list names.** *LOCKED BY THE MAINTAINER 2026-10-20 (BIND-9a
+  win-x64 needs the VC++ 2015-2022 redistributable (the dynamic CRT, D-BIND-38; the shim loads
+  `MSVCP140`, `MSVCP140_ATOMIC_WAIT`, `VCRUNTIME140`, `VCRUNTIME140_1`, measured at `9d214c9`) and
+  otherwise only DLLs every Windows has.** *LOCKED BY THE MAINTAINER 2026-10-20 (BIND-9a
   Q8; the libstdc++ floor and the Windows list added the same day, when the maintainer asked
   whether the packages hold every unmanaged part).* Lowering the glibc floor (building the shim on
   an older image) stays BIND-9b work (D-BIND-41). **Declined:** lowering the floor before the first
