@@ -63,8 +63,17 @@ jobs:
       bundle: ${{ steps.bundle.outputs.bundle }}
     steps:
       - uses: actions/checkout@v6
+      # The branch name is untrusted input: compared in the shell through an
+      # environment variable, never expanded into the script (actionlint).
       - id: bundle
-        run: echo "bundle=${{ github.head_ref == 'feature/csharp-bindings' }}" >> "$GITHUB_OUTPUT"
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          if [ "$HEAD_REF" = "feature/csharp-bindings" ]; then
+            echo "bundle=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "bundle=false" >> "$GITHUB_OUTPUT"
+          fi
       # Filters list only positive patterns; we deliberately avoid '!'
       # negations. Reason: dorny/paths-filter v4 (with the default
       # predicate-quantifier: 'some') evaluates every pattern — including
