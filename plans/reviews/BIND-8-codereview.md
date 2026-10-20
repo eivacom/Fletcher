@@ -10,6 +10,17 @@ changes, the tests, both live lanes, CI and records. Commits `ad4fb9c..89f9a34`.
 **Outcome: 5 BLOCKERs, 12 questions for a ruling (including the 8 defaults chosen without one),
 DEBT, NITs.** BIND-8 does not close until the blockers are fixed and the questions ruled.
 
+> **CLOSED 2026-10-20, on CI at `750d79d` (`ci.pr` 39375700668, 56/56, every side workflow
+> green).** All five blockers fixed and all twelve questions ruled and implemented (records
+> `058755b`, fixes `cac7626`, green at `7e2acca`, `ci.pr` 39281811974), and the DEBT the maintainer
+> chose fixed (the cheap fixes, client robustness, tests and AOT); performance and the NITs 8e did
+> not touch are carried as KNOWN debt, listed in the tracker's BIND-8 section. Two things came out
+> of the close itself: the maintainer's question why 8e deleted `DecodeBatch` showed the gateway
+> client could not deliver batches as C++ and the native pair do, so `DecodeBatch` stays (D-BIND-128
+> amended) and slice 8f added `SubscribeBatchedAsync` (D-BIND-133, `7e2acca`); and verifying 8f
+> turned a one-in-25 test failure into A1 below, two writes reaching the socket at once, fixed in
+> `750d79d`.
+
 > **ALL TWELVE QUESTIONS RULED 2026-10-19 (D-BIND-121 to 132):** Q1 `Completion` (121); Q2 one
 > namespace import per file, path relative to the importer (122, amends 118); Q3 reply before keeping
 > the subscription, tolerant `field_number` (123); Q4 an unparseable reply fails only its request

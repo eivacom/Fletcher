@@ -1058,7 +1058,7 @@ fix is proposed as a separate session.
 - **Perl on Windows-shell one-liners:** an escaped `|` inside a `|`-delimited pattern is alternation,
   and `\n` in a double-quoted replacement is a real newline. Prefer the Edit tool for code.
 
-## BIND-8 — the managed gateway client (2026-10-15 to …)
+## BIND-8 — the managed gateway client (2026-10-15 to 2026-10-20, CLOSED)
 
 **The rulings (2026-10-15).** A read-only map of the gateway's protocol came first
 (`gateway/src/ws_session.*` is its authority; the spec omits the `unsubscribed` and `published`
@@ -1276,3 +1276,10 @@ the fake transport can hold a send open after answering it, which makes the race
 
 **Lesson.** A test that fails one run in 25 is reporting a race, not noise: here the rare
 interleaving was the very one a real socket produces.
+
+**Closed on CI** at `750d79d`, `ci.pr` 39375700668, 56/56, every side workflow green, all on the
+first attempt. The review's fixes and 8f went in one push (`cac7626` and `7e2acca`, the maintainer
+chose one pipeline run over two for the long build), green at `7e2acca` (`ci.pr` 39281811974); the
+records commit before them (`058755b`) had its run superseded. Carried as known debt: performance
+(per-row allocation in the managed decode, a codec planned per `PublishAsync`) and the NITs 8e did
+not touch; TypeScript batched delivery is a BIND-T parity item.

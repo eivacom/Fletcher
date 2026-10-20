@@ -859,7 +859,7 @@ Kind: 🟪 spec · 🟦 impl · 🔬 proof · ⚙ pipelines · 📓 docs
 | BIND-6 | C# backend on the IR: type table + visitor → `<stem>.fletcher.cs` | B | 🟦 | — (GIR) | `CsVisitor.*`, `CsVisitorPair.*`, `CsVisitorCrossFile.*`, `CsNames.*` and `CsTypeTable.*` in `protoc/tests` (named `CsharpVisitor.*` until review T-D5 corrected it, 2026-10-14); no-drift test unchanged | 🟢 (closed on CI at `63ab057`, `ci.pr` 38575041994, after a fresh-context review whose 5 BLOCKERs were fixed and 10 questions ruled, D-BIND-83 to 93; the minor debt carried as known, listed in BIND-6's section) |
 | BIND-7 | Arrow view + accessor emitters (`csharp_accessor`) + capstone third arm | B | 🟦 | BIND-6, BIND-3 | `accessor-capstone` C# arm `observed == expected`; `StructArray` windowing fixture at non-zero offset | 🟢 (closed on CI at `268dceb`, `ci.pr` 38746753749, after a fresh-context review whose 2 BLOCKERs were fixed and 5 questions ruled, D-BIND-103 to 107; rulings during the round D-BIND-94 to 102; the minor debt carried as known, listed in BIND-7's section) |
 | BIND-T | TS `Publisher`/`Subscriber` emitter | C | 🟦 | — | `TsVisitor.DescriptorByteIdentical` still green + new emitter cases | ⚪ |
-| BIND-8 | `Eiva.Fletcher.GatewayClient` (managed port; the codec exception) | C | 🟦 | — | Bucket 2 green (the Part 4 file set, not a count); `Package.GatewayClientHasNoRuntimesFolder` | 🔴 (started 2026-10-15: rulings D-BIND-108 to 133, slices 8a to 8f; 8a to 8d done on CI, 8e and 8f in the tree 2026-10-19) |
+| BIND-8 | `Eiva.Fletcher.GatewayClient` (managed port; the codec exception) | C | 🟦 | — | Bucket 2 green (the Part 4 file set, not a count); `Package.GatewayClientHasNoRuntimesFolder` | 🟢 (closed on CI at `750d79d`, `ci.pr` 39375700668, 56/56, every side workflow green, after a fresh-context review whose 5 BLOCKERs were fixed and 12 questions ruled, D-BIND-121 to 132; rulings during the round D-BIND-108 to 120, and D-BIND-133 (slice 8f, batched delivery); one finding after the review fixed (A1); performance carried as known debt, listed in BIND-8's section) |
 | BIND-9 | CI/CD: RID matrix, publish to `nuget.eiva.com` from a self-hosted job (D-BIND-28), size budget, licence files | D | ⚙ | BIND-0 (skeleton), all for release | `cd.dotnet.yml` dry run; packed-size check; asset-isolation + licence check | ⚪ |
 | BIND-10 | Docs, TD-009, archive to `docs/archive/BIND/` | D | 📓 | all | docs review | ⚪ |
 
@@ -2137,7 +2137,7 @@ token and names; one request in flight; `PublishAsync` awaits the ack). Slices:
   build), no `Eiva.Fletcher.Model` reference (D-BIND-120; the packed package's one dependency is
   `Apache.Arrow`), and `ci.dotnet`'s step `Package.GatewayClientHasNoRuntimesFolder` on the packed
   `.nupkg` (no `runtimes/` entry, no dependency on `Eiva.Fletcher` or `Eiva.Fletcher.Interop`; both
-  mutants caught). **8d is done** once the lane is green on CI.
+  mutants caught). **8d is done on CI** (`89f9a34`, `ci.pr` 39248253992, 56/56).
 - **8e:** fresh-context review and close.
   **Review 2026-10-19** (`plans/reviews/BIND-8-codereview.md`, `BIND-8-conformance.md`, at `89f9a34`):
   5 BLOCKERs, all checked by the author (TypeScript cross-file imports relative to the include root;
@@ -2180,7 +2180,7 @@ token and names; one request in flight; `PublishAsync` awaits the ack). Slices:
   live after a probe, each retry whole, the TypeScript peer declaring its own topic; the
   end-to-end lane gains a 100 KiB row (in-process) and the odd-`field_number` case, and forwards
   the gateway's stderr (17). `AotSmoke` NativeAOT-compiles the gateway client and its generated
-  pair. Left: commit, CI, close.
+  pair. **Done on CI** at `7e2acca` (`ci.pr` 39281811974, 56/56, every side workflow green).
 - **8f:** a batched gateway subscription (D-BIND-133, ruled 2026-10-19 when the maintainer asked
   why 8e had deleted `DecodeBatch`: C++ and the native C# pair deliver batches, the gateway client
   only rows). `FletcherClient.SubscribeBatchedAsync` with `GatewayBatchHandler`,
@@ -2191,11 +2191,18 @@ token and names; one request in flight; `PublishAsync` awaits the ack). Slices:
   connection; one subscription's handler never concurrent with itself.
   **Done 2026-10-19 (in the tree):** `GatewayBatch.cs`; `BatchedSubscriptionTests` 18
   (Fletcher.GatewayClient.Tests 216, 16 mutants caught); the end-to-end lane's batched
-  case over both providers (19); `AotSmoke` drives a window through the batcher. Left: CI, with 8e.
+  case over both providers (19); `AotSmoke` drives a window through the batcher. **Done on CI**
+  at `7e2acca`, with 8e.
   **Found after the review, fixed 2026-10-20 (review A1):** two writes could reach the socket at
   once (the next request's send over one still returning, `DisposeAsync`'s close over a send);
   every write now takes a write lock. Fletcher.GatewayClient.Tests 219, three new deterministic
-  cases, a mutant per lock caught.
+  cases, a mutant per lock caught; on CI at `750d79d` (`ci.pr` 39375700668, 56/56).
+
+**BIND-8 CLOSED 2026-10-20** on CI at `750d79d` (`ci.pr` 39375700668, 56/56, every side workflow
+green). **Known debt carried:** performance, which the maintainer chose not to fix in 8e: per-row
+allocation in the managed decode, and a codec planned per `PublishAsync` call; and the review's
+remaining NITs (`plans/reviews/BIND-8-codereview.md`). TypeScript batched delivery is a BIND-T
+parity item (D-BIND-133 k).
 
 The Fast DDS legs share `gateway-fastdds-ts`'s exposure to Fast DDS 3.4.0's data-sharing defect
 (`fastdds-pubsub-provider/README.md`). Ruled by the maintainer 2026-10-16: keep that test as the

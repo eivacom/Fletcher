@@ -25,3 +25,9 @@ by the cross-language lane. Row 7's "thin" is answered by the same comparison (n
 schema-level metadata, Timestamp unit and zone). Row 8 is met: each retry attempt must deliver all
 four rows by itself, and the rows travel live after a probe row (D-BIND-129). Row 2's stale wording
 is annotated in the tracker. Grades become final when the fixes are green on CI.
+
+**Final grades (2026-10-20, on CI at `750d79d`, `ci.pr` 39375700668, 56/56; the fixes green
+first at `7e2acca`, `ci.pr` 39281811974): all eight criteria MET (row 2 by ruling, D-BIND-108);
+forcing tests MET** (Bucket 2 as re-mapped by D-BIND-128, `Package.GatewayClientHasNoRuntimesFolder`).
+Beyond the acceptance, the client gained batched delivery (D-BIND-133, slice 8f) and one write at a
+time on its socket (review A1).
