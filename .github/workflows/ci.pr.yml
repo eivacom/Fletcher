@@ -57,8 +57,14 @@ jobs:
       integration-protoc-gen-fletcher-rust: ${{ steps.filter.outputs.integration-protoc-gen-fletcher-rust }}
       integration-protoc-dotnet: ${{ steps.filter.outputs.integration-protoc-dotnet }}
       integration-protoc-plugin-cli: ${{ steps.filter.outputs.integration-protoc-plugin-cli }}
+      # BIND-9a (D-BIND-139): on the round's own branch every push builds the preview
+      # bundle, so dotnet, gateway and protoc run whatever the push touched. Removed
+      # with the bundle job when PR #129 merges (BIND-9b).
+      bundle: ${{ steps.bundle.outputs.bundle }}
     steps:
       - uses: actions/checkout@v6
+      - id: bundle
+        run: echo "bundle=${{ github.head_ref == 'feature/csharp-bindings' }}" >> "$GITHUB_OUTPUT"
       # Filters list only positive patterns; we deliberately avoid '!'
       # negations. Reason: dorny/paths-filter v4 (with the default
       # predicate-quantifier: 'some') evaluates every pattern — including
@@ -165,6 +171,7 @@ jobs:
               - '.devcontainer/**'
             protoc:
               - 'protoc/**'
+              - 'gateway/deployers/**'
               - '.github/workflows/ci.pr.yml'
               - '.github/workflows/ci.protoc.yml'
               - '.github/workflows/ci.setup-devcontainer-image.yml'
@@ -486,12 +493,15 @@ jobs:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
 
+  # On the round's own branch the packages get a version of their own per run,
+  # 0.6.0-pr.<PR>.<run> (D-BIND-138): NuGet caches by version.
   dotnet:
     needs: [detect-changes, setup-devcontainer]
-    if: ${{ needs.detect-changes.outputs.dotnet == 'true' }}
+    if: ${{ needs.detect-changes.outputs.dotnet == 'true' || needs.detect-changes.outputs.bundle == 'true' }}
     uses: ./.github/workflows/ci.dotnet.yml
     with:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+      package-version: ${{ needs.detect-changes.outputs.bundle == 'true' && format('0.6.0-pr.{0}.{1}', github.event.pull_request.number, github.run_number) || '' }}
     secrets: inherit
 
   pubsub:
@@ -512,18 +522,20 @@ jobs:
 
   protoc:
     needs: [detect-changes, setup-devcontainer]
-    if: ${{ needs.detect-changes.outputs.protoc == 'true' }}
+    if: ${{ needs.detect-changes.outputs.protoc == 'true' || needs.detect-changes.outputs.bundle == 'true' }}
     uses: ./.github/workflows/ci.protoc.yml
     with:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+      bundle: ${{ needs.detect-changes.outputs.bundle == 'true' }}
     secrets: inherit
 
   gateway:
     needs: [detect-changes, setup-devcontainer]
-    if: ${{ needs.detect-changes.outputs.gateway == 'true' }}
+    if: ${{ needs.detect-changes.outputs.gateway == 'true' || needs.detect-changes.outputs.bundle == 'true' }}
     uses: ./.github/workflows/ci.gateway.yml
     with:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+      bundle: ${{ needs.detect-changes.outputs.bundle == 'true' }}
     secrets: inherit
 
   fastdds-pubsub-provider:
@@ -701,6 +713,54 @@ jobs:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
 
+  # BIND-9a (D-BIND-139): on the round's own branch, one preview bundle per push, the
+  # only way a build reaches testers before PR #129 merges: the four NuGet packages,
+  # the gateway and the code generator built from this commit, with a README and the
+  # licences, as ONE 30-day artifact. Never a tag, a release or a registry push.
+  # Removed with the `bundle` flag when the PR merges (BIND-9b).
+  preview-bundle:
+    needs: [detect-changes, dotnet, gateway, protoc]
+    if: ${{ needs.detect-changes.outputs.bundle == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ format('0.6.0-pr.{0}.{1}', github.event.pull_request.number, github.run_number) }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            scripts
+            protoc/include/fletcher
+
+      - name: Download the NuGet packages
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: dotnet-packages
+          path: bundle/nuget
+
+      - name: Download the gateway archives
+        uses: actions/download-artifact@v8.0.1
+        with:
+          pattern: gateway-{linux,windows}
+          merge-multiple: true
+          path: bundle/gateway
+
+      - name: Download the plugin and its licence files
+        uses: actions/download-artifact@v8.0.1
+        with:
+          pattern: fletcher-protoc-{linux-static,windows-static,licences}
+          merge-multiple: true
+          path: bundle/protoc
+
+      - name: Assemble and check the bundle
+        run: bash scripts/assemble_preview_bundle.sh bundle "$VERSION" "${{ github.event.pull_request.head.sha }}"
+
+      - name: Upload the preview bundle
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: fletcher-preview-${{ env.VERSION }}
+          path: bundle/
+          retention-days: 30
+
   # ── Stage 3: PR gate ────────────────────────────────────────────────────────
   pr_gate:
     needs:
@@ -733,6 +793,7 @@ jobs:
       - integration-test-protoc-gen-fletcher-rust
       - integration-test-protoc-dotnet
       - integration-test-protoc-plugin-cli
+      - preview-bundle
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -772,4 +833,5 @@ jobs:
             ${{ needs.integration-test-protoc-gen-fletcher-npm.result }},
             ${{ needs.integration-test-protoc-gen-fletcher-rust.result }},
             ${{ needs.integration-test-protoc-dotnet.result }},
-            ${{ needs.integration-test-protoc-plugin-cli.result }}
+            ${{ needs.integration-test-protoc-plugin-cli.result }},
+            ${{ needs.preview-bundle.result }}

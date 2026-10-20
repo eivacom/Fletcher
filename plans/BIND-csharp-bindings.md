@@ -2292,6 +2292,21 @@ before the round merges.
   for the first time (system DLLs, the VC++ runtime, the UCRT; no `psapi.dll`), both legs' notices
   named the same eight libraries, and `Interop` carries both shims (the packages artifact grew
   from 0.4 to 8.9 MB).
+- **9a-1 in the tree 2026-10-20:** `ci.pr`'s `detect-changes` sets `bundle` when the PR's branch is
+  `feature/csharp-bindings`; then `dotnet`, `gateway` and `protoc` run on every push, `dotnet` packs
+  at `0.6.0-pr.<PR>.<run>` (its `package-version` input), and `ci.gateway` and `ci.protoc` take a
+  `bundle` input that opens their tag-gated release steps, so the archives and binaries a release
+  would ship are built. A new `preview-bundle` job (in `pr_gate`) downloads them and runs
+  `scripts/assemble_preview_bundle.sh`, which adds `protoc/fletcher/options.proto`, `LICENSE`,
+  `VERSION` and `README-preview.md` (from `scripts/preview/README-preview.md`: packages from a
+  local folder, running the gateway, generating code, the floors, the relinking route, clearing
+  caches when `0.6.0-alpha` ships), checks that nothing is missing, and uploads
+  `fletcher-preview-0.6.0-pr.<PR>.<run>` for 30 days. **Found on the way:** no plugin artifact had
+  ever carried a licence notice, though the plugin links protobuf and zlib statically;
+  `ci.protoc` now writes one on every run with the same deployer, and the bundle carries it
+  (attaching it to `cd.protoc`'s release is BIND-9b). Rehearsed in the devcontainer: the four
+  workflows parse, the plugin's notice lists protobuf and zlib, the assembly passes complete and
+  fails naming a missing gateway archive. The first real bundle comes from the first push.
 
 **BIND-9b — the rest**, the acceptance below: the `nuget.eiva.com` publish job and its
 self-hosted runner, the packed-size budget, lowering the glibc floor if wanted, the Windows and

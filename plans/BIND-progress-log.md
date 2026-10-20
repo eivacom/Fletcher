@@ -1309,3 +1309,10 @@ texts, and the deployer lists them.
 **Lesson.** A notice derived from the dependency graph is exactly as complete as the graph; code
 vendored or fetched by CMake is invisible to it, so the check names the libraries that must be
 there rather than trusting the derivation.
+
+**9a-1, the per-push preview bundle.** `ci.pr` recognises the round's own branch and then runs the
+.NET, gateway and plugin lanes on every push, with the gateway's and the plugin's release steps
+opened by a new `bundle` input instead of a tag; one job gathers the packages, the archives and the
+binaries, adds a README for testers, and uploads a single 30-day artifact. The plugin turned out to
+have shipped in every release without a licence notice for the protobuf and zlib it links
+statically; it now writes one on every CI run, like the gateway.

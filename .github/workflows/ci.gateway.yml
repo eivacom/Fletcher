@@ -20,6 +20,14 @@ on:
           cd.gateway.yml wrapper does the same for tag-push releases.
         required: true
         type: string
+      bundle:
+        description: >-
+          Build and upload the release archives (gateway-linux.tar.gz,
+          gateway-windows.zip) as a tag push does, without a tag: ci.pr.yml sets
+          it for the BIND-9a per-push preview bundle (D-BIND-135, 139).
+        required: false
+        type: boolean
+        default: false
 
 # Gateway is distributed as a self-contained deploy that runs with zero setup
 # (no LD_LIBRARY_PATH / conanrun). It is built and packaged as a Conan
@@ -124,7 +132,7 @@ jobs:
       # two licence files from the step above, so zipping the folder ships the
       # exe and its attribution texts as one archive.
       - name: Bundle gateway + runtime libraries
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.bundle
         shell: bash
         working-directory: gateway
         run: |
@@ -146,7 +154,7 @@ jobs:
           rm -rf zipcheck
 
       - name: Upload Windows bundle
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.bundle
         uses: actions/upload-artifact@v7.0.1
         with:
           name: gateway-windows
@@ -175,7 +183,7 @@ jobs:
       - name: Build dependencies, install, build, and test
         shell: bash
         env:
-          ARTIFACT_NAME: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && 'gateway-linux.tar.gz' || '' }}
+          ARTIFACT_NAME: ${{ ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.bundle) && 'gateway-linux.tar.gz' || '' }}
         run: |
           docker run --rm \
             -v "${GITHUB_WORKSPACE}:/workspace" \
@@ -249,7 +257,7 @@ jobs:
             '
 
       - name: Upload Linux binary
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.bundle
         uses: actions/upload-artifact@v7.0.1
         with:
           name: gateway-linux
