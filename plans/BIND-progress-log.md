@@ -1316,3 +1316,14 @@ opened by a new `bundle` input instead of a tag; one job gathers the packages, t
 binaries, adds a README for testers, and uploads a single 30-day artifact. The plugin turned out to
 have shipped in every release without a licence notice for the protobuf and zlib it links
 statically; it now writes one on every CI run, like the gateway.
+
+**9a-2, the package README and the bundle's consumer.** The four packages now carry one README
+with the floors, the relinking route and the commit they were built from, and the package checks
+refuse one without them. A consumer test takes the bundle as a tester gets it, restores the
+packages from it alone, generates its C# with the bundled plugin, publishes and subscribes
+through the packaged shim and talks to the bundled gateway, on plain Linux and Windows runners.
+Wiring the commit into the README showed that a pull request's CI builds the head merged into
+`main` while the bundle names the head; the bundle job now refuses to run when the two differ.
+
+**Lesson.** "The commit this was built from" is not `head.sha` on a `pull_request` run; it is a
+merge nobody named. Where a commit is a promise (here, the corresponding source), check it.

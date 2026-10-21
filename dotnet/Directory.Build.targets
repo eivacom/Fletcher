@@ -38,4 +38,28 @@
       </KnownILCompilerPack>
     </ItemGroup>
   </Target>
+
+  <!-- BIND-9a-2 (D-BIND-140, D-BIND-141): every package carries README.package.md as its
+       README.md, the same text in all four, with the version and the commit filled in so the
+       relinking route names its source. CI passes the commit:
+         dotnet pack -p:FletcherSourceCommit=<sha>
+       A local pack without it says so in place of the commit. Here and not in the props,
+       because PackageVersion is final only once the project has set Version. -->
+  <PropertyGroup Condition="'$(IsPackable)' != 'false'">
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <Target Name="FletcherPackageReadme" BeforeTargets="_GetPackageFiles" Condition="'$(IsPackable)' != 'false'">
+    <PropertyGroup>
+      <_FletcherReadmeCommit>$(FletcherSourceCommit)</_FletcherReadmeCommit>
+      <_FletcherReadmeCommit Condition="'$(_FletcherReadmeCommit)' == ''">unrecorded-local-pack</_FletcherReadmeCommit>
+      <_FletcherReadmeFile>$(IntermediateOutputPath)README.md</_FletcherReadmeFile>
+      <_FletcherReadmeText>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)README.package.md').Replace('@VERSION@', '$(PackageVersion)').Replace('@COMMIT@', '$(_FletcherReadmeCommit)').TrimEnd())</_FletcherReadmeText>
+    </PropertyGroup>
+    <!-- Escaped, so the text stays one line item: a bare ';' in it would split it. -->
+    <WriteLinesToFile File="$(_FletcherReadmeFile)" Lines="$([MSBuild]::Escape($(_FletcherReadmeText)))" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <ItemGroup>
+      <None Include="$(_FletcherReadmeFile)" Pack="true" PackagePath="README.md" Visible="false" />
+    </ItemGroup>
+  </Target>
 </Project>

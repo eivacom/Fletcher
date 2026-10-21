@@ -3528,3 +3528,23 @@ public.
   whether the packages hold every unmanaged part).* Lowering the glibc floor (building the shim on
   an older image) stays BIND-9b work (D-BIND-41). **Declined:** lowering the floor before the first
   preview.
+
+Two more, ruled 2026-10-21 while slice 9a-2 was built:
+
+- **D-BIND-142 - the four packages carry ONE README, `dotnet/README.package.md`, packed into each
+  as its `README.md` (`PackageReadmeFile`), with the version and the commit filled in at pack time.**
+  *LOCKED BY THE MAINTAINER 2026-10-21 (BIND-9a-2).* It opens with a table of the four packages
+  (what each is, which carries native assets), then the native section for `Eiva.Fletcher` and
+  `Eiva.Fletcher.Interop` (the floors of D-BIND-141, the relinking route of D-BIND-140 naming the
+  commit, the NativeAOT caveat), marked as not applying to `GatewayClient` and `Model`. CI passes
+  the commit (`-p:FletcherSourceCommit`); `scripts/check_dotnet_packages.sh` refuses a package
+  without the README, with a placeholder left, without the floors and the relinking route, or
+  naming another commit. **Declined:** four READMEs, one per package (the shared text repeated).
+
+- **D-BIND-143 - a preview bundle names the commit it was built from, or is not made.** *LOCKED
+  BY THE MAINTAINER 2026-10-21 (BIND-9a-2).* A `pull_request` run builds the PR head MERGED into
+  `main`, while the bundle and the package READMEs name the head as the source to relink from
+  (D-BIND-140). The two are one tree until `main` moves; `ci.pr`'s `preview-bundle` job compares
+  them and fails when they differ, asking for `main` to be merged into the branch. Found while
+  9a-2 wired the commit into the README; true of every bundle so far (`main` has not moved since
+  the branch point). **Declined:** naming both commits; recording it and changing nothing.

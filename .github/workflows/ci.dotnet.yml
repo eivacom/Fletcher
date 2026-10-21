@@ -370,8 +370,12 @@ jobs:
               || { echo "::error::THIRD-PARTY-LICENSES.txt does not cover $lib, which is linked into the shim"; exit 1; }
           done
 
+      # The commit the packages name in their README (BIND-9a-2): the PR head on a pull
+      # request, which ci.pr's preview-bundle job checks is the tree that was built.
       - name: Pack
         shell: bash
+        env:
+          SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           VERSION_ARG=""
           if [ -n "${{ inputs.package-version }}" ]; then VERSION_ARG="-p:Version=${{ inputs.package-version }}"; fi
@@ -382,17 +386,21 @@ jobs:
                 dotnet pack src/\$P/\$P.csproj -c Release --no-restore -o /workspace/dotnet/artifacts $VERSION_ARG \
                   -p:FletcherShimLinuxX64=/workspace/dotnet/native/linux-x64/libfletcher-c-abi.so \
                   -p:FletcherShimWinX64=/workspace/dotnet/native/win-x64/fletcher-c-abi.dll \
-                  -p:FletcherLicenceDir=/workspace/dotnet/native/licences
+                  -p:FletcherLicenceDir=/workspace/dotnet/native/licences \
+                  -p:FletcherSourceCommit=$SOURCE_COMMIT
               done
             "
 
       # D-BIND-13 and D-BIND-134 on the PACKED packages: Interop carries exactly the two
       # shims, nothing else carries native assets or depends on a package that does (the
       # gateway client's former Package.GatewayClientHasNoRuntimesFolder step), no probe
-      # shim, both licence files in every package.
+      # shim, both licence files in every package, and (BIND-9a-2) a README naming the
+      # floors, the relinking route and this commit.
       - name: Check the packages
         shell: bash
-        run: bash scripts/check_dotnet_packages.sh dotnet/artifacts
+        env:
+          SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: bash scripts/check_dotnet_packages.sh dotnet/artifacts "$SOURCE_COMMIT"
 
       - name: Upload packages
         uses: actions/upload-artifact@v7.0.1

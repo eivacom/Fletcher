@@ -867,7 +867,9 @@ the bundle is external publication:
 the LGPL question is ruled for the preview as the shared-shim relinking route (D-BIND-140), and
 the shim, self-contained with every native dependency linked in, ships as built with its floors
 stated: glibc 2.38 and the GCC 13 libstdc++ on Linux, the VC++ redistributable on Windows
-(D-BIND-134, 141).
+(D-BIND-134, 141). The four packages share one README carrying those facts and the commit
+(D-BIND-142), and a bundle is made only when the tree CI built is the commit it names
+(D-BIND-143, 2026-10-21).
 
 **BIND-T, BIND-8, BIND-9, BIND-10** — as in the 2026-08-31 plan, with BIND-9
 carrying the LGPL notice text and the packaging statement (§6 P-1), and BIND-10
