@@ -2292,7 +2292,8 @@ before the round merges.
   for the first time (system DLLs, the VC++ runtime, the UCRT; no `psapi.dll`), both legs' notices
   named the same eight libraries, and `Interop` carries both shims (the packages artifact grew
   from 0.4 to 8.9 MB).
-- **9a-1 in the tree 2026-10-20:** `ci.pr`'s `detect-changes` sets `bundle` when the PR's branch is
+- **9a-1 done on CI 2026-10-20** (`8c54be5`, `ci.pr` 39499932051, 58/58, every side workflow
+  green): `ci.pr`'s `detect-changes` sets `bundle` when the PR's branch is
   `feature/csharp-bindings`; then `dotnet`, `gateway` and `protoc` run on every push, `dotnet` packs
   at `0.6.0-pr.<PR>.<run>` (its `package-version` input), and `ci.gateway` and `ci.protoc` take a
   `bundle` input that opens their tag-gated release steps, so the archives and binaries a release
@@ -2306,7 +2307,15 @@ before the round merges.
   `ci.protoc` now writes one on every run with the same deployer, and the bundle carries it
   (attaching it to `cd.protoc`'s release is BIND-9b). Rehearsed in the devcontainer: the four
   workflows parse, the plugin's notice lists protobuf and zlib, the assembly passes complete and
-  fails naming a missing gateway archive. The first real bundle comes from the first push.
+  fails naming a missing gateway archive. The first push (`3ad543d`) failed `ci.action-lint`: the
+  new step expanded `github.head_ref` into its script, an untrusted input there; `8c54be5` passes
+  it through the environment. **The first bundle**, `fletcher-preview-0.6.0-pr.129.337` (19.7 MB),
+  was downloaded and checked: the four packages and their symbol packages at that version,
+  `Interop` with both shims and both licence files; both gateway archives with `LICENSE` and a
+  notice that now lists nanoarrow; the plugin binaries, `options.proto` and the plugin's notice
+  (protobuf, zlib); `VERSION` naming the commit; the README with its placeholders filled. In the
+  devcontainer the bundled plugin generated C# (`.fletcher.cs`, `.native.cs`, `.gateway.cs`) from a
+  small `.proto`, and the bundled gateway started (`READY`).
 
 **BIND-9b — the rest**, the acceptance below: the `nuget.eiva.com` publish job and its
 self-hosted runner, the packed-size budget, lowering the glibc floor if wanted, the Windows and
