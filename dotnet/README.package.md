@@ -1,3 +1,17 @@
+<!--
+  Maintainers: every fenced code block in this file is checked when the packages are built
+  (scripts/check_readme_snippets.py, run by ci.dotnet's pack job; D-BIND-144, D-BIND-147).
+  The line above each block is a marker, an HTML comment holding "snippet: NAME" or
+  "snippet: none" (the blocks below show the exact form):
+    snippet: NAME   the block must equal the region NAME, which the consumer test marks with
+                    <snippet name="NAME"> and </snippet> comment lines in
+                    integration-tests/preview-bundle-consumer/dotnet/PreviewConsumer/
+                    (fix.proto, PreviewConsumer.csproj, Program.cs), and which CI builds and
+                    runs against these packages on Linux and Windows;
+    snippet: none   the block is not test code (shell commands, say): a visible decision.
+  A block with no marker fails the build, as does a region no block shows. The version and
+  commit placeholders are filled in at pack time (dotnet/Directory.Build.targets).
+-->
 # Fletcher for .NET
 
 Arrow-typed publish/subscribe for .NET over Fletcher's one wire format, with the codec running
@@ -26,9 +40,10 @@ Every package targets .NET 8 and .NET 10.
 Every snippet below is taken from a test that compiles and runs it against these packages on
 Linux and Windows, so it works as shown.
 
-**1. Describe the data.** A message is a row; a `service` method that takes a `stream` of it names
-a topic, here `preview.consumer/FixFeed/Report`, and the generated classes are named after it
-(`FixFeed_Report...`). A `google.protobuf.Timestamp` becomes a lossless
+**1. Describe the data.** A message is a row; a `service` method that takes a `stream` of it and
+returns `google.protobuf.Empty` names a topic, here `preview.consumer/FixFeed/Report`, and the
+generated classes are named after it (`FixFeed_Report...`). The message must be declared in the
+same file, and a method that streams its replies is skipped. A `google.protobuf.Timestamp` becomes a lossless
 `Eiva.Fletcher.Model.Timestamp`, a `repeated` field a list, a `map` a list of key/value pairs.
 
 <!-- snippet: proto -->
@@ -120,8 +135,14 @@ publisher.Publish(fixes);
 
 **5. Or receive them as Arrow batches**, for volume: `SubscriberArrow` collects rows into a
 window, flushed at `MaxRows` or after `Timeout` (8000 rows or one minute by default), and the
-generated accessor reads the batch, as model objects (`ToRow`) or in place (`At`). The topic's
-schema comes from its publisher, so declare the publisher first. The handler owns the batch.
+generated accessor reads the batch, as model objects (`ToRow`) or in place (`At`). An Arrow
+subscriber reads rows with the topic's schema, which comes from its publisher. Over `fastdds` the
+schema arrives with the data, so the order does not matter. Over the default `inprocess` provider,
+a subscription made before the topic is declared stays without a schema, and every row on it is
+dropped and counted, so declare the publisher first. The handler owns the batch, and its calls are
+not serialised: a window flushed at `MaxRows` runs on the delivery thread, one flushed by `Timeout`
+on a timer thread, and the last one on the thread that unsubscribes, so two may run at once and
+complete out of order.
 
 <!-- snippet: native-batch -->
 ```csharp
@@ -168,7 +189,8 @@ ulong subscription = await subscriber.SubscribeAsync((fix, envelope) => received
 await publisher.PublishAsync(fixes);
 ```
 
-Batches from a gateway work the same way as natively, on the client; the handler is synchronous.
+Batches from a gateway are cut the same way, on the client, with the same defaults. Here the
+handler is synchronous and never runs concurrently with itself, and its windows arrive in order.
 
 <!-- snippet: gateway-batch -->
 ```csharp
@@ -187,8 +209,10 @@ await subscriberClient.SubscribeBatchedAsync(FixFeed_ReportGatewayPublisher.Topi
 }, new GatewayBatchOptions { MaxRows = fixes.Length, Timeout = TimeSpan.FromSeconds(10) });
 ```
 
-Handlers run on the provider's or the client's delivery thread: hand rows to your own queue or
-collection that is safe to use from it.
+A row handler runs on the provider's or the client's delivery thread, one call at a time. Over
+`inprocess` that is the publishing thread, before `Publish` returns, which is why step 4 can collect
+into a plain list; over `fastdds` and through a gateway it is another thread, so hand rows to a queue
+or a collection that is safe to use from it.
 
 ## The native shim (`Eiva.Fletcher`, `Eiva.Fletcher.Interop`)
 
@@ -202,31 +226,40 @@ nothing in this section applies to them.
 - **linux-x64:** glibc 2.38 and the GCC 13 C++ runtime (`libstdc++` with `GLIBCXX_3.4.32`) or
   newer: Ubuntu 24.04, Debian 13, RHEL 10 or newer. The shim loads only `libstdc++`, `libgcc_s`,
   `libm` and `libc`.
-- **win-x64:** the Microsoft Visual C++ 2015-2022 redistributable (x64). Otherwise the shim loads
-  only DLLs every Windows has.
+- **win-x64:** the latest Visual C++ 2015-2022 redistributable (x64), 14.40 or newer. Otherwise
+  the shim loads only DLLs every Windows has.
 
-The shim checks at load that it was built for this version of the managed packages; a shim from
-another version is refused with a message saying so.
+When the shim is loaded, `Eiva.Fletcher.Interop` checks that it speaks the binding ABI this
+package was built against, and refuses one that does not, with a message saying so. It does not
+check the package version or the commit, so use a shim built from the commit this package names.
 
 ### Replacing the shim (LGPL-3.0)
 
-Fletcher is licensed under the LGPL-3.0-or-later (`LICENSE` in this package). The shim is a shared
-library that the .NET assembly loads at run time, so you may replace it with one you build from the
-corresponding source, commit `@COMMIT@`:
+Fletcher is licensed under the LGPL-3.0-or-later (`LICENSE` in this package, with `COPYING`, the
+GNU GPL-3.0 text it incorporates). The shim is a shared library that the .NET assembly loads at run
+time, so you may replace it with one you build from the corresponding source, commit `@COMMIT@`.
+With [Conan 2](https://conan.io) and a C++ toolchain, from the repository's root, where `<profile>`
+is `Linux-gcc13-x86_64-Release` or `Windows-msvc194-x86_64-Release`:
 
+<!-- snippet: none -->
 ```bash
 git clone https://github.com/eivacom/Fletcher.git
 cd Fletcher
 git checkout @COMMIT@
+for component in core pubsub fastdds-pubsub-provider xrcedds-pubsub-provider c-abi; do
+  conan create $component --build=missing -pr:a=.conan-profiles/<profile>
+done
+conan install --requires="fletcher-c-abi/[*, include_prerelease]" --deployer=direct_deploy --deployer-folder=shim -pr:a=.conan-profiles/<profile>
 ```
 
-then build `c-abi/` as its `README.md` describes (`conan create` for `core`, `pubsub`, the two
-providers and `c-abi`, with the profile for your platform), and put the resulting
-`libfletcher-c-abi.so` (Linux) or `fletcher-c-abi.dll` (Windows) in place of
-`runtimes/<rid>/native/` in this package, or beside your published application.
+The shim is then `shim/direct_deploy/fletcher-c-abi/lib/libfletcher-c-abi.so` (Linux) or
+`shim/direct_deploy/fletcher-c-abi/bin/fletcher-c-abi.dll` (Windows). Put it in place of the file
+of the same name under `runtimes/<rid>/native/` in this package, or of the copy beside your
+published application.
 
-**NativeAOT.** The packages are trimming- and NativeAOT-compatible, and the shim stays a separate
-shared library beside a NativeAOT application. Linking the shim statically into the application is
+**NativeAOT.** The packages are trimming- and NativeAOT-compatible (a NativeAOT consumer is
+published and run in CI on Linux; Windows NativeAOT is not yet exercised), and the shim stays a
+separate shared library beside a NativeAOT application. Linking the shim statically into the application is
 not supported, and an application that did so would form a different combined work under the
 LGPL, with the obligations that brings.
 

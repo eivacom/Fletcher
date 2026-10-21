@@ -10,6 +10,15 @@ concurrency:
 on:
   workflow_call:
     inputs:
+      ref:
+        description: >-
+          The commit to check out, or empty for the default (the merge ref on a pull
+          request). ci.pr.yml passes the PR head when it builds the BIND-9a preview
+          bundle, so every artifact names one commit, the one the bundle names
+          (D-BIND-145; the preview-bundle job checks the two are one tree).
+        required: false
+        type: string
+        default: ''
       devcontainer-image:
         description: >-
           Pre-built devcontainer image reference (e.g.
@@ -70,6 +79,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.ref }}
           sparse-checkout: |
             dotnet
             .github
@@ -193,6 +203,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.ref }}
           sparse-checkout: |
             dotnet
             .github
@@ -325,6 +336,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.ref }}
           sparse-checkout: |
             dotnet
             .github
@@ -357,7 +369,7 @@ jobs:
           name: dotnet-native-win-x64
           path: dotnet/native/win-x64
 
-      - name: Stage one notice and the LICENSE
+      - name: Stage one notice, the LICENSE and COPYING
         shell: bash
         run: |
           set -e
@@ -370,7 +382,7 @@ jobs:
           fi
           mkdir -p dotnet/native/licences
           cp dotnet/native/linux-x64/THIRD-PARTY-LICENSES.txt dotnet/native/licences/
-          cp LICENSE dotnet/native/licences/
+          cp LICENSE COPYING dotnet/native/licences/
           listed dotnet/native/licences/THIRD-PARTY-LICENSES.txt
           # Compiled into the shim from source, so not in the Conan graph: their texts
           # come from the fletcher-* packages that vendor them, and must be here.

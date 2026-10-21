@@ -81,7 +81,7 @@ jobs:
           mapfile -t files < <(
             git ls-files \
               | grep -v -E '^(pubsub|protoc)/third_party/' \
-              | grep -v -E '^(LICENSE|AUTHORS)$' \
+              | grep -v -E '^(LICENSE|COPYING|AUTHORS)$' \
               | grep -v -E '^\.gitignore$|^\.gitattributes$' \
               | grep -v -E '(^|/)\.gitkeep$' \
               | grep -v -E '\.md$' \

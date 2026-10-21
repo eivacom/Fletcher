@@ -60,11 +60,16 @@ conan create ../core            --build=missing -pr:a=../.conan-profiles/<profil
 conan create ../pubsub          --build=missing -pr:a=../.conan-profiles/<profile>
 conan create ../fastdds-pubsub-provider  --build=missing -pr:a=../.conan-profiles/<profile>
 conan create ../xrcedds-pubsub-provider  --build=missing -pr:a=../.conan-profiles/<profile>
-conan create .                  --build=missing -pr:a=../.conan-profiles/<profile> -o "&:run_tests=True"
+conan create .                  --build=missing -pr:a=../.conan-profiles/<profile>
 ```
 
 No Conan remote hosts the `fletcher-*` packages, so the dependencies have to be
-in the local cache first; `ci.c-abi.yml` does exactly the above.
+in the local cache first. That builds the shim alone, which is what the NuGet
+packages carry and what their README's relinking route builds (rehearsed as
+written, BIND-9a review B3). **With the tests** (`-o "&:run_tests=True"`) the
+recipe also needs `fletcher-arrow-bridge`, for the C ABI encoder's oracle, so
+`conan create ../arrow-bridge` goes before it; `ci.c-abi.yml` does that, and
+builds the probe shim too (below).
 
 ### The probe shim (`with_probe_shim`, test-only)
 

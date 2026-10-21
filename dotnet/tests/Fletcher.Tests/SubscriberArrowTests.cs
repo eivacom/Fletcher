@@ -350,6 +350,65 @@ public sealed class SubscriberArrowTests : IDisposable
 
     // ── Batching ────────────────────────────────────────────────────────────
 
+    // ── Subscribed before the topic is declared (D-BIND-146) ────────────────
+    // The seam fixes a subscription's schema mode when Subscribe returns (provider.hpp,
+    // spec §7 clause 1). On a schema-CARRYING transport (Fast DDS, inprocess with
+    // schema_carriage=carried) the schema arrives with the data, so a subscriber that
+    // subscribed first still decodes: conformance clause 1, SchemaBeforeDataAcrossHandoff,
+    // and the first test below. The default inprocess loopback (as_declared) instead
+    // answers a subscription made before the declaration with no schema, for its whole
+    // life; SubscriberArrow then cannot decode, and every row is dropped and counted (the
+    // second test). Found by the BIND-9a review, after the package README's batch snippet
+    // received a null window over the default inprocess.
+
+    [Fact]
+    public void OnACarryingTransportASubscriberThatSubscribedFirstStillDecodes()
+    {
+        using PubSubProviderHandle carrying = ProviderRegistry.Create(
+            ProviderSelector.Parse("inprocess"),
+            new ProviderConfig { Document = System.Text.Encoding.UTF8.GetBytes("schema_carriage=carried") });
+        using var publisher = new Publisher(carrying);
+        using var subscriber = new SubscriberArrow(carrying);
+        TopicPath topic = Topic("carriedfirst");
+        subscriber.SubscribeBatched(topic, _sink.Handler, Options(3, Long)).Schema.Dispose();
+        publisher.CreateTopic(topic, TwoColumns);
+
+        for (int i = 0; i < 3; i++)
+        {
+            using RecordBatch batch = Row(i, "late");
+            using var codec = new FletcherCodec(TwoColumns);
+            using BoundRows rows = codec.Bind(batch);
+            publisher.Publish(topic, rows, 0, null);
+        }
+
+        Delivery only = Assert.Single(_sink.Snapshot());
+        Assert.Equal(3, only.Rows);
+        Assert.Equal(0, only.Status.RowsDropped);
+        Assert.Equal(BatchReason.RowLimit, only.Status.Reason);
+    }
+
+    [Fact]
+    public void OnTheDefaultInProcessLoopbackASubscriberThatSubscribedFirstDropsAndCountsEveryRow()
+    {
+        TopicPath topic = Topic("declaredlater");
+        SubscribeResult result = _subscriber.SubscribeBatched(topic, _sink.Handler, Options(3, Long));
+        result.Schema.Dispose();
+        _publisher.CreateTopic(topic, TwoColumns);
+
+        for (int i = 0; i < 3; i++)
+        {
+            Publish(topic, i, "late");
+        }
+
+        Assert.Empty(_sink.Snapshot());
+        result.Subscription.Dispose();
+
+        Delivery closing = Assert.Single(_sink.Snapshot());
+        Assert.Null(closing.Batch);
+        Assert.Equal(3, closing.Status.RowsDropped);
+        Assert.Equal(BatchReason.Closing, closing.Status.Reason);
+    }
+
     /// <summary>Mirrors SubscriberArrowBatchTest.FlushesAtRowLimit.</summary>
     [Fact]
     public void FlushesAtTheRowLimit()

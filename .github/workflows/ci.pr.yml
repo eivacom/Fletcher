@@ -61,16 +61,32 @@ jobs:
       # bundle, so dotnet, gateway and protoc run whatever the push touched. Removed
       # with the bundle job when PR #129 merges (BIND-9b).
       bundle: ${{ steps.bundle.outputs.bundle }}
+      # The preview's one version, computed here once so every job of the run uses the
+      # same (D-BIND-138, D-BIND-150): 0.6.0-pr.<PR>.<run>, and .<attempt> after it when a
+      # re-run rebuilt the run. A "re-run failed jobs" keeps the jobs that passed, and with
+      # them this output from the attempt that built them.
+      bundle-version: ${{ steps.bundle.outputs.version }}
     steps:
       - uses: actions/checkout@v6
       # The branch name is untrusted input: compared in the shell through an
-      # environment variable, never expanded into the script (actionlint).
+      # environment variable, never expanded into the script (actionlint). A head ref
+      # carries no repository, so a fork's PR from a branch of the same name must not
+      # pass for this one: the head must be this repository and the PR #129 (BIND-9a
+      # review B2).
       - id: bundle
         env:
           HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          THIS_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
-          if [ "$HEAD_REF" = "feature/csharp-bindings" ]; then
+          if [ "$HEAD_REF" = "feature/csharp-bindings" ] && [ "$HEAD_REPO" = "$THIS_REPO" ] && [ "$PR_NUMBER" = "129" ]; then
             echo "bundle=true" >> "$GITHUB_OUTPUT"
+            version="0.6.0-pr.$PR_NUMBER.$RUN_NUMBER"
+            if [ "$RUN_ATTEMPT" -gt 1 ]; then version="$version.$RUN_ATTEMPT"; fi
+            echo "version=$version" >> "$GITHUB_OUTPUT"
           else
             echo "bundle=false" >> "$GITHUB_OUTPUT"
           fi
@@ -146,6 +162,8 @@ jobs:
               - 'gateway/deployers/**'
               - 'scripts/check_shim_dependencies.sh'
               - 'scripts/check_dotnet_packages.sh'
+              - 'scripts/shim_floors.env'
+              - 'COPYING'
               # BIND-9a-4: the package README's snippets are checked against the
               # consumer test's code.
               - 'scripts/check_readme_snippets.py'
@@ -507,14 +525,16 @@ jobs:
     secrets: inherit
 
   # On the round's own branch the packages get a version of their own per run,
-  # 0.6.0-pr.<PR>.<run> (D-BIND-138): NuGet caches by version.
+  # 0.6.0-pr.<PR>.<run>[.<attempt>] (D-BIND-138, D-BIND-150), from detect-changes: NuGet
+  # caches by version.
   dotnet:
     needs: [detect-changes, setup-devcontainer]
     if: ${{ needs.detect-changes.outputs.dotnet == 'true' || needs.detect-changes.outputs.bundle == 'true' }}
     uses: ./.github/workflows/ci.dotnet.yml
     with:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
-      package-version: ${{ needs.detect-changes.outputs.bundle == 'true' && format('0.6.0-pr.{0}.{1}', github.event.pull_request.number, github.run_number) || '' }}
+      package-version: ${{ needs.detect-changes.outputs.bundle-version }}
+      ref: ${{ needs.detect-changes.outputs.bundle == 'true' && github.event.pull_request.head.sha || '' }}
     secrets: inherit
 
   pubsub:
@@ -540,6 +560,7 @@ jobs:
     with:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
       bundle: ${{ needs.detect-changes.outputs.bundle == 'true' }}
+      ref: ${{ needs.detect-changes.outputs.bundle == 'true' && github.event.pull_request.head.sha || '' }}
     secrets: inherit
 
   gateway:
@@ -549,6 +570,7 @@ jobs:
     with:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
       bundle: ${{ needs.detect-changes.outputs.bundle == 'true' }}
+      ref: ${{ needs.detect-changes.outputs.bundle == 'true' && github.event.pull_request.head.sha || '' }}
     secrets: inherit
 
   fastdds-pubsub-provider:
@@ -736,7 +758,7 @@ jobs:
     if: ${{ needs.detect-changes.outputs.bundle == 'true' }}
     runs-on: ubuntu-latest
     env:
-      VERSION: ${{ format('0.6.0-pr.{0}.{1}', github.event.pull_request.number, github.run_number) }}
+      VERSION: ${{ needs.detect-changes.outputs.bundle-version }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -779,7 +801,9 @@ jobs:
           fi
 
       - name: Assemble and check the bundle
-        run: bash scripts/assemble_preview_bundle.sh bundle "$VERSION" "${{ github.event.pull_request.head.sha }}"
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bash scripts/assemble_preview_bundle.sh bundle "$VERSION" "$HEAD_SHA"
 
       - name: Upload the preview bundle
         uses: actions/upload-artifact@v7.0.1
@@ -802,7 +826,7 @@ jobs:
         os: [ubuntu-24.04, windows-2022]
     runs-on: ${{ matrix.os }}
     env:
-      VERSION: ${{ format('0.6.0-pr.{0}.{1}', github.event.pull_request.number, github.run_number) }}
+      VERSION: ${{ needs.detect-changes.outputs.bundle-version }}
     steps:
       - uses: actions/checkout@v6
         with:

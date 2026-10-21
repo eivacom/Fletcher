@@ -11,8 +11,8 @@
 #   nuget/     the four .nupkg (and .snupkg) at <version>
 #   gateway/   gateway-linux.tar.gz, gateway-windows.zip
 #   protoc/    protoc-gen-fletcher-linux-x64, protoc-gen-fletcher-windows-x64.exe,
-#              LICENSE, THIRD-PARTY-LICENSES.txt
-# Adds protoc/fletcher/options.proto, LICENSE, VERSION and README-preview.md (from
+#              LICENSE, COPYING, THIRD-PARTY-LICENSES.txt
+# Adds protoc/fletcher/options.proto, LICENSE, COPYING, VERSION and README-preview.md (from
 # scripts/preview/README-preview.md). Run from the repository root.
 set -euo pipefail
 
@@ -23,6 +23,7 @@ COMMIT=${3:?commit}
 mkdir -p "$DIR/protoc/fletcher"
 cp protoc/include/fletcher/options.proto "$DIR/protoc/fletcher/"
 cp LICENSE "$DIR/LICENSE"
+cp COPYING "$DIR/COPYING"
 printf 'version: %s\ncommit: %s\nbranch: feature/csharp-bindings\n' "$VERSION" "$COMMIT" > "$DIR/VERSION"
 sed -e "s/@VERSION@/$VERSION/g" -e "s/@COMMIT@/$COMMIT/g" scripts/preview/README-preview.md > "$DIR/README-preview.md"
 
@@ -37,8 +38,10 @@ need protoc/protoc-gen-fletcher-linux-x64
 need protoc/protoc-gen-fletcher-windows-x64.exe
 need protoc/fletcher/options.proto
 need protoc/LICENSE
+need protoc/COPYING
 need protoc/THIRD-PARTY-LICENSES.txt
 need LICENSE
+need COPYING
 need VERSION
 need README-preview.md
 if grep -q '@VERSION@\|@COMMIT@' "$DIR/README-preview.md"; then

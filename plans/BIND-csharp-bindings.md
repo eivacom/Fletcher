@@ -862,7 +862,7 @@ Kind: 🟪 spec · 🟦 impl · 🔬 proof · ⚙ pipelines · 📓 docs
 | BIND-7 | Arrow view + accessor emitters (`csharp_accessor`) + capstone third arm | B | 🟦 | BIND-6, BIND-3 | `accessor-capstone` C# arm `observed == expected`; `StructArray` windowing fixture at non-zero offset | 🟢 (closed on CI at `268dceb`, `ci.pr` 38746753749, after a fresh-context review whose 2 BLOCKERs were fixed and 5 questions ruled, D-BIND-103 to 107; rulings during the round D-BIND-94 to 102; the minor debt carried as known, listed in BIND-7's section) |
 | BIND-T | TS `Publisher`/`Subscriber` emitter | C | 🟦 | — | `TsVisitor.DescriptorByteIdentical` still green + new emitter cases | ⚪ |
 | BIND-8 | `Eiva.Fletcher.GatewayClient` (managed port; the codec exception) | C | 🟦 | — | Bucket 2 green (the Part 4 file set, not a count); `Package.GatewayClientHasNoRuntimesFolder` | 🟢 (closed on CI at `750d79d`, `ci.pr` 39375700668, 56/56, every side workflow green, after a fresh-context review whose 5 BLOCKERs were fixed and 12 questions ruled, D-BIND-121 to 132; rulings during the round D-BIND-108 to 120, and D-BIND-133 (slice 8f, batched delivery); one finding after the review fixed (A1); performance carried as known debt, listed in BIND-8's section) |
-| BIND-9a | A preview for testers (split from BIND-9 2026-10-20): one bundle per push to this branch, a 30-day CI artifact with the four NuGet packages (shim for both RIDs), the gateway binaries and the plugin binaries; nothing released before the merge (D-BIND-134 to 144) | D | ⚙ | BIND-3, BIND-8 | A consumer test using only the bundle publishes natively, generates code with the bundled plugin and reaches the bundled gateway, on Linux and Windows; `Interop` carries exactly the two shims; licence files in every package | 🔴 (rulings D-BIND-134 to 141, 2026-10-20; 142 to 144, 2026-10-21) |
+| BIND-9a | A preview for testers (split from BIND-9 2026-10-20): one bundle per push to this branch, a 30-day CI artifact with the four NuGet packages (shim for both RIDs), the gateway binaries and the plugin binaries; nothing released before the merge (D-BIND-134 to 152) | D | ⚙ | BIND-3, BIND-8 | A consumer test using only the bundle publishes natively, generates code with the bundled plugin and reaches the bundled gateway, on Linux and Windows; `Interop` carries exactly the two shims; licence files in every package | 🔴 (rulings D-BIND-134 to 141, 2026-10-20; 142 to 152, 2026-10-21) |
 | BIND-9b | The rest of BIND-9: publish to `nuget.eiva.com` from a self-hosted job (D-BIND-28), size budget, glibc floor, `Eiva.Fletcher.Protoc`, NativeAOT on Windows and `fastdds`, C#-native cross-language rows | D | ⚙ | BIND-9a, all for release | `cd.dotnet.yml` dry run; packed-size check; asset-isolation + licence check | ⚪ |
 | BIND-10 | Docs, TD-009, archive to `docs/archive/BIND/` | D | 📓 | all | docs review | ⚪ |
 
@@ -2228,7 +2228,7 @@ upgrade is planned separately. The change was made in a session of its own and t
 **As** a maintainer, **I want** the .NET tier built, tested and published by the
 same machinery as everything else, **so that** it cannot rot.
 
-**Split 2026-10-20 into BIND-9a and BIND-9b** (rulings D-BIND-134 to 144). Testers are
+**Split 2026-10-20 into BIND-9a and BIND-9b** (rulings D-BIND-134 to 152). Testers are
 waiting for packages, so **BIND-9a** delivers a preview first; **BIND-9b** is everything in the
 acceptance below that 9a does not do.
 
@@ -2241,7 +2241,8 @@ before the round merges.
   packages; `gateway/` the gateway binaries for Linux and Windows, as `cd.gateway.yml` would
   release them; `protoc/` the standalone plugin binaries for Linux and Windows and
   `fletcher/options.proto`, as `cd.protoc.yml` would release them; `README-preview.md`; `LICENSE`
-  and `THIRD-PARTY-LICENSES.txt`. On this branch `ci.pr` builds dotnet, gateway and protoc on every
+  and `COPYING` at the root, and each component's `THIRD-PARTY-LICENSES.txt` inside it (amended
+  2026-10-21, review Q7; D-BIND-152). On this branch `ci.pr` builds dotnet, gateway and protoc on every
   push, whatever the push touched. `Eiva.Fletcher.Protoc` stays in 9b.
 - **Nothing released before the merge** (D-BIND-137, 138): no tag, GitHub release, npm, Conan or
   NuGet-feed push; the only version is the per-build `0.6.0-pr.129.<run>`. **Temporary:** after
@@ -2343,8 +2344,8 @@ before the round merges.
   (`Interop` without the Linux shim: `DllNotFoundException`; no `Eiva.Fletcher.Model` in the bundle:
   NU1101, nuget.org not considered); a real four-package pack passes the README checks, and four
   mutants fail them (another commit, no commit, a floor missing, no README); actionlint clean.
-- **9a-3 written 2026-10-21** (CI pending): the tester note, `dotnet/PREVIEW-TESTERS.md`, linked
-  from `dotnet/README.md` and from a "For testers" section at the top of PR #129's description
+- **9a-3 done on CI 2026-10-21** (`8f5b911`, with 9a-4): the tester note,
+  `dotnet/PREVIEW-TESTERS.md`, linked from `dotnet/README.md` and from a "For testers" section at the top of PR #129's description
   (ruled by the maintainer: the repository file, versioned with the branch, plus the PR, where the
   download sits). What the bundle holds, where to get the newest one (the `ci.pr` runs for the
   branch filtered to successful ones, the run's Summary > Artifacts; or `gh run list` and
@@ -2352,7 +2353,9 @@ before the round merges.
   moving to a newer bundle, what to do when `0.6.0-alpha` ships, and where to report problems.
   Both download routes were followed as written and fetched `pr.129.338`. The note goes with the
   bundle job at the merge (BIND-9b).
-- **9a-4 written 2026-10-21** (CI pending; asked for by the maintainer while reviewing 9a-3,
+- **9a-4 done on CI 2026-10-21** (`8f5b911`, `ci.pr` 39580014921, 60/60, every side workflow green,
+  first attempt: 7 snippets matched, four routes green on both runners, .NET 8 and 10, against
+  bundle `pr.129.339`; asked for by the maintainer while reviewing 9a-3,
   D-BIND-144): `dotnet/README.package.md` gains "From a `.proto` to publish and subscribe", six
   steps with seven code blocks: the `.proto`, the package references, the MSBuild target that runs
   `protoc` with the plugin (options explained), rows natively (providers by name), Arrow batches
@@ -2370,11 +2373,29 @@ before the round merges.
   the checker passes (7 snippets) and fails on four mutants (a README line edited, a snippet not
   shown, an unknown name, the code edited); the packed README is byte-identical to the source with
   version and commit filled in; the README pack checks pass; `dotnet format` and actionlint clean.
+- **Review 2026-10-21** (`plans/reviews/BIND-9a-codereview.md`, `BIND-9a-conformance.md`; three
+  fresh-context reviewers): 6 BLOCKERs, all reproduced and fixed, and 10 questions, all ruled
+  (D-BIND-145 to 152, the D-BIND-139 amendment, the VC++ wording). The blockers: the shim
+  dependency check passed on an empty list (B1, now it must name `libc.so.6` / `KERNEL32.dll`); a
+  fork's PR from a branch of the same name would have built a bundle the tester note picked (B2,
+  the flag now needs this repository and PR #129, and the note starts from the PR); the
+  relinking route failed as written (B3, now the exact commands, rehearsed from a clean copy, and
+  `c-abi/README.md` corrected); the plugin's notice lacked its vendored nanoarrow and flatcc (B4,
+  the protoc recipe packages the licence and `ci.protoc` asserts it); and two README claims were
+  wrong (B5 the load-time check is the ABI only; B6 native batch handlers are not serialised).
+  **Found by the fixes:** the packed-README comparison (M10) caught MSBuild turning a `\` in the
+  README into `/` on Linux, which would have shipped a broken relinking command; Q2 is the seam's
+  documented contract, not a defect (D-BIND-146).
 
 **BIND-9b — the rest**, the acceptance below: the `nuget.eiva.com` publish job and its
 self-hosted runner, the packed-size budget, lowering the glibc floor if wanted, the Windows and
 `fastdds` NativeAOT runs, the null-in-a-non-nullable-column question, `Eiva.Fletcher.Protoc`, and
-the C#-native cross-language rows.
+the C#-native cross-language rows. From the BIND-9a review: Fast DDS's own vendored third-party
+code and Apache-2.0 `NOTICE` files verified and carried before the first release (D-BIND-152);
+the relinking route executed by a test on both platforms, the floors tested on a minimal machine,
+the plugin's notice compared across platforms and attached to `cd.protoc`'s release (and the npm
+package), a lockfile with the release, and a vendored-licence check for the gateway (review T12,
+T13, T14, M6, M7, L14).
 
 **How test builds reach testers during development, and what changes at the merge** (recorded
 2026-10-20 at the maintainer's request, D-BIND-137 to 139). Until PR #129 merges, the per-push

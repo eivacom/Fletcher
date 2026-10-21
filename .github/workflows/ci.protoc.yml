@@ -10,6 +10,15 @@ concurrency:
 on:
   workflow_call:
     inputs:
+      ref:
+        description: >-
+          The commit to check out, or empty for the default (the merge ref on a pull
+          request). ci.pr.yml passes the PR head when it builds the BIND-9a preview
+          bundle, so every artifact names one commit, the one the bundle names
+          (D-BIND-145; the preview-bundle job checks the two are one tree).
+        required: false
+        type: string
+        default: ''
       devcontainer-image:
         description: >-
           Pre-built devcontainer image reference (e.g.
@@ -54,6 +63,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.ref }}
           sparse-checkout: |
             protoc/conanfile.py
             protoc/npm/package.json
@@ -86,6 +96,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.ref }}
           sparse-checkout: |
             protoc
             .github
@@ -151,6 +162,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.ref }}
           sparse-checkout: |
             protoc
             gateway/deployers
@@ -188,7 +200,14 @@ jobs:
                 --deployer-folder=/workspace/protoc-licences -c tools.graph:skip_binaries=False \
                 -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release
               cp /workspace/LICENSE /workspace/protoc-licences/LICENSE
-              rm -f /workspace/protoc-licences/conan*.sh /workspace/protoc-licences/deactivate_conan*.sh
+              cp /workspace/COPYING /workspace/protoc-licences/COPYING
+              # What the plugin links or compiles in must be in its notice: protobuf
+              # and zlib from the graph, and the vendored nanoarrow, which only reaches
+              # the notice through the recipe (BIND-9a review B4).
+              for lib in protobuf zlib nanoarrow; do
+                grep -qE "^  \* $lib " /workspace/protoc-licences/THIRD-PARTY-LICENSES.txt \
+                  || { echo "::error::the plugin notice does not cover $lib, which is linked into the plugin"; exit 1; }
+              done
               if [[ -n "$ARTIFACT_NAME" ]]; then
                 REF=$(conan inspect . --format json | python3 -c "import json,sys; d=json.load(sys.stdin); print(d[\"name\"]+\"/\"+d[\"version\"])")
                 conan cache save "$REF:*" --file "/workspace/$ARTIFACT_NAME"
@@ -228,5 +247,6 @@ jobs:
           name: fletcher-protoc-licences
           path: |
             protoc-licences/LICENSE
+            protoc-licences/COPYING
             protoc-licences/THIRD-PARTY-LICENSES.txt
           retention-days: 5

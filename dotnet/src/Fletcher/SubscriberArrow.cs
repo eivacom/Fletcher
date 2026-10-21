@@ -484,7 +484,10 @@ public sealed class SubscriberArrow : IDisposable
             }
         }
 
-        /// <summary>The codec, from the first delivery's schema - so a subscriber that subscribed first still decodes.</summary>
+        /// <summary>The codec, from the first delivery's schema - so a subscriber that subscribed first still
+        /// decodes on a schema-carrying transport. A subscription the transport serves with no schema (the
+        /// default inprocess loopback, subscribed before the topic was declared) is undecodable for its whole
+        /// life: the seam fixes the mode when Subscribe returns, and every row is dropped and counted (D-BIND-146).</summary>
         private void Resolve(SchemaHandle schema)
         {
             try

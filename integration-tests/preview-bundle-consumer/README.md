@@ -17,22 +17,39 @@ gateway and plugin working together as shipped, on Linux and Windows.
   model, the native pair, the gateway pair and the Arrow accessor), with the bundle's `protoc/` on
   the include path.
 - **Publish and subscribe natively** through `Eiva.Fletcher` over `inprocess`, row by row and as one
-  Arrow batch read through the generated accessor, and check that the shim that answered is the
-  one `Eiva.Fletcher.Interop` put under `runtimes/<rid>/native/`.
+  Arrow batch read through the generated accessor; then over `fastdds`, in this one process on a
+  domain of its own (D-BIND-151; `FLETCHER_PREVIEW_DDS_DOMAIN`, 157 by default), after a probe
+  row shows discovery is done; and check that the shim that answered is the one
+  `Eiva.Fletcher.Interop` put under `runtimes/<rid>/native/`.
 - **Reach the bundled gateway** through `Eiva.Fletcher.GatewayClient`: the bundle's gateway is
   started over `inprocess`, and the generated gateway pair carries the same rows across it, row by
   row and as one batch.
 
-**The package README's code** (BIND-9a-4): every code block in
-[`dotnet/README.package.md`](../../dotnet/README.package.md) is a region of `fix.proto`,
-`PreviewConsumer.csproj` or `Program.cs` between `<snippet name="...">` markers, and
-[`scripts/check_readme_snippets.py`](../../scripts/check_readme_snippets.py), run by `ci.dotnet`'s
-pack job, fails when the two differ or one is missing; so the walkthrough every package carries is
-code this test compiles and runs.
-
 Each route must deliver exactly the rows sent, field for field (a nested message, a Timestamp, a
-repeated field, a map); the program's exit code is the verdict. It runs once per target framework
-the packages ship, .NET 8 and .NET 10.
+repeated field, a map), and nothing more: a route that receives through a queue waits briefly
+after the last row, and an extra or duplicate delivery fails it. The program's exit code is the
+verdict. It runs once per target framework the packages ship, .NET 8 and .NET 10, and fails if
+the net8.0 build is not running on .NET 8 (set `FLETCHER_PREVIEW_ALLOW_ROLL_FORWARD=1` to rehearse
+on a machine with only a newer runtime).
+
+## Snippets: the package README's code is this test's code
+
+Every fenced code block in [`dotnet/README.package.md`](../../dotnet/README.package.md), the
+README all four packages carry, is checked by
+[`scripts/check_readme_snippets.py`](../../scripts/check_readme_snippets.py), which `ci.dotnet`'s
+pack job runs before packing (D-BIND-144, D-BIND-147):
+
+- **Here**, a region is marked by two comment lines in `fix.proto`, `PreviewConsumer.csproj` or
+  `Program.cs`: one containing `<snippet name="NAME">` (`// <snippet name="native-rows">`, or
+  `<!-- <snippet name="csproj-generate"> -->` in the project) and one containing `</snippet>`.
+- **In the README**, the line above a code block is `<!-- snippet: NAME -->`, and the block must
+  equal the region `NAME` with its common indentation removed. A block that is not test code
+  (shell commands) is marked `<!-- snippet: none -->` instead.
+- The check fails when a block and its region differ, when a region is not shown or a shown
+  snippet has no region, when a code block has no marker, and when there is no snippet at all.
+
+To add one: write the code in `Program.cs` (it then compiles and runs on every push), put the two
+marker lines around it, and paste the region, unindented, into the README under its marker.
 
 ## How it runs
 

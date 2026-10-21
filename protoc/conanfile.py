@@ -3,8 +3,11 @@
 #
 from conan import ConanFile
 from conan.tools.cmake import CMake, CMakeToolchain, CMakeDeps, cmake_layout
-from conan.tools.files import copy
+from conan.errors import ConanException
+from conan.tools.files import copy, save
+import json
 import os
+import re
 
 
 class FletcherProtocPluginConan(ConanFile):
@@ -94,6 +97,23 @@ class FletcherProtocPluginConan(ConanFile):
              src=os.path.join(self.source_folder, "cmake"),
              dst=os.path.join(self.package_folder, "cmake"),
              keep_path=False)
+        # The vendored nanoarrow (with the flatcc it bundles, both Apache-2.0) is
+        # compiled into the plugin but is not in the Conan graph, so its licence text
+        # travels here for the third-party notice deployer, as fletcher-pubsub does
+        # (gateway/deployers/third_party_licenses.py; BIND-9a review B4).
+        vendored = os.path.join(self.package_folder, "licenses", "vendored", "nanoarrow")
+        copy(self, "LICENSE.txt",
+             src=os.path.join(self.source_folder, "third_party", "nanoarrow"),
+             dst=vendored, keep_path=False)
+        # The version is read from the vendored header, so a re-vendoring updates it.
+        header = os.path.join(self.source_folder, "third_party", "nanoarrow", "nanoarrow", "nanoarrow.h")
+        with open(header, encoding="utf-8") as handle:
+            match = re.search(r'#define NANOARROW_VERSION "([^"]+)"', handle.read())
+        if not match:
+            raise ConanException(f"no NANOARROW_VERSION in {header}")
+        save(self, os.path.join(vendored, "vendored.json"), json.dumps({
+            "name": "nanoarrow", "version": match.group(1), "license": "Apache-2.0",
+            "homepage": "https://github.com/apache/arrow-nanoarrow"}, indent=2))
         # Package Fletcher's public proto option definitions for consumers.
         copy(self, "*.proto",
              src=os.path.join(self.source_folder, "include"),

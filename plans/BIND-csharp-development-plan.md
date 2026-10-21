@@ -871,7 +871,12 @@ stated: glibc 2.38 and the GCC 13 libstdc++ on Linux, the VC++ redistributable o
 (D-BIND-142), and a bundle is made only when the tree CI built is the commit it names
 (D-BIND-143, 2026-10-21). That README walks from a `.proto` to publishing and subscribing,
 natively and through the gateway, with every code block checked against the consumer test that
-CI compiles and runs (D-BIND-144).
+CI compiles and runs (D-BIND-144). The review of BIND-9a added: every artifact names the PR head
+(D-BIND-145); the subscribe-before-declare behaviour is the seam's contract, now tested and
+documented (D-BIND-146); every README code block is checked or exempt (D-BIND-147); exact
+dependency lists and asserted floors (D-BIND-148, 149); one version per re-run (D-BIND-150); a
+`fastdds` route from the packaged shim (D-BIND-151); and the GPL-3.0 text beside the LGPL
+everywhere (D-BIND-152).
 
 **BIND-T, BIND-8, BIND-9, BIND-10** — as in the 2026-08-31 plan, with BIND-9
 carrying the LGPL notice text and the packaging statement (§6 P-1), and BIND-10

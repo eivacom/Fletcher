@@ -7,7 +7,8 @@
 //
 // 1. Natively through Eiva.Fletcher, over `inprocess`: the generated FixFeed_Report pair
 //    publishes and subscribes row by row, then SubscriberArrow receives the same rows as one
-//    Arrow batch read through the generated accessor; and the shim that answered is the one
+//    Arrow batch read through the generated accessor; then the pair again over `fastdds`, in
+//    this one process (D-BIND-151); and the shim that answered is the one
 //    Eiva.Fletcher.Interop's package put under runtimes/<rid>/native/ in this application's
 //    output.
 // 2. Through Eiva.Fletcher.GatewayClient: the bundle's gateway is started over `inprocess`, and
@@ -50,9 +51,22 @@ string[] expected = sent.Select(Describe).ToArray();
 var failures = new List<string>();
 Console.WriteLine($"PreviewConsumer on {RuntimeInformation.FrameworkDescription}, {RuntimeInformation.RuntimeIdentifier}");
 
+// The net8.0 build must RUN on .NET 8, or it is a second .NET 10 run (review T-N1). A local
+// rehearsal on a machine with only a newer runtime rolls forward and opts out.
+#if NET10_0_OR_GREATER
+const int TargetMajor = 10;
+#else
+const int TargetMajor = 8;
+#endif
+if (Environment.Version.Major != TargetMajor && Environment.GetEnvironmentVariable("FLETCHER_PREVIEW_ALLOW_ROLL_FORWARD") != "1")
+{
+    failures.Add($"built for .NET {TargetMajor} but running on .NET {Environment.Version}");
+}
+
 // ── 1. Natively, through the shim in the package ──
 Check("native rows", NativeRows(sent), expected, failures);
 Check("native batch", NativeBatch(sent), expected, failures);
+Check("native fastdds", NativeFastDds(sent), expected, failures);
 
 string shim = OperatingSystem.IsWindows() ? "fletcher-c-abi.dll" : "libfletcher-c-abi.so";
 string packaged = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "runtimes", OperatingSystem.IsWindows() ? "win-x64" : "linux-x64", "native", shim));
@@ -193,15 +207,61 @@ static async Task<List<Fix>> GatewayBatch(Uri uri, Fix[] fixes)
     return Take(received, fixes.Length);
 }
 
+// The rows that arrive, and then anything more that arrives within a short wait: a duplicate or
+// extra delivery is returned too, so the comparison with what was sent fails (review T9).
 static List<Fix> Take(BlockingCollection<Fix> received, int count)
 {
     var rows = new List<Fix>();
-    while (rows.Count < count && received.TryTake(out Fix? row, TimeSpan.FromSeconds(10)))
+    while (rows.Count < count && received.TryTake(out Fix? row, TimeSpan.FromSeconds(15)))
     {
         rows.Add(row);
     }
 
+    while (received.TryTake(out Fix? extra, TimeSpan.FromMilliseconds(500)))
+    {
+        rows.Add(extra);
+    }
+
     return rows;
+}
+
+// D-BIND-151: the same rows over `fastdds`, within one process on a domain of its own, so the
+// statically linked eProsima chain runs from the packaged shim. Discovery is asynchronous: probe
+// rows (Id 0) are published until one arrives, then the rows that are checked.
+static List<Fix> NativeFastDds(Fix[] fixes)
+{
+    uint domain = uint.TryParse(Environment.GetEnvironmentVariable("FLETCHER_PREVIEW_DDS_DOMAIN"), out uint d) ? d : 157;
+    var received = new BlockingCollection<Fix>();
+    var probed = new ManualResetEventSlim();
+    using PubSubProviderHandle provider = ProviderRegistry.Create(ProviderSelector.Parse("fastdds"), new ProviderConfig { DomainId = domain });
+
+    using var publisher = new FixFeed_ReportPublisher(provider);
+    using var subscriber = new FixFeed_ReportSubscriber(provider);
+    using Subscription subscription = subscriber.Subscribe((fix, attachments) =>
+    {
+        if (fix.Id == 0)
+        {
+            probed.Set();
+        }
+        else
+        {
+            received.Add(fix);
+        }
+    });
+
+    var deadline = Stopwatch.StartNew();
+    while (!probed.Wait(TimeSpan.FromMilliseconds(200)) && deadline.Elapsed < TimeSpan.FromSeconds(30))
+    {
+        publisher.Publish(MakeFix(0, "probe"));
+    }
+
+    if (!probed.IsSet)
+    {
+        return [];
+    }
+
+    publisher.Publish(fixes);
+    return Take(received, fixes.Length);
 }
 
 static void Check(string route, List<Fix> actual, string[] expected, List<string> failures)

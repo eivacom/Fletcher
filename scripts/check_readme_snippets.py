@@ -12,6 +12,11 @@
 # block must equal the region with its common indentation removed; every region must be shown
 # and every shown snippet must have a region, so neither side can drift or be left behind.
 #
+# D-BIND-147: EVERY fenced code block in the README is marked. A block that is not test code
+# (shell commands, say) is marked `<!-- snippet: none -->` above it, a visible decision; a
+# block with no marker fails, so new code cannot reach the README unchecked; and a README
+# with no snippet at all fails, as an empty comparison checks nothing.
+#
 # Stdlib only, as the other checkers here.
 import difflib
 import pathlib
@@ -23,6 +28,8 @@ START = re.compile(r'<snippet name="([A-Za-z0-9_-]+)">')
 END = re.compile(r'</snippet>')
 SHOWN = re.compile(r'^<!-- snippet: ([A-Za-z0-9_-]+) -->\s*$')
 FENCE = re.compile(r'^```')
+OPEN = re.compile(r'^\s*(```|~~~)')
+EXEMPT = "none"
 
 
 def tidy(lines):
@@ -53,30 +60,52 @@ def regions(path, errors):
 
 
 def shown(path, errors):
+    """The README's snippets by name. Every fenced code block must be marked: with
+    `<!-- snippet: NAME -->` it is a snippet, with `<!-- snippet: none -->` it is
+    exempt, and with no marker it is an error (D-BIND-147)."""
     found = {}
     lines = path.read_text(encoding="utf-8").splitlines()
+    pending = None
     i = 0
     while i < len(lines):
-        marker = SHOWN.match(lines[i])
-        if not marker:
+        line = lines[i]
+        marker = SHOWN.match(line)
+        if marker:
+            if pending:
+                errors.append(f"{path}:{pending[1]}: snippet {pending[0]!r} is not followed by a fenced code block")
+            pending = (marker.group(1), i + 1)
             i += 1
             continue
-        name, at = marker.group(1), i + 1
-        i += 1
-        while i < len(lines) and not lines[i].strip():
+        opened = OPEN.match(line)
+        if opened:
+            at, token = i + 1, opened.group(1)
             i += 1
-        if i >= len(lines) or not FENCE.match(lines[i]):
-            errors.append(f"{path}:{at}: snippet {name!r} is not followed by a fenced code block")
+            body = []
+            while i < len(lines) and not lines[i].lstrip().startswith(token):
+                body.append(lines[i])
+                i += 1
+            i += 1
+            if pending is None:
+                errors.append(f"{path}:{at}: a code block with no snippet marker: put "
+                              f"<!-- snippet: NAME --> or <!-- snippet: none --> above it")
+                continue
+            name, marked_at = pending
+            pending = None
+            if name == EXEMPT:
+                continue
+            if not FENCE.match(line):
+                errors.append(f"{path}:{at}: snippet {name!r} must be a ``` fence at the start of a line")
+                continue
+            if name in found:
+                errors.append(f"{path}:{marked_at}: snippet {name!r} is shown twice")
+            found[name] = (tidy(body), f"{path}:{marked_at}")
             continue
+        if line.strip() and pending:
+            errors.append(f"{path}:{pending[1]}: snippet {pending[0]!r} is not followed by a fenced code block")
+            pending = None
         i += 1
-        body = []
-        while i < len(lines) and not FENCE.match(lines[i]):
-            body.append(lines[i])
-            i += 1
-        if name in found:
-            errors.append(f"{path}:{at}: snippet {name!r} is shown twice")
-        found[name] = (tidy(body), f"{path}:{at}")
-        i += 1
+    if pending:
+        errors.append(f"{path}:{pending[1]}: snippet {pending[0]!r} is not followed by a fenced code block")
     return found
 
 
@@ -106,6 +135,8 @@ def main(argv):
     for name, (_, where) in sources.items():
         if name not in in_readme:
             errors.append(f"{where}: snippet {name!r} is not shown in {readme}")
+    if not in_readme and not errors:
+        errors.append(f"{readme}: no snippet at all, so nothing was checked")
 
     for error in errors:
         print(f"::error::{error}")

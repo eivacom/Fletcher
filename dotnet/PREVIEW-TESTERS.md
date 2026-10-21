@@ -16,20 +16,23 @@ are not released anywhere. Instead, every push to its branch, `feature/csharp-bi
 
 You need a GitHub account (signed in); the repository is public.
 
-**In the browser:** open the
-[ci.pr runs for the branch](https://github.com/eivacom/Fletcher/actions/workflows/ci.pr.yml?query=branch%3Afeature%2Fcsharp-bindings+is%3Asuccess),
-click the newest run, and on its **Summary** page, under **Artifacts**, download
-`fletcher-preview-0.6.0-pr.129.<run>` (about 20 MB). The same runs are reached from the pull
-request: **Checks**, then **ci.pr**, then **Summary**.
+Always start from pull request [#129](https://github.com/eivacom/Fletcher/pull/129) itself, not
+from a list of runs filtered by branch name: a fork can have a branch of the same name.
 
-**With the GitHub CLI:**
+**In the browser:** on the pull request, open **Checks**, then **ci.pr**, then **Summary**, and
+under **Artifacts** download `fletcher-preview-0.6.0-pr.129.<run>` (about 20 MB). If the newest
+push is still building, the previous commit's run has the previous bundle.
+
+**With the GitHub CLI**, the bundle of the pull request's newest commit:
 
 ```bash
-gh run list --repo eivacom/Fletcher --workflow ci.pr.yml --branch feature/csharp-bindings --status success --limit 1
-gh run download <run id from the list> --repo eivacom/Fletcher --pattern 'fletcher-preview-*'
+HEAD=$(gh pr view 129 --repo eivacom/Fletcher --json headRefOid --jq .headRefOid)
+RUN=$(gh run list --repo eivacom/Fletcher --workflow ci.pr.yml --commit "$HEAD" --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+gh run download "$RUN" --repo eivacom/Fletcher --pattern 'fletcher-preview-0.6.0-pr.129.*'
 ```
 
-The CLI unpacks the bundle into a folder of the same name.
+The CLI unpacks the bundle into a folder of the same name. Either way, check that the name says
+`pr.129` and that the bundle's `VERSION` file names a commit of pull request #129.
 
 ## Using it
 
@@ -46,8 +49,8 @@ and runs. In short:
    `Eiva.Fletcher.GatewayClient` to it.
 
 Needed on the machine: .NET 8 or .NET 10; on Linux glibc 2.38 and the GCC 13 C++ runtime or newer
-(Ubuntu 24.04, Debian 13, RHEL 10 or newer); on Windows the Microsoft Visual C++ 2015-2022
-redistributable (x64).
+(Ubuntu 24.04, Debian 13, RHEL 10 or newer); on Windows the latest Visual C++ 2015-2022
+redistributable (x64), 14.40 or newer.
 
 **Moving to a newer bundle:** change the version you reference to the new bundle's and point the
 package source at its `nuget/` folder. Every bundle has a version of its own, so nothing stale is

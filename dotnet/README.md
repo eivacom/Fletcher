@@ -33,7 +33,10 @@ model without native assets (D-BIND-72). User-defined messages are not in it.
 dotnet/
   Fletcher.slnx              XML solution (it can carry a licence header; .sln cannot)
   Directory.Build.props      the single <VersionPrefix> for all four packages
-  Directory.Build.targets    the AOT toolchain packs, pinned with global.json (D-BIND-81)
+  Directory.Build.targets    the AOT toolchain packs, pinned with global.json (D-BIND-81), and the
+                             package README packed into all four (README.package.md, D-BIND-142)
+  README.package.md          that README: what each package is, a walkthrough whose code CI runs,
+                             the platform floors and the relinking route
   global.json                the SDK band, pinned to the devcontainer's
   .editorconfig              what `dotnet format --verify-no-changes` enforces
   src/…                      the four packages
@@ -69,11 +72,10 @@ executed, not merely compiled.
 
 ## NativeAOT
 
-*A draft for the package README (BIND-9); the facts are D-BIND-81's.*
+*The facts are D-BIND-81's; the package README (`README.package.md`) carries the short form.*
 
-`Eiva.Fletcher`, `Eiva.Fletcher.Interop` and `Eiva.Fletcher.Model` are marked
-`IsAotCompatible` and raise no trim or AOT warnings; `Eiva.Fletcher.GatewayClient`
-makes no such claim yet. Whether an application uses NativeAOT is the
+All four packages are marked `IsAotCompatible` and raise no trim or AOT warnings
+(`Eiva.Fletcher.GatewayClient` since BIND-8d). Whether an application uses NativeAOT is the
 **application's** choice, not the packages': set `<PublishAot>true</PublishAot>` in
 the app's project, or don't, and the packages behave the same either way. Generated
 C# is compiled into the app and follows the app's settings.
@@ -95,10 +97,10 @@ What it cannot:
   obligations (risk N-8).
 
 Deployment facts that apply with or without AOT: one build per RID (`linux-x64`,
-`win-x64`); the Linux shim needs **glibc 2.38 or newer** and only the system's
-`libstdc++`, `libm`, `libgcc_s` and `libc`; and the shim must come from the same
-release as the managed packages, because its ABI version is checked at load
-(exact minor before 1.0). Proven by `tests/Fletcher.AotSmoke` on Linux in CI;
+`win-x64`); the Linux shim needs **glibc 2.38 and `GLIBCXX_3.4.32` or newer** and only the
+system's `libstdc++`, `libm`, `libgcc_s` and `libc`; and the shim must come from the
+same commit as the managed packages: its binding ABI version is checked at load (exact
+minor before 1.0), nothing finer. Proven by `tests/Fletcher.AotSmoke` on Linux in CI;
 Windows NativeAOT has not yet been exercised.
 
 ## Status — round BIND
@@ -124,10 +126,13 @@ codec/Arrow tier (`FletcherCodec`, `BoundRows`), and **BIND-4** the pub/sub tier
 (`ProviderRegistry`, `Publisher`, `Subscriber`, `SchemaArrival`), all over the
 native shim in [`../c-abi`](../c-abi/README.md) at ABI 0.7. A transport is chosen
 by selector string and C# never implements one (D-BIND-24).
-`Eiva.Fletcher.GatewayClient` is still empty. The suites that need a real
+The suites that need a real
 transport live under `integration-tests/` and are deliberately not in
 `Fletcher.slnx`, so `dotnet test Fletcher.slnx` stays a unit run.
 
-Next: **BIND-5** `SubscriberArrow`, **BIND-6** generated C# rows, **BIND-8** the
-gateway client, **BIND-9** the packaging and the publish pipeline. Item by item:
+Since then: **BIND-5** `SubscriberArrow`, **BIND-6** generated C# rows, **BIND-7** the
+Arrow view and accessor, **BIND-8** the gateway client, and **BIND-9a** the packages
+with the shim inside and a per-push preview bundle for testers (see
+[PREVIEW-TESTERS.md](PREVIEW-TESTERS.md)). Next: BIND-9b, the release pipeline and the
+rest of packaging. Item by item:
 [`plans/BIND-progress-log.md`](../plans/BIND-progress-log.md).

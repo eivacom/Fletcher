@@ -1343,3 +1343,16 @@ down: an Arrow subscriber needs the topic's publisher to exist first, or every r
 
 **Lesson.** Documentation code that is executed finds what reading the API does not: the first
 honest snippet for the batch route was wrong in a way no reviewer would have seen.
+
+**The BIND-9a review, and what fixing it found.** Three fresh-context reviewers found six
+blockers, all reproduced and fixed: a dependency check that passed on an empty list, a bundle a
+fork could have produced under the same branch name, a relinking route that failed as written, a
+plugin notice missing its vendored nanoarrow, and two README claims that were wrong. Ten questions
+were ruled one at a time (D-BIND-145 to 152). Two of the fixes found more: comparing the packed
+README with its template showed MSBuild turning a backslash into a slash on Linux, which would have
+shipped a broken relinking command; and reproducing the "subscribe before the publisher" drop
+showed it is the seam's documented schema-mode rule, now tested in C# and stated in the README.
+
+**Lesson.** A check is only as good as its failing case: the dependency check, the snippet
+checker and the README check each passed on input that should have failed, until a mutant was
+written for the case.

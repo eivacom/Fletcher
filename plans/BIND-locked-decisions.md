@@ -3492,7 +3492,10 @@ public.
   `gateway/` the gateway binaries (D-BIND-135); `protoc/` the plugin binaries and
   `fletcher/options.proto` (D-BIND-136); `README-preview.md` (versions and commit, the floors, the
   relinking route, how to use a local NuGet folder, "delete and clear caches when `0.6.0-alpha`
-  ships"); `LICENSE` and `THIRD-PARTY-LICENSES.txt`. On this branch `ci.pr` builds dotnet, gateway
+  ships"); `LICENSE` (and `COPYING`, D-BIND-152) at the root, with each component's
+  `THIRD-PARTY-LICENSES.txt` inside it: each package, each gateway archive, `protoc/` (**amended
+  2026-10-21**, BIND-9a review Q7: the ruling first listed one notice at the root, and each binary
+  links a different set). On this branch `ci.pr` builds dotnet, gateway
   and protoc on every push whatever the push touched (the path filters stay for other branches),
   which lengthens every run. A version unique to each build, because NuGet caches a package by
   version and a tester would otherwise keep an old build silently. No tag, GitHub release, npm,
@@ -3560,3 +3563,70 @@ Three more, ruled 2026-10-21 while slices 9a-2 and 9a-4 were built:
   `scripts/check_readme_snippets.py`, run before the pack, fails when a block and its region
   differ or either is missing. A compact walkthrough, not the full guide, which stays BIND-10's.
   **Declined:** snippets copied by hand, accepting drift until BIND-10.
+
+Eight more, ruled 2026-10-21 on the fresh-context review of BIND-9a
+(`plans/reviews/BIND-9a-codereview.md`, questions Q1 to Q10; Q7 amends D-BIND-139 above, Q10 is
+wording):
+
+- **D-BIND-145 - every artifact of a bundle names one commit, the PR head.** *LOCKED BY THE
+  MAINTAINER 2026-10-21 (review Q1).* A `pull_request` run checks out the merge ref, so the
+  packages' nuspec `<repository commit>` and their SourceLink named a merge commit (`4353dcc` in
+  `pr.129.338`) that disappears at the next push, while the README and `VERSION` named the head.
+  When `bundle` is set, `ci.pr` passes the head to `ci.dotnet`, `ci.gateway` and `ci.protoc` as a
+  new `ref` input that every checkout in them uses (D-BIND-143 already proves the two are one tree),
+  and `check_dotnet_packages.sh` requires the nuspec to name the commit. **Declined:** recording it
+  and keeping the merge commit.
+
+- **D-BIND-146 - an Arrow subscriber that subscribed before the topic was declared: the seam's
+  contract, not a defect.** *LOCKED BY THE MAINTAINER 2026-10-21 (review Q2: "treat it as a defect:
+  reproduce it, fix it if it is one").* Reproduced in `Fletcher.Tests` and traced to the seam: a
+  subscription's schema mode is fixed when `Subscribe` returns (`provider.hpp`, spec §7 clause 1),
+  and the default `inprocess` loopback (`schema_carriage=as_declared`) answers a subscription made
+  before the declaration with no schema for its whole life, so `SubscriberArrow` drops and counts
+  every row. A schema-carrying transport (Fast DDS, `inprocess` with `schema_carriage=carried`)
+  delivers the schema with the data, so a subscriber that joined first decodes: conformance clause
+  1 (`SchemaBeforeDataAcrossHandoff`) for C++, two new `SubscriberArrowTests` for C#. The generated
+  row subscriber brings its own schema and works in any order. The package README scopes "declare
+  the publisher first" to the default `inprocess`, and `SubscriberArrow`'s comment no longer
+  promises more. **Declined:** documenting it without the reproduction.
+
+- **D-BIND-147 - every fenced code block in the package README is a snippet or explicitly exempt,
+  and the syntax is written down.** *LOCKED BY THE MAINTAINER 2026-10-21 (review Q3, with the
+  maintainer's addition).* A block is preceded by `<!-- snippet: NAME -->` (checked against the
+  consumer's region) or `<!-- snippet: none -->` (not test code); an unmarked block fails, and so
+  does a README with no snippet. The syntax is described in a maintainers' HTML comment at the top
+  of `dotnet/README.package.md` (invisible to package readers), a "Snippets" section of the
+  consumer's README and the checker's header. **Declined:** checking marked blocks only.
+
+- **D-BIND-148 - the Windows shim's dependencies are an exact allow-list.** *LOCKED BY THE
+  MAINTAINER 2026-10-21 (review Q4).* The measured list of D-BIND-134 (`KERNEL32`, `ADVAPI32`,
+  `WS2_32`, `MSWSOCK`, `IPHLPAPI`, `SHLWAPI`, `MSVCP140`, `MSVCP140_ATOMIC_WAIT`, `VCRUNTIME140`,
+  `VCRUNTIME140_1`) and `api-ms-win-crt-*`; a new DLL, or the debug runtime, fails and needs a
+  ruling. With it (review B1) both platforms fail on a list that parses empty or lacks
+  `KERNEL32.dll` / `libc.so.6`. **Declined:** the System32-presence heuristic.
+
+- **D-BIND-149 - the linux-x64 floors are asserted: measured equals stated.** *LOCKED BY THE
+  MAINTAINER 2026-10-21 (review Q5).* `scripts/shim_floors.env` holds `GLIBC_FLOOR` and
+  `GLIBCXX_FLOOR`; `check_shim_dependencies.sh` requires the shim's highest `GLIBC_` and
+  `GLIBCXX_` symbol versions to EQUAL them (a lower one fails too, so the README moves with it), and
+  `check_dotnet_packages.sh` requires the package README to state them. **Declined:** leaving it to
+  BIND-9b's floor work.
+
+- **D-BIND-150 - a re-run that rebuilds gets a version of its own:
+  `0.6.0-pr.129.<run>.<attempt>` when the attempt is above 1.** *LOCKED BY THE MAINTAINER
+  2026-10-21 (review Q6).* Computed once, as `detect-changes`' `bundle-version` output, because
+  `run_attempt` also rises on "re-run failed jobs", where the jobs that passed keep the first
+  attempt's outputs: one output keeps every job of a run on one version in both kinds of re-run.
+  **Declined:** documenting the reuse.
+
+- **D-BIND-151 - the consumer runs `fastdds` from the packaged shim, and no route accepts more than
+  was sent.** *LOCKED BY THE MAINTAINER 2026-10-21 (review Q8, with T9).* A fifth route publishes
+  and receives over `fastdds` in one process on its own domain, after a probe row shows discovery is
+  done; every queue-fed route waits briefly after the last row, so an extra or duplicate delivery
+  fails it. **Declined:** leaving `fastdds` to BIND-9b.
+
+- **D-BIND-152 - `COPYING`, the GPL-3.0 text the LGPL-3.0 incorporates, ships beside `LICENSE`
+  everywhere.** *LOCKED BY THE MAINTAINER 2026-10-21 (review Q9).* In the repository root, every
+  NuGet package, both gateway archives, the plugin's licence artifact and the bundle; checked where
+  `LICENSE` is. Fast DDS's own vendored third-party code and Apache-2.0 `NOTICE` files are a BIND-9b
+  item, verified before the first release. **Declined:** all three now.

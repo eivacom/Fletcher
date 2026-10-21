@@ -10,6 +10,15 @@ concurrency:
 on:
   workflow_call:
     inputs:
+      ref:
+        description: >-
+          The commit to check out, or empty for the default (the merge ref on a pull
+          request). ci.pr.yml passes the PR head when it builds the BIND-9a preview
+          bundle, so every artifact names one commit, the one the bundle names
+          (D-BIND-145; the preview-bundle job checks the two are one tree).
+        required: false
+        type: string
+        default: ''
       devcontainer-image:
         description: >-
           Pre-built devcontainer image reference (e.g.
@@ -53,6 +62,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.ref }}
           sparse-checkout: |
             gateway
             core
@@ -113,16 +123,18 @@ jobs:
       # where the licence texts live. It is set on this invocation alone so it
       # cannot influence what runtime_deploy bundles.
       #
-      # The repository's own LICENSE joins it: the gateway is LGPL-3.0-or-later,
+      # The repository's own LICENSE joins it, with COPYING, the GPL-3.0 text the
+      # LGPL-3.0 incorporates (D-BIND-152): the gateway is LGPL-3.0-or-later,
       # and that licence wants its text distributed with the binary just as the
       # third-party ones do. The root LICENSE is present despite the
       # sparse-checkout because cone mode always keeps top-level files.
-      - name: Stage LICENSE + THIRD-PARTY-LICENSES.txt into dist/
+      - name: Stage LICENSE, COPYING and THIRD-PARTY-LICENSES.txt into dist/
         shell: bash
         working-directory: gateway
         run: |
           conan install --requires="fletcher-gateway/[*, include_prerelease]" --deployer=deployers/third_party_licenses.py --deployer-folder=dist -c tools.graph:skip_binaries=False -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release
           cp ../LICENSE dist/LICENSE
+          cp ../COPYING dist/COPYING
 
       # Self-contained bundle: gateway.exe + the runtime DLLs beside it (the
       # Windows loader searches the exe's own directory first), so it runs with
@@ -147,7 +159,7 @@ jobs:
           # `test` sees stay relative and POSIX.
           rm -rf zipcheck
           7z x -y -ozipcheck "${GITHUB_WORKSPACE}/gateway-windows.zip" >/dev/null
-          for required in gateway.exe LICENSE THIRD-PARTY-LICENSES.txt; do
+          for required in gateway.exe LICENSE COPYING THIRD-PARTY-LICENSES.txt; do
             test -f "zipcheck/${required}" \
               || { echo "::error::gateway-windows.zip does not contain ${required}"; exit 1; }
           done
@@ -166,6 +178,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.ref }}
           sparse-checkout: |
             gateway
             core
@@ -226,13 +239,15 @@ jobs:
               # invocation alone so it cannot influence what runtime_deploy
               # bundles.
               #
-              # The repository LICENSE joins it: the gateway is
+              # The repository LICENSE joins it, with COPYING, the GPL-3.0 text the
+              # LGPL-3.0 incorporates (D-BIND-152): the gateway is
               # LGPL-3.0-or-later, and that licence wants its text distributed
               # with the binary just as the third-party ones do. The root LICENSE
               # is present despite the sparse-checkout because cone mode always
               # keeps top-level files.
               conan install --requires="fletcher-gateway/[*, include_prerelease]" --deployer=deployers/third_party_licenses.py --deployer-folder=dist -c tools.graph:skip_binaries=False -pr:a="$PROFILE"
               cp /workspace/LICENSE dist/LICENSE
+              cp /workspace/COPYING dist/COPYING
               # Self-contained bundle: because the gateway is an `application`
               # package, runtime_deploy flattens the exe (with its $ORIGIN rpath)
               # AND every runtime shared library it links into dist/, so the
@@ -249,7 +264,7 @@ jobs:
                 tar -czf "/workspace/$ARTIFACT_NAME" -C dist .
                 rm -rf /tmp/tarcheck && mkdir -p /tmp/tarcheck
                 tar -xzf "/workspace/$ARTIFACT_NAME" -C /tmp/tarcheck
-                for required in gateway LICENSE THIRD-PARTY-LICENSES.txt; do
+                for required in gateway LICENSE COPYING THIRD-PARTY-LICENSES.txt; do
                   test -f "/tmp/tarcheck/$required" \
                     || { echo "::error::$ARTIFACT_NAME does not contain $required"; exit 1; }
                 done
