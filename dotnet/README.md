@@ -1,5 +1,7 @@
 # Fletcher for .NET
 
+**Trying the bindings before they are released:** see [PREVIEW-TESTERS.md](PREVIEW-TESTERS.md).
+
 Four NuGet packages, one solution, one version — the managed half of round
 BIND. The C half is [`c-abi/`](../c-abi/README.md), the shim these packages call.
 

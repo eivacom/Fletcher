@@ -3,7 +3,9 @@
 //
 // The message the preview-bundle consumer publishes and subscribes (BIND-9a-2): a nested
 // message, a Timestamp, a repeated field and a map beside plain scalars, and a service
-// whose method the generated native and gateway pairs are named after.
+// whose method the generated native and gateway pairs are named after. The region between
+// the snippet markers is shown, verbatim, in dotnet/README.package.md (BIND-9a-4).
+// <snippet name="proto">
 syntax = "proto3";
 
 package preview.consumer;
@@ -25,6 +27,8 @@ message Fix {
   map<string, int32> tags = 6;
 }
 
+// One topic per method that takes a stream: preview.consumer/FixFeed/Report carries Fix rows.
 service FixFeed {
   rpc Report(stream Fix) returns (google.protobuf.Empty);
 }
+// </snippet>

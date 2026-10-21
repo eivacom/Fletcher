@@ -7,7 +7,7 @@
 #
 #   run.sh <unpacked bundle folder> [<work folder>]
 #
-# Copies dotnet/PreviewConsumer and proto/ into the work folder (outside any checkout, so
+# Copies dotnet/PreviewConsumer (with its fix.proto) into the work folder (outside any checkout, so
 # nothing of the repository's build applies), writes a nuget.config whose package source mapping
 # takes every Eiva.Fletcher* package from the bundle's nuget/ and nowhere else, restores into
 # an empty package cache, unpacks the bundle's gateway, then builds and runs the consumer
@@ -31,8 +31,8 @@ VERSION=$(sed -n 's/^version: //p' "$BUNDLE/VERSION")
 [ -n "$VERSION" ] || { echo "::error::$BUNDLE/VERSION names no version"; exit 1; }
 echo "preview bundle $VERSION"
 
-rm -rf "$WORK/dotnet" "$WORK/proto" "$WORK/gateway" "$WORK/plugin" "$WORK/packages"
-cp -r "$HERE/dotnet" "$HERE/proto" "$WORK/"
+rm -rf "$WORK/dotnet" "$WORK/gateway" "$WORK/plugin" "$WORK/packages"
+cp -r "$HERE/dotnet" "$WORK/"
 rm -rf "$WORK/dotnet/PreviewConsumer/bin" "$WORK/dotnet/PreviewConsumer/obj"
 mkdir -p "$WORK/gateway" "$WORK/plugin"
 
@@ -76,14 +76,14 @@ export NUGET_PACKAGES
 export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
 
 PROJECT=$(native "$WORK/dotnet/PreviewConsumer/PreviewConsumer.csproj")
-dotnet restore "$PROJECT" --configfile "$(native "$WORK/nuget.config")" -p:FletcherPreviewVersion="$VERSION"
+dotnet restore "$PROJECT" --configfile "$(native "$WORK/nuget.config")" -p:FletcherVersion="$VERSION"
 
 for tfm in net8.0 net10.0; do
   echo "── $tfm"
   dotnet run --project "$PROJECT" -c Release -f "$tfm" --no-restore \
-    -p:FletcherPreviewVersion="$VERSION" \
+    -p:FletcherVersion="$VERSION" \
     -p:FletcherPlugin="$(native "$PLUGIN")" \
-    -p:FletcherBundleProtoc="$(native "$BUNDLE/protoc")" \
+    -p:FletcherProtoInclude="$(native "$BUNDLE/protoc")" \
     -- "$(native "$GATEWAY")"
 done
 echo "preview bundle $VERSION: the consumer passed on every target framework"

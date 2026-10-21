@@ -146,6 +146,10 @@ jobs:
               - 'gateway/deployers/**'
               - 'scripts/check_shim_dependencies.sh'
               - 'scripts/check_dotnet_packages.sh'
+              # BIND-9a-4: the package README's snippets are checked against the
+              # consumer test's code.
+              - 'scripts/check_readme_snippets.py'
+              - 'integration-tests/preview-bundle-consumer/**'
               - '.github/workflows/ci.pr.yml'
               - '.github/workflows/ci.dotnet.yml'
               - '.github/workflows/ci.setup-devcontainer-image.yml'

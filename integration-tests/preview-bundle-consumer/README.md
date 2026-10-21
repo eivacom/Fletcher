@@ -12,13 +12,23 @@ gateway and plugin working together as shipped, on Linux and Windows.
   `Eiva.Fletcher*` package from the bundle's `nuget/` and from no other source, into an empty
   package cache; `Apache.Arrow` and `Google.Protobuf.Tools` (for `protoc`) come from nuget.org.
 - **Generate with the bundled plugin.** [`PreviewConsumer.csproj`](dotnet/PreviewConsumer/PreviewConsumer.csproj)
-  runs `protoc` with the bundle's `protoc-gen-fletcher` over [`proto/fix.proto`](proto/fix.proto)
-  (`csharp,csharp_gateway`: the model, the native pair and the gateway pair), with the bundle's
-  `protoc/` on the include path.
-- **Publish and subscribe natively** through `Eiva.Fletcher` over `inprocess`, and check that the
-  shim that answered is the one `Eiva.Fletcher.Interop` put under `runtimes/<rid>/native/`.
+  runs `protoc` with the bundle's `protoc-gen-fletcher` over
+  [`fix.proto`](dotnet/PreviewConsumer/fix.proto) (`csharp,csharp_gateway,csharp_accessor`: the
+  model, the native pair, the gateway pair and the Arrow accessor), with the bundle's `protoc/` on
+  the include path.
+- **Publish and subscribe natively** through `Eiva.Fletcher` over `inprocess`, row by row and as one
+  Arrow batch read through the generated accessor, and check that the shim that answered is the
+  one `Eiva.Fletcher.Interop` put under `runtimes/<rid>/native/`.
 - **Reach the bundled gateway** through `Eiva.Fletcher.GatewayClient`: the bundle's gateway is
-  started over `inprocess`, and the generated gateway pair carries the same rows across it.
+  started over `inprocess`, and the generated gateway pair carries the same rows across it, row by
+  row and as one batch.
+
+**The package README's code** (BIND-9a-4): every code block in
+[`dotnet/README.package.md`](../../dotnet/README.package.md) is a region of `fix.proto`,
+`PreviewConsumer.csproj` or `Program.cs` between `<snippet name="...">` markers, and
+[`scripts/check_readme_snippets.py`](../../scripts/check_readme_snippets.py), run by `ci.dotnet`'s
+pack job, fails when the two differ or one is missing; so the walkthrough every package carries is
+code this test compiles and runs.
 
 Each route must deliver exactly the rows sent, field for field (a nested message, a Timestamp, a
 repeated field, a map); the program's exit code is the verdict. It runs once per target framework

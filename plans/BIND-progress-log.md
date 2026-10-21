@@ -1327,3 +1327,19 @@ Wiring the commit into the README showed that a pull request's CI builds the hea
 
 **Lesson.** "The commit this was built from" is not `head.sha` on a `pull_request` run; it is a
 merge nobody named. Where a commit is a promise (here, the corresponding source), check it.
+
+**9a-3, the tester note.** `dotnet/PREVIEW-TESTERS.md` tells a tester what the bundle holds, where
+the newest one is (the branch's successful `ci.pr` runs, or two `gh` commands), the three steps of
+using it, the platform requirements, and what to do when `0.6.0-alpha` ships; PR #129's
+description points to it. Both download routes were followed exactly as written before it was
+committed.
+
+**9a-4, a walkthrough that cannot rot.** At the maintainer's request the package README now walks
+from a `.proto` to publishing and subscribing, natively and through the gateway, row by row and in
+Arrow batches. Every code block in it is a marked region of the bundle consumer, which CI compiles
+against the bundled packages and runs on Linux and Windows, and a check fails the pack when a block
+and its region differ. Writing the Arrow-batch snippet found an ordering rule nobody had written
+down: an Arrow subscriber needs the topic's publisher to exist first, or every row is dropped.
+
+**Lesson.** Documentation code that is executed finds what reading the API does not: the first
+honest snippet for the batch route was wrong in a way no reviewer would have seen.

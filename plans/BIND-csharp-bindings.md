@@ -862,7 +862,7 @@ Kind: 🟪 spec · 🟦 impl · 🔬 proof · ⚙ pipelines · 📓 docs
 | BIND-7 | Arrow view + accessor emitters (`csharp_accessor`) + capstone third arm | B | 🟦 | BIND-6, BIND-3 | `accessor-capstone` C# arm `observed == expected`; `StructArray` windowing fixture at non-zero offset | 🟢 (closed on CI at `268dceb`, `ci.pr` 38746753749, after a fresh-context review whose 2 BLOCKERs were fixed and 5 questions ruled, D-BIND-103 to 107; rulings during the round D-BIND-94 to 102; the minor debt carried as known, listed in BIND-7's section) |
 | BIND-T | TS `Publisher`/`Subscriber` emitter | C | 🟦 | — | `TsVisitor.DescriptorByteIdentical` still green + new emitter cases | ⚪ |
 | BIND-8 | `Eiva.Fletcher.GatewayClient` (managed port; the codec exception) | C | 🟦 | — | Bucket 2 green (the Part 4 file set, not a count); `Package.GatewayClientHasNoRuntimesFolder` | 🟢 (closed on CI at `750d79d`, `ci.pr` 39375700668, 56/56, every side workflow green, after a fresh-context review whose 5 BLOCKERs were fixed and 12 questions ruled, D-BIND-121 to 132; rulings during the round D-BIND-108 to 120, and D-BIND-133 (slice 8f, batched delivery); one finding after the review fixed (A1); performance carried as known debt, listed in BIND-8's section) |
-| BIND-9a | A preview for testers (split from BIND-9 2026-10-20): one bundle per push to this branch, a 30-day CI artifact with the four NuGet packages (shim for both RIDs), the gateway binaries and the plugin binaries; nothing released before the merge (D-BIND-134 to 143) | D | ⚙ | BIND-3, BIND-8 | A consumer test using only the bundle publishes natively, generates code with the bundled plugin and reaches the bundled gateway, on Linux and Windows; `Interop` carries exactly the two shims; licence files in every package | 🔴 (rulings D-BIND-134 to 141, 2026-10-20; 142, 143, 2026-10-21) |
+| BIND-9a | A preview for testers (split from BIND-9 2026-10-20): one bundle per push to this branch, a 30-day CI artifact with the four NuGet packages (shim for both RIDs), the gateway binaries and the plugin binaries; nothing released before the merge (D-BIND-134 to 144) | D | ⚙ | BIND-3, BIND-8 | A consumer test using only the bundle publishes natively, generates code with the bundled plugin and reaches the bundled gateway, on Linux and Windows; `Interop` carries exactly the two shims; licence files in every package | 🔴 (rulings D-BIND-134 to 141, 2026-10-20; 142 to 144, 2026-10-21) |
 | BIND-9b | The rest of BIND-9: publish to `nuget.eiva.com` from a self-hosted job (D-BIND-28), size budget, glibc floor, `Eiva.Fletcher.Protoc`, NativeAOT on Windows and `fastdds`, C#-native cross-language rows | D | ⚙ | BIND-9a, all for release | `cd.dotnet.yml` dry run; packed-size check; asset-isolation + licence check | ⚪ |
 | BIND-10 | Docs, TD-009, archive to `docs/archive/BIND/` | D | 📓 | all | docs review | ⚪ |
 
@@ -2228,7 +2228,7 @@ upgrade is planned separately. The change was made in a session of its own and t
 **As** a maintainer, **I want** the .NET tier built, tested and published by the
 same machinery as everything else, **so that** it cannot rot.
 
-**Split 2026-10-20 into BIND-9a and BIND-9b** (rulings D-BIND-134 to 143). Testers are
+**Split 2026-10-20 into BIND-9a and BIND-9b** (rulings D-BIND-134 to 144). Testers are
 waiting for packages, so **BIND-9a** delivers a preview first; **BIND-9b** is everything in the
 acceptance below that 9a does not do.
 
@@ -2268,7 +2268,9 @@ before the round merges.
 - **Slices:** 9a-0 the shim for both RIDs in one pack, the licence files and the package checks;
   9a-1 the bundle job in `ci.pr` (dotnet, gateway and protoc built on every push to this branch,
   the per-build version, the 30-day artifact with `README-preview.md`); 9a-2 package READMEs and
-  the consumer tests over the bundle; 9a-3 a short tester note pointing at the newest bundle.
+  the consumer tests over the bundle; 9a-3 a short tester note pointing at the newest bundle;
+  9a-4 (added 2026-10-21, D-BIND-144) the package README's walkthrough from a `.proto` to publish
+  and subscribe, its code checked against the consumer test.
   `cd.dotnet.yml` and the feed are BIND-9b.
 - **9a-0 done on CI 2026-10-20** (`9d214c9`, `ci.pr` 39490321322, 57/57, every side workflow
   green, first attempt): `ci.dotnet` gains a `pack` job that needs both legs. Each leg checks its
@@ -2341,6 +2343,33 @@ before the round merges.
   (`Interop` without the Linux shim: `DllNotFoundException`; no `Eiva.Fletcher.Model` in the bundle:
   NU1101, nuget.org not considered); a real four-package pack passes the README checks, and four
   mutants fail them (another commit, no commit, a floor missing, no README); actionlint clean.
+- **9a-3 written 2026-10-21** (CI pending): the tester note, `dotnet/PREVIEW-TESTERS.md`, linked
+  from `dotnet/README.md` and from a "For testers" section at the top of PR #129's description
+  (ruled by the maintainer: the repository file, versioned with the branch, plus the PR, where the
+  download sits). What the bundle holds, where to get the newest one (the `ci.pr` runs for the
+  branch filtered to successful ones, the run's Summary > Artifacts; or `gh run list` and
+  `gh run download`), the three steps of `README-preview.md` in short, the platform requirements,
+  moving to a newer bundle, what to do when `0.6.0-alpha` ships, and where to report problems.
+  Both download routes were followed as written and fetched `pr.129.338`. The note goes with the
+  bundle job at the merge (BIND-9b).
+- **9a-4 written 2026-10-21** (CI pending; asked for by the maintainer while reviewing 9a-3,
+  D-BIND-144): `dotnet/README.package.md` gains "From a `.proto` to publish and subscribe", six
+  steps with seven code blocks: the `.proto`, the package references, the MSBuild target that runs
+  `protoc` with the plugin (options explained), rows natively (providers by name), Arrow batches
+  through `SubscriberArrow` and the generated accessor, and rows and batches through the gateway.
+  Each block is a `<snippet name="...">` region of the consumer, which was reshaped for it: one
+  function per route, `fix.proto` moved beside the project, `csharp_accessor` generated, the
+  properties renamed for a reader (`FletcherVersion`, `FletcherPlugin`, `FletcherProtoInclude`).
+  The consumer now checks four routes, two of them new (native Arrow batch, gateway batch).
+  `scripts/check_readme_snippets.py` compares block and region and runs in `ci.dotnet`'s pack job
+  before the pack; `ci.pr`'s dotnet filter covers it and the consumer. **Found by writing the
+  snippet:** an Arrow subscriber that subscribes before the topic's publisher exists gets no
+  schema, and its window is flushed as `null` with every row dropped; the snippet declares the
+  publisher first, the README says so, and the `SchemaArrival` is disposed. Rehearsed over bundle
+  `pr.129.338`: four routes green on Windows (this host) and Linux (devcontainer), .NET 8 and 10;
+  the checker passes (7 snippets) and fails on four mutants (a README line edited, a snippet not
+  shown, an unknown name, the code edited); the packed README is byte-identical to the source with
+  version and commit filled in; the README pack checks pass; `dotnet format` and actionlint clean.
 
 **BIND-9b — the rest**, the acceptance below: the `nuget.eiva.com` publish job and its
 self-hosted runner, the packed-size budget, lowering the glibc floor if wanted, the Windows and
@@ -2364,7 +2393,8 @@ from `main` after the merge:**
   also publishing `Eiva.Fletcher.Protoc`. Each workflow's dry run is green before its tag.
 - **The preview bundle retired:** the `ci.pr` bundle job and its "build dotnet, gateway and
   protoc on every push to this branch" condition are removed in the merge, so `main` keeps only
-  the path-filtered CI.
+  the path-filtered CI; with them go the `preview-consumer` job (or it is turned on the released
+  packages), `scripts/preview/` and the tester note `dotnet/PREVIEW-TESTERS.md` (9a-3).
 - **Previews cleared before the first `-alpha`:** the remaining bundles deleted and testers told to
   clear their NuGet caches (D-BIND-138).
 

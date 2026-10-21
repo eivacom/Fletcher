@@ -329,6 +329,15 @@ jobs:
             dotnet
             .github
             scripts
+            integration-tests/preview-bundle-consumer
+
+      # BIND-9a-4: the package README's code is the consumer test's code, region for region,
+      # so what the README shows compiles and runs (the preview-consumer job runs it).
+      - name: Check the README's snippets
+        run: |
+          C=integration-tests/preview-bundle-consumer/dotnet/PreviewConsumer
+          python3 scripts/check_readme_snippets.py dotnet/README.package.md \
+            "$C/fix.proto" "$C/PreviewConsumer.csproj" "$C/Program.cs"
 
       - name: Pull devcontainer image
         uses: ./.github/actions/pull-devcontainer-image

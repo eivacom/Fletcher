@@ -3529,7 +3529,7 @@ public.
   an older image) stays BIND-9b work (D-BIND-41). **Declined:** lowering the floor before the first
   preview.
 
-Two more, ruled 2026-10-21 while slice 9a-2 was built:
+Three more, ruled 2026-10-21 while slices 9a-2 and 9a-4 were built:
 
 - **D-BIND-142 - the four packages carry ONE README, `dotnet/README.package.md`, packed into each
   as its `README.md` (`PackageReadmeFile`), with the version and the commit filled in at pack time.**
@@ -3548,3 +3548,15 @@ Two more, ruled 2026-10-21 while slice 9a-2 was built:
   them and fails when they differ, asking for `main` to be merged into the branch. Found while
   9a-2 wired the commit into the README; true of every bundle so far (`main` has not moved since
   the branch point). **Declined:** naming both commits; recording it and changing nothing.
+
+- **D-BIND-144 - the package README walks from a `.proto` to publish and subscribe, and every code
+  block in it is code a test compiles and runs.** *LOCKED BY THE MAINTAINER 2026-10-21 (BIND-9a-4).*
+  `dotnet/README.package.md` (D-BIND-142) shows, in order: the `.proto`, the package references,
+  the MSBuild target that runs `protoc` with the plugin, rows published and received natively,
+  the same as Arrow batches through `SubscriberArrow` and the generated accessor, and rows and
+  batches through the gateway with the generated gateway pair. Each block is a region, between
+  `<snippet name="...">` markers, of the preview-bundle consumer's `fix.proto`, project or
+  program, which CI builds against the bundled packages and runs on Linux and Windows;
+  `scripts/check_readme_snippets.py`, run before the pack, fails when a block and its region
+  differ or either is missing. A compact walkthrough, not the full guide, which stays BIND-10's.
+  **Declined:** snippets copied by hand, accepting drift until BIND-10.
