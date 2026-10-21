@@ -2316,7 +2316,10 @@ before the round merges.
   (protobuf, zlib); `VERSION` naming the commit; the README with its placeholders filled. In the
   devcontainer the bundled plugin generated C# (`.fletcher.cs`, `.native.cs`, `.gateway.cs`) from a
   small `.proto`, and the bundled gateway started (`READY`).
-- **9a-2 built and rehearsed 2026-10-21** (CI pending): **the package README** (D-BIND-142),
+- **9a-2 done on CI 2026-10-21** (`5e41f62`, `ci.pr` 39567194940, 60/60, every side workflow
+  green, first attempt; on CI the consumer passed on `ubuntu-24.04` and `windows-2022` with .NET
+  8.0.32 and 10.0.13 against bundle `pr.129.338`, the shim loaded from the package's
+  `runtimes/<rid>/native/`, and all four packages passed the README check): **the package README** (D-BIND-142),
   `dotnet/README.package.md`, packed into all four packages by `dotnet/Directory.Build.targets` as
   `README.md` with the version and the commit (`FletcherSourceCommit`, passed by `ci.dotnet`'s pack
   job: the PR head, or the pushed commit) filled in: which package does what, the floors
