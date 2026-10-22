@@ -1973,7 +1973,7 @@ the maintainer's choice, from `plans/reviews/BIND-7-codereview.md`:
   gained `SubscribeBatchedAsync` (windows flushed by row count, deadline and close, as native
   `SubscriberArrow`); `gateway-client-ts` still delivers row by row. BIND-T decides whether its
   client and pair gain the same shape.
-- **The null refusal, a parity item from D-BIND-156 (2026-10-23).** The two C++ codecs and the
+- **The null refusal, a parity item from D-BIND-156 (2026-10-22).** The two C++ codecs and the
   C# gateway client refuse a batch with a null in a non-nullable field (its parent present) at
   bind, naming the field and the row; `gateway-client-ts` still encodes it, and a C++ subscriber
   behind the gateway then reads a value that is not there. BIND-T gives it the same refusal, with
@@ -2447,7 +2447,9 @@ preparation, a fresh-context review and the close.
   otherwise fail. Rehearsed in the devcontainer: exports unchanged, the stripped shim self-contained
   at the stated floors, `Fletcher.Tests` 423/423 on it, the packages checked, a ceiling mutant
   caught, the folder assembled naming its branch; actionlint clean.
-- **9b-2 built and rehearsed 2026-10-23** (CI pending; D-BIND-156, widened by the maintainer to the
+- **9b-2 done on CI 2026-10-22** (`6ca8ed2` + `553cfb3`, `ci.pr` 39852936786, 60/60, every workflow
+  green; `6ca8ed2` alone failed `ci.check-test-matrix`: `test_codec_edge` grew to 30 cases and the
+  bucket 1 tables still said 23, fixed in `553cfb3`; D-BIND-156, widened by the maintainer to the
   C# gateway client): a null in a field the schema marks not nullable, where its parent value is
   present, is refused before anything is encoded, naming the field's path and (for a batch) the
   row. **Three codecs, one rule:** `c-abi`'s `BoundRows` refuses the whole batch at bind (so C#'s
