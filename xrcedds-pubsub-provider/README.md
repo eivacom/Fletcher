@@ -348,7 +348,7 @@ ctest --test-dir build/Debug --output-on-failure -V
 
 ```python
 def requirements(self):
-    self.requires("fletcher-xrcedds-pubsub-provider/0.5.1-alpha")
+    self.requires("fletcher-xrcedds-pubsub-provider/0.5.2-alpha")
 ```
 
 Install dependencies:

@@ -112,7 +112,7 @@ conan create . --build=missing -pr:a=../.conan-profiles/Linux-gcc13-x86_64-Relea
 
 ```python
 def requirements(self):
-    self.requires("fletcher-arrow-bridge/0.5.1-alpha")
+    self.requires("fletcher-arrow-bridge/0.5.2-alpha")
 ```
 
 ```cmake
