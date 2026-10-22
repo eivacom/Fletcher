@@ -626,10 +626,10 @@ flowchart LR
         S2["fletcher-pubsub-arrow"]
         S3["Fast DDS driver"]
     end
-    subgraph dotnet[".NET consumer (built - preview bundle per push at BIND-9a, D-BIND-139, feed at BIND-9b)"]
+    subgraph dotnet[".NET consumer (built - preview bundle per push until the merge, D-BIND-139, then GitHub Release assets and the nuget.eiva.com feed, D-BIND-153)"]
         D1["Eiva.Fletcher<br/>codec + Arrow tier + pub/sub"]
         D2["Eiva.Fletcher.Interop<br/>native assets per RID"]
-        D3["Eiva.Fletcher.Protoc<br/>build time only: the plugin<br/>protoc component, D-BIND-71"]
+        D3["Eiva.Fletcher.Protoc<br/>build time only: the plugin and<br/>fletcher/options.proto, also for Grpc.Tools<br/>projects, D-BIND-71, D-BIND-158"]
         D4["Eiva.Fletcher.Model<br/>Apache.Arrow only: lossless<br/>Timestamp and Duration, D-BIND-74"]
     end
     subgraph browser["Browser / WASM"]
@@ -650,7 +650,9 @@ flowchart LR
 
 **`Eiva.Fletcher.Protoc` is build-time only** (D-BIND-71): it bundles the plugin
 binary and sets `$(FletcherProtocPlugin)`, as `fletcher-protoc::plugin` does for
-C++ and `@eiva/protoc-gen-fletcher` for TypeScript. It is released by
+C++ and `@eiva/protoc-gen-fletcher` for TypeScript. It also carries `fletcher/options.proto`
+(`$(FletcherProtoInclude)`) and wires it into projects that compile `.proto` files with
+`Grpc.Tools`, so standard gRPC code can use Fletcher's options (D-BIND-158). It is released by
 `cd.protoc.yml`, not with the four dotnet packages, and nothing links it at run
 time. It ships in BIND-9b; until the merge, testers generate code with the plugin binaries in
 BIND-9a's per-push preview bundle (D-BIND-136).

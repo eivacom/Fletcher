@@ -1361,3 +1361,10 @@ written for the case.
 before it were timing tests nobody had touched, one now given room on a slow runner and one, which
 92 local runs could not reproduce, on the PR's watch list. The re-runs themselves confirmed one of
 the rulings: a partial re-run kept the run's version, as D-BIND-150 meant.
+
+**BIND-9b, the rulings.** Eight questions, one at a time (D-BIND-153 to 160). Two were reshaped
+with the maintainer on the way: `options.proto` has to reach standard gRPC projects too, so the
+protoc package wires itself into `Grpc.Tools`; and a test of released packages could only report a
+broken release, so the consumer test stays a test of the packed packages, on every pull request and
+as a gate before anything is published. Measuring for the size question showed the Linux shim
+carries a 3.5 MB symbol table nothing needs; it will ship stripped.

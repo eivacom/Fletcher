@@ -863,7 +863,7 @@ Kind: 🟪 spec · 🟦 impl · 🔬 proof · ⚙ pipelines · 📓 docs
 | BIND-T | TS `Publisher`/`Subscriber` emitter | C | 🟦 | — | `TsVisitor.DescriptorByteIdentical` still green + new emitter cases | ⚪ |
 | BIND-8 | `Eiva.Fletcher.GatewayClient` (managed port; the codec exception) | C | 🟦 | — | Bucket 2 green (the Part 4 file set, not a count); `Package.GatewayClientHasNoRuntimesFolder` | 🟢 (closed on CI at `750d79d`, `ci.pr` 39375700668, 56/56, every side workflow green, after a fresh-context review whose 5 BLOCKERs were fixed and 12 questions ruled, D-BIND-121 to 132; rulings during the round D-BIND-108 to 120, and D-BIND-133 (slice 8f, batched delivery); one finding after the review fixed (A1); performance carried as known debt, listed in BIND-8's section) |
 | BIND-9a | A preview for testers (split from BIND-9 2026-10-20): one bundle per push to this branch, a 30-day CI artifact with the four NuGet packages (shim for both RIDs), the gateway binaries and the plugin binaries; nothing released before the merge (D-BIND-134 to 152) | D | ⚙ | BIND-3, BIND-8 | A consumer test using only the bundle publishes natively, generates code with the bundled plugin and reaches the bundled gateway, on Linux and Windows; `Interop` carries exactly the two shims; licence files in every package | 🟢 (closed on CI at `133631a`, `ci.pr` 39592797595, 60/60 on its third attempt after two one-off Windows timing failures in unchanged tests, every side workflow green, after a fresh-context review whose 6 BLOCKERs were fixed and 10 questions ruled, D-BIND-145 to 152; rulings during the item D-BIND-134 to 144; the review's deferred items listed in BIND-9b) |
-| BIND-9b | The rest of BIND-9: publish to `nuget.eiva.com` from a self-hosted job (D-BIND-28), size budget, glibc floor, `Eiva.Fletcher.Protoc`, NativeAOT on Windows and `fastdds`, C#-native cross-language rows | D | ⚙ | BIND-9a, all for release | `cd.dotnet.yml` dry run; packed-size check; asset-isolation + licence check | ⚪ |
+| BIND-9b | The rest of BIND-9: publish to `nuget.eiva.com` from a self-hosted job (D-BIND-28), size budget, glibc floor, `Eiva.Fletcher.Protoc`, NativeAOT on Windows and `fastdds`, C#-native cross-language rows | D | ⚙ | BIND-9a, all for release | `cd.dotnet.yml` dry run; packed-size check; asset-isolation + licence check | 🔴 (rulings D-BIND-153 to 160, 2026-10-22; slices 9b-0 to 9b-8) |
 | BIND-10 | Docs, TD-009, archive to `docs/archive/BIND/` | D | 📓 | all | docs review | ⚪ |
 
 ---
@@ -2410,6 +2410,19 @@ the plugin's notice compared across platforms and attached to `cd.protoc`'s rele
 package), a lockfile with the release, and a vendored-licence check for the gateway (review T12,
 T13, T14, M6, M7, L14).
 
+**BIND-9b rulings, 2026-10-22** (D-BIND-153 to 160, asked one at a time): the release never waits
+on the self-hosted runner, as `cd.dotnet` always attaches the packages to the GitHub Release and
+the feed push is a job of its own (153); Ubuntu 24.04 and later only, so the Linux floor stays
+(154); the MSVC runtime stays dynamic (155); the C++ codec refuses a null in a non-nullable column
+(156); a 12 MB packed ceiling on `Interop`, the Linux shim stripped, N-10 accepted (157);
+`Eiva.Fletcher.Protoc` carries `options.proto` and wires it into `Grpc.Tools` projects (158);
+after the merge the consumer test runs on the PACKED packages, in `ci.pr` and as a gate in
+`cd.dotnet` before anything is published (159). **Slices (160):** 9b-0 the rulings; 9b-1
+packaging hardening; 9b-2 the codec's null refusal; 9b-3 NativeAOT on Windows and over
+`fastdds`; 9b-4 the C#-native cross-language lane; 9b-5 `Eiva.Fletcher.Protoc`; 9b-6
+`cd.dotnet.yml`; 9b-7 the licence research and the 9a review's remaining debts; 9b-8 the merge
+preparation, a fresh-context review and the close.
+
 **How test builds reach testers during development, and what changes at the merge** (recorded
 2026-10-20 at the maintainer's request, D-BIND-137 to 139). Until PR #129 merges, the per-push
 preview bundle is the ONLY way anything built here reaches a tester: a 30-day CI artifact, never
@@ -2446,8 +2459,9 @@ from `main` after the merge:**
 - **Licence files**: `LICENSE` + graph-derived `THIRD-PARTY-LICENSES.txt` staged
   every run via the #127 deployer; pack fails if either is missing. The
   **asset-isolation check** for `GatewayClient` rides in the same step.
-- The **packed-size budget** for the shim.
-- **The glibc floor for `linux-x64`, stated here (D-BIND-41, moved from BIND-3).**
+- The **packed-size budget** for the shim. **RULED 2026-10-22 (D-BIND-157): 12 MB packed for `Interop`,
+  the Linux shim stripped, N-10 accepted.**
+- **The glibc floor for `linux-x64`, stated here (D-BIND-41, moved from BIND-3).** **RULED 2026-10-22 (D-BIND-154): Ubuntu 24.04 and later only; the floor stays glibc 2.38 and `GLIBCXX_3.4.32`, asserted by D-BIND-149.**
   The number is not guessed: `ci.c-abi.yml`'s Linux leg prints the highest
   `GLIBC_x.y` the built shim references, which is the oldest distribution that can
   load it, on every run. State THAT number in the package README, and decide
@@ -2459,7 +2473,7 @@ from `main` after the merge:**
   `runtimes/linux-x64/native/` is taken as-is or not at all, and .NET supports
   distributions older than this repository's build image — so a consumer can be
   fully supported by Microsoft and still fail at the first P/Invoke.
-- **The MSVC CRT: dynamic or static, decided here (D-BIND-38, moved from BIND-3).**
+- **The MSVC CRT: dynamic or static, decided here (D-BIND-38, moved from BIND-3).** **RULED 2026-10-22 (D-BIND-155): dynamic, the 14.40+ redistributable a stated requirement.**
   The question is a packaging one — whether a consumer needs the VC++
   redistributable on the target machine — and it is settled with **evidence** about
   what the .NET runtime's own install already guarantees, not by assumption. Static
@@ -2484,7 +2498,8 @@ from `main` after the merge:**
   is encoded as given in BOTH languages: no codec path checks a column's nullability,
   and C++'s generated decoder then reads a value that is not there. Decide here
   whether the codec refuses such a batch (in C++, for every binding) or the contract
-  is documented as the caller's; BIND-10 documents whichever is ruled.
+  is documented as the caller's; BIND-10 documents whichever is ruled. **RULED 2026-10-22
+  (D-BIND-156): the C++ codec refuses it, naming the column.**
 - **Cross-language pub/sub, the C#-native rows (ruled 2026-10-14, at BIND-6's close).** A lane of
   its own, on Linux and Windows, in which the GENERATED native pairs exchange rows over Fast DDS
   across processes: C# → C++ and C++ → C#; C# → TypeScript and TypeScript → C# through the gateway;
@@ -2503,7 +2518,8 @@ from `main` after the merge:**
   its own on D-BIND-28's self-hosted runner. Settle here: how `Google.Protobuf.Tools` exposes
   protoc, and whether the package also carries `fletcher/options.proto` with an
   include property, as the C++ locator does. A consumer-shaped test builds a project
-  from the packed package alone. **Three more, from Oliver Monberg-Jensen's review on
+  from the packed package alone. **RULED 2026-10-22 (D-BIND-158): it carries `options.proto`
+  and wires it into `Grpc.Tools` projects; no hard dependency on either tools package.** **Three more, from Oliver Monberg-Jensen's review on
   ADO 18789 (comment 23089, 2026-09-21), each checked against the tree 2026-09-29:**
   * **The executable bit.** NuGet extraction is reported not to keep it, so on Linux
     the `build/*.props` makes the plugin executable before protoc runs. The

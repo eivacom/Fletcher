@@ -878,6 +878,16 @@ dependency lists and asserted floors (D-BIND-148, 149); one version per re-run (
 `fastdds` route from the packaged shim (D-BIND-151); and the GPL-3.0 text beside the LGPL
 everywhere (D-BIND-152).
 
+**BIND-9b, the rest (rulings 2026-10-22, D-BIND-153 to 160).** The release never waits on the
+self-hosted runner: `cd.dotnet` attaches the packages to the GitHub Release and pushes to
+`nuget.eiva.com` from a job of its own once the runner exists. The platforms stay Ubuntu 24.04 and
+later (glibc 2.38, `GLIBCXX_3.4.32`) and the Windows VC++ redistributable 14.40 or newer. The C++
+codec refuses a null in a non-nullable column, for every binding. `Interop` gets a 12 MB packed
+ceiling and a stripped Linux shim. `Eiva.Fletcher.Protoc` carries `options.proto` for Fletcher's
+plugin and for `Grpc.Tools` alike. After the merge the consumer test keeps running on the packed
+packages, on every pull request and as a gate before a release is published. Nine slices, 9b-0
+to 9b-8.
+
 **BIND-T, BIND-8, BIND-9, BIND-10** — as in the 2026-08-31 plan, with BIND-9
 carrying the LGPL notice text and the packaging statement (§6 P-1), and BIND-10
 adding **TD-009** (TD-008 is now taken by the seam).

@@ -3630,3 +3630,73 @@ wording):
   NuGet package, both gateway archives, the plugin's licence artifact and the bundle; checked where
   `LICENSE` is. Fast DDS's own vendored third-party code and Apache-2.0 `NOTICE` files are a BIND-9b
   item, verified before the first release. **Declined:** all three now.
+
+## Rulings of 2026-10-22 — BIND-9b, the rest of BIND-9
+
+Asked one at a time, each with a recommendation (draft and measurements in the session notes).
+Measured first: `Eiva.Fletcher.Interop` is 8.6 MB packed, of which the Linux shim is 5.4 MB and the
+Windows shim 3.1 MB compressed; the Linux shim is 14.6 MB unpacked, 3.5 MB of it a symbol table;
+glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) and
+`GLIBCXX_3.4.32` from one GCC 13 iostream symbol.
+
+- **D-BIND-153 - the release never waits on the self-hosted runner.** *LOCKED BY THE MAINTAINER
+  2026-10-22 (BIND-9b Q1).* `cd.dotnet.yml` packs on a GitHub-hosted runner and attaches the four
+  `.nupkg` and their `.snupkg` to the GitHub Release on every tag; the `nuget.eiva.com` push is a
+  job of its own on the self-hosted runner with `NUGET_EIVA_API_KEY` (D-BIND-28), which runs once
+  the runner exists (re-run for a release cut before it). Until then consumers use the Release
+  assets as a local package source. So the merge of PR #129 never waits on admin setup.
+  **Declined:** publishing to the feed only, which makes the runner a precondition of the merge.
+
+- **D-BIND-154 - Ubuntu 24.04 and later only: the linux-x64 floor stays glibc 2.38 and
+  `GLIBCXX_3.4.32`.** *LOCKED BY THE MAINTAINER 2026-10-22 (BIND-9b Q2; answers D-BIND-41).* No
+  older build image and no second compiler. Recorded for later, should older distributions matter:
+  GCC 12 alone lowers only the libstdc++ floor (to `3.4.30`), not glibc; linking libstdc++ and
+  libgcc statically and building on an older image would give glibc 2.34 (Ubuntu 22.04, Debian 12,
+  RHEL 9). **Declined:** lowering the floor.
+
+- **D-BIND-155 - the MSVC runtime stays dynamic.** *LOCKED BY THE MAINTAINER 2026-10-22 (BIND-9b
+  Q3; confirms D-BIND-38 at BIND-9).* The Visual C++ 2015-2022 redistributable, 14.40 or newer,
+  stays a stated requirement. **Declined:** the static CRT (a from-source rebuild of the chain, a
+  bigger shim, CRT fixes only by reshipping, the two-heaps hazard).
+
+- **D-BIND-156 - the C++ codec refuses a batch with a null in a non-nullable column.** *LOCKED BY
+  THE MAINTAINER 2026-10-22 (BIND-9b Q4; D-BIND-92's parked half).* At bind/encode, for every
+  binding, nested fields, list elements and map keys included, with an error naming the column;
+  tests in C++ and C#. A caller who builds a `RecordBatch` by hand can no longer have a C++ decoder
+  read a value that is not there. **Declined:** documenting it as the caller's contract.
+
+- **D-BIND-157 - a packed-size ceiling of 12 MB on `Eiva.Fletcher.Interop`, the Linux shim
+  stripped, the Windows export surface accepted.** *LOCKED BY THE MAINTAINER 2026-10-22 (BIND-9b
+  Q5).* The pack job fails above 12 MB; the Linux shim ships without its symbol table (14.6 to
+  11.1 MB unpacked, the package to about 7.7 MB); N-10's 3531 Windows exports (ConanCenter's
+  fast-dds static build) are recorded and revisited only if the ceiling is hit. **Declined:**
+  owning a fast-dds build now.
+
+- **D-BIND-158 - `Eiva.Fletcher.Protoc` carries `fletcher/options.proto`, and wires it into
+  `Grpc.Tools` projects.** *LOCKED BY THE MAINTAINER 2026-10-22 (BIND-9b Q6, revised with the
+  maintainer so standard gRPC can use the options).* `$(FletcherProtoInclude)` names its folder;
+  the package's build targets add that folder to every `<Protobuf>` item's `AdditionalImportDirs`
+  and add `options.proto` as a `<Protobuf GrpcServices="None">` item, so its C# descriptor is
+  compiled, only in a project with `Protobuf` items and with an opt-out
+  (`FletcherCompileOptionsProto=false`); `options.proto` gains
+  `option csharp_namespace = "Eiva.Fletcher.Protobuf"`; no hard dependency on
+  `Google.Protobuf.Tools` or `Grpc.Tools`. A `Grpc.Tools` consumer test proves it beside the
+  Fletcher-generation one. **Declined:** a separate options package.
+
+- **D-BIND-159 - after the merge the consumer test tests the PACKED packages, before anything is
+  published.** *LOCKED BY THE MAINTAINER 2026-10-22 (BIND-9b Q7, revised with the maintainer: a
+  test of released packages could only report a broken release).* In `ci.pr`, on every relevant
+  pull request, against the `dotnet` lane's freshly packed files from a local folder, on both
+  runners (the 30-day bundle artifact goes); and as a gate in `cd.dotnet.yml`, which packs, runs
+  the test on exactly those files, and only then attaches them to the Release and runs the feed
+  push. The README's snippet check keeps its program in both. **Declined for now:** a
+  post-publish smoke check against the feed; retiring the test with the bundle.
+
+- **D-BIND-160 - BIND-9b's slices, in this order.** *LOCKED BY THE MAINTAINER 2026-10-22 (BIND-9b
+  Q8).* 9b-0 these rulings; 9b-1 packaging hardening (the ceiling, the stripped shim, the consumer
+  test on packed packages in `ci.pr`); 9b-2 the codec's null refusal; 9b-3 NativeAOT on Windows
+  and over `fastdds`; 9b-4 the C#-native cross-language lane; 9b-5 `Eiva.Fletcher.Protoc`; 9b-6
+  `cd.dotnet.yml` (Release assets, the feed-push job, the gate, a dry run); 9b-7 the licence
+  research from the 9a review and its remaining debts; 9b-8 the merge preparation (the lockstep
+  bump to `0.6.0-alpha` and the bundle job's removal, staged), then a fresh-context review and the
+  close.
