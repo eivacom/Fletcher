@@ -1356,3 +1356,8 @@ showed it is the seam's documented schema-mode rule, now tested in C# and stated
 **Lesson.** A check is only as good as its failing case: the dependency check, the snippet
 checker and the README check each passed on input that should have failed, until a mutant was
 written for the case.
+
+**BIND-9a closed.** The review's fixes went green on CI at the third attempt; the two failures
+before it were timing tests nobody had touched, one now given room on a slow runner and one, which
+92 local runs could not reproduce, on the PR's watch list. The re-runs themselves confirmed one of
+the rulings: a partial re-run kept the run's version, as D-BIND-150 meant.

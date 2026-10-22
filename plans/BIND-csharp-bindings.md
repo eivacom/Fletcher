@@ -862,7 +862,7 @@ Kind: 🟪 spec · 🟦 impl · 🔬 proof · ⚙ pipelines · 📓 docs
 | BIND-7 | Arrow view + accessor emitters (`csharp_accessor`) + capstone third arm | B | 🟦 | BIND-6, BIND-3 | `accessor-capstone` C# arm `observed == expected`; `StructArray` windowing fixture at non-zero offset | 🟢 (closed on CI at `268dceb`, `ci.pr` 38746753749, after a fresh-context review whose 2 BLOCKERs were fixed and 5 questions ruled, D-BIND-103 to 107; rulings during the round D-BIND-94 to 102; the minor debt carried as known, listed in BIND-7's section) |
 | BIND-T | TS `Publisher`/`Subscriber` emitter | C | 🟦 | — | `TsVisitor.DescriptorByteIdentical` still green + new emitter cases | ⚪ |
 | BIND-8 | `Eiva.Fletcher.GatewayClient` (managed port; the codec exception) | C | 🟦 | — | Bucket 2 green (the Part 4 file set, not a count); `Package.GatewayClientHasNoRuntimesFolder` | 🟢 (closed on CI at `750d79d`, `ci.pr` 39375700668, 56/56, every side workflow green, after a fresh-context review whose 5 BLOCKERs were fixed and 12 questions ruled, D-BIND-121 to 132; rulings during the round D-BIND-108 to 120, and D-BIND-133 (slice 8f, batched delivery); one finding after the review fixed (A1); performance carried as known debt, listed in BIND-8's section) |
-| BIND-9a | A preview for testers (split from BIND-9 2026-10-20): one bundle per push to this branch, a 30-day CI artifact with the four NuGet packages (shim for both RIDs), the gateway binaries and the plugin binaries; nothing released before the merge (D-BIND-134 to 152) | D | ⚙ | BIND-3, BIND-8 | A consumer test using only the bundle publishes natively, generates code with the bundled plugin and reaches the bundled gateway, on Linux and Windows; `Interop` carries exactly the two shims; licence files in every package | 🔴 (rulings D-BIND-134 to 141, 2026-10-20; 142 to 152, 2026-10-21) |
+| BIND-9a | A preview for testers (split from BIND-9 2026-10-20): one bundle per push to this branch, a 30-day CI artifact with the four NuGet packages (shim for both RIDs), the gateway binaries and the plugin binaries; nothing released before the merge (D-BIND-134 to 152) | D | ⚙ | BIND-3, BIND-8 | A consumer test using only the bundle publishes natively, generates code with the bundled plugin and reaches the bundled gateway, on Linux and Windows; `Interop` carries exactly the two shims; licence files in every package | 🟢 (closed on CI at `133631a`, `ci.pr` 39592797595, 60/60 on its third attempt after two one-off Windows timing failures in unchanged tests, every side workflow green, after a fresh-context review whose 6 BLOCKERs were fixed and 10 questions ruled, D-BIND-145 to 152; rulings during the item D-BIND-134 to 144; the review's deferred items listed in BIND-9b) |
 | BIND-9b | The rest of BIND-9: publish to `nuget.eiva.com` from a self-hosted job (D-BIND-28), size budget, glibc floor, `Eiva.Fletcher.Protoc`, NativeAOT on Windows and `fastdds`, C#-native cross-language rows | D | ⚙ | BIND-9a, all for release | `cd.dotnet.yml` dry run; packed-size check; asset-isolation + licence check | ⚪ |
 | BIND-10 | Docs, TD-009, archive to `docs/archive/BIND/` | D | 📓 | all | docs review | ⚪ |
 
@@ -2385,7 +2385,20 @@ before the round merges.
   wrong (B5 the load-time check is the ABI only; B6 native batch handlers are not serialised).
   **Found by the fixes:** the packed-README comparison (M10) caught MSBuild turning a `\` in the
   README into `/` on Linux, which would have shipped a broken relinking command; Q2 is the seam's
-  documented contract, not a defect (D-BIND-146).
+  documented contract, not a defect (D-BIND-146). **The fixes on CI** at `133631a` (`ci.pr`
+  39592797595): every side workflow green first time; `ci.pr` green 60/60 on its third attempt.
+  Attempt 1 failed `Fletcher.GatewayClient.Tests` `AWindowFlushesWhenItsDeadlinePasses` on Windows
+  net10.0 (two rows expected inside a 200 ms window; the second arrived late), now given a 2 s
+  window; attempt 2 failed `Fletcher.Tests` `SubscriberArrowTests.OnlyDroppedRowsStillDeliverAnEmptyBatch`
+  on Windows net8.0 (a 100 ms timeout flush not within 5 s), investigated (the path reads correct;
+  92 local Windows runs, a one-core pool and a saturated CPU among them, did not reproduce it;
+  thread-pool starvation on the 4-core runner the likeliest cause) and put on PR #129's watch list
+  on the maintainer's ruling. On CI for the first time and green: the exact Windows dependency list
+  against the real `dumpbin`, the PR head checked out (the nuspec names it), the `fastdds` route on
+  both runners and both frameworks, `COPYING` in every artifact, the plugin's notice with nanoarrow,
+  and D-BIND-150 itself: the partial re-runs kept the run's version, `pr.129.340`.
+- **BIND-9a CLOSED 2026-10-22.** Testers have a bundle per push (`dotnet/PREVIEW-TESTERS.md`), the
+  packages carry a README whose code CI runs, and everything the review left is in BIND-9b below.
 
 **BIND-9b — the rest**, the acceptance below: the `nuget.eiva.com` publish job and its
 self-hosted runner, the packed-size budget, lowering the glibc floor if wanted, the Windows and

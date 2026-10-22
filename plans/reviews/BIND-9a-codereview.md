@@ -10,9 +10,11 @@ consumer (9a-4). Commits `eee0a3e^..8f5b911`.
 **Outcome: 6 BLOCKERs, 10 questions for a ruling, DEBT, NITs.** BIND-9a does not close until the
 blockers are fixed and the questions ruled.
 
-> **FIXED AND RULED 2026-10-21 (not yet on CI).** All six blockers fixed and rehearsed with mutants;
-> all ten questions ruled (D-BIND-145 to 152, the D-BIND-139 amendment, the VC++ wording) and
-> implemented. DEBT fixed now: T9 (with Q8), T-N1, M10 (which then caught MSBuild turning `` into
+> **CLOSED 2026-10-22, on CI at `133631a` (`ci.pr` 39592797595, 60/60 on its third attempt; the two
+> one-off Windows timing failures in unchanged tests are in the tracker's BIND-9a section, one widened,
+> one on PR #129's watch list).** Fixed and ruled 2026-10-21: all six blockers fixed and rehearsed
+> with mutants; all ten questions ruled (D-BIND-145 to 152, the D-BIND-139 amendment, the VC++
+> wording) and implemented. DEBT fixed now: T9 (with Q8), T-N1, M10 (which then caught MSBuild turning `\` into
 > `/` in the packed README on Linux), M13, M14 (dead `rm -f`), L12, L15 (a note in the bundle
 > README), L17, L18, L19, L20. T11 is accepted as is: the guard's logic was read sound by two
 > reviewers and it cannot be exercised failing without moving `main`. Moved to BIND-9b: T10, T12,

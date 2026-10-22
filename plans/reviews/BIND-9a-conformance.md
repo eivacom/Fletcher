@@ -50,3 +50,6 @@ and `fastdds` (D-BIND-151). D-BIND-139: MET (B2 fixed; root notice amended to pe
 re-run version, D-BIND-150). D-BIND-140: MET (the relinking route rehearsed as written, B3; the
 nuspec names the PR head, D-BIND-145). D-BIND-141: MET and guarded (D-BIND-149). D-BIND-144: MET
 (every block checked or exempt, D-BIND-147). The CI result is recorded in the tracker.
+
+**On CI 2026-10-22:** `133631a`, `ci.pr` 39592797595 green 60/60 (third attempt), every side
+workflow green; the grades above hold.

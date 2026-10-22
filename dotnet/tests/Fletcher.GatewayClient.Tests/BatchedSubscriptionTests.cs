@@ -95,9 +95,11 @@ public sealed class BatchedSubscriptionTests
         await using FletcherClient client = await Connected(gateway);
         var windows = new BlockingCollection<Received>();
         ulong id = await client.SubscribeBatchedAsync("t", RowSchema(), Collect(windows),
-            new GatewayBatchOptions { MaxRows = 1000, Timeout = TimeSpan.FromMilliseconds(200) });
+            new GatewayBatchOptions { MaxRows = 1000, Timeout = TimeSpan.FromSeconds(2) });
 
-        // Inside the first window's deadline, so both rows ride the same Timeout flush.
+        // Inside the first window's deadline, so both rows ride the same Timeout flush. Two seconds,
+        // not 200 ms: a loaded Windows runner once let the second row arrive after a 200 ms deadline
+        // (ci.pr 39592797595, BIND-9a close).
         gateway.Deliver(id, Row(1));
         gateway.Deliver(id, Row(2));
 
