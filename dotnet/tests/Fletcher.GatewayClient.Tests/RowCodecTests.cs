@@ -505,6 +505,45 @@ public sealed class RowCodecTests
         Assert.Contains("map key must not be null", e.Message, StringComparison.Ordinal);
     }
 
+    // ── D-BIND-156: a null where the schema promises a value is refused at Bind ──
+
+    [Fact]
+    public void ANullInANonNullableColumnIsRefusedAtBindNamingTheRow()
+    {
+        IArrowArray ids = new Int32Array.Builder().Append(1).AppendNull().Build();
+        var batch = new RecordBatch(new Schema(new[] { new Field("id", Int32Type.Default, nullable: false) }, null), new[] { ids }, 2);
+        var codec = new GatewayRowCodec(batch.Schema);
+
+        ArgumentException e = Assert.Throws<ArgumentException>(() => codec.Bind(batch));
+        Assert.Contains("field 'id' is not nullable, but row 1 has a null there", e.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ANullInANonNullableFieldOfAPresentStructIsRefusedByItsPath()
+    {
+        var type = new StructType(new[] { new Field("x", Int32Type.Default, nullable: false) });
+        IArrowArray xs = new Int32Array.Builder().AppendNull().Build();
+        var s = new StructArray(type, 1, new[] { xs }, ArrowBuffer.Empty, nullCount: 0);
+        var batch = new RecordBatch(new Schema(new[] { new Field("s", type, nullable: true) }, null), new IArrowArray[] { s }, 1);
+        var codec = new GatewayRowCodec(batch.Schema);
+
+        ArgumentException e = Assert.Throws<ArgumentException>(() => codec.Bind(batch));
+        Assert.Contains("field 's.x' is not nullable, but row 0", e.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ANullBelowANullStructIsAccepted()
+    {
+        var type = new StructType(new[] { new Field("x", Int32Type.Default, nullable: false) });
+        IArrowArray xs = new Int32Array.Builder().AppendNull().Build();
+        ArrowBuffer validity = new ArrowBuffer.BitmapBuilder().Append(false).Build();
+        var s = new StructArray(type, 1, new[] { xs }, validity, nullCount: 1);
+        var batch = new RecordBatch(new Schema(new[] { new Field("s", type, nullable: true) }, null), new IArrowArray[] { s }, 1);
+        var codec = new GatewayRowCodec(batch.Schema);
+
+        Assert.NotEmpty(codec.Encode(codec.Bind(batch), 0));
+    }
+
     // ── Malformed bytes: refused as C++'s reader refuses them ──
 
     public static TheoryData<string, string> MalformedRows => new()

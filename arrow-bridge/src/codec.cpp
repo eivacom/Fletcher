@@ -64,6 +64,138 @@ void CheckStructurallyValid(const arrow::Array& arr, const char* what) {
         throw std::invalid_argument(std::string("Codec: malformed ") + what + ": " + st.ToString());
 }
 
+// D-BIND-156: a field the schema marks NOT nullable must hold a value wherever its parent does,
+// because its decoders have nowhere to put a null (a C++ row class holds `std::string`,
+// `std::vector`). The encoders below take types, not fields, so the row is checked against the
+// schema's fields here, before anything of it is written. A null below a null parent is no value
+// and is fine; map keys keep their own refusal, at encode (D-BIND-131); dictionaries are values
+// the encoder resolves and checks itself.
+[[noreturn]] void RefuseNull(const std::string& path) {
+    throw std::invalid_argument("Codec::EncodeRow: field '" + path +
+                                "' is not nullable, but the row has a null there; a decoder of "
+                                "this schema has nowhere to put it (D-BIND-156)");
+}
+
+bool IsNested(const arrow::DataType& type) {
+    switch (type.id()) {
+        case arrow::Type::STRUCT:
+        case arrow::Type::LIST:
+        case arrow::Type::LARGE_LIST:
+        case arrow::Type::FIXED_SIZE_LIST:
+        case arrow::Type::MAP:
+            return true;
+        default:
+            return false;
+    }
+}
+
+void RequireArrayValue(const arrow::Array& arr, int64_t i, const arrow::Field& field,
+                       const std::string& path);
+
+// Elements [start, start + count) of `arr`, each a value of `field`.
+void RequireArrayElements(const arrow::Array& arr, int64_t start, int64_t count,
+                          const arrow::Field& field, const std::string& path) {
+    const bool nested = IsNested(*field.type());
+    if (arr.null_count() == 0 && !nested) return;
+    for (int64_t j = 0; j < count; ++j) {
+        if (arr.IsNull(start + j)) {
+            if (!field.nullable()) RefuseNull(path);
+            continue;
+        }
+        if (nested) RequireArrayValue(arr, start + j, field, path);
+    }
+}
+
+// The fields below the PRESENT value at index `i` of `arr`, indexed as the encoder indexes them.
+void RequireArrayValue(const arrow::Array& arr, int64_t i, const arrow::Field& field,
+                       const std::string& path) {
+    const arrow::DataType& type = *field.type();
+    switch (type.id()) {
+        case arrow::Type::STRUCT: {
+            const auto& sa = static_cast<const arrow::StructArray&>(arr);
+            const auto& st = static_cast<const arrow::StructType&>(type);
+            for (int k = 0; k < st.num_fields(); ++k) {
+                RequireArrayElements(*sa.field(k), i, 1, *st.field(k),
+                                     path + "." + st.field(k)->name());
+            }
+            return;
+        }
+        case arrow::Type::LIST: {
+            const auto& la = static_cast<const arrow::ListArray&>(arr);
+            RequireArrayElements(*la.values(), la.value_offset(i), la.value_length(i),
+                                 *static_cast<const arrow::ListType&>(type).value_field(),
+                                 path + "[]");
+            return;
+        }
+        case arrow::Type::LARGE_LIST: {
+            const auto& la = static_cast<const arrow::LargeListArray&>(arr);
+            RequireArrayElements(*la.values(), la.value_offset(i), la.value_length(i),
+                                 *static_cast<const arrow::LargeListType&>(type).value_field(),
+                                 path + "[]");
+            return;
+        }
+        case arrow::Type::FIXED_SIZE_LIST: {
+            const auto& fa = static_cast<const arrow::FixedSizeListArray&>(arr);
+            const auto& fsl = static_cast<const arrow::FixedSizeListType&>(type);
+            RequireArrayElements(*fa.values(), fa.value_offset(i), fsl.list_size(),
+                                 *fsl.value_field(), path + "[]");
+            return;
+        }
+        case arrow::Type::MAP: {
+            const auto& ma = static_cast<const arrow::MapArray&>(arr);
+            RequireArrayElements(*ma.items(), ma.value_offset(i), ma.value_length(i),
+                                 *static_cast<const arrow::MapType&>(type).item_field(),
+                                 path + "{}.value");
+            return;
+        }
+        default:
+            return;
+    }
+}
+
+// One present top-level value: a scalar whose nested parts are arrays (a list's elements, a map's
+// entries) or scalars (a struct's fields).
+void RequireScalar(const arrow::Scalar& scalar, const arrow::Field& field,
+                   const std::string& path) {
+    const arrow::DataType& type = *field.type();
+    switch (type.id()) {
+        case arrow::Type::STRUCT: {
+            const auto& ss = static_cast<const arrow::StructScalar&>(scalar);
+            const auto& st = static_cast<const arrow::StructType&>(type);
+            for (int k = 0; k < st.num_fields() && k < static_cast<int>(ss.value.size()); ++k) {
+                const std::string here = path + "." + st.field(k)->name();
+                const auto& child = ss.value[k];
+                if (!child || !child->is_valid) {
+                    if (!st.field(k)->nullable()) RefuseNull(here);
+                    continue;
+                }
+                RequireScalar(*child, *st.field(k), here);
+            }
+            return;
+        }
+        case arrow::Type::LIST:
+        case arrow::Type::LARGE_LIST:
+        case arrow::Type::FIXED_SIZE_LIST: {
+            const auto& ls = static_cast<const arrow::BaseListScalar&>(scalar);
+            if (!ls.value) return;
+            const auto& value_field = *static_cast<const arrow::BaseListType&>(type).value_field();
+            RequireArrayElements(*ls.value, 0, ls.value->length(), value_field, path + "[]");
+            return;
+        }
+        case arrow::Type::MAP: {
+            const auto& ms = static_cast<const arrow::MapScalar&>(scalar);
+            if (!ms.value) return;
+            const auto& entries = static_cast<const arrow::StructArray&>(*ms.value);
+            RequireArrayElements(*entries.field(1), 0, entries.length(),
+                                 *static_cast<const arrow::MapType&>(type).item_field(),
+                                 path + "{}.value");
+            return;
+        }
+        default:
+            return;
+    }
+}
+
 // PositionalWriter has no fixed-size-list primitive: same element bitfield as a list, no count.
 PositionalWriter::ListContext BeginFixedSizeList(WriteBuffer& buf, int32_t n) {
     const size_t offset = buf.Position();
@@ -626,6 +758,20 @@ void Codec::EncodeRow(const ArrowRow& values, WriteBuffer& out) const {
         throw std::invalid_argument(
             "Codec::EncodeRow: values.size() (" + std::to_string(values.size()) +
             ") does not match schema.num_fields() (" + std::to_string(num_fields) + ")");
+
+    // D-BIND-156, before anything is written: a null where the schema promises a value.
+    for (int i = 0; i < num_fields; ++i) {
+        const auto& field = *schema_->field(i);
+        const auto& scalar = values[i];
+        if (!scalar || !scalar->is_valid) {
+            if (!field.nullable()) RefuseNull(field.name());
+            continue;
+        }
+        // Only where the types agree: a mismatch is refused below, with its own message, and the
+        // checker casts by the schema's type.
+        if (field.type()->id() != arrow::Type::DICTIONARY && scalar->type->Equals(*field.type()))
+            RequireScalar(*scalar, field, field.name());
+    }
 
     PositionalWriter w(out, num_fields);
 

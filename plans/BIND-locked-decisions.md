@@ -3664,6 +3664,9 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   binding, nested fields, list elements and map keys included, with an error naming the column;
   tests in C++ and C#. A caller who builds a `RecordBatch` by hand can no longer have a C++ decoder
   read a value that is not there. **Declined:** documenting it as the caller's contract.
+  **Widened 2026-10-23 by the maintainer, in 9b-2:** also the C# gateway client's managed
+  codec, so every C# path refuses alike; the TypeScript gateway client gets it as a BIND-T parity
+  item. Map keys keep their own refusal at encode (D-BIND-131).
 
 - **D-BIND-157 - a packed-size ceiling of 12 MB on `Eiva.Fletcher.Interop`, the Linux shim
   stripped, the Windows export surface accepted.** *LOCKED BY THE MAINTAINER 2026-10-22 (BIND-9b

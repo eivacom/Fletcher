@@ -302,7 +302,137 @@ internal sealed class GatewayRowCodec
             columns[i] = data;
         }
 
+        RequireNoForbiddenNulls(columns, batch.Length);
         return new BoundBatch(columns, batch.Length);
+    }
+
+    // ───────────────────────────── Nullability (D-BIND-156) ─────────────────────────────
+    //
+    // The native codec's rule, in the same terms: a field the schema marks NOT nullable must
+    // hold a value wherever its parent does, because its decoders (a C++ row class above all)
+    // have nowhere to put a null. Refused at Bind, before any row is encoded. A null below a
+    // null parent is no value and is fine; map keys keep their own refusal, at encode
+    // (D-BIND-131); dictionaries are values the encoder resolves and checks itself. The rows
+    // are walked only when some non-nullable field holds any null at all.
+    private void RequireNoForbiddenNulls(ArrayData[] columns, int length)
+    {
+        for (int i = 0; i < _fields.Length; ++i)
+        {
+            if (!MayHoldForbiddenNull(_fields[i], columns[i]))
+            {
+                continue;
+            }
+
+            for (int row = 0; row < length; ++row)
+            {
+                RequireElement(_fields[i], columns[i], row, row);
+            }
+        }
+    }
+
+    private static bool MayHoldForbiddenNull(Node node, ArrayData data)
+    {
+        if (!node.Field.IsNullable && data.NullCount != 0)
+        {
+            return true;
+        }
+
+        if (data.DataType is DictionaryType)
+        {
+            return false;
+        }
+
+        return node.Kind switch
+        {
+            Kind.Struct => node.Children.Where((child, k) => MayHoldForbiddenNull(child, data.Children[k])).Any(),
+            Kind.List or Kind.LargeList or Kind.FixedSizeList => MayHoldForbiddenNull(node.Children[0], data.Children[0]),
+            Kind.Map => MayHoldForbiddenNull(node.Children[1], data.Children[0].Children[1]),
+            _ => false,
+        };
+    }
+
+    private static void RequireElement(Node node, ArrayData data, int index, int row)
+    {
+        if (IsNull(data, index))
+        {
+            if (!node.Field.IsNullable)
+            {
+                throw new ArgumentException("GatewayRowCodec: field '" + node.Path + "' is not nullable, but row " + row +
+                    " has a null there; a decoder of this schema has nowhere to put it (D-BIND-156)", "batch");
+            }
+
+            return;
+        }
+
+        RequirePresentChildren(node, data, index, row);
+    }
+
+    // The fields below a PRESENT value, indexed exactly as EncodeValue indexes them.
+    private static void RequirePresentChildren(Node node, ArrayData data, int index, int row)
+    {
+        if (data.DataType is DictionaryType)
+        {
+            return;
+        }
+
+        int at = data.Offset + index;
+        switch (node.Kind)
+        {
+            case Kind.Struct:
+                for (int k = 0; k < node.Children.Length; ++k)
+                {
+                    RequireElement(node.Children[k], data.Children[k], at, row);
+                }
+
+                return;
+
+            case Kind.List:
+                {
+                    ReadOnlySpan<int> offsets = Int32s(data.Buffers[1]);
+                    for (int e = offsets[at]; e < offsets[at + 1]; ++e)
+                    {
+                        RequireElement(node.Children[0], data.Children[0], e, row);
+                    }
+
+                    return;
+                }
+
+            case Kind.LargeList:
+                {
+                    ReadOnlySpan<long> offsets = Int64s(data.Buffers[1]);
+                    for (long e = offsets[at]; e < offsets[at + 1]; ++e)
+                    {
+                        RequireElement(node.Children[0], data.Children[0], checked((int)e), row);
+                    }
+
+                    return;
+                }
+
+            case Kind.FixedSizeList:
+                for (int e = at * node.FixedSize; e < (at + 1) * node.FixedSize; ++e)
+                {
+                    RequireElement(node.Children[0], data.Children[0], e, row);
+                }
+
+                return;
+
+            case Kind.Map:
+                {
+                    ReadOnlySpan<int> offsets = Int32s(data.Buffers[1]);
+                    ArrayData entries = data.Children[0];
+                    int entryAt = entries.Offset + offsets[at];
+                    for (int j = 0; j < offsets[at + 1] - offsets[at]; ++j)
+                    {
+                        // Keys: refused at encode, with their own message (D-BIND-131).
+                        RequireElement(node.Children[1], entries.Children[1], entryAt + j, row);
+                    }
+
+                    return;
+                }
+
+            default:
+                return;
+        }
     }
 
     /// <summary>Encode row <paramref name="row"/> of a bound batch into <paramref name="output"/>.</summary>

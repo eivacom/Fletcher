@@ -90,6 +90,88 @@ public sealed class ManagedCodecAgreesWithNativeTests
         Assert.Contains(expected, managedRefusal.Message, StringComparison.Ordinal);
     }
 
+    public static TheoryData<string> ForbiddenNulls => new()
+    {
+        "a top-level column",
+        "a field of a present struct",
+        "a list element",
+        "a map value",
+    };
+
+    // D-BIND-156: a null where the schema promises a value (the field is not nullable, its
+    // parent value is present) is refused by both codecs at BIND, before any row is encoded,
+    // naming the row. The native codec is the C ABI's, the one C#'s Publisher encodes with.
+    [Theory]
+    [MemberData(nameof(ForbiddenNulls))]
+    public void BothCodecsRefuseANullWhereTheSchemaPromisesAValue(string name)
+    {
+        RecordBatch batch = ForbiddenNull(name);
+
+        using var native = new FletcherCodec(batch.Schema);
+        Exception nativeRefusal = Assert.ThrowsAny<Exception>(() => native.Bind(batch).Dispose());
+
+        var managed = new GatewayRowCodec(batch.Schema);
+        Exception managedRefusal = Assert.ThrowsAny<ArgumentException>(() => managed.Bind(batch));
+
+        foreach (Exception refusal in new[] { nativeRefusal, managedRefusal })
+        {
+            Assert.Contains("is not nullable, but row 0 has a null there", refusal.Message, StringComparison.Ordinal);
+            Assert.Contains("D-BIND-156", refusal.Message, StringComparison.Ordinal);
+        }
+    }
+
+    // ...while a null BELOW a null struct is no value at all: both codecs accept it and write
+    // the same bytes.
+    [Fact]
+    public void BothCodecsAcceptANullBelowANullStructAndAgreeOnIt()
+    {
+        var x = new Field("x", Int32Type.Default, nullable: false);
+        IArrowArray children = new Int32Array.Builder().AppendNull().Append(5).Build();
+        ArrowBuffer validity = new ArrowBuffer.BitmapBuilder().Append(false).Append(true).Build();
+        var s = new StructArray(new StructType(new[] { x }), 2, new[] { children }, validity, nullCount: 1);
+        AssertAgree(Batch(("s", s)));
+    }
+
+    private static RecordBatch ForbiddenNull(string name)
+    {
+        IArrowArray ints = new Int32Array.Builder().AppendNull().Append(2).Build();
+        switch (name)
+        {
+            case "a top-level column":
+                return OneColumn(new Field("id", Int32Type.Default, nullable: false), ints);
+
+            case "a field of a present struct":
+                {
+                    var type = new StructType(new[] { new Field("x", Int32Type.Default, nullable: false) });
+                    return OneColumn(new Field("s", type, nullable: true), new StructArray(type, 2, new[] { ints }, ArrowBuffer.Empty, nullCount: 0));
+                }
+
+            case "a list element":
+                {
+                    var type = new ListType(new Field("item", Int32Type.Default, nullable: false));
+                    ArrowBuffer offsets = new ArrowBuffer.Builder<int>().Append(0).Append(2).Build();
+                    var list = (ListArray)ArrowArrayFactory.BuildArray(new ArrayData(type, 1, 0, 0, new[] { ArrowBuffer.Empty, offsets }, new[] { ints.Data }));
+                    return OneColumn(new Field("readings", type, nullable: true), list);
+                }
+
+            case "a map value":
+                {
+                    IArrowArray keys = new StringArray.Builder().Append("a").Append("b").Build();
+                    var type = new MapType(new Field("key", StringType.Default, false), new Field("value", Int32Type.Default, nullable: false), false);
+                    var entries = new ArrayData(type.KeyValueType, 2, 0, 0, new[] { ArrowBuffer.Empty }, new[] { keys.Data, ints.Data });
+                    ArrowBuffer offsets = new ArrowBuffer.Builder<int>().Append(0).Append(2).Build();
+                    var map = (MapArray)ArrowArrayFactory.BuildArray(new ArrayData(type, 1, 0, 0, new[] { ArrowBuffer.Empty, offsets }, new[] { entries }));
+                    return OneColumn(new Field("tags", type, nullable: true), map);
+                }
+
+            default:
+                throw new ArgumentOutOfRangeException(nameof(name));
+        }
+    }
+
+    private static RecordBatch OneColumn(Field field, IArrowArray column) =>
+        new(new Schema(new[] { field }, null), new[] { column }, column.Length);
+
     private static MapArray NullKeyMap()
     {
         // map<string, int32>, one row {"a": 1, null: 2}: Apache.Arrow builds it without validating.

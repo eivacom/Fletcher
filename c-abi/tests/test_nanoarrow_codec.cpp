@@ -43,6 +43,7 @@
 #include <fletcher/core/write_buffer.hpp>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -865,4 +866,114 @@ TEST(NanoarrowCodec, ARowNamingANullDictionaryEntryIsRefused) {
     EXPECT_NE(refusal.find("null dictionary entry"), std::string::npos)
         << "a null dictionary entry was encoded (or refused for another reason): '" << refusal
         << "'";
+}
+
+// ---------------------------------------------------------------------------
+// D-BIND-156 — a null where the schema promises a value is refused at bind
+// ---------------------------------------------------------------------------
+
+namespace {
+
+std::shared_ptr<arrow::Array> Int32s(const std::vector<std::optional<int32_t>>& values) {
+    arrow::Int32Builder builder;
+    for (const auto& v : values) {
+        EXPECT_TRUE((v ? builder.Append(*v) : builder.AppendNull()).ok());
+    }
+    return builder.Finish().ValueOrDie();
+}
+
+// A validity bitmap: a boolean array's values buffer has the same bit layout.
+std::shared_ptr<arrow::Buffer> Validity(const std::vector<bool>& valid) {
+    arrow::BooleanBuilder builder;
+    for (bool v : valid) EXPECT_TRUE(builder.Append(v).ok());
+    return builder.Finish().ValueOrDie()->data()->buffers[1];
+}
+
+std::shared_ptr<arrow::Array> Offsets(const std::vector<int32_t>& offsets) {
+    arrow::Int32Builder builder;
+    EXPECT_TRUE(builder.AppendValues(offsets).ok());
+    return builder.Finish().ValueOrDie();
+}
+
+std::shared_ptr<arrow::RecordBatch> OneColumn(const std::shared_ptr<arrow::Field>& field,
+                                              const std::shared_ptr<arrow::Array>& column) {
+    return arrow::RecordBatch::Make(arrow::schema({field}), column->length(), {column});
+}
+
+}  // namespace
+
+/// A top-level column marked not nullable, with a null in row 1: the whole batch is refused at
+/// bind, naming the field and the row, before any row is encoded.
+TEST(NanoarrowCodec, ANullInANonNullableColumnIsRefused) {
+    auto batch = OneColumn(arrow::field("id", arrow::int32(), /*nullable=*/false),
+                           Int32s({1, std::nullopt}));
+    const std::string refusal = EncodeRefusal(*batch);
+    EXPECT_NE(refusal.find("field 'id' is not nullable, but row 1"), std::string::npos) << refusal;
+}
+
+/// A present struct whose non-nullable field is null is refused, by its path.
+TEST(NanoarrowCodec, ANullInANonNullableFieldOfAPresentStructIsRefused) {
+    auto x = arrow::field("x", arrow::int32(), /*nullable=*/false);
+    auto s = std::make_shared<arrow::StructArray>(
+        arrow::struct_({x}), 2,
+        std::vector<std::shared_ptr<arrow::Array>>{Int32s({7, std::nullopt})});
+    const std::string refusal = EncodeRefusal(*OneColumn(arrow::field("s", s->type()), s));
+    EXPECT_NE(refusal.find("field 's.x' is not nullable, but row 1"), std::string::npos) << refusal;
+}
+
+/// A null BELOW a null struct is no value at all: the struct is absent, and so is its field.
+TEST(NanoarrowCodec, ANullBelowANullStructIsAccepted) {
+    auto x = arrow::field("x", arrow::int32(), /*nullable=*/false);
+    auto s = std::make_shared<arrow::StructArray>(
+        arrow::struct_({x}), 2,
+        std::vector<std::shared_ptr<arrow::Array>>{Int32s({7, std::nullopt})},
+        Validity({true, false}), /*null_count=*/1);
+    EXPECT_EQ(EncodeRefusal(*OneColumn(arrow::field("s", s->type()), s)), "");
+}
+
+/// A null element of a list whose element field is not nullable is refused.
+TEST(NanoarrowCodec, ANullElementOfAListWithNonNullableElementsIsRefused) {
+    auto type = arrow::list(arrow::field("item", arrow::int32(), /*nullable=*/false));
+    auto list =
+        arrow::ListArray::FromArrays(type, *Offsets({0, 2, 3}), *Int32s({1, 2, std::nullopt}))
+            .ValueOrDie();
+    const std::string refusal = EncodeRefusal(*OneColumn(arrow::field("readings", type), list));
+    EXPECT_NE(refusal.find("field 'readings[]' is not nullable, but row 1"), std::string::npos)
+        << refusal;
+}
+
+/// A null value in a map whose value field is not nullable is refused; a null KEY keeps its own
+/// refusal at encode (D-BIND-131, above).
+TEST(NanoarrowCodec, ANullMapValueOfANonNullableValueFieldIsRefused) {
+    auto type =
+        std::make_shared<arrow::MapType>(arrow::field("key", arrow::utf8(), false),
+                                         arrow::field("value", arrow::int32(), /*nullable=*/false));
+    arrow::StringBuilder keys;
+    ASSERT_TRUE(keys.AppendValues({"a", "b"}).ok());
+    auto map = arrow::MapArray::FromArrays(type, Offsets({0, 2}), keys.Finish().ValueOrDie(),
+                                           Int32s({1, std::nullopt}))
+                   .ValueOrDie();
+    const std::string refusal = EncodeRefusal(*OneColumn(arrow::field("tags", type), map));
+    EXPECT_NE(refusal.find("field 'tags{}.value' is not nullable, but row 0"), std::string::npos)
+        << refusal;
+}
+
+/// Nulls where the schema allows them encode as before.
+TEST(NanoarrowCodec, NullsInNullableFieldsStillEncode) {
+    auto type = arrow::list(arrow::field("item", arrow::int32(), /*nullable=*/true));
+    auto list = arrow::ListArray::FromArrays(type, *Offsets({0, 2}), *Int32s({1, std::nullopt}))
+                    .ValueOrDie();
+    EXPECT_EQ(EncodeRefusal(*OneColumn(arrow::field("readings", type), list)), "");
+    EXPECT_EQ(EncodeRefusal(*OneColumn(arrow::field("id", arrow::int32()), Int32s({std::nullopt}))),
+              "");
+}
+
+/// The rows are read through the array's offset, as the encoder reads them: in a sliced batch a
+/// null outside the slice is not there, and one inside it is reported at its row in the slice.
+TEST(NanoarrowCodec, NullabilityIsCheckedThroughASlicesOffset) {
+    auto field = arrow::field("id", arrow::int32(), /*nullable=*/false);
+    auto batch = OneColumn(field, Int32s({std::nullopt, 1, 2, std::nullopt}));
+    EXPECT_EQ(EncodeRefusal(*batch->Slice(1, 2)), "");
+    const std::string refusal = EncodeRefusal(*batch->Slice(1, 3));
+    EXPECT_NE(refusal.find("field 'id' is not nullable, but row 2"), std::string::npos) << refusal;
 }

@@ -1973,6 +1973,11 @@ the maintainer's choice, from `plans/reviews/BIND-7-codereview.md`:
   gained `SubscribeBatchedAsync` (windows flushed by row count, deadline and close, as native
   `SubscriberArrow`); `gateway-client-ts` still delivers row by row. BIND-T decides whether its
   client and pair gain the same shape.
+- **The null refusal, a parity item from D-BIND-156 (2026-10-23).** The two C++ codecs and the
+  C# gateway client refuse a batch with a null in a non-nullable field (its parent present) at
+  bind, naming the field and the row; `gateway-client-ts` still encodes it, and a C++ subscriber
+  behind the gateway then reads a value that is not there. BIND-T gives it the same refusal, with
+  the same message, and a test.
 - **A full-fidelity topic declaration (D-BIND-117, ruled 2026-10-19 at BIND-8d; MOVED INTO
   BIND-8e by D-BIND-130, so BIND-T inherits it done and its pair declares with it).** The
   plugin embeds each message's Arrow IPC schema (the bytes its `ipc` output writes,
@@ -2423,7 +2428,9 @@ packaging hardening; 9b-2 the codec's null refusal; 9b-3 NativeAOT on Windows an
 `cd.dotnet.yml`; 9b-7 the licence research and the 9a review's remaining debts; 9b-8 the merge
 preparation, a fresh-context review and the close.
 
-- **9b-1 built and rehearsed 2026-10-22** (CI pending; all three parts, on the maintainer's
+- **9b-1 done on CI 2026-10-22** (`ed2ddce`, `ci.pr` 39798973114, every workflow green: the strip
+  step 14,628,480 -> 11,594,728 bytes with 47 exports unchanged, `Interop` 7,999,043 bytes packed,
+  `package-consumer` green on both runners; all three parts, on the maintainer's
   ruling against moving the third to 9b-8): **the stripped shim**, `ci.dotnet`'s Linux leg strips
   the packaged copy (`strip --strip-unneeded`), requires its exported symbols to be unchanged, and
   from there runs the dependency and floor check, the tests and the AOT smoke on that copy, the one
@@ -2440,6 +2447,23 @@ preparation, a fresh-context review and the close.
   otherwise fail. Rehearsed in the devcontainer: exports unchanged, the stripped shim self-contained
   at the stated floors, `Fletcher.Tests` 423/423 on it, the packages checked, a ceiling mutant
   caught, the folder assembled naming its branch; actionlint clean.
+- **9b-2 built and rehearsed 2026-10-23** (CI pending; D-BIND-156, widened by the maintainer to the
+  C# gateway client): a null in a field the schema marks not nullable, where its parent value is
+  present, is refused before anything is encoded, naming the field's path and (for a batch) the
+  row. **Three codecs, one rule:** `c-abi`'s `BoundRows` refuses the whole batch at bind (so C#'s
+  `Publisher` and `FletcherCodec`); `arrow-bridge`'s `Codec::EncodeRow` refuses the row before
+  writing it (C++'s `PublisherArrow`), with a field-aware checker beside its type-driven encoders;
+  `GatewayRowCodec.Bind` refuses the batch (the C# gateway client). Each walks values with its
+  encoder's own index rules (`Physical` and offsets, sliced batches included); a null below a null
+  parent is no value and is accepted; map keys keep their own refusal at encode (D-BIND-131); the
+  common case costs a null count per field and no row walk. Tests: `c-abi` 7 (top level, a
+  present struct's field, a null below a null struct, a list element, a map value, nullable nulls
+  still encode, a slice's offset), `arrow-bridge` 7, `Fletcher.Tests` 5 (both codecs refuse the
+  same four shapes and agree on a null below a null struct), `Fletcher.GatewayClient.Tests` 3.
+  Rehearsed: `arrow-bridge` 125/125 and `c-abi` 96/96 built with their tests in the devcontainer,
+  `Fletcher.Tests` 428/428 on both frameworks against the rebuilt shim, the gateway client 222/222
+  on this host, clang-format-18 and `dotnet format` clean. The TypeScript gateway client is a
+  BIND-T parity item.
 
 **How test builds reach testers during development, and what changes at the merge** (recorded
 2026-10-20 at the maintainer's request, D-BIND-137 to 139). Until PR #129 merges, the per-push

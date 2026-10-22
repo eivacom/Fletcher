@@ -1376,3 +1376,10 @@ every pull request that can change the packages builds them as a release would a
 routes against them. Wiring it found that the pack job named the pull request's head as its
 commit even where the merge commit was built, which the new nuspec check would have refused on
 every other pull request.
+
+**9b-2, a null where the schema promises a value.** Every C++ path that turns a caller's Arrow
+data into wire rows, and the C# gateway client's own codec, now refuses a null in a field marked
+not nullable before anything is written, naming the field and the row. Before, a C++ subscriber
+read a value that was not there. The check walks values exactly as each encoder does, so a null
+below an absent parent, which is no value at all, still goes through, and in the common case it
+costs one null count per field. TypeScript follows in BIND-T.

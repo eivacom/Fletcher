@@ -429,6 +429,113 @@ void EncodeValue(const ArrowArrayView& view, int64_t index, WriteBuffer& out) {
 }
 
 // ---------------------------------------------------------------------------
+// Nullability (D-BIND-156)
+// ---------------------------------------------------------------------------
+//
+// The wire can carry a null wherever a struct or a list has a null bitfield, so the
+// encoder above writes whatever the array says. A schema that marks a field NOT
+// nullable promises its decoders the value is always there, and a C++ row class
+// (`std::string`, `std::vector`) has nowhere to put a null: it reads a value that is
+// not there. So a bound batch is refused, before any of its rows is encoded, when a
+// non-nullable field holds a null where its parent value is present. A null BELOW a
+// null parent is no value at all and is fine; map keys keep their own refusal, at
+// encode (D-BIND-131).
+//
+// The common case costs one null count per field and no row walk: the rows are
+// walked only when some non-nullable field has any null at all.
+
+bool Nullable(const ArrowSchema& field) { return (field.flags & ARROW_FLAG_NULLABLE) != 0; }
+
+/// True when `field`, or a field below it, is not nullable and holds a null somewhere in its
+/// array. Conservative (a null under a null parent counts), which only decides whether the rows
+/// are walked; the walk decides what is refused. Dictionaries are values the encoder resolves
+/// and checks itself (D-BIND-131), so the walk does not enter them.
+bool MayHoldForbiddenNull(const ArrowSchema& field, const ArrowArrayView& view) {
+    if (!Nullable(field) && ArrowArrayViewComputeNullCount(&view) > 0) return true;
+    for (int64_t i = 0; i < view.n_children; ++i) {
+        if (MayHoldForbiddenNull(*field.children[i], *view.children[i])) return true;
+    }
+    return false;
+}
+
+[[noreturn]] void RefuseNull(const std::string& path, int64_t row) {
+    Refuse("field '" + path + "' is not nullable, but row " + std::to_string(row) +
+           " has a null there; a decoder of this schema has nowhere to put it (D-BIND-156)");
+}
+
+void RequirePresentChildren(const ArrowSchema& field, const ArrowArrayView& view, int64_t index,
+                            const std::string& path, int64_t row);
+
+/// Element `at` of `view`, read exactly as the encoder reads it: refused when null and not
+/// nullable; when present, its own fields checked in turn.
+void RequireElement(const ArrowSchema& field, const ArrowArrayView& view, int64_t at,
+                    const std::string& path, int64_t row) {
+    if (ArrowArrayViewIsNull(&view, at) != 0) {
+        if (!Nullable(field)) RefuseNull(path, row);
+        return;
+    }
+    RequirePresentChildren(field, view, at, path, row);
+}
+
+/// The fields below a PRESENT value at `index` of `view`, with the encoder's index rules
+/// (`Physical` for a struct's children and a list's offsets).
+void RequirePresentChildren(const ArrowSchema& field, const ArrowArrayView& view, int64_t index,
+                            const std::string& path, int64_t row) {
+    if (view.dictionary != nullptr) return;
+    switch (view.storage_type) {
+        case NANOARROW_TYPE_STRUCT: {
+            const int64_t at = Physical(view, index);
+            for (int64_t i = 0; i < view.n_children; ++i) {
+                RequireElement(*field.children[i], *view.children[i], at,
+                               Describe(path, field.children[i]->name), row);
+            }
+            return;
+        }
+        case NANOARROW_TYPE_LIST:
+        case NANOARROW_TYPE_LARGE_LIST: {
+            const int64_t first = ArrowArrayViewListChildOffset(&view, Physical(view, index));
+            const int64_t last = ArrowArrayViewListChildOffset(&view, Physical(view, index) + 1);
+            for (int64_t e = first; e < last; ++e) {
+                RequireElement(*field.children[0], *view.children[0], e, path + "[]", row);
+            }
+            return;
+        }
+        case NANOARROW_TYPE_FIXED_SIZE_LIST: {
+            const int64_t size = view.layout.child_size_elements;
+            const int64_t first = Physical(view, index) * size;
+            for (int64_t e = first; e < first + size; ++e) {
+                RequireElement(*field.children[0], *view.children[0], e, path + "[]", row);
+            }
+            return;
+        }
+        case NANOARROW_TYPE_MAP: {
+            const int64_t first = ArrowArrayViewListChildOffset(&view, Physical(view, index));
+            const int64_t last = ArrowArrayViewListChildOffset(&view, Physical(view, index) + 1);
+            const ArrowArrayView& entries = *view.children[0];
+            const ArrowSchema& value_field = *field.children[0]->children[1];
+            const int64_t entry_at = Physical(entries, first);
+            for (int64_t j = 0; j < last - first; ++j) {
+                // Keys: refused at encode, with their own message (D-BIND-131).
+                RequireElement(value_field, *entries.children[1], entry_at + j, path + "{}.value",
+                               row);
+            }
+            return;
+        }
+        default:
+            return;
+    }
+}
+
+/// The whole batch, before any row of it is encoded.
+void RequireNoForbiddenNulls(const ArrowSchema& schema, const ArrowArrayView& view,
+                             int64_t length) {
+    if (!MayHoldForbiddenNull(schema, view)) return;
+    for (int64_t row = 0; row < length; ++row) {
+        RequirePresentChildren(schema, view, row, "", row);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Decode (BIND-2b)
 // ---------------------------------------------------------------------------
 
@@ -788,6 +895,13 @@ BoundRows::BoundRows(const NanoarrowCodec& codec, const ArrowArray& array)
         Refuse(std::string("the array does not match the codec's schema: ") + error.message);
     }
     length_ = array.length;
+    try {
+        RequireNoForbiddenNulls(*codec.schema_.get(), *view_, length_);
+    } catch (...) {
+        // A throwing constructor runs no destructor: the view is released here.
+        ArrowArrayViewReset(view_.get());
+        throw;
+    }
 }
 
 BoundRows::~BoundRows() {
