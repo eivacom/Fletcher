@@ -1368,3 +1368,11 @@ protoc package wires itself into `Grpc.Tools`; and a test of released packages c
 broken release, so the consumer test stays a test of the packed packages, on every pull request and
 as a gate before anything is published. Measuring for the size question showed the Linux shim
 carries a 3.5 MB symbol table nothing needs; it will ship stripped.
+
+**9b-1, the packaging hardening.** The Linux shim now ships without its symbol table, 3 MB lighter
+with every exported function intact, and it is the stripped copy that the tests and checks run
+on. The pack fails above 12 MB. And the consumer test no longer belongs to this branch alone:
+every pull request that can change the packages builds them as a release would and runs the five
+routes against them. Wiring it found that the pack job named the pull request's head as its
+commit even where the merge commit was built, which the new nuspec check would have refused on
+every other pull request.

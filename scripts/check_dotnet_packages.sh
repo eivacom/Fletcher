@@ -18,6 +18,7 @@
 #     its root, named by the nuspec, and it is dotnet/README.package.md with exactly the
 #     version and the commit filled in (so nothing was lost or mangled on the way, and
 #     the floors it states are the ones in shim_floors.env);
+#   * BIND-9b-1 (D-BIND-157): Eiva.Fletcher.Interop is at most 12 MB packed;
 #   * given a <commit> (D-BIND-145): the README names it, and so does the nuspec's
 #     <repository commit>, which SourceLink and NuGet show.
 set -euo pipefail
@@ -30,6 +31,8 @@ TEMPLATE="$HERE/../dotnet/README.package.md"
 . "$HERE/shim_floors.env"
 fail=0
 err() { echo "::error::$*"; fail=1; }
+# 12 MB (D-BIND-157), overridable only to rehearse the check.
+INTEROP_CEILING=${INTEROP_CEILING:-12000000}
 
 # Listing and reading go through Python's zipfile: present on the runners and in the
 # devcontainer, where unzip is not.
@@ -91,6 +94,11 @@ for id in Eiva.Fletcher Eiva.Fletcher.Interop Eiva.Fletcher.Model Eiva.Fletcher.
   fi
   RUNTIMES=$(echo "$ENTRIES" | grep '^runtimes/' || true)
   if [ "$id" = Eiva.Fletcher.Interop ]; then
+    # D-BIND-157: the packed-size ceiling. 8.6 MB with an unstripped Linux shim, about
+    # 7.7 MB stripped; above the ceiling something grew unnoticed, so the pack fails.
+    SIZE=$(wc -c < "$PKG")
+    echo "$PKG: $SIZE bytes packed (ceiling $INTEROP_CEILING)"
+    [ "$SIZE" -le "$INTEROP_CEILING" ] || err "$PKG is $SIZE bytes packed, above the $INTEROP_CEILING-byte ceiling (D-BIND-157)"
     EXPECTED=$'runtimes/linux-x64/native/libfletcher-c-abi.so\nruntimes/win-x64/native/fletcher-c-abi.dll'
     if [ "$(echo "$RUNTIMES" | sort)" != "$EXPECTED" ]; then
       err "$PKG must carry exactly the two shims (D-BIND-134); it carries: ${RUNTIMES:-nothing}"

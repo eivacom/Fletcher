@@ -15,7 +15,7 @@ on:
           The commit to check out, or empty for the default (the merge ref on a pull
           request). ci.pr.yml passes the PR head when it builds the BIND-9a preview
           bundle, so every artifact names one commit, the one the bundle names
-          (D-BIND-145; the preview-bundle job checks the two are one tree).
+          (D-BIND-145; the package-bundle job checks the two are one tree).
         required: false
         type: string
         default: ''
@@ -29,11 +29,12 @@ on:
           cd.protoc.yml wrapper does the same for tag-push releases.
         required: true
         type: string
-      bundle:
+      release-artifacts:
         description: >-
           Build and upload the release artifacts (the Conan packages and the
           static plugin binaries) as a tag push does, without a tag: ci.pr.yml
-          sets it for the BIND-9a per-push preview bundle (D-BIND-136, 139).
+          sets it for the BIND-9a per-push preview bundle (D-BIND-136, 139) and, since
+          BIND-9b-1, whenever the package consumer test runs (D-BIND-159).
         required: false
         type: boolean
         default: false
@@ -112,7 +113,7 @@ jobs:
 
       - name: Get Conan reference
         id: get-ref
-        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.bundle
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.release-artifacts
         shell: bash
         working-directory: protoc
         run: |
@@ -120,12 +121,12 @@ jobs:
           echo "conan-ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Save Conan package
-        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.bundle
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.release-artifacts
         shell: bash
         run: conan cache save "${{ steps.get-ref.outputs.conan-ref }}:*" --file "fletcher-protoc-windows-conan-package.tgz"
 
       - name: Upload Windows Conan package .tgz artifact
-        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.bundle
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.release-artifacts
         uses: actions/upload-artifact@v7.0.1
         with:
           name: fletcher-protoc-windows
@@ -135,7 +136,7 @@ jobs:
       # Raw single-file binary for GitHub Release / the npm shim — extracted
       # from the build above, not rebuilt.
       - name: Extract static binary
-        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.bundle
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.release-artifacts
         shell: bash
         run: |
           set -euo pipefail
@@ -149,7 +150,7 @@ jobs:
           ls -lah protoc-gen-fletcher-windows-x64.exe
 
       - name: Upload Windows static binary
-        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.bundle
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.release-artifacts
         uses: actions/upload-artifact@v7.0.1
         with:
           name: fletcher-protoc-windows-static
@@ -178,7 +179,7 @@ jobs:
       - name: Build and test
         shell: bash
         env:
-          ARTIFACT_NAME: ${{ ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.bundle) && 'fletcher-protoc-linux-conan-package.tgz' || '' }}
+          ARTIFACT_NAME: ${{ ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.release-artifacts) && 'fletcher-protoc-linux-conan-package.tgz' || '' }}
         run: |
           docker run --rm \
             -v "${GITHUB_WORKSPACE}:/workspace" \
@@ -225,7 +226,7 @@ jobs:
             '
 
       - name: Upload Linux Conan package .tgz artifact
-        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.bundle
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.release-artifacts
         uses: actions/upload-artifact@v7.0.1
         with:
           name: fletcher-protoc-linux
@@ -233,7 +234,7 @@ jobs:
           retention-days: 5
 
       - name: Upload Linux static binary
-        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.bundle
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.release-artifacts
         uses: actions/upload-artifact@v7.0.1
         with:
           name: fletcher-protoc-linux-static
@@ -241,7 +242,7 @@ jobs:
           retention-days: 5
 
       - name: Upload the plugin's licence files
-        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.bundle
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.release-artifacts
         uses: actions/upload-artifact@v7.0.1
         with:
           name: fletcher-protoc-licences

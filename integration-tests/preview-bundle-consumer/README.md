@@ -61,7 +61,10 @@ The project is copied into the work folder (a temporary folder by default) so th
 repository's build applies to it. Linux, or Git Bash on Windows; it needs the .NET 8 and .NET 10
 runtimes and network access to nuget.org.
 
-CI: the `preview-consumer` job in [`ci.pr.yml`](../../.github/workflows/ci.pr.yml), after
-`preview-bundle`, on plain `ubuntu-24.04` and `windows-2022` runners (not the devcontainer), with
-only this folder checked out. It runs on pushes to `feature/csharp-bindings`, where the bundle is
-built, and goes away with the bundle when the round merges (BIND-9b).
+CI: the `package-consumer` job in [`ci.pr.yml`](../../.github/workflows/ci.pr.yml), after
+`package-bundle`, on plain `ubuntu-24.04` and `windows-2022` runners (not the devcontainer), with
+only this folder checked out. It runs on every pull request that can change what a consumer gets
+(the `dotnet`, `gateway` or `protoc` filter, or the round's own branch; D-BIND-159), against the
+packages just packed: on `feature/csharp-bindings` the 30-day preview bundle, elsewhere the same
+folder assembled for the run and kept for a day. It stays after the round merges, and BIND-9b
+also makes it the gate `cd.dotnet` passes before a release is published.

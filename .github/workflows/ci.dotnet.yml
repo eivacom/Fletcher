@@ -15,7 +15,7 @@ on:
           The commit to check out, or empty for the default (the merge ref on a pull
           request). ci.pr.yml passes the PR head when it builds the BIND-9a preview
           bundle, so every artifact names one commit, the one the bundle names
-          (D-BIND-145; the preview-bundle job checks the two are one tree).
+          (D-BIND-145; the package-bundle job checks the two are one tree).
         required: false
         type: string
         default: ''
@@ -153,8 +153,21 @@ jobs:
               # and both handed to the pack job.
               NATIVE=/workspace/dotnet/native/linux-x64
               mkdir -p "$NATIVE"
-              bash /workspace/scripts/check_shim_dependencies.sh "$SHIM"
               cp "$SHIM" "$NATIVE/"
+              # BIND-9b-1 (D-BIND-157): the packaged copy ships without its symbol table
+              # (3.5 MB of 14.6 MB that nothing loads); the exported C ABI must be exactly
+              # what it was, and from here on the tests, the AOT smoke and the checks all
+              # use this copy, the one that ships. The Conan package keeps its symbols.
+              EXPORTS_BEFORE=$(nm -D --defined-only "$NATIVE/libfletcher-c-abi.so" | cut -d" " -f3 | sort)
+              strip --strip-unneeded "$NATIVE/libfletcher-c-abi.so"
+              EXPORTS_AFTER=$(nm -D --defined-only "$NATIVE/libfletcher-c-abi.so" | cut -d" " -f3 | sort)
+              if [ -z "$EXPORTS_AFTER" ] || [ "$EXPORTS_BEFORE" != "$EXPORTS_AFTER" ]; then
+                echo "::error::stripping changed the shim exports"
+                exit 1
+              fi
+              echo "stripped: $(stat -c %s "$SHIM") -> $(stat -c %s "$NATIVE/libfletcher-c-abi.so") bytes, $(echo "$EXPORTS_AFTER" | wc -l) exports unchanged"
+              SHIM="$NATIVE/libfletcher-c-abi.so"
+              bash /workspace/scripts/check_shim_dependencies.sh "$SHIM"
               conan install --requires="fletcher-c-abi/[*, include_prerelease]" -o "fletcher-c-abi/*:with_probe_shim=True" \
                 --deployer=/workspace/gateway/deployers/third_party_licenses.py --deployer-folder="$NATIVE" \
                 -c tools.graph:skip_binaries=False -pr:a=$PROFILE
@@ -344,7 +357,7 @@ jobs:
             integration-tests/preview-bundle-consumer
 
       # BIND-9a-4: the package README's code is the consumer test's code, region for region,
-      # so what the README shows compiles and runs (the preview-consumer job runs it).
+      # so what the README shows compiles and runs (the package-consumer job runs it).
       - name: Check the README's snippets
         run: |
           C=integration-tests/preview-bundle-consumer/dotnet/PreviewConsumer
@@ -391,12 +404,13 @@ jobs:
               || { echo "::error::THIRD-PARTY-LICENSES.txt does not cover $lib, which is linked into the shim"; exit 1; }
           done
 
-      # The commit the packages name in their README (BIND-9a-2): the PR head on a pull
-      # request, which ci.pr's preview-bundle job checks is the tree that was built.
+      # The commit the packages name in their README and nuspec (BIND-9a-2, D-BIND-145): the one
+      # checked out, `ref` when ci.pr passes the PR head for the preview bundle (whose
+      # package-bundle job checks it is the tree that was built), else the event's commit.
       - name: Pack
         shell: bash
         env:
-          SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          SOURCE_COMMIT: ${{ inputs.ref || github.sha }}
         run: |
           VERSION_ARG=""
           if [ -n "${{ inputs.package-version }}" ]; then VERSION_ARG="-p:Version=${{ inputs.package-version }}"; fi
@@ -420,7 +434,7 @@ jobs:
       - name: Check the packages
         shell: bash
         env:
-          SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          SOURCE_COMMIT: ${{ inputs.ref || github.sha }}
         run: bash scripts/check_dotnet_packages.sh dotnet/artifacts "$SOURCE_COMMIT"
 
       - name: Upload packages

@@ -15,7 +15,7 @@ on:
           The commit to check out, or empty for the default (the merge ref on a pull
           request). ci.pr.yml passes the PR head when it builds the BIND-9a preview
           bundle, so every artifact names one commit, the one the bundle names
-          (D-BIND-145; the preview-bundle job checks the two are one tree).
+          (D-BIND-145; the package-bundle job checks the two are one tree).
         required: false
         type: string
         default: ''
@@ -29,11 +29,12 @@ on:
           cd.gateway.yml wrapper does the same for tag-push releases.
         required: true
         type: string
-      bundle:
+      release-artifacts:
         description: >-
           Build and upload the release archives (gateway-linux.tar.gz,
           gateway-windows.zip) as a tag push does, without a tag: ci.pr.yml sets
-          it for the BIND-9a per-push preview bundle (D-BIND-135, 139).
+          it for the BIND-9a per-push preview bundle (D-BIND-135, 139) and, since
+          BIND-9b-1, whenever the package consumer test runs (D-BIND-159).
         required: false
         type: boolean
         default: false
@@ -144,7 +145,7 @@ jobs:
       # two licence files from the step above, so zipping the folder ships the
       # exe and its attribution texts as one archive.
       - name: Bundle gateway + runtime libraries
-        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.bundle
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.release-artifacts
         shell: bash
         working-directory: gateway
         run: |
@@ -166,7 +167,7 @@ jobs:
           rm -rf zipcheck
 
       - name: Upload Windows bundle
-        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.bundle
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.release-artifacts
         uses: actions/upload-artifact@v7.0.1
         with:
           name: gateway-windows
@@ -196,7 +197,7 @@ jobs:
       - name: Build dependencies, install, build, and test
         shell: bash
         env:
-          ARTIFACT_NAME: ${{ ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.bundle) && 'gateway-linux.tar.gz' || '' }}
+          ARTIFACT_NAME: ${{ ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.release-artifacts) && 'gateway-linux.tar.gz' || '' }}
         run: |
           docker run --rm \
             -v "${GITHUB_WORKSPACE}:/workspace" \
@@ -272,7 +273,7 @@ jobs:
             '
 
       - name: Upload Linux binary
-        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.bundle
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.release-artifacts
         uses: actions/upload-artifact@v7.0.1
         with:
           name: gateway-linux

@@ -66,6 +66,11 @@ jobs:
       # re-run rebuilt the run. A "re-run failed jobs" keeps the jobs that passed, and with
       # them this output from the attempt that built them.
       bundle-version: ${{ steps.bundle.outputs.version }}
+      # BIND-9b-1 (D-BIND-159): the packages are tested as a consumer gets them, from the
+      # PACKED files, on every pull request that can change them, not only on the round's
+      # branch: then dotnet, gateway and protoc run with their release artifacts, the
+      # package-bundle job assembles them, and package-consumer runs the five routes.
+      consumer: ${{ steps.bundle.outputs.bundle == 'true' || steps.filter.outputs.dotnet == 'true' || steps.filter.outputs.gateway == 'true' || steps.filter.outputs.protoc == 'true' }}
     steps:
       - uses: actions/checkout@v6
       # The branch name is untrusted input: compared in the shell through an
@@ -529,7 +534,7 @@ jobs:
   # caches by version.
   dotnet:
     needs: [detect-changes, setup-devcontainer]
-    if: ${{ needs.detect-changes.outputs.dotnet == 'true' || needs.detect-changes.outputs.bundle == 'true' }}
+    if: ${{ needs.detect-changes.outputs.dotnet == 'true' || needs.detect-changes.outputs.consumer == 'true' }}
     uses: ./.github/workflows/ci.dotnet.yml
     with:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
@@ -555,21 +560,21 @@ jobs:
 
   protoc:
     needs: [detect-changes, setup-devcontainer]
-    if: ${{ needs.detect-changes.outputs.protoc == 'true' || needs.detect-changes.outputs.bundle == 'true' }}
+    if: ${{ needs.detect-changes.outputs.protoc == 'true' || needs.detect-changes.outputs.consumer == 'true' }}
     uses: ./.github/workflows/ci.protoc.yml
     with:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
-      bundle: ${{ needs.detect-changes.outputs.bundle == 'true' }}
+      release-artifacts: ${{ needs.detect-changes.outputs.consumer == 'true' }}
       ref: ${{ needs.detect-changes.outputs.bundle == 'true' && github.event.pull_request.head.sha || '' }}
     secrets: inherit
 
   gateway:
     needs: [detect-changes, setup-devcontainer]
-    if: ${{ needs.detect-changes.outputs.gateway == 'true' || needs.detect-changes.outputs.bundle == 'true' }}
+    if: ${{ needs.detect-changes.outputs.gateway == 'true' || needs.detect-changes.outputs.consumer == 'true' }}
     uses: ./.github/workflows/ci.gateway.yml
     with:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
-      bundle: ${{ needs.detect-changes.outputs.bundle == 'true' }}
+      release-artifacts: ${{ needs.detect-changes.outputs.consumer == 'true' }}
       ref: ${{ needs.detect-changes.outputs.bundle == 'true' && github.event.pull_request.head.sha || '' }}
     secrets: inherit
 
@@ -748,17 +753,18 @@ jobs:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
 
-  # BIND-9a (D-BIND-139): on the round's own branch, one preview bundle per push, the
-  # only way a build reaches testers before PR #129 merges: the four NuGet packages,
-  # the gateway and the code generator built from this commit, with a README and the
-  # licences, as ONE 30-day artifact. Never a tag, a release or a registry push.
-  # Removed with the `bundle` flag when the PR merges (BIND-9b).
-  preview-bundle:
+  # The packages, the gateway and the code generator as ONE folder, as a consumer gets them.
+  # BIND-9a (D-BIND-139): on the round's own branch it is the preview bundle, the only way a
+  # build reaches testers before PR #129 merges, uploaded as one 30-day artifact; never a tag,
+  # a release or a registry push. BIND-9b-1 (D-BIND-159): on every other pull request that can
+  # change the packages it is assembled the same way and kept for a day, only for
+  # package-consumer, so the packed files are tested before anything reaches main.
+  package-bundle:
     needs: [detect-changes, dotnet, gateway, protoc]
-    if: ${{ needs.detect-changes.outputs.bundle == 'true' }}
+    if: ${{ needs.detect-changes.outputs.consumer == 'true' }}
     runs-on: ubuntu-latest
-    env:
-      VERSION: ${{ needs.detect-changes.outputs.bundle-version }}
+    outputs:
+      artifact: ${{ steps.name.outputs.artifact }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -786,11 +792,35 @@ jobs:
           merge-multiple: true
           path: bundle/protoc
 
+      # The version: the preview's, computed once by detect-changes (D-BIND-150); otherwise
+      # the one the packages were packed at (Directory.Build.props), read off their names.
+      - id: name
+        name: Name the folder and its version
+        env:
+          BUNDLE: ${{ needs.detect-changes.outputs.bundle }}
+          BUNDLE_VERSION: ${{ needs.detect-changes.outputs.bundle-version }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          if [ "$BUNDLE" = true ]; then
+            version=$BUNDLE_VERSION
+            echo "artifact=fletcher-preview-$version" >> "$GITHUB_OUTPUT"
+          else
+            interop=$(find bundle/nuget -maxdepth 1 -name 'Eiva.Fletcher.Interop.[0-9]*.nupkg' -print -quit)
+            [ -n "$interop" ] || { echo "::error::no Eiva.Fletcher.Interop package was downloaded"; exit 1; }
+            version=$(basename "$interop" .nupkg); version=${version#Eiva.Fletcher.Interop.}
+            echo "artifact=ci-package-bundle-$RUN_ID-$RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "packages at $version"
+
       # The bundle and its packages name the PR head as their source, the one a relinking
       # user rebuilds the shim from (D-BIND-140), but a pull_request run builds the head
       # MERGED into main. The two are one tree until main moves; then main must be merged
-      # into the branch before a bundle can name its source (BIND-9a-2).
+      # into the branch before a bundle can name its source (BIND-9a-2). Only for the bundle:
+      # elsewhere nothing leaves the run.
       - name: Check that the built tree is the named commit's
+        if: ${{ needs.detect-changes.outputs.bundle == 'true' }}
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
@@ -800,33 +830,42 @@ jobs:
             exit 1
           fi
 
-      - name: Assemble and check the bundle
+      - name: Assemble and check the folder
         env:
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: bash scripts/assemble_preview_bundle.sh bundle "$VERSION" "$HEAD_SHA"
+          COMMIT: ${{ needs.detect-changes.outputs.bundle == 'true' && github.event.pull_request.head.sha || github.sha }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: bash scripts/assemble_preview_bundle.sh bundle "$VERSION" "$COMMIT"
 
       - name: Upload the preview bundle
+        if: ${{ needs.detect-changes.outputs.bundle == 'true' }}
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: fletcher-preview-${{ env.VERSION }}
+          name: ${{ steps.name.outputs.artifact }}
           path: bundle/
           retention-days: 30
 
-  # BIND-9a-2: the bundle as a tester gets it, on plain runners (not the devcontainer, so
-  # the platform floors are met by an ordinary Ubuntu 24.04 and Windows), with only the
+      - name: Upload the folder for package-consumer
+        if: ${{ needs.detect-changes.outputs.bundle != 'true' }}
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: ${{ steps.name.outputs.artifact }}
+          path: bundle/
+          retention-days: 1
+
+  # BIND-9a-2, and since BIND-9b-1 on every pull request package-bundle runs for (D-BIND-159):
+  # the packages as a consumer gets them, on plain runners (not the devcontainer, so the
+  # platform floors are met by an ordinary Ubuntu 24.04 and Windows), with only the
   # consumer's own folder checked out: code generated by the bundled plugin, the packages
-  # restored from the bundle alone, publish and subscribe through the packaged shim, and the
+  # restored from the folder alone, publish and subscribe through the packaged shim, and the
   # bundled gateway reached through the gateway client, on .NET 8 and .NET 10.
-  preview-consumer:
-    needs: [detect-changes, preview-bundle]
-    if: ${{ needs.detect-changes.outputs.bundle == 'true' }}
+  package-consumer:
+    needs: [detect-changes, package-bundle]
+    if: ${{ needs.detect-changes.outputs.consumer == 'true' }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, windows-2022]
     runs-on: ${{ matrix.os }}
-    env:
-      VERSION: ${{ needs.detect-changes.outputs.bundle-version }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -838,13 +877,13 @@ jobs:
             8.0.x
             10.0.x
 
-      - name: Download the preview bundle
+      - name: Download the packages, gateway and plugin
         uses: actions/download-artifact@v8.0.1
         with:
-          name: fletcher-preview-${{ env.VERSION }}
+          name: ${{ needs.package-bundle.outputs.artifact }}
           path: bundle
 
-      - name: Consume the bundle
+      - name: Consume them
         shell: bash
         run: bash integration-tests/preview-bundle-consumer/run.sh bundle "$RUNNER_TEMP/preview-consumer"
 
@@ -880,8 +919,8 @@ jobs:
       - integration-test-protoc-gen-fletcher-rust
       - integration-test-protoc-dotnet
       - integration-test-protoc-plugin-cli
-      - preview-bundle
-      - preview-consumer
+      - package-bundle
+      - package-consumer
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -922,5 +961,5 @@ jobs:
             ${{ needs.integration-test-protoc-gen-fletcher-rust.result }},
             ${{ needs.integration-test-protoc-dotnet.result }},
             ${{ needs.integration-test-protoc-plugin-cli.result }},
-            ${{ needs.preview-bundle.result }},
-            ${{ needs.preview-consumer.result }}
+            ${{ needs.package-bundle.result }},
+            ${{ needs.package-consumer.result }}

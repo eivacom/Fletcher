@@ -3668,8 +3668,8 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
 - **D-BIND-157 - a packed-size ceiling of 12 MB on `Eiva.Fletcher.Interop`, the Linux shim
   stripped, the Windows export surface accepted.** *LOCKED BY THE MAINTAINER 2026-10-22 (BIND-9b
   Q5).* The pack job fails above 12 MB; the Linux shim ships without its symbol table (14.6 to
-  11.1 MB unpacked, the package to about 7.7 MB); N-10's 3531 Windows exports (ConanCenter's
-  fast-dds static build) are recorded and revisited only if the ceiling is hit. **Declined:**
+  11.6 MB unpacked, measured in 9b-1; the package to about 7.7 MB); N-10's 3531 Windows exports
+  (ConanCenter's fast-dds static build) are recorded and revisited only if the ceiling is hit. **Declined:**
   owning a fast-dds build now.
 
 - **D-BIND-158 - `Eiva.Fletcher.Protoc` carries `fletcher/options.proto`, and wires it into

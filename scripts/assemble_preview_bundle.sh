@@ -7,7 +7,7 @@
 #
 #   assemble_preview_bundle.sh <bundle folder> <version> <commit>
 #
-# Expects, downloaded by ci.pr's preview-bundle job:
+# Expects, downloaded by ci.pr's package-bundle job:
 #   nuget/     the four .nupkg (and .snupkg) at <version>
 #   gateway/   gateway-linux.tar.gz, gateway-windows.zip
 #   protoc/    protoc-gen-fletcher-linux-x64, protoc-gen-fletcher-windows-x64.exe,
@@ -24,7 +24,7 @@ mkdir -p "$DIR/protoc/fletcher"
 cp protoc/include/fletcher/options.proto "$DIR/protoc/fletcher/"
 cp LICENSE "$DIR/LICENSE"
 cp COPYING "$DIR/COPYING"
-printf 'version: %s\ncommit: %s\nbranch: feature/csharp-bindings\n' "$VERSION" "$COMMIT" > "$DIR/VERSION"
+printf 'version: %s\ncommit: %s\nbranch: %s\n' "$VERSION" "$COMMIT" "${BRANCH:-feature/csharp-bindings}" > "$DIR/VERSION"
 sed -e "s/@VERSION@/$VERSION/g" -e "s/@COMMIT@/$COMMIT/g" scripts/preview/README-preview.md > "$DIR/README-preview.md"
 
 missing=0

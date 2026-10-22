@@ -2423,6 +2423,24 @@ packaging hardening; 9b-2 the codec's null refusal; 9b-3 NativeAOT on Windows an
 `cd.dotnet.yml`; 9b-7 the licence research and the 9a review's remaining debts; 9b-8 the merge
 preparation, a fresh-context review and the close.
 
+- **9b-1 built and rehearsed 2026-10-22** (CI pending; all three parts, on the maintainer's
+  ruling against moving the third to 9b-8): **the stripped shim**, `ci.dotnet`'s Linux leg strips
+  the packaged copy (`strip --strip-unneeded`), requires its exported symbols to be unchanged, and
+  from there runs the dependency and floor check, the tests and the AOT smoke on that copy, the one
+  that ships (14.6 to 11.6 MB, all 47 `fl_*` exports kept; the Conan package keeps its symbols);
+  **the ceiling**, `check_dotnet_packages.sh` fails a packed `Eiva.Fletcher.Interop` above
+  12,000,000 bytes; **the consumer on packed packages for every pull request**, `detect-changes`
+  gains a `consumer` output (the round's branch, or the `dotnet`, `gateway` or `protoc` filter),
+  which runs those three lanes with their release artifacts (the input renamed `bundle` to
+  `release-artifacts`); `preview-bundle` and `preview-consumer` become `package-bundle` and
+  `package-consumer`, which on this branch keep the head-commit check and the 30-day
+  `fletcher-preview-*` upload and elsewhere assemble the same folder for the run (one day,
+  `ci-package-bundle-*`); the pack job now names the commit it checked out (`inputs.ref` or the
+  event's), as on a non-bundle pull request that is the merge commit and the nuspec check would
+  otherwise fail. Rehearsed in the devcontainer: exports unchanged, the stripped shim self-contained
+  at the stated floors, `Fletcher.Tests` 423/423 on it, the packages checked, a ceiling mutant
+  caught, the folder assembled naming its branch; actionlint clean.
+
 **How test builds reach testers during development, and what changes at the merge** (recorded
 2026-10-20 at the maintainer's request, D-BIND-137 to 139). Until PR #129 merges, the per-push
 preview bundle is the ONLY way anything built here reaches a tester: a 30-day CI artifact, never
@@ -2440,8 +2458,10 @@ from `main` after the merge:**
   also publishing `Eiva.Fletcher.Protoc`. Each workflow's dry run is green before its tag.
 - **The preview bundle retired:** the `ci.pr` bundle job and its "build dotnet, gateway and
   protoc on every push to this branch" condition are removed in the merge, so `main` keeps only
-  the path-filtered CI; with them go the `preview-consumer` job (or it is turned on the released
-  packages), `scripts/preview/` and the tester note `dotnet/PREVIEW-TESTERS.md` (9a-3).
+  the path-filtered CI; with them go the 30-day upload, `scripts/preview/`'s tester README and
+  the tester note `dotnet/PREVIEW-TESTERS.md` (9a-3). The `package-bundle` and
+  `package-consumer` jobs STAY: they test the packed packages on every pull request that can
+  change them (D-BIND-159, wired in 9b-1).
 - **Previews cleared before the first `-alpha`:** the remaining bundles deleted and testers told to
   clear their NuGet caches (D-BIND-138).
 
