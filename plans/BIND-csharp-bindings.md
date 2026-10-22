@@ -1849,7 +1849,8 @@ codec step.
     unreachable today.
   - **G-D2** D-BIND-81 pins the ILCompiler pack, not the runtime pack it is used with; an AOT publish
     on an SDK other than 10.0.400 mixes 10.0.11 and 10.0.12. CI is unaffected. BIND-9, with the SDK
-    pin.
+    pin. **Closed by BIND-9b-3 (2026-10-22):** not harmless, the mix fails the publish, which the
+    new Windows leg met; the runtime pack is now pinned with the AOT packs.
   - **G-D3** the generated subscriber builds a `StructType` per delivery; build it once. BIND-7 or a
     performance pass.
   - **G-D4** decode failures reach `HandlerFaulted` as if the handler had thrown; document them or
@@ -2466,6 +2467,26 @@ preparation, a fresh-context review and the close.
   `Fletcher.Tests` 428/428 on both frameworks against the rebuilt shim, the gateway client 222/222
   on this host, clang-format-18 and `dotnet format` clean. The TypeScript gateway client is a
   BIND-T parity item.
+- **9b-3, 2026-10-22 (D-BIND-88, D-BIND-160): NativeAOT on Windows and over `fastdds`.**
+  **Windows:** `ci.dotnet`'s Windows leg publishes `Fletcher.AotSmoke` with NativeAOT for net8.0
+  and net10.0 (ILC, then the MSVC linker, which the ILCompiler package finds with vswhere) and runs
+  it against the shim that leg built, warnings as errors as on Linux. Measuring it found **G-D2
+  real for publishing:** the SDK picks a self-contained app's runtime pack at its own latest patch,
+  and ILC refuses a `System.Private.CoreLib` newer than its own, so on any SDK but 10.0.400 (the
+  Windows runner rolls forward) the publish failed. `Directory.Build.targets` now pins
+  `RuntimeFrameworkVersion` to the AOT packs' versions for every `PublishAot` project. **A real
+  transport (the maintainer's ruling: two processes, both legs):** `Fletcher.AotSmoke fastdds`
+  relaunches itself as `fastdds-subscribe <topic>` on a GUID topic and republishes one row every
+  100 ms until the child exits (30 s deadline; the child's is 35 s). Two processes because Fast
+  DDS delivers a sample written in the same process on the writer's own thread. The child decodes
+  through `FletcherCodec` and the generated `Reading.FromArrow`, as the generated subscriber does
+  (the generated classes fix their topic), and exits 0 only on the expected row, delivered off its
+  main thread. Rehearsed: on this Windows host (VS 18 MSVC, SDK 10.0.402, the bundle 338 shim) and
+  in the devcontainer (SDK 10.0.400, gcc), both TFMs publish with no IL diagnostics, the inprocess
+  smoke passes, and over `fastdds` the row arrives on a transport thread after 2 to 4 publishes;
+  the solution builds clean with the pin, and `dotnet format` is clean. Two mutants are caught: the
+  child on another topic (30 s deadline, 299 published, exit 1) and a different row (the child
+  refuses it, exit 1).
 
 **How test builds reach testers during development, and what changes at the merge** (recorded
 2026-10-20 at the maintainer's request, D-BIND-137 to 139). Until PR #129 merges, the per-push

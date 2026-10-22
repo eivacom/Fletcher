@@ -1383,3 +1383,12 @@ not nullable before anything is written, naming the field and the row. Before, a
 read a value that was not there. The check walks values exactly as each encoder does, so a null
 below an absent parent, which is no value at all, still goes through, and in the common case it
 costs one null count per field. TypeScript follows in BIND-T.
+
+**9b-3, NativeAOT on Windows and over a real transport.** The ahead-of-time compiled smoke app
+now also builds and runs on Windows, linked by the Microsoft toolchain, and both platforms run
+it a second time over Fast DDS. That run uses two processes, because Fast DDS hands a sample
+written in the same process straight to the reader on the writer's thread, so only a second
+process puts the delivery on a Fast DDS thread. The Windows build failed at first on a
+version mismatch that an old note had judged harmless: the compiler's packages were pinned but
+the runtime they compile against followed whichever SDK was installed. Both are now pinned
+together.

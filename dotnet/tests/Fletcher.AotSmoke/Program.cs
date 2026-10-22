@@ -8,9 +8,19 @@
 // another file, built through its public ToArrow, D-BIND-80), the codec behind the C ABI, the
 // provider, and the generated subscriber's delegate. The exit code is the verdict: 0 only
 // when exactly the rows that were sent come back.
+//
+// BIND-9b-3 (D-BIND-88): `Fletcher.AotSmoke fastdds` is the same crossing over a real transport,
+// so a delivery enters AOT-compiled code on a Fast DDS thread. That takes TWO processes: Fast
+// DDS hands a sample written in the same process to the reader on the writer's own thread
+// (intraprocess delivery), which is what `inprocess` already covers. So this process relaunches
+// itself as `fastdds-subscribe <topic>`, and republishes one row on that GUID topic every 100 ms
+// until the child exits, because a sample written before discovery matched is lost. Each side
+// has a deadline; the child's exit code is the verdict.
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
+using System.Threading;
 
 using Apache.Arrow;
 using Apache.Arrow.Types;
@@ -22,6 +32,20 @@ using Eiva.Fletcher.Model;
 using Fletcher.Gen.Golden.Pair;
 
 using PbTimestamp = Fletcher.Gen.Google.Protobuf.Timestamp;
+
+TimeSpan fastDdsDeadline = TimeSpan.FromSeconds(30);
+switch (args)
+{
+    case []:
+        break;
+    case ["fastdds"]:
+        return RunFastDdsPublisher();
+    case ["fastdds-subscribe", string topicSegment]:
+        return RunFastDdsSubscriber(topicSegment);
+    default:
+        Console.Error.WriteLine("usage: Fletcher.AotSmoke [fastdds]");
+        return 2;
+}
 
 using PubSubProviderHandle provider = ProviderRegistry.Create(ProviderSelector.Parse("inprocess"), new ProviderConfig());
 
@@ -132,3 +156,85 @@ static Reading MakeReading() => new()
 static string Describe(Reading row) =>
     $"{row.Id} {row.Name} {row.Value} {row.Mood} {string.Join(',', row.Samples)} "
     + $"{row.Tags.Count} {row.Stamp?.By} {row.History.Count} {row.At.WithUnit(TimeUnit.Nanosecond).Value}";
+
+// The runtime's Publisher and Subscriber with the generated row class, as the generated pair
+// uses them: the generated classes fix their topic, and this run needs a GUID one.
+int RunFastDdsPublisher()
+{
+    string topicSegment = "aotsmoke-" + Guid.NewGuid().ToString("N");
+    using Process child = Process.Start(new ProcessStartInfo(Environment.ProcessPath!)
+    {
+        ArgumentList = { "fastdds-subscribe", topicSegment },
+        UseShellExecute = false,
+    })!;
+
+    using PubSubProviderHandle provider = ProviderRegistry.Create(ProviderSelector.Parse("fastdds"), new ProviderConfig());
+    using var codec = new FletcherCodec(Reading.Schema);
+    using var publisher = new Publisher(provider);
+    TopicPath topic = TopicPath.Of(topicSegment);
+    publisher.CreateTopic(topic, Reading.Schema);
+    using RecordBatch batch = Reading.ToArrow(new[] { MakeReading() });
+    using BoundRows bound = codec.Bind(batch);
+
+    var clock = Stopwatch.StartNew();
+    int sent = 0;
+    while (!child.WaitForExit(100))
+    {
+        if (clock.Elapsed > fastDdsDeadline)
+        {
+            child.Kill();
+            Console.Error.WriteLine($"AotSmoke fastdds: no row reached the subscriber in {fastDdsDeadline.TotalSeconds} s ({sent} published on {topicSegment})");
+            return 1;
+        }
+
+        publisher.Publish(topic, bound, 0);
+        ++sent;
+    }
+
+    Console.WriteLine($"AotSmoke fastdds: {sent} published on {topicSegment}, subscriber exited {child.ExitCode}");
+    return child.ExitCode == 0 ? 0 : 1;
+}
+
+int RunFastDdsSubscriber(string topicSegment)
+{
+    int mainThread = Environment.CurrentManagedThreadId;
+    using PubSubProviderHandle provider = ProviderRegistry.Create(ProviderSelector.Parse("fastdds"), new ProviderConfig());
+    using var codec = new FletcherCodec(Reading.Schema);
+    using var subscriber = new Subscriber(provider);
+    subscriber.HandlerFaulted += (_, e) => Console.Error.WriteLine($"AotSmoke fastdds-subscribe: the handler threw: {e.Exception}");
+
+    string? first = null;
+    int deliveryThread = 0;
+    using var arrived = new ManualResetEventSlim();
+    SubscribeResult result = subscriber.Subscribe(TopicPath.Of(topicSegment), (bytes, schema, attachments) =>
+    {
+        using RecordBatch batch = codec.Decode(bytes);
+        var columns = new StructArray(new StructType(batch.Schema.FieldsList), batch.Length, batch.Arrays, ArrowBuffer.Empty, 0);
+        string row = Describe(Reading.FromArrow(columns, 0));
+        if (Interlocked.CompareExchange(ref first, row, null) is null)
+        {
+            deliveryThread = Environment.CurrentManagedThreadId;
+            arrived.Set();
+        }
+    });
+    result.Schema.Dispose();
+    using Subscription subscription = result.Subscription;
+
+    // Longer than the publisher's, so it is the publisher that reports a lost row.
+    if (!arrived.Wait(fastDdsDeadline + TimeSpan.FromSeconds(5)))
+    {
+        Console.Error.WriteLine("AotSmoke fastdds-subscribe: no row arrived");
+        return 1;
+    }
+
+    string expected = Describe(MakeReading());
+    Console.WriteLine($"fastdds {first} (delivered on thread {deliveryThread}, main thread {mainThread})");
+    if (first != expected || deliveryThread == mainThread)
+    {
+        Console.Error.WriteLine($"AotSmoke fastdds-subscribe: expected \"{expected}\" on a transport thread");
+        return 1;
+    }
+
+    Console.WriteLine("AotSmoke fastdds: OK");
+    return 0;
+}
