@@ -9,14 +9,14 @@ import os
 
 class FletcherPubsubConan(ConanFile):
     name = "fletcher-xrcedds-pubsub-provider"
-    version = "0.5.1-alpha"
+    version = "0.5.2-alpha"
     description = "Fletcher XRCE-DDS PubSub Provider library"
     license = "LGPL-3.0-or-later"
     package_type = "static-library"
     settings = "os", "compiler", "build_type", "arch"
 
-    options = {"run_tests": [True, False]}
-    default_options = {"run_tests": False}
+    options = {"run_tests": [True, False], "fPIC": [True, False]}
+    default_options = {"run_tests": False, "fPIC": True}
 
     exports_sources = (
         "CMakeLists.txt",
@@ -31,8 +31,12 @@ class FletcherPubsubConan(ConanFile):
         "third_party/*",
     )
 
+    def config_options(self):
+        if self.settings.os == "Windows":
+            self.options.rm_safe("fPIC")
+
     def requirements(self):
-        self.requires("fletcher-pubsub/0.5.1-alpha", transitive_headers=True)
+        self.requires("fletcher-pubsub/0.5.2-alpha", transitive_headers=True)
         self.requires("fletcher-core/0.5.0-alpha", transitive_headers=True)
         if self.options.run_tests:
             self.requires("gtest/1.17.0")

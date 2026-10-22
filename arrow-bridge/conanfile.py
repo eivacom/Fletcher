@@ -9,14 +9,14 @@ import os
 
 class FletcherArrowBridgeConan(ConanFile):
     name = "fletcher-arrow-bridge"
-    version = "0.5.1-alpha"
+    version = "0.5.2-alpha"
     description = "Fletcher Arrow C++ bridge — Codec, ArrowRowView, CRS utilities"
     license = "LGPL-3.0-or-later"
     package_type = "static-library"
     settings = "os", "compiler", "build_type", "arch"
 
-    options = {"run_tests": [True, False]}
-    default_options = {"run_tests": False}
+    options = {"run_tests": [True, False], "fPIC": [True, False]}
+    default_options = {"run_tests": False, "fPIC": True}
 
     exports_sources = (
         "CMakeLists.txt",
@@ -25,6 +25,10 @@ class FletcherArrowBridgeConan(ConanFile):
         "cmake/*",
         "tests/*",
     )
+
+    def config_options(self):
+        if self.settings.os == "Windows":
+            self.options.rm_safe("fPIC")
 
     def requirements(self):
         # core types appear in arrow-bridge's public interface (codec.hpp →
