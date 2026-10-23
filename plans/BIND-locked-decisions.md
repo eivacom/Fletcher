@@ -3720,3 +3720,37 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   line a peer prints for a received row names its topic, and every command names one, so a late
   row of an earlier test never counts for the next. **Declined:** a new lane reusing this one's
   parts by path; a new lane from scratch.
+
+## Rulings of 2026-10-23 — BIND-9b-6, the release workflows
+
+- **D-BIND-162 - `cd.dotnet`'s gate builds the gateway and the code generator from the tag's own
+  tree, through one consumer workflow shared with `ci.pr`.** *LOCKED BY THE MAINTAINER 2026-10-23
+  (BIND-9b-6 Q1).* D-BIND-159's gate runs the consumer test, which since 9b-5 also needs the
+  gateway (the gateway-client route) and `Eiva.Fletcher.Protoc` (to generate code). `cd.dotnet`
+  calls `ci.gateway` and `ci.protoc` with their release artifacts beside `ci.dotnet`, as `ci.pr`
+  does, and the package-bundle and package-consumer jobs move into
+  `.github/workflows/ci.package-consumer.yml`, which both call. So the gate needs nothing released
+  first and is the very test every pull request runs; a dotnet release costs about a PR run.
+  **Declined:** the other components' released assets (a dotnet release would wait on two other
+  releases, and the test would differ from `ci.pr`'s); the native routes only (drops the gateway
+  route and the generator from the gate).
+
+- **D-BIND-163 - the feed push is skipped until the runner exists, and a manual workflow pushes a
+  Release later.** *LOCKED BY THE MAINTAINER 2026-10-23 (BIND-9b-6 Q2).* `cd.dotnet`'s and
+  `cd.protoc`'s feed jobs run only when the repository variable `NUGET_EIVA_RUNNER` is `'true'`,
+  which an admin sets once the `[self-hosted, eiva-network]` runner exists; until then a release
+  run is green with its GitHub Release assets (D-BIND-153). Both call
+  `.github/workflows/cd.nuget-feed.yml`, which pushes exactly a Release's `.nupkg` and `.snupkg`
+  assets (the packages the gate tested) and can be dispatched with a tag for a release cut before
+  the runner existed. **Declined:** always queueing the push job (every release run would wait a
+  day for a missing runner and end failed).
+
+- **D-BIND-164 - the release workflows' dry run is a dispatch on `main`, after the merge.**
+  *LOCKED BY THE MAINTAINER 2026-10-23 (BIND-9b-6 Q3).* GitHub dispatches only workflows on the
+  default branch. `cd.dotnet` and `cd.protoc` gain `workflow_dispatch`, which is always a dry run:
+  everything up to and including the gate (`cd.dotnet`) or the packed and checked package
+  (`cd.protoc`), never npm, the Release or the feed; a real release comes only from a tag. 9b-8
+  records the first dry runs on `main`, before the first tags. Until then `ci.pr` runs every reused
+  part on each push, and the release-only step with logic, the tag check
+  (`verify-tag-version-dotnet`), is tested by `ci.action-lint`. **Declined:** running `cd.dotnet` in
+  dry-run mode from `ci.pr` (a second full build of three components on every push).

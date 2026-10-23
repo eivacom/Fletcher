@@ -1,0 +1,183 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+name: ci.package-consumer
+
+# BIND-9b-6 (D-BIND-159, D-BIND-162): the packed packages tested as a consumer gets them, in ONE
+# place for both callers: ci.pr.yml on every pull request that can change them (and, on the
+# round's branch, the preview bundle), and cd.dotnet.yml as the gate before a release attaches
+# anything or pushes to the feed. The caller runs ci.dotnet, ci.gateway and ci.protoc first, with
+# their release artifacts; this workflow assembles them into one folder and runs the consumer test
+# on exactly those files. Moved here from ci.pr.yml's package-bundle and package-consumer jobs.
+
+on:
+  workflow_call:
+    inputs:
+      preview:
+        description: >-
+          The round's preview bundle (BIND-9a, D-BIND-139): upload the folder as the 30-day
+          fletcher-preview-<version> artifact testers download, after checking that the built
+          tree is head-sha's. Otherwise the folder is kept for a day, only for the test.
+        required: false
+        type: boolean
+        default: false
+      version:
+        description: >-
+          The preview's version (D-BIND-150), computed once by the caller. Empty: the version
+          the packages were packed at, read off Eiva.Fletcher.Interop's file name.
+        required: false
+        type: string
+        default: ''
+      head-sha:
+        description: >-
+          The commit a preview bundle names (the pull request head, D-BIND-145). Empty: the
+          run's own commit.
+        required: false
+        type: string
+        default: ''
+    outputs:
+      artifact:
+        description: The name of the uploaded folder's artifact.
+        value: ${{ jobs.package-bundle.outputs.artifact }}
+
+jobs:
+  # The packages, the gateway and the code generator as ONE folder, as a consumer gets them.
+  # BIND-9a (D-BIND-139): on the round's own branch it is the preview bundle, the only way a
+  # build reaches testers before PR #129 merges, uploaded as one 30-day artifact; never a tag,
+  # a release or a registry push. BIND-9b-1 (D-BIND-159): on every other pull request that can
+  # change the packages, and in cd.dotnet (BIND-9b-6), it is assembled the same way and kept for
+  # a day, only for package-consumer, so the packed files are tested before anything reaches main
+  # or a release.
+  package-bundle:
+    runs-on: ubuntu-latest
+    outputs:
+      artifact: ${{ steps.name.outputs.artifact }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            scripts
+            protoc/include/fletcher
+
+      - name: Download the NuGet packages
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: dotnet-packages
+          path: bundle/nuget
+
+      # BIND-9b-5 (D-BIND-71): Eiva.Fletcher.Protoc, which ci.protoc packs beside the plugin.
+      - name: Download the plugin package
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: fletcher-protoc-nuget
+          path: bundle/nuget
+
+      - name: Download the gateway archives
+        uses: actions/download-artifact@v8.0.1
+        with:
+          pattern: gateway-{linux,windows}
+          merge-multiple: true
+          path: bundle/gateway
+
+      - name: Download the plugin and its licence files
+        uses: actions/download-artifact@v8.0.1
+        with:
+          pattern: fletcher-protoc-{linux-static,windows-static,licences}
+          merge-multiple: true
+          path: bundle/protoc
+
+      # The version: the preview's, computed once by the caller (D-BIND-150); otherwise
+      # the one the packages were packed at (Directory.Build.props), read off their names.
+      - id: name
+        name: Name the folder and its version
+        env:
+          PREVIEW: ${{ inputs.preview }}
+          PREVIEW_VERSION: ${{ inputs.version }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          if [ "$PREVIEW" = true ]; then
+            version=$PREVIEW_VERSION
+            echo "artifact=fletcher-preview-$version" >> "$GITHUB_OUTPUT"
+          else
+            interop=$(find bundle/nuget -maxdepth 1 -name 'Eiva.Fletcher.Interop.[0-9]*.nupkg' -print -quit)
+            [ -n "$interop" ] || { echo "::error::no Eiva.Fletcher.Interop package was downloaded"; exit 1; }
+            version=$(basename "$interop" .nupkg); version=${version#Eiva.Fletcher.Interop.}
+            echo "artifact=ci-package-bundle-$RUN_ID-$RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "packages at $version"
+
+      # The bundle and its packages name the PR head as their source, the one a relinking
+      # user rebuilds the shim from (D-BIND-140), but a pull_request run builds the head
+      # MERGED into main. The two are one tree until main moves; then main must be merged
+      # into the branch before a bundle can name its source (BIND-9a-2). Only for the bundle:
+      # elsewhere nothing leaves the run.
+      - name: Check that the built tree is the named commit's
+        if: ${{ inputs.preview }}
+        env:
+          HEAD_SHA: ${{ inputs.head-sha }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$HEAD_SHA"
+          if [ "$(git rev-parse 'HEAD^{tree}')" != "$(git rev-parse "$HEAD_SHA^{tree}")" ]; then
+            echo "::error::this run built the merge of $HEAD_SHA into main, and main has moved: merge main into the branch, so the bundle names the source it was built from"
+            exit 1
+          fi
+
+      - name: Assemble and check the folder
+        env:
+          COMMIT: ${{ inputs.preview && inputs.head-sha || github.sha }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+          BUNDLE_PROTOC_VERSION_MUST_MATCH: ${{ inputs.preview && '1' || '0' }}
+        run: bash scripts/assemble_preview_bundle.sh bundle "$VERSION" "$COMMIT"
+
+      - name: Upload the preview bundle
+        if: ${{ inputs.preview }}
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: ${{ steps.name.outputs.artifact }}
+          path: bundle/
+          retention-days: 30
+
+      - name: Upload the folder for package-consumer
+        if: ${{ !inputs.preview }}
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: ${{ steps.name.outputs.artifact }}
+          path: bundle/
+          retention-days: 1
+
+  # BIND-9a-2, and since BIND-9b-1 wherever package-bundle runs (D-BIND-159): the packages as a
+  # consumer gets them, on plain runners (not the devcontainer, so the platform floors are met
+  # by an ordinary Ubuntu 24.04 and Windows), with only the consumer's own folder checked out:
+  # code generated by the plugin Eiva.Fletcher.Protoc locates, the packages restored from the
+  # folder alone, publish and subscribe through the packaged shim, the bundled gateway reached
+  # through the gateway client, and a Grpc.Tools project using Fletcher's options (BIND-9b-5),
+  # on .NET 8 and .NET 10.
+  package-consumer:
+    needs: package-bundle
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: integration-tests/preview-bundle-consumer
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - name: Download the packages, gateway and plugin
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: ${{ needs.package-bundle.outputs.artifact }}
+          path: bundle
+
+      - name: Consume them
+        shell: bash
+        run: bash integration-tests/preview-bundle-consumer/run.sh bundle "$RUNNER_TEMP/preview-consumer"

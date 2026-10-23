@@ -1412,3 +1412,13 @@ tester would now generates its code through the package, beside a second project
 gRPC route. Checking whether the package needs to mark the generator executable on Linux showed
 that current NuGet already does so for the user who installed it; the package does it for
 everyone else.
+
+**9b-6, the release workflows.** The C# packages now have a release pipeline of their own. A tag
+builds them, builds the gateway and the code generator from the same commit, and runs the same
+consumer test every pull request runs, on the packed files; only if it passes are the packages
+attached to a GitHub Release. The push to EIVA's internal feed is a separate step that waits,
+switched off, until the network runner it needs exists, and can then push any earlier release
+by its tag. The code generator's release gained the same feed step and now attaches its NuGet
+package too. Three choices, each ruled by the maintainer: build the other two components for the
+check rather than wait for their releases, skip the feed step until it can run, and do the first
+trial runs on main after the merge, since GitHub cannot start these workflows from a branch.

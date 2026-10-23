@@ -7,7 +7,7 @@
 #
 #   assemble_preview_bundle.sh <bundle folder> <version> <commit>
 #
-# Expects, downloaded by ci.pr's package-bundle job:
+# Expects, downloaded by the package-bundle job of ci.package-consumer.yml:
 #   nuget/     the four .nupkg (and .snupkg) at <version>, and Eiva.Fletcher.Protoc (BIND-9b-5),
 #              at <version> in a preview bundle and at the protoc component's version elsewhere
 #   gateway/   gateway-linux.tar.gz, gateway-windows.zip

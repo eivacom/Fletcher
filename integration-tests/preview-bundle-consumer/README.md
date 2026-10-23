@@ -68,7 +68,9 @@ The project is copied into the work folder (a temporary folder by default) so th
 repository's build applies to it. Linux, or Git Bash on Windows; it needs the .NET 8 and .NET 10
 runtimes and network access to nuget.org.
 
-CI: the `package-consumer` job in [`ci.pr.yml`](../../.github/workflows/ci.pr.yml), after
+CI: the `package-consumer` job of [`ci.package-consumer.yml`](../../.github/workflows/ci.package-consumer.yml),
+which [`ci.pr.yml`](../../.github/workflows/ci.pr.yml) calls and, as the gate before a release,
+[`cd.dotnet.yml`](../../.github/workflows/cd.dotnet.yml) (BIND-9b-6, D-BIND-162), after
 `package-bundle`, on plain `ubuntu-24.04` and `windows-2022` runners (not the devcontainer), with
 only this folder checked out. It runs on every pull request that can change what a consumer gets
 (the `dotnet`, `gateway` or `protoc` filter, or the round's own branch; D-BIND-159), against the

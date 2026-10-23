@@ -703,6 +703,12 @@ listed in `pr_gate`'s `results:`).
 
 ### CD — publishing to `nuget.eiva.com` (D-BIND-28)
 
+> **Built by BIND-9b-6 (2026-10-23), and changed from the sketch below by D-BIND-153 and
+> D-BIND-162 to 164:** the Release is created on a GitHub-hosted runner from the packages the gate
+> tested, and the feed push is its own job, `cd.nuget-feed.yml`, skipped until the runner exists;
+> the gate (`ci.package-consumer.yml`) runs first, with the gateway and protoc built beside dotnet;
+> a dispatch is a dry run. `.github/workflows/cd.dotnet.yml` is the reference, not the YAML below.
+
 **Mirror the Conan CD workflows exactly** (`cd.core.yml` and its siblings): a tag push
 runs `setup-devcontainer` → `ci.dotnet.yml` (build, test, pack, upload artifacts) →
 one `publish` job that verifies the tag against the version, downloads the packed
@@ -780,7 +786,12 @@ installed; create an API key on `nuget.eiva.com` and store it as the
 `NUGET_EIVA_API_KEY` repository secret. The runner executes **only this job**: no
 build, no test, and never pull-request code — `cd.dotnet.yml` is tag-triggered, so
 `pull_request` events cannot reach it. Its label, what it runs and what it must have
-installed are documented in `dotnet/README.md` (BIND-10).
+installed are documented in `dotnet/README.md` (BIND-10). **As built (9b-6, D-BIND-163), three
+admin steps, none needed for a release:** (1) register the runner with the labels
+`self-hosted` and `eiva-network`, with bash, the .NET SDK and `gh`; (2) store a `nuget.eiva.com`
+API key as the `NUGET_EIVA_API_KEY` repository secret; (3) set the repository variable
+`NUGET_EIVA_RUNNER` to `true`. Then dispatch `cd.nuget-feed.yml` with the tag of every release
+cut before step 3. The runner runs only `cd.nuget-feed.yml`'s push job, documented in that file.
 
 **Consumers** add the feed to their `nuget.config`
 (`<add key="eiva" value="https://nuget.eiva.com/v3/index.json" />`). Pre-release
@@ -2567,6 +2578,29 @@ preparation, a fresh-context review and the close.
   the old comment is refused); both consumers re-rehearsed green on Windows and Linux. The same run
   also failed `CSharpNativeToCpp` once on Linux (no probe in two 20 s attempts, the Fast DDS
   "0 rows" kind), passing on Windows and in every earlier run: the new row's first such failure.
+- **9b-6, 2026-10-23 (D-BIND-153, D-BIND-159, D-BIND-162 to 164): the release workflows.** Three
+  rulings first, one at a time: the gate builds the gateway and protoc from the tag's tree (162),
+  the feed push is skipped until the runner exists (163), the dry run is a dispatch on `main`
+  (164). **`cd.dotnet.yml`** (new): on a `dotnet-v*` tag, `ci.dotnet`, `ci.gateway` and
+  `ci.protoc` (release artifacts), then the gate, `ci.package-consumer.yml`; only then `release`
+  (GitHub-hosted: the tag checked against `Directory.Build.props` by the new composite action
+  `verify-tag-version-dotnet`, the four `.nupkg` and four `.snupkg` checked present and attached to
+  the GitHub Release) and `feed` (`cd.nuget-feed.yml`, when `NUGET_EIVA_RUNNER` is `'true'`). A
+  dispatch runs up to the gate. **`ci.package-consumer.yml`** (new): the package-bundle and
+  package-consumer jobs, moved out of `ci.pr.yml` unchanged but for three inputs (`preview`,
+  `version`, `head-sha`) in place of `detect-changes`' outputs; `ci.pr` calls it as one job
+  (`pr_gate` lists it), and the preview bundle keeps its name. **`cd.nuget-feed.yml`** (new):
+  `workflow_call` and `workflow_dispatch` with a tag; a GitHub-hosted job fails with the reason
+  unless `NUGET_EIVA_RUNNER` is `'true'`, then the `[self-hosted, eiva-network]` job downloads the
+  Release's `.nupkg` and `.snupkg` with `gh` and pushes them (`--skip-duplicate`, symbols to the
+  feed's symbol endpoint). **`cd.protoc.yml`**: `ci.protoc` always with release artifacts (so a
+  dispatch packs too), npm and the Release only on a tag, `Eiva.Fletcher.Protoc` checked present and
+  attached to the Release, and the same `feed` job. **Also:** `.github/actionlint.yaml` declares
+  the `eiva-network` label; `ci.action-lint` runs the tag check's test (seven cases and the
+  repository's own props); `ci.pr`'s `dotnet` filter gains what assembles and tests the folder.
+  Not exercisable before the merge: the Release, the feed and the dispatch (D-BIND-164); checked
+  here: actionlint over every workflow and the tag check's test, both clean; the reused jobs run on
+  this push.
 
 **How test builds reach testers during development, and what changes at the merge** (recorded
 2026-10-20 at the maintainer's request, D-BIND-137 to 139). Until PR #129 merges, the per-push
