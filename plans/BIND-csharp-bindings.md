@@ -2467,7 +2467,10 @@ preparation, a fresh-context review and the close.
   `Fletcher.Tests` 428/428 on both frameworks against the rebuilt shim, the gateway client 222/222
   on this host, clang-format-18 and `dotnet format` clean. The TypeScript gateway client is a
   BIND-T parity item.
-- **9b-3, 2026-10-22 (D-BIND-88, D-BIND-160): NativeAOT on Windows and over `fastdds`.**
+- **9b-3 done on CI 2026-10-23** (`2420e11`, `ci.pr` 39860825935, 60/60, every workflow green on
+  the first attempt; both legs' logs show both TFMs publishing and the `fastdds` row delivered on a
+  transport thread after 2 to 3 publishes). **9b-3, 2026-10-22 (D-BIND-88, D-BIND-160): NativeAOT
+  on Windows and over `fastdds`.**
   **Windows:** `ci.dotnet`'s Windows leg publishes `Fletcher.AotSmoke` with NativeAOT for net8.0
   and net10.0 (ILC, then the MSVC linker, which the ILCompiler package finds with vswhere) and runs
   it against the shim that leg built, warnings as errors as on Linux. Measuring it found **G-D2
@@ -2551,7 +2554,8 @@ from `main` after the merge:**
   two-heaps hazard between the shim and other native modules that BIND-2's B1
   found. Dynamic is the status quo and needs no work.
 - **NativeAOT where BIND-6 did not reach (D-BIND-88, parked here from the BIND-6
-  review, Q6).** D-BIND-81 publishes and runs `Fletcher.AotSmoke` on Linux over
+  review, Q6).** **Met by 9b-3 (`2420e11`, green on CI 2026-10-23): both notes
+  below.** D-BIND-81 publishes and runs `Fletcher.AotSmoke` on Linux over
   `inprocess` only. BIND-9 owns the two open notes 6e-2 left:
   1. **`win-x64`:** publish AotSmoke with NativeAOT (MSVC links) and run it against
      the Windows shim, in the RID matrix's Windows leg, for net8.0 and net10.0.
