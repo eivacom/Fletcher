@@ -2,9 +2,9 @@
 // Copyright (C) 2026 The Fletcher Authors
 //
 // A child process of the lane that speaks the peers' line protocol: it prints READY once set
-// up, then lines the test reads (RECV ..., PUBLISHED ..., ERROR ...), takes commands on stdin
-// (`publish`, `stop`), and stops on `stop`, or is killed if it does not exit in 5 s. The
-// gateway is one too: it prints `READY <port>` and stops on `stop`.
+// up, then lines the test reads (<topic> RECV ..., PUBLISHED ..., ERROR ...), takes commands on
+// stdin (`publish <topic>`, `probe <topic>`, `stop`), and stops on `stop`, or is killed if it
+// does not exit in 5 s. The gateway is one too: it prints `READY <port>` and stops on `stop`.
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;

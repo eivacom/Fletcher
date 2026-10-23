@@ -1392,3 +1392,12 @@ process puts the delivery on a Fast DDS thread. The Windows build failed at firs
 version mismatch that an old note had judged harmless: the compiler's packages were pinned but
 the runtime they compile against followed whichever SDK was installed. Both are now pinned
 together.
+
+**9b-4, the C# native binding talks to every other language.** The last open rows of the
+maintainer's cross-language request: the C# native binding now exchanges rows with C++ over Fast
+DDS, with TypeScript through the gateway, and with a second C# process, in both directions where
+there are two, every field compared on the receiving side. They run in the lane the gateway
+client's rows already used, on the maintainer's ruling, since it had every program they need:
+five more topics and a second C# peer, rather than a second lane building the same programs again.
+Sharing the programs meant each now listens on several topics, so every message they print names
+its topic; otherwise a late row from one test could have passed the next.

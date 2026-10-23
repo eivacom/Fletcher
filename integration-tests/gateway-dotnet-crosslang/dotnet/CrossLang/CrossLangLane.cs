@@ -2,8 +2,9 @@
 // Copyright (C) 2026 The Fletcher Authors
 //
 // The lane's processes, started once for its tests (D-BIND-116): the gateway over Fast DDS on an
-// isolated domain, and the three peers, each its own process: the C++ native pair, the C# native
-// pair, and the TypeScript gateway client. The C# gateway client under test is THIS process.
+// isolated domain, and the peers, each its own process: the C++ native pair, the C# native pair
+// (twice since BIND-9b-4, D-BIND-161: the second only receives NativeToNative), and the
+// TypeScript gateway client. The C# gateway client under test is THIS process.
 //
 // Fletcher's built-in data profile is VOLATILE (qos_defaults.cpp): a reader that matches a
 // writer after a row was written never sees it, and across processes Fast DDS discovery takes
@@ -92,6 +93,8 @@ public sealed class CrossLangLane : IAsyncLifetime
 
     public PeerProcess Native { get; private set; } = null!;
 
+    public PeerProcess Native2 { get; private set; } = null!;
+
     public PeerProcess Ts { get; private set; } = null!;
 
     public async Task InitializeAsync()
@@ -113,10 +116,16 @@ public sealed class CrossLangLane : IAsyncLifetime
             ? fromEnv
             : typeof(CrossLangLane).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
                 .Single(a => a.Key == "NativePeerDll").Value!;
+        string dotnet = Environment.GetEnvironmentVariable("DOTNET_HOST_PATH") is { Length: > 0 } host ? host : "dotnet";
         Native = await PeerProcess.StartAsync(
             "C# native peer",
-            Environment.GetEnvironmentVariable("DOTNET_HOST_PATH") is { Length: > 0 } host ? host : "dotnet",
-            [nativePeer, "--domain-id", DomainId, "--document", document]);
+            dotnet,
+            [nativePeer, "--domain-id", DomainId, "--document", document, "--role", "primary"]);
+        // BIND-9b-4 (D-BIND-161): C# native to C# native across processes needs a second one.
+        Native2 = await PeerProcess.StartAsync(
+            "second C# native peer",
+            dotnet,
+            [nativePeer, "--domain-id", DomainId, "--document", document, "--role", "secondary"]);
 
         string tsDir = Path.Combine(LaneDir(), "ts");
         Ts = await PeerProcess.StartAsync(
@@ -128,7 +137,7 @@ public sealed class CrossLangLane : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
-        foreach (PeerProcess? peer in new[] { Ts, Native, Cpp, Gateway })
+        foreach (PeerProcess? peer in new[] { Ts, Native2, Native, Cpp, Gateway })
         {
             if (peer is not null)
             {

@@ -3703,3 +3703,20 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   research from the 9a review and its remaining debts; 9b-8 the merge preparation (the lockstep
   bump to `0.6.0-alpha` and the bundle job's removal, staged), then a fresh-context review and the
   close.
+
+## Rulings of 2026-10-23 — BIND-9b-4, the C#-native cross-language rows
+
+- **D-BIND-161 - the C#-native cross-language rows run in the cross-language lane BIND-8d built,
+  not a lane of their own.** *LOCKED BY THE MAINTAINER 2026-10-23 (BIND-9b-4), replacing the
+  2026-10-14 "a lane of its own" (BIND-6's close).* `integration-tests/gateway-dotnet-crosslang`
+  already runs every process the rows need (the C++ native peer, the C# native peer, the TypeScript
+  peer, one gateway over Fast DDS), the one `.proto` reaching every mapped shape, a comparer per
+  language and the probe-until-live rule (D-BIND-129), on Linux and Windows. So the five rows are
+  five more topics there, peer to peer, the test process only driving them: C# native → C++ and
+  back over Fast DDS, C# native → TypeScript and back through the gateway, and C# native → C#
+  native in a second process (a second C# native peer that only receives that topic). A new lane
+  would build the same peers and gateway a second time in CI; one built from scratch would copy the
+  hand-written comparers, which drift (T-D4). Since peers now listen on more than one topic, every
+  line a peer prints for a received row names its topic, and every command names one, so a late
+  row of an earlier test never counts for the next. **Declined:** a new lane reusing this one's
+  parts by path; a new lane from scratch.

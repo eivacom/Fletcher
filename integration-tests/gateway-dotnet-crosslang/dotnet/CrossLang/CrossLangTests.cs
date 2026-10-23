@@ -15,6 +15,12 @@
 // (fastdds-pubsub-provider/README.md, "Zero-copy: the plain sample"). As ruled for that defect
 // by the maintainer 2026-10-16, a missed delivery still names it and is retried ONCE, with a
 // fresh client; each attempt must deliver all four rows by itself (review B3).
+//
+// The C# NATIVE pair's rows (BIND-9b-4, D-BIND-161) run here too, peer to peer: this process
+// only drives them. One peer publishes on its command, another receives and compares, so these
+// rows cross no C# gateway client. A peer listens on more than one topic, so each of its lines
+// names the topic (`<topic> RECV <seq> ...`) and each command names one (`publish <topic>`): a
+// late row of an earlier test never counts for the next.
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -54,15 +60,15 @@ public sealed class CrossLangTests : IClassFixture<CrossLangLane>
 
     [Fact]
     public Task CSharpGatewayToCpp() =>
-        SendToPeerAsync(_lane.Cpp, async client => (await CrossLang_CsToCppGatewayPublisher.CreateAsync(client)).PublishAsync);
+        SendToPeerAsync(_lane.Cpp, "CsToCpp", async client => (await CrossLang_CsToCppGatewayPublisher.CreateAsync(client)).PublishAsync);
 
     [Fact]
     public Task CSharpGatewayToCSharpNative() =>
-        SendToPeerAsync(_lane.Native, async client => (await CrossLang_CsToNativeGatewayPublisher.CreateAsync(client)).PublishAsync);
+        SendToPeerAsync(_lane.Native, "CsToNative", async client => (await CrossLang_CsToNativeGatewayPublisher.CreateAsync(client)).PublishAsync);
 
     [Fact]
     public Task CSharpGatewayToTypeScript() =>
-        SendToPeerAsync(_lane.Ts, async client => (await CrossLang_CsToTsGatewayPublisher.CreateAsync(client)).PublishAsync);
+        SendToPeerAsync(_lane.Ts, "CsToTs", async client => (await CrossLang_CsToTsGatewayPublisher.CreateAsync(client)).PublishAsync);
 
     // ── peer → C# gateway client: this process compares ──────────────────────────────────────
     // The TypeScript peer declares its own topic since D-BIND-130 (its generated schema carries
@@ -70,57 +76,101 @@ public sealed class CrossLangTests : IClassFixture<CrossLangLane>
 
     [Fact]
     public Task CppToCSharpGateway() =>
-        ReceiveFromPeerAsync(_lane.Cpp, (client, handler) => new CrossLang_CppToCsGatewaySubscriber(client).SubscribeAsync((row, _) => handler(row)));
+        ReceiveFromPeerAsync(_lane.Cpp, "CppToCs", (client, handler) => new CrossLang_CppToCsGatewaySubscriber(client).SubscribeAsync((row, _) => handler(row)));
 
     [Fact]
     public Task CSharpNativeToCSharpGateway() =>
-        ReceiveFromPeerAsync(_lane.Native, (client, handler) => new CrossLang_NativeToCsGatewaySubscriber(client).SubscribeAsync((row, _) => handler(row)));
+        ReceiveFromPeerAsync(_lane.Native, "NativeToCs", (client, handler) => new CrossLang_NativeToCsGatewaySubscriber(client).SubscribeAsync((row, _) => handler(row)));
 
     [Fact]
     public Task TypeScriptToCSharpGateway() =>
-        ReceiveFromPeerAsync(_lane.Ts, (client, handler) => new CrossLang_TsToCsGatewaySubscriber(client).SubscribeAsync((row, _) => handler(row)));
+        ReceiveFromPeerAsync(_lane.Ts, "TsToCs", (client, handler) => new CrossLang_TsToCsGatewaySubscriber(client).SubscribeAsync((row, _) => handler(row)));
 
-    // One attempt delivers all four rows on its own, or it is retried once, with a fresh client
-    // and the rows sent again (review B3: rows of two partial attempts never add up to one).
-    private async Task SendToPeerAsync(PeerProcess peer, Func<FletcherClient, Task<Func<IEnumerable<CrossRow>, CancellationToken, Task>>> publisher)
+    // ── C# native pair ↔ peer (BIND-9b-4, D-BIND-161): the receiving peer compares ───────────
+
+    [Fact]
+    public Task CSharpNativeToCpp() => PeerToPeerAsync(_lane.Native, _lane.Cpp, "NativeToCpp");
+
+    [Fact]
+    public Task CppToCSharpNative() => PeerToPeerAsync(_lane.Cpp, _lane.Native, "CppToNative");
+
+    [Fact]
+    public Task CSharpNativeToTypeScript() => PeerToPeerAsync(_lane.Native, _lane.Ts, "NativeToTs");
+
+    [Fact]
+    public Task TypeScriptToCSharpNative() => PeerToPeerAsync(_lane.Ts, _lane.Native, "TsToNative");
+
+    [Fact]
+    public Task CSharpNativeToCSharpNative() => PeerToPeerAsync(_lane.Native, _lane.Native2, "NativeToNative");
+
+    // A fresh C# gateway client per attempt publishes; the peer compares.
+    private Task SendToPeerAsync(PeerProcess peer, string topic, Func<FletcherClient, Task<Func<IEnumerable<CrossRow>, CancellationToken, Task>>> publisher) =>
+        DeliverToPeerAsync(peer, topic, async () =>
+        {
+            FletcherClient client = await ConnectAsync();
+            Func<IEnumerable<CrossRow>, CancellationToken, Task> publish = await publisher(client);
+            return new Sender(() => publish(new[] { ProbeRow() }, default), () => publish(FixtureRows(), default), client);
+        });
+
+    // One peer publishes on its commands; the other compares.
+    private Task PeerToPeerAsync(PeerProcess publisher, PeerProcess receiver, string topic) =>
+        DeliverToPeerAsync(receiver, topic, () => Task.FromResult(new Sender(
+            () => SendAndAwaitAsync(publisher, $"probe {topic}", "PROBED"),
+            () => SendAndAwaitAsync(publisher, $"publish {topic}", "PUBLISHED"),
+            null)));
+
+    // How one attempt sends: a probe row, the fixture rows, and what to dispose after the attempt.
+    private sealed record Sender(Func<Task> Probe, Func<Task> Publish, IAsyncDisposable? Owner);
+
+    // One attempt delivers all four rows on its own, or it is retried once, with the sender made
+    // again and the rows sent again (review B3: rows of two partial attempts never add up to one).
+    private async Task DeliverToPeerAsync(PeerProcess peer, string topic, Func<Task<Sender>> makeSender)
     {
         List<string> received = new();
         bool delivered = false;
         for (int attempt = 1; attempt <= 2 && !delivered; attempt++)
         {
-            await using var client = await ConnectAsync();
-            Func<IEnumerable<CrossRow>, CancellationToken, Task> publish = await publisher(client);
-
-            // D-BIND-129: probe rows until one arrives, so the fixture rows travel live, not
-            // through the backlog a late match replays.
-            int probed = peer.Lines.Count;
-            bool matched = false;
-            DateTime deadline = DateTime.UtcNow + Attempt;
-            while (!matched && DateTime.UtcNow < deadline)
+            Sender sender = await makeSender();
+            try
             {
-                await publish(new[] { ProbeRow() }, default);
-                matched = await peer.WaitForAsync(lines => lines.Skip(probed).Any(IsProbe), ProbeWait);
-                Assert.False(peer.HasExited, $"{peer.Label} exited while probing; stderr: {peer.StandardErrorTail}");
-            }
+                // D-BIND-129: probe rows until one arrives, so the fixture rows travel live, not
+                // through the backlog a late match replays.
+                int probed = peer.Lines.Count;
+                bool matched = false;
+                DateTime deadline = DateTime.UtcNow + Attempt;
+                while (!matched && DateTime.UtcNow < deadline)
+                {
+                    await sender.Probe();
+                    matched = await peer.WaitForAsync(lines => lines.Skip(probed).Any(l => IsProbe(l, topic)), ProbeWait);
+                    Assert.False(peer.HasExited, $"{peer.Label} exited while probing; stderr: {peer.StandardErrorTail}");
+                }
 
-            int seen = peer.Lines.Count;
-            if (matched)
+                int seen = peer.Lines.Count;
+                if (matched)
+                {
+                    await sender.Publish();
+                    delivered = await peer.WaitForAsync(lines => AllSeqs(lines.Skip(seen), topic), Attempt);
+                }
+
+                Assert.False(peer.HasExited, $"{peer.Label} exited while receiving. Lines: {Show(peer.Lines.Skip(seen))}; stderr: {peer.StandardErrorTail}");
+                received = peer.Lines.Skip(seen).Where(l => (IsRecv(l, topic) && !IsProbe(l, topic)) || l.StartsWith("ERROR ", StringComparison.Ordinal)).ToList();
+                Note(peer, attempt, delivered, matched, Show(received));
+            }
+            finally
             {
-                await publish(FixtureRows(), default);
-                delivered = await peer.WaitForAsync(lines => AllSeqs(lines.Skip(seen)), Attempt);
+                if (sender.Owner is not null)
+                {
+                    await sender.Owner.DisposeAsync();
+                }
             }
-
-            Assert.False(peer.HasExited, $"{peer.Label} exited while receiving. Lines: {Show(peer.Lines.Skip(seen))}; stderr: {peer.StandardErrorTail}");
-            received = peer.Lines.Skip(seen).Where(l => (l.StartsWith("RECV ", StringComparison.Ordinal) && !IsProbe(l)) || l.StartsWith("ERROR ", StringComparison.Ordinal)).ToList();
-            Note(peer, attempt, delivered, matched, Show(received));
         }
 
-        Assert.True(delivered, $"{peer.Label} did not receive rows 0 to {CoverageFixture.CompositeRowCount - 1} in one attempt, twice ({Defect}?). Lines: {Show(received)}; stderr: {peer.StandardErrorTail}");
+        Assert.True(delivered, $"{peer.Label} did not receive rows 0 to {CoverageFixture.CompositeRowCount - 1} on {topic} in one attempt, twice ({Defect}?). Lines: {Show(received)}; stderr: {peer.StandardErrorTail}");
         List<string> wrong = received.Where(l => !l.EndsWith(" OK", StringComparison.Ordinal)).ToList();
-        Assert.True(wrong.Count == 0, $"{peer.Label} received rows that differ from the fixture:\n{string.Join("\n", wrong)}");
+        Assert.True(wrong.Count == 0, $"{peer.Label} received rows on {topic} that differ from the fixture:\n{string.Join("\n", wrong)}");
     }
 
-    private async Task ReceiveFromPeerAsync(PeerProcess peer, Func<FletcherClient, Action<CrossRow>, Task<ulong>> subscribe)
+    private async Task ReceiveFromPeerAsync(PeerProcess peer, string topic, Func<FletcherClient, Action<CrossRow>, Task<ulong>> subscribe)
     {
         var faults = new ConcurrentQueue<string>();
         ConcurrentDictionary<int, List<string>> rows = new();
@@ -155,7 +205,7 @@ public sealed class CrossLangTests : IClassFixture<CrossLangLane>
             DateTime deadline = DateTime.UtcNow + Attempt;
             while (Volatile.Read(ref probesSeen) == 0 && DateTime.UtcNow < deadline)
             {
-                await SendAndAwaitAsync(peer, "probe", "PROBED");
+                await SendAndAwaitAsync(peer, $"probe {topic}", "PROBED");
                 DateTime probeEnd = DateTime.UtcNow + ProbeWait;
                 while (Volatile.Read(ref probesSeen) == 0 && DateTime.UtcNow < probeEnd)
                 {
@@ -166,7 +216,7 @@ public sealed class CrossLangTests : IClassFixture<CrossLangLane>
             bool matched = Volatile.Read(ref probesSeen) > 0;
             if (matched)
             {
-                await SendAndAwaitAsync(peer, "publish", "PUBLISHED");
+                await SendAndAwaitAsync(peer, $"publish {topic}", "PUBLISHED");
                 deadline = DateTime.UtcNow + Attempt;
                 while (!Enumerable.Range(0, CoverageFixture.CompositeRowCount).All(attemptRows.ContainsKey) && DateTime.UtcNow < deadline)
                 {
@@ -225,13 +275,15 @@ public sealed class CrossLangTests : IClassFixture<CrossLangLane>
     // A probe row: seq -1, which no receiver compares (each reports it as UNKNOWN).
     private static CrossRow ProbeRow() => new() { Seq = -1 };
 
-    private static bool IsProbe(string line) => line.StartsWith("RECV -1 ", StringComparison.Ordinal);
+    private static bool IsRecv(string line, string topic) => line.StartsWith($"{topic} RECV ", StringComparison.Ordinal);
 
-    // Every fixture row has a RECV line, whatever its verdict.
-    private static bool AllSeqs(IEnumerable<string> lines)
+    private static bool IsProbe(string line, string topic) => line.StartsWith($"{topic} RECV -1 ", StringComparison.Ordinal);
+
+    // Every fixture row has a RECV line on the topic, whatever its verdict.
+    private static bool AllSeqs(IEnumerable<string> lines, string topic)
     {
-        var seqs = lines.Where(l => l.StartsWith("RECV ", StringComparison.Ordinal))
-            .Select(l => l.Split(' ')[1])
+        var seqs = lines.Where(l => IsRecv(l, topic))
+            .Select(l => l.Split(' ')[2])
             .ToHashSet();
         return Enumerable.Range(0, CoverageFixture.CompositeRowCount).All(s => seqs.Contains($"{s}"));
     }

@@ -1838,7 +1838,9 @@ codec step.
   docs. **Owner RULED by the maintainer 2026-10-14, at BIND-6's close: split by readiness, as
   suggested.** The three C#-native rows are an acceptance bullet of BIND-9 (their own CI lane, Linux
   and Windows), the gateway-client rows one of BIND-8, and BIND-10 documents the whole matrix; neither
-  BIND-8 nor BIND-9 closes without its rows.
+  BIND-8 nor BIND-9 closes without its rows. **Since then every row is covered:** the gateway-client
+  rows by BIND-8d (D-BIND-116), the three C#-native rows, both directions, by BIND-9b-4 (D-BIND-161,
+  in the same lane rather than one of their own), all in `integration-tests/gateway-dotnet-crosslang`.
 - **BIND-6 CLOSED 2026-10-14, with this debt carried out as KNOWN (the maintainer's choice: record,
   not fix).** Every review BLOCKER (B1 to B5), all ten rulings (D-BIND-83 to 93) and every debt the
   review marked important (P-D1, P-D3, G-D1, T-D1 to T-D5, T-D9) are done; the rest stays open, each
@@ -2490,6 +2492,21 @@ preparation, a fresh-context review and the close.
   the solution builds clean with the pin, and `dotnet format` is clean. Two mutants are caught: the
   child on another topic (30 s deadline, 299 published, exit 1) and a different row (the child
   refuses it, exit 1).
+- **9b-4, 2026-10-23 (D-BIND-161): the C#-native cross-language rows.** In BIND-8d's lane
+  (`integration-tests/gateway-dotnet-crosslang`), on the maintainer's ruling, as five topics of
+  `crosslang.proto` driven peer to peer: `NativeToCpp` and `CppToNative` (Fast DDS),
+  `NativeToTs` and `TsToNative` (the C# native pair over Fast DDS, the TypeScript client through
+  the gateway), and `NativeToNative`, to a second C# native peer (`--role secondary`, which
+  receives only that topic; the first does not, so the rows cross processes). The test process
+  sends `probe <topic>` until the receiving peer reports one, then `publish <topic>`, one retry
+  as before (D-BIND-129, review B3); the receiving peer compares with its own transcription of the
+  fixture. Peers now listen on more than one topic, so their lines name the topic
+  (`<topic> RECV <seq> ...`) and their commands name one; the six gateway-client tests changed to
+  match. Rehearsed in the devcontainer: the lane's 11 tests pass; two mutants are caught (the C#
+  native peer sending each row under the next row's `seq`: the C++ and second C# peers report
+  every field that differs; `NativeToCpp`'s publisher writing on `CsToCpp`: the C++ peer's rows
+  arrive under the other topic and the test fails after its retry); clang-format, prettier,
+  `dotnet format` and the test matrix clean. Windows is CI's (no local Conan cache for it).
 
 **How test builds reach testers during development, and what changes at the merge** (recorded
 2026-10-20 at the maintainer's request, D-BIND-137 to 139). Until PR #129 merges, the per-push
@@ -2571,7 +2588,9 @@ from `main` after the merge:**
   whether the codec refuses such a batch (in C++, for every binding) or the contract
   is documented as the caller's; BIND-10 documents whichever is ruled. **RULED 2026-10-22
   (D-BIND-156): the C++ codec refuses it, naming the column.**
-- **Cross-language pub/sub, the C#-native rows (ruled 2026-10-14, at BIND-6's close).** A lane of
+- **Cross-language pub/sub, the C#-native rows (ruled 2026-10-14, at BIND-6's close).**
+  **Where, RULED AGAIN 2026-10-23 (D-BIND-161): in `integration-tests/gateway-dotnet-crosslang`,
+  BIND-8d's lane, as five peer-to-peer topics, not a lane of its own.** A lane of
   its own, on Linux and Windows, in which the GENERATED native pairs exchange rows over Fast DDS
   across processes: C# → C++ and C++ → C#; C# → TypeScript and TypeScript → C# through the gateway;
   C# → C# between two processes. One shared `.proto` reaching every mapped shape (scalars, lists,

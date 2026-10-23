@@ -1,20 +1,29 @@
 # gateway-dotnet-crosslang integration test
 
-The C# gateway client's rows of the cross-language pub/sub matrix (BIND-8d, D-BIND-116): the
-generated C# **gateway** pair exchanges rows, in both directions, with a C++ native pair, a C#
-native pair and a TypeScript gateway client, through one gateway over Fast DDS. Every row is
-compared field by field on the receiving side.
+The cross-language pub/sub matrix's C# rows, in both directions, every row compared field by field
+on the receiving side:
+
+- **The C# gateway client's** (BIND-8d, D-BIND-116): the generated C# **gateway** pair exchanges
+  rows with a C++ native pair, a C# native pair and a TypeScript gateway client, through one
+  gateway over Fast DDS.
+- **The C# native pair's** (BIND-9b-4, D-BIND-161): the generated C# **native** pair exchanges rows
+  with the C++ native pair over Fast DDS, with the TypeScript client through the gateway, and with
+  a second C# native pair in another process. Peer to peer: the test process only drives them.
 
 ## Topology
 
 ```
-  C++ peer (native pair)  ──DDS──┐
-                                 ├──  gateway --provider fastdds  ──WS──  C# gateway client (the test)
-  C# native peer (shim)   ──DDS──┘                                ──WS──  TypeScript peer
+  C++ peer (native pair)      ──DDS──┐
+  C# native peer (shim)       ──DDS──┤
+  second C# native peer       ──DDS──┤
+                                     ├──  gateway --provider fastdds  ──WS──  C# gateway client (the test)
+                                     │                                ──WS──  TypeScript peer
 ```
 
-The test process is the C# gateway client; the gateway and the three peers are child
-processes it starts once (`CrossLangLane`) and stops after the suite.
+The test process is the C# gateway client; the gateway and the four peers are child processes it
+starts once (`CrossLangLane`) and stops after the suite. The second C# native peer
+(`--role secondary`) only receives `NativeToNative`, and the first does not, so that topic's rows
+always cross a process boundary.
 
 | Test | Topic (`CrossLang.*`) | Publisher | Subscriber, which compares |
 |---|---|---|---|
@@ -24,6 +33,11 @@ processes it starts once (`CrossLangLane`) and stops after the suite.
 | `CSharpNativeToCSharpGateway` | `NativeToCs` | C# native pair | C# gateway pair |
 | `CSharpGatewayToTypeScript` | `CsToTs` | C# gateway pair | TypeScript client |
 | `TypeScriptToCSharpGateway` | `TsToCs` | TypeScript client | C# gateway pair |
+| `CSharpNativeToCpp` | `NativeToCpp` | C# native pair | C++ native pair |
+| `CppToCSharpNative` | `CppToNative` | C++ native pair | C# native pair |
+| `CSharpNativeToTypeScript` | `NativeToTs` | C# native pair, through the gateway | TypeScript client |
+| `TypeScriptToCSharpNative` | `TsToNative` | TypeScript client, through the gateway | C# native pair |
+| `CSharpNativeToCSharpNative` | `NativeToNative` | C# native pair | second C# native pair |
 
 ## One `.proto`, one fixture
 
@@ -42,8 +56,10 @@ transcription of the fixture row `seq` names:
 | C# (both) | `dotnet/tests/Shared/CoverageFixture.cs` | `dotnet/Shared/RowCompare.cs` |
 | TypeScript | `ts/src/fixture.ts` | `ts/src/compare.ts` |
 
-A peer reports each row it receives as `RECV <seq> OK` or `RECV <seq> MISMATCH <n>: <path>: expected
-... got ...;` on stdout, and publishes its four rows on the stdin line `publish`.
+A peer reports each row it receives as `<topic> RECV <seq> OK` or `<topic> RECV <seq> MISMATCH <n>:
+<path>: expected ... got ...;` on stdout, and publishes its four rows on the stdin line
+`publish <topic>`. Lines and commands name the topic because a peer listens and publishes on more
+than one: a late row of an earlier test must never count for the next (D-BIND-161).
 
 ## What it found (BIND-8d)
 
@@ -65,9 +81,9 @@ and the C# client declared the topic for it, D-BIND-117.)
 
 ## Live, not replayed
 
-Before the fixture rows, the publisher sends probe rows (`seq` -1, which every receiver reports as
-`RECV -1 UNKNOWN` and nobody compares) until one arrives, so the receiving reader has matched the
-writer and the rows travel live rather than through a Fast DDS backlog replay (D-BIND-129). A retry
+Before the fixture rows, the publisher sends probe rows (`seq` -1, which every receiver reports
+as `<topic> RECV -1 UNKNOWN` and nobody compares) until one arrives, so the receiving reader has
+matched the writer and the rows travel live rather than through a Fast DDS backlog replay (D-BIND-129). A retry
 attempt must deliver all four rows by itself.
 
 ## Fast DDS
