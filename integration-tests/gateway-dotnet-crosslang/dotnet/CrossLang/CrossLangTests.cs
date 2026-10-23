@@ -109,7 +109,7 @@ public sealed class CrossLangTests : IClassFixture<CrossLangLane>
         {
             FletcherClient client = await ConnectAsync();
             Func<IEnumerable<CrossRow>, CancellationToken, Task> publish = await publisher(client);
-            return new Sender(() => publish(new[] { ProbeRow() }, default), () => publish(FixtureRows(), default), client);
+            return new Sender(() => publish(new[] { ProbeRow() }, default), () => publish(FixtureRows(), default), client, null);
         });
 
     // One peer publishes on its commands; the other compares.
@@ -117,10 +117,12 @@ public sealed class CrossLangTests : IClassFixture<CrossLangLane>
         DeliverToPeerAsync(receiver, topic, () => Task.FromResult(new Sender(
             () => SendAndAwaitAsync(publisher, $"probe {topic}", "PROBED"),
             () => SendAndAwaitAsync(publisher, $"publish {topic}", "PUBLISHED"),
-            null)));
+            null,
+            publisher)));
 
-    // How one attempt sends: a probe row, the fixture rows, and what to dispose after the attempt.
-    private sealed record Sender(Func<Task> Probe, Func<Task> Publish, IAsyncDisposable? Owner);
+    // How one attempt sends: a probe row, the fixture rows, what to dispose after the attempt,
+    // and the publishing peer, if a peer publishes (its STATUS lines join a failure's message).
+    private sealed record Sender(Func<Task> Probe, Func<Task> Publish, IAsyncDisposable? Owner, PeerProcess? Publisher);
 
     // One attempt delivers all four rows on its own, or it is retried once, with the sender made
     // again and the rows sent again (review B3: rows of two partial attempts never add up to one).
@@ -128,9 +130,11 @@ public sealed class CrossLangTests : IClassFixture<CrossLangLane>
     {
         List<string> received = new();
         bool delivered = false;
+        PeerProcess? publisher = null;
         for (int attempt = 1; attempt <= 2 && !delivered; attempt++)
         {
             Sender sender = await makeSender();
+            publisher = sender.Publisher;
             try
             {
                 // D-BIND-129: probe rows until one arrives, so the fixture rows travel live, not
@@ -165,7 +169,7 @@ public sealed class CrossLangTests : IClassFixture<CrossLangLane>
             }
         }
 
-        Assert.True(delivered, $"{peer.Label} did not receive rows 0 to {CoverageFixture.CompositeRowCount - 1} on {topic} in one attempt, twice ({Defect}?). Lines: {Show(received)}; stderr: {peer.StandardErrorTail}");
+        Assert.True(delivered, $"{peer.Label} did not receive rows 0 to {CoverageFixture.CompositeRowCount - 1} on {topic} in one attempt, twice ({Defect}?). Lines: {Show(received)}; stderr: {peer.StandardErrorTail}; {Statuses(topic, peer, publisher)}");
         List<string> wrong = received.Where(l => !l.EndsWith(" OK", StringComparison.Ordinal)).ToList();
         Assert.True(wrong.Count == 0, $"{peer.Label} received rows on {topic} that differ from the fixture:\n{string.Join("\n", wrong)}");
     }
@@ -274,6 +278,12 @@ public sealed class CrossLangTests : IClassFixture<CrossLangLane>
 
     // A probe row: seq -1, which no receiver compares (each reports it as UNKNOWN).
     private static CrossRow ProbeRow() => new() { Seq = -1 };
+
+    // The STATUS lines a peer printed for the topic (the C++ peer prints Fast DDS's match and loss
+    // statuses), to tell a lost schema from a lost row or a missing match when a delivery fails.
+    private static string Statuses(string topic, params PeerProcess?[] peers) =>
+        string.Join("; ", peers.Where(p => p is not null).Distinct().Select(p =>
+            $"{p!.Label} statuses: {Show(p.Lines.Where(l => l.StartsWith("STATUS ", StringComparison.Ordinal) && l.Contains($"/{topic} ", StringComparison.Ordinal)))}"));
 
     private static bool IsRecv(string line, string topic) => line.StartsWith($"{topic} RECV ", StringComparison.Ordinal);
 

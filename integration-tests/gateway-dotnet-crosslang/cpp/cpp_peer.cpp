@@ -57,6 +57,41 @@ std::string ReadFile(const std::string& path) {
     return text.str();
 }
 
+// Prints the transport's statuses as `STATUS <topic> <schema|data> <reader|writer> ...` lines,
+// which the test ignores until a row fails to arrive, and then shows: whether the schema channel
+// matched, whether a data reader followed, and whether samples were lost (BIND-9b-6: NativeToCpp
+// once delivered nothing on the CI runner, not even a probe, and never locally).
+class StatusPrinter : public fletcher::FastDDSStatusListener {
+   public:
+    void OnMatched(Endpoint endpoint, int32_t current_count, int32_t change) noexcept override {
+        Print(endpoint,
+              "matched " + std::to_string(current_count) + " (" + std::to_string(change) + ")");
+    }
+    void OnIncompatibleQos(Endpoint endpoint, uint32_t policy_id,
+                           uint32_t total_count) noexcept override {
+        Print(endpoint, "incompatible-qos policy " + std::to_string(policy_id) + " total " +
+                            std::to_string(total_count));
+    }
+    void OnSampleLost(Endpoint endpoint, uint32_t total_count) noexcept override {
+        Print(endpoint, "sample-lost total " + std::to_string(total_count));
+    }
+    void OnSampleRejected(Endpoint endpoint, int32_t reason,
+                          uint32_t total_count) noexcept override {
+        Print(endpoint, "sample-rejected reason " + std::to_string(reason) + " total " +
+                            std::to_string(total_count));
+    }
+
+   private:
+    static void Print(Endpoint endpoint, const std::string& what) noexcept {
+        try {
+            PrintLine("STATUS " + std::string(endpoint.topic) +
+                      (endpoint.is_schema_channel ? " schema " : " data ") +
+                      (endpoint.is_writer ? "writer " : "reader ") + what);
+        } catch (...) {
+        }
+    }
+};
+
 // Reports every row a subscriber receives, under the topic's name.
 auto Reporter(std::string topic) {
     return [topic = std::move(topic)](xl::CrossRow row, const fletcher::Attachments&) {
@@ -77,8 +112,10 @@ int main(int argc, char* argv[]) {
             document = ReadFile(argv[++i]);
     }
 
+    // Outlives the provider, as the listener contract requires.
+    static StatusPrinter status_printer;
     auto provider = std::make_shared<fletcher::FastDDSPubSubProvider>(
-        fletcher::ProviderConfig{.domain_id = domain_id, .document = document});
+        fletcher::ProviderConfig{.domain_id = domain_id, .document = document}, &status_printer);
 
     xl::CrossLang_CsToCppSubscriber from_cs(provider);
     from_cs.Subscribe(Reporter("CsToCpp"));

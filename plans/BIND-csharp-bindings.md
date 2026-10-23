@@ -2600,7 +2600,21 @@ preparation, a fresh-context review and the close.
   repository's own props); `ci.pr`'s `dotnet` filter gains what assembles and tests the folder.
   Not exercisable before the merge: the Release, the feed and the dispatch (D-BIND-164); checked
   here: actionlint over every workflow and the tag check's test, both clean; the reused jobs run on
-  this push.
+  this push. **First CI run (`c13c809`, `ci.pr` 39968536854):** the moved jobs green at once
+  (`package-consumer / package-bundle`, both consumers on both runners), `ci.action-lint` with the
+  tag check's test green; one failure, not 9b-6's: the cross-language lane's `CSharpNativeToCpp`
+  on Linux again (no probe in two 20 s attempts), its second failure in three Linux runs
+  (`9d4640d`, `c13c809`), always this row, never on Windows. **Investigated, on the maintainer's
+  ruling (2026-10-23):** not reproduced locally in 30 runs in the devcontainer limited to two CPUs
+  (15 of the row alone, 15 of the whole lane). It is the one new row whose subscriber (the C++
+  peer, subscribed at the lane's start) exists in another process before its publisher (the C#
+  native peer) declares the topic; the publisher writes its schema sample once and the C++
+  side's schema reader matches it later, the late-joiner case the Fast DDS 3.4 data-sharing defect
+  breaks, and a lost schema sample would explain why no probe ever arrives (rows are republished,
+  the schema is not). Not proven: the C++ peer now prints Fast DDS's match and loss statuses as
+  `STATUS` lines (a `FastDDSStatusListener`), and a failed delivery's message shows each peer's
+  lines for the topic, so the next failure says whether the schema channel matched, whether a data
+  reader followed, or whether samples were lost.
 
 **How test builds reach testers during development, and what changes at the merge** (recorded
 2026-10-20 at the maintainer's request, D-BIND-137 to 139). Until PR #129 merges, the per-push
