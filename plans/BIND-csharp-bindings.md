@@ -2517,6 +2517,11 @@ preparation, a fresh-context review and the close.
   every field that differs; `NativeToCpp`'s publisher writing on `CsToCpp`: the C++ peer's rows
   arrive under the other topic and the test fails after its retry); clang-format, prettier,
   `dotnet format` and the test matrix clean. Windows is CI's (no local Conan cache for it).
+- **9b-5 done on CI 2026-10-23** (`9d4640d` + the fix `89ecb87`, `ci.pr` 39938498743, 61/61 on
+  the first attempt, every workflow green): `pack-nuget` packed and checked
+  `Eiva.Fletcher.Protoc.0.6.0-pr.129.349`, the bundle carries it, and `package-consumer` ran both
+  consumers (the Fletcher one through the package, `GrpcConsumer` through `Grpc.Tools`) on Ubuntu
+  24.04 and Windows, .NET 8 and 10; the cross-language lane 11/11 on both runners.
 - **9b-5, 2026-10-23 (D-BIND-71, D-BIND-158): `Eiva.Fletcher.Protoc`.** `protoc/nuget/` packs,
   from what `ci.protoc` already builds and nothing else: the two static plugins under
   `tools/linux-x64/` and `tools/win-x64/`, `include/fletcher/options.proto`, the plugin's
@@ -2665,7 +2670,9 @@ from `main` after the merge:**
   protoc, and whether the package also carries `fletcher/options.proto` with an
   include property, as the C++ locator does. A consumer-shaped test builds a project
   from the packed package alone. **RULED 2026-10-22 (D-BIND-158): it carries `options.proto`
-  and wires it into `Grpc.Tools` projects; no hard dependency on either tools package.** **Three more, from Oliver Monberg-Jensen's review on
+  and wires it into `Grpc.Tools` projects; no hard dependency on either tools package.** **Built,
+  packed, checked and consumer-tested by 9b-5 (`89ecb87`, green on CI 2026-10-23), the three
+  review points below included; its NuGet push from `cd.protoc` is 9b-6's.** **Three more, from Oliver Monberg-Jensen's review on
   ADO 18789 (comment 23089, 2026-09-21), each checked against the tree 2026-09-29:**
   * **The executable bit.** NuGet extraction is reported not to keep it, so on Linux
     the `build/*.props` makes the plugin executable before protoc runs. The
