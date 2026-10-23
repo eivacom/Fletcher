@@ -49,6 +49,9 @@ dotnet/**/BenchmarkDotNet.Artifacts/
 # reason: a blanket **/bin/ would quietly stop tracking the protoc launcher.
 integration-tests/**/dotnet/**/bin/
 integration-tests/**/dotnet/**/obj/
+# Eiva.Fletcher.Protoc's pack project (BIND-9b-5), scoped for the same reason.
+protoc/nuget/bin/
+protoc/nuget/obj/
 integration-tests/**/dotnet/**/*.user
 dotnet/**/TestResults/
 dotnet/artifacts/

@@ -7,9 +7,9 @@ are not released anywhere. Instead, every push to its branch, `feature/csharp-bi
 
 | In the bundle | |
 |---|---|
-| `nuget/` | The four NuGet packages, `Eiva.Fletcher`, `Eiva.Fletcher.Interop` (with the native library for Linux and Windows), `Eiva.Fletcher.Model`, `Eiva.Fletcher.GatewayClient` |
+| `nuget/` | The NuGet packages, `Eiva.Fletcher`, `Eiva.Fletcher.Interop` (with the native library for Linux and Windows), `Eiva.Fletcher.Model`, `Eiva.Fletcher.GatewayClient`, and `Eiva.Fletcher.Protoc`, the code generator for C# projects |
 | `gateway/` | The Fletcher gateway for Linux and Windows, built from the same commit. Use this one; the released 0.5 gateway does not work with the C# gateway client |
-| `protoc/` | The code generator `protoc-gen-fletcher` for Linux and Windows, and `fletcher/options.proto` |
+| `protoc/` | The code generator `protoc-gen-fletcher` for Linux and Windows outside NuGet, and `fletcher/options.proto` |
 | `README-preview.md` | How to use all of it, step by step |
 
 ## Getting the newest bundle
@@ -43,8 +43,9 @@ and runs. In short:
 
 1. Add the bundle's `nuget/` folder as a package source (a `nuget.config` beside your solution)
    and reference the packages at the bundle's exact version, `0.6.0-pr.129.<run>`.
-2. Generate C# for your `.proto` files with `protoc` and the bundle's `protoc-gen-fletcher`
-   (`--fletcher_opt=csharp`, and `csharp_gateway` for the gateway client).
+2. Generate C# for your `.proto` files with `protoc` and `protoc-gen-fletcher`, which
+   `Eiva.Fletcher.Protoc` brings (`--fletcher_opt=csharp`, and `csharp_gateway` for the gateway
+   client).
 3. To use the gateway, unpack `gateway/` for your platform and run it; connect
    `Eiva.Fletcher.GatewayClient` to it.
 

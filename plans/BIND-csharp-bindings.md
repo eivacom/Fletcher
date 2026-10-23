@@ -2517,6 +2517,44 @@ preparation, a fresh-context review and the close.
   every field that differs; `NativeToCpp`'s publisher writing on `CsToCpp`: the C++ peer's rows
   arrive under the other topic and the test fails after its retry); clang-format, prettier,
   `dotnet format` and the test matrix clean. Windows is CI's (no local Conan cache for it).
+- **9b-5, 2026-10-23 (D-BIND-71, D-BIND-158): `Eiva.Fletcher.Protoc`.** `protoc/nuget/` packs,
+  from what `ci.protoc` already builds and nothing else: the two static plugins under
+  `tools/linux-x64/` and `tools/win-x64/`, `include/fletcher/options.proto`, the plugin's
+  `LICENSE`, `COPYING` and `THIRD-PARTY-LICENSES.txt`, a README, and `build/` props and targets.
+  The props set `$(FletcherProtocPlugin)` (this machine's plugin; empty, with warning
+  `FLETCHERPROTOC001`, off linux-x64 and win-x64) and `$(FletcherProtoInclude)`, each only if the
+  project has not set it (the in-tree lanes keep setting the plugin from
+  `FLETCHER_PROTOC_PLUGIN`, D-BIND-71's point 4). The targets `chmod +x` the plugin on Linux before
+  `PrepareForBuild`, and in a project with `<Protobuf>` items put `$(FletcherProtoInclude)` in
+  front of every item's `AdditionalImportDirs` and compile `options.proto` as a messages-only item
+  rooted there (opt-out `FletcherCompileOptionsProto=false`). `options.proto` gains
+  `option csharp_namespace = "Eiva.Fletcher.Protobuf"`. A development dependency (a reference is
+  `PrivateAssets="all"` by default), no dependencies, nothing a project loads. **Packed** by a new
+  `ci.protoc` job, `pack-nuget`, whenever the release artifacts are built, at the protoc
+  component's version or (new input `package-version`) the preview bundle's, and checked by
+  `scripts/check_protoc_package.sh` (both plugins byte for byte the release binaries, the tree's
+  `options.proto`, the licences, exactly the two build files, no `lib/`, `ref/` or `runtimes/`,
+  no dependencies, a development dependency naming its commit). `cd.protoc`'s NuGet push is
+  9b-6's. **The bundle** holds it in `nuget/`, at the bundle's version (assembly checks that in a
+  preview bundle; elsewhere it is the protoc component's own, so the consumer reads it off the
+  file). **The consumer test** (`package-consumer`, Linux and Windows) now generates the
+  Fletcher consumer's C# with the plugin the package locates (the README's snippets changed with
+  it), and a second project, `GrpcConsumer`, is a standard gRPC project: `Grpc.Tools` 2.80.0 (its
+  own protoc, 31.1) compiles a `.proto` that imports `fletcher/options.proto` and sets both
+  options, and the program reads both back through `Eiva.Fletcher.Protobuf.OptionsExtensions`.
+  **D-BIND-71's open points, settled:** `Google.Protobuf.Tools` 3.36.1 exposes protoc as
+  `$(protoc_linux64)`, `$(protoc_windows64)` and the like, in its build targets (so after a
+  project's own properties), and through `GeneratePathProperty` as `$(PkgGoogle_Protobuf_Tools)`,
+  which the README uses; the plugin (protobuf 3.21.12) works with the protoc of
+  `Google.Protobuf.Tools` 3.36.1 and of `Grpc.Tools` 2.80.0; the executable bit, measured: NuGet
+  of SDK 10.0.400 extracts every file as `rwxr--r--`, so the plugin already runs for the user
+  who restored it, and the `chmod` is for everyone else and for clients that extract without it.
+  Rehearsed with a package packed from bundle 338's plugins: the package check passes; both
+  consumers pass on this Windows host and in the devcontainer, .NET 8 and 10; mutants caught: no
+  import folder (`reading.proto` cannot import `fletcher/options.proto`), no compiled
+  `options.proto` (`Eiva.Fletcher.Protobuf` is missing); the no-`chmod` mutant survives, as
+  measured above. protoc's own suite 195/195 and test_package 3/3 with the new `options.proto`;
+  the README snippets, `dotnet format` and actionlint clean.
 
 **How test builds reach testers during development, and what changes at the merge** (recorded
 2026-10-20 at the maintainer's request, D-BIND-137 to 139). Until PR #129 merges, the per-push

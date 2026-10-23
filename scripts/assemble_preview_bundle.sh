@@ -8,7 +8,8 @@
 #   assemble_preview_bundle.sh <bundle folder> <version> <commit>
 #
 # Expects, downloaded by ci.pr's package-bundle job:
-#   nuget/     the four .nupkg (and .snupkg) at <version>
+#   nuget/     the four .nupkg (and .snupkg) at <version>, and Eiva.Fletcher.Protoc (BIND-9b-5),
+#              at <version> in a preview bundle and at the protoc component's version elsewhere
 #   gateway/   gateway-linux.tar.gz, gateway-windows.zip
 #   protoc/    protoc-gen-fletcher-linux-x64, protoc-gen-fletcher-windows-x64.exe,
 #              LICENSE, COPYING, THIRD-PARTY-LICENSES.txt
@@ -32,6 +33,12 @@ need() { [ -s "$DIR/$1" ] || { echo "::error::the preview bundle has no $1"; mis
 for id in Eiva.Fletcher Eiva.Fletcher.Interop Eiva.Fletcher.Model Eiva.Fletcher.GatewayClient; do
   need "nuget/$id.$VERSION.nupkg"
 done
+protoc_packages=$(find "$DIR/nuget" -maxdepth 1 -name 'Eiva.Fletcher.Protoc.[0-9]*.nupkg' | wc -l)
+if [ "$protoc_packages" -ne 1 ]; then
+  echo "::error::the preview bundle has $protoc_packages Eiva.Fletcher.Protoc packages, not one"; missing=1
+fi
+# A preview bundle's five packages share its version (D-BIND-138); ci.pr sets this for one.
+if [ "${BUNDLE_PROTOC_VERSION_MUST_MATCH:-0}" = 1 ]; then need "nuget/Eiva.Fletcher.Protoc.$VERSION.nupkg"; fi
 need gateway/gateway-linux.tar.gz
 need gateway/gateway-windows.zip
 need protoc/protoc-gen-fletcher-linux-x64

@@ -38,6 +38,14 @@ on:
         required: false
         type: boolean
         default: false
+      package-version:
+        description: >-
+          The version of the Eiva.Fletcher.Protoc NuGet package (BIND-9b-5), replacing
+          conanfile.py's: ci.pr.yml passes the preview bundle's 0.6.0-pr.129.<run>, so the
+          bundle's five packages share one version (D-BIND-138). Empty keeps conanfile.py's.
+        required: false
+        type: string
+        default: ''
     outputs:
       conan-ref:
         description: >-
@@ -250,4 +258,62 @@ jobs:
             protoc-licences/LICENSE
             protoc-licences/COPYING
             protoc-licences/THIRD-PARTY-LICENSES.txt
+          retention-days: 5
+
+  # BIND-9b-5 (D-BIND-71, D-BIND-158): Eiva.Fletcher.Protoc, the C# locator for the plugin,
+  # packed from the two static binaries and the licence files the legs above uploaded, so the
+  # package carries exactly what the GitHub Release and the npm shim carry. The protoc
+  # component's package, at its version (or the bundle's); cd.protoc.yml releases it.
+  pack-nuget:
+    needs: [build-windows, build-linux]
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.release-artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+          sparse-checkout: |
+            protoc/nuget
+            protoc/include/fletcher
+            protoc/conanfile.py
+            dotnet/global.json
+            scripts
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: dotnet/global.json
+
+      - name: Download the static plugins and the licence files
+        uses: actions/download-artifact@v8.0.1
+        with:
+          pattern: fletcher-protoc-{linux-static,windows-static,licences}
+          merge-multiple: true
+          path: protoc-dist
+
+      - name: Pack and check
+        shell: bash
+        env:
+          PACKAGE_VERSION: ${{ inputs.package-version }}
+          SOURCE_COMMIT: ${{ inputs.ref || github.sha }}
+        run: |
+          set -euo pipefail
+          VERSION=$PACKAGE_VERSION
+          if [ -z "$VERSION" ]; then
+            VERSION=$(sed -n 's/^ *version *= *"\([^"]*\)".*/\1/p' protoc/conanfile.py | head -1)
+          fi
+          [ -n "$VERSION" ] || { echo "::error::no version for Eiva.Fletcher.Protoc"; exit 1; }
+          D="$PWD/protoc-dist"
+          dotnet pack protoc/nuget/Eiva.Fletcher.Protoc.csproj -c Release -o "$PWD/protoc-nuget" \
+            -p:Version="$VERSION" \
+            -p:FletcherPluginLinuxX64="$D/protoc-gen-fletcher-linux-x64" \
+            -p:FletcherPluginWinX64="$D/protoc-gen-fletcher-windows-x64.exe" \
+            -p:FletcherLicenceDir="$D" \
+            -p:FletcherSourceCommit="$SOURCE_COMMIT"
+          bash scripts/check_protoc_package.sh "$PWD/protoc-nuget/Eiva.Fletcher.Protoc.$VERSION.nupkg" "$D" "$SOURCE_COMMIT"
+
+      - name: Upload the package
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: fletcher-protoc-nuget
+          path: protoc-nuget/*.nupkg
           retention-days: 5

@@ -29,7 +29,7 @@ are used together at the same version.
 An application that publishes and subscribes natively references `Eiva.Fletcher`; one that talks
 to a gateway references `Eiva.Fletcher.GatewayClient`. Both reference `Eiva.Fletcher.Model` for
 their generated code. The C# for your messages comes from Fletcher's `protoc` plugin,
-`protoc-gen-fletcher` (`--fletcher_opt=csharp` for the model and the native publisher and
+`protoc-gen-fletcher`, which the `Eiva.Fletcher.Protoc` package brings (`--fletcher_opt=csharp` for the model and the native publisher and
 subscriber, `csharp_gateway` for the gateway pair, `csharp_accessor` for the Arrow view, and
 `csharp_model_only` to leave the native pair out).
 
@@ -76,7 +76,9 @@ service FixFeed {
 ```
 
 **2. Reference the packages** in your project. `FletcherVersion` is the version of these
-packages, `@VERSION@`; `Google.Protobuf.Tools` brings `protoc`.
+packages, `@VERSION@`. `Eiva.Fletcher.Protoc` brings the code generator, `protoc-gen-fletcher`;
+`FletcherProtocVersion` is its version, which has the same `MAJOR.MINOR` as these packages.
+`Google.Protobuf.Tools` brings `protoc`.
 
 <!-- snippet: csproj-references -->
 ```xml
@@ -84,13 +86,15 @@ packages, `@VERSION@`; `Google.Protobuf.Tools` brings `protoc`.
   <PackageReference Include="Eiva.Fletcher" Version="[$(FletcherVersion)]" />
   <PackageReference Include="Eiva.Fletcher.GatewayClient" Version="[$(FletcherVersion)]" />
   <PackageReference Include="Eiva.Fletcher.Model" Version="[$(FletcherVersion)]" />
-  <!-- protoc and the well-known .proto files, used at build time only. -->
+  <!-- The plugin, and protoc with the well-known .proto files, used at build time only. -->
+  <PackageReference Include="Eiva.Fletcher.Protoc" Version="[$(FletcherProtocVersion)]" PrivateAssets="all" />
   <PackageReference Include="Google.Protobuf.Tools" Version="[3.36.1]" GeneratePathProperty="true" PrivateAssets="all" />
 </ItemGroup>
 ```
 
-**3. Generate the C# on every build.** `FletcherPlugin` is the path to `protoc-gen-fletcher`, and
-`FletcherProtoInclude` the folder holding its `fletcher/options.proto`. The options choose what
+**3. Generate the C# on every build.** `Eiva.Fletcher.Protoc` sets `FletcherProtocPlugin`, the
+path to `protoc-gen-fletcher` for this machine, and `FletcherProtoInclude`, the folder holding its
+`fletcher/options.proto`. The options choose what
 is generated: `csharp` the model and the native publisher and subscriber, `csharp_gateway` the
 gateway publisher and subscriber, `csharp_accessor` the Arrow accessor and view; add
 `csharp_model_only` to leave the native pair out of an application that only talks to a gateway.
@@ -106,11 +110,11 @@ gateway publisher and subscriber, `csharp_accessor` the Arrow accessor and view;
   <PropertyGroup>
     <FletcherOut>$(IntermediateOutputPath)fletcher</FletcherOut>
   </PropertyGroup>
-  <!-- A NuGet package does not keep the executable bit. -->
+  <!-- A NuGet package does not keep the executable bit (Eiva.Fletcher.Protoc sets its own). -->
   <Exec Condition="!$([MSBuild]::IsOSPlatform('Windows'))" Command="chmod +x &quot;$(Protoc)&quot;" />
   <RemoveDir Directories="$(FletcherOut)" />
   <MakeDir Directories="$(FletcherOut)" />
-  <Exec Command="&quot;$(Protoc)&quot; --plugin=protoc-gen-fletcher=&quot;$(FletcherPlugin)&quot; --fletcher_out=&quot;$(FletcherOut)&quot; --fletcher_opt=csharp,csharp_gateway,csharp_accessor -I . -I &quot;$(FletcherProtoInclude)&quot; -I &quot;$(PkgGoogle_Protobuf_Tools)/tools&quot; fix.proto" />
+  <Exec Command="&quot;$(Protoc)&quot; --plugin=protoc-gen-fletcher=&quot;$(FletcherProtocPlugin)&quot; --fletcher_out=&quot;$(FletcherOut)&quot; --fletcher_opt=csharp,csharp_gateway,csharp_accessor -I . -I &quot;$(FletcherProtoInclude)&quot; -I &quot;$(PkgGoogle_Protobuf_Tools)/tools&quot; fix.proto" />
   <ItemGroup>
     <Compile Include="$(FletcherOut)/*.cs" />
   </ItemGroup>

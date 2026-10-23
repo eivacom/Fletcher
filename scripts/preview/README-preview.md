@@ -8,9 +8,9 @@ feed, and the round has not merged. Every push to the branch makes a new bundle,
 
 | Folder | Contents |
 |---|---|
-| `nuget/` | `Eiva.Fletcher`, `Eiva.Fletcher.Interop` (the native shim for linux-x64 and win-x64), `Eiva.Fletcher.Model`, `Eiva.Fletcher.GatewayClient`, version `@VERSION@`, with their symbol packages |
+| `nuget/` | `Eiva.Fletcher`, `Eiva.Fletcher.Interop` (the native shim for linux-x64 and win-x64), `Eiva.Fletcher.Model`, `Eiva.Fletcher.GatewayClient`, version `@VERSION@`, with their symbol packages; and `Eiva.Fletcher.Protoc`, the code generator for C# projects, at the same version |
 | `gateway/` | The Fletcher gateway built from the same commit: `gateway-linux.tar.gz`, `gateway-windows.zip`. Use this gateway with `Eiva.Fletcher.GatewayClient`; the released 0.5 gateway does not accept the schema the client announces |
-| `protoc/` | The code generator: `protoc-gen-fletcher-linux-x64`, `protoc-gen-fletcher-windows-x64.exe`, and `fletcher/options.proto` |
+| `protoc/` | The code generator outside NuGet, for C++ or a script: `protoc-gen-fletcher-linux-x64`, `protoc-gen-fletcher-windows-x64.exe`, and `fletcher/options.proto` |
 
 Each package's README (`README.md` inside the `.nupkg`, or shown by your IDE's package manager)
 walks from a `.proto` file to publishing and subscribing, natively and through the gateway, with
@@ -43,6 +43,12 @@ folder, for example `./gateway --port 9090 --provider fastdds` on Linux (after
 machine. Connect `Eiva.Fletcher.GatewayClient` to `ws://<host>:9090`.
 
 ## Generating C# code
+
+In a C# project, reference `Eiva.Fletcher.Protoc` (version `@VERSION@`, `PrivateAssets="all"`): it sets
+`FletcherProtocPlugin` to the plugin for your machine and `FletcherProtoInclude` to the folder of
+`fletcher/options.proto`, and the packages' README shows the protoc call that uses them. In a
+project that compiles `.proto` files with `Grpc.Tools`, it also lets them import
+`fletcher/options.proto`. Outside NuGet, use the plugin in `protoc/`.
 
 You need `protoc` itself (protobuf 3.21 or newer, for example from a protobuf release or the
 `Google.Protobuf.Tools` package); the plugin in `protoc/` is what adds Fletcher's output:

@@ -1,0 +1,22 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// BIND-9b-5 (D-BIND-158): a .proto of a standard gRPC project that uses Fletcher's options, both
+// of them, so the test can read each back from C#.
+syntax = "proto3";
+
+package grpcconsumer;
+
+import "fletcher/options.proto";
+
+option csharp_namespace = "GrpcConsumer.Messages";
+
+message Celsius {
+  option (fletcher.flatten) = true;
+  double value = 1;
+}
+
+message Reading {
+  string sensor = 1;
+  Celsius temperature = 2 [(fletcher.flatten_field) = true];
+}

@@ -11,11 +11,18 @@ gateway and plugin working together as shipped, on Linux and Windows.
 - **Restore from the bundle alone.** A `nuget.config` with package source mapping takes every
   `Eiva.Fletcher*` package from the bundle's `nuget/` and from no other source, into an empty
   package cache; `Apache.Arrow` and `Google.Protobuf.Tools` (for `protoc`) come from nuget.org.
-- **Generate with the bundled plugin.** [`PreviewConsumer.csproj`](dotnet/PreviewConsumer/PreviewConsumer.csproj)
-  runs `protoc` with the bundle's `protoc-gen-fletcher` over
-  [`fix.proto`](dotnet/PreviewConsumer/fix.proto) (`csharp,csharp_gateway,csharp_accessor`: the
-  model, the native pair, the gateway pair and the Arrow accessor), with the bundle's `protoc/` on
-  the include path.
+- **Generate with the bundled plugin, through its package.** [`PreviewConsumer.csproj`](dotnet/PreviewConsumer/PreviewConsumer.csproj)
+  references the bundle's `Eiva.Fletcher.Protoc` (BIND-9b-5, D-BIND-71) and runs `protoc` with the
+  plugin it locates, `$(FletcherProtocPlugin)`, over [`fix.proto`](dotnet/PreviewConsumer/fix.proto)
+  (`csharp,csharp_gateway,csharp_accessor`: the model, the native pair, the gateway pair and the
+  Arrow accessor), with the package's `$(FletcherProtoInclude)` on the include path. Its version is
+  read off the package in `nuget/`: the bundle's in a preview bundle, the protoc component's
+  elsewhere.
+- **A standard gRPC project** (D-BIND-158). [`GrpcConsumer.csproj`](dotnet/GrpcConsumer/GrpcConsumer.csproj)
+  references `Eiva.Fletcher.Protoc` and `Grpc.Tools`, whose own protoc compiles
+  [`reading.proto`](dotnet/GrpcConsumer/reading.proto), a file that imports
+  `fletcher/options.proto` and sets both options; the package puts its folder on the import path
+  and compiles `options.proto`, and the program reads both options back from C#.
 - **Publish and subscribe natively** through `Eiva.Fletcher` over `inprocess`, row by row and as one
   Arrow batch read through the generated accessor; then over `fastdds`, in this one process on a
   domain of its own (D-BIND-151; `FLETCHER_PREVIEW_DDS_DOMAIN`, 157 by default), after a probe

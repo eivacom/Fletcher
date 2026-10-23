@@ -1,0 +1,66 @@
+<!-- SPDX-License-Identifier: LGPL-3.0-or-later
+     Copyright (C) 2026 The Fletcher Authors
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- BIND-9b-5 (D-BIND-71, D-BIND-158): Eiva.Fletcher.Protoc, the C# locator for the plugin,
+       as fletcher-protoc::plugin is C++'s and @eiva/protoc-gen-fletcher TypeScript's. It packs
+       what ci.protoc already builds and nothing else: the two static plugin binaries, the
+       plugin's licence files, fletcher/options.proto, and build/ files that set
+       $(FletcherProtocPlugin) and $(FletcherProtoInclude) and wire options.proto into
+       Grpc.Tools projects. No code is compiled; the target framework is only what `dotnet pack`
+       needs to run. The protoc component's package, versioned with it (protoc-v); ci.protoc
+       packs it:
+
+         dotnet pack protoc/nuget -o <dir> -p:Version=<version>
+           -p:FletcherPluginLinuxX64=<protoc-gen-fletcher-linux-x64>
+           -p:FletcherPluginWinX64=<protoc-gen-fletcher-windows-x64.exe>
+           -p:FletcherLicenceDir=<dir with LICENSE, COPYING, THIRD-PARTY-LICENSES.txt>
+           -p:FletcherSourceCommit=<sha> -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <PackageId>Eiva.Fletcher.Protoc</PackageId>
+    <Description>protoc-gen-fletcher for C# projects: the Fletcher protoc plugin for linux-x64 and win-x64, fletcher/options.proto, and the MSBuild properties FletcherProtocPlugin and FletcherProtoInclude. Bring your own protoc (Google.Protobuf.Tools, Grpc.Tools).</Description>
+    <PackageTags>fletcher;protoc;protobuf;arrow;codegen</PackageTags>
+    <Authors>The Fletcher Authors</Authors>
+    <Company>EIVA</Company>
+    <PackageLicenseExpression>LGPL-3.0-or-later</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/eivacom/Fletcher</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/eivacom/Fletcher.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <RepositoryCommit>$(FletcherSourceCommit)</RepositoryCommit>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <!-- A build-time tool: a consumer's reference is PrivateAssets="all" by default, so it never
+         flows to the consumer's own consumers. -->
+    <DevelopmentDependency>true</DevelopmentDependency>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <!-- NU5128: no lib/ for the target framework, which is the point: nothing is referenced. -->
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="$(FletcherPluginLinuxX64)" Pack="true" PackagePath="tools/linux-x64/" />
+    <None Include="$(FletcherPluginWinX64)" Pack="true" PackagePath="tools/win-x64/" />
+    <None Include="../include/fletcher/options.proto" Pack="true" PackagePath="include/fletcher/" />
+    <None Include="msbuild/Eiva.Fletcher.Protoc.props" Pack="true" PackagePath="build/" />
+    <None Include="msbuild/Eiva.Fletcher.Protoc.targets" Pack="true" PackagePath="build/" />
+    <None Include="README.md" Pack="true" PackagePath="" />
+    <None Include="$(FletcherLicenceDir)/LICENSE" Pack="true" PackagePath="" />
+    <None Include="$(FletcherLicenceDir)/COPYING" Pack="true" PackagePath="" />
+    <None Include="$(FletcherLicenceDir)/THIRD-PARTY-LICENSES.txt" Pack="true" PackagePath="" />
+  </ItemGroup>
+
+  <!-- Every input is required: a package missing a plugin or its licences is not one to ship. -->
+  <Target Name="FletcherCheckPackInputs" BeforeTargets="GenerateNuspec">
+    <Error Condition="'$(FletcherPluginLinuxX64)' == '' Or !Exists('$(FletcherPluginLinuxX64)')"
+           Text="FletcherPluginLinuxX64 must name protoc-gen-fletcher-linux-x64 (got '$(FletcherPluginLinuxX64)')." />
+    <Error Condition="'$(FletcherPluginWinX64)' == '' Or !Exists('$(FletcherPluginWinX64)')"
+           Text="FletcherPluginWinX64 must name protoc-gen-fletcher-windows-x64.exe (got '$(FletcherPluginWinX64)')." />
+    <Error Condition="'$(FletcherLicenceDir)' == '' Or !Exists('$(FletcherLicenceDir)/THIRD-PARTY-LICENSES.txt')"
+           Text="FletcherLicenceDir must hold LICENSE, COPYING and the plugin's THIRD-PARTY-LICENSES.txt (got '$(FletcherLicenceDir)')." />
+  </Target>
+
+</Project>

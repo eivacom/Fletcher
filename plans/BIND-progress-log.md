@@ -1401,3 +1401,14 @@ client's rows already used, on the maintainer's ruling, since it had every progr
 five more topics and a second C# peer, rather than a second lane building the same programs again.
 Sharing the programs meant each now listens on several topics, so every message they print names
 its topic; otherwise a late row from one test could have passed the next.
+
+**9b-5, the code generator as a NuGet package.** A C# project now gets Fletcher's code generator
+the way it gets everything else: a NuGet package, `Eiva.Fletcher.Protoc`, holding the generator for
+Linux and Windows and telling the project where it is. The project still writes its own protoc
+call, as C++ and TypeScript projects do. The package also helps ordinary gRPC projects: they can
+use Fletcher's options in their `.proto` files and read them from C#. It is built from the very
+binaries the release ships, checked file by file, and the test that uses the preview bundle as a
+tester would now generates its code through the package, beside a second project that proves the
+gRPC route. Checking whether the package needs to mark the generator executable on Linux showed
+that current NuGet already does so for the user who installed it; the package does it for
+everyone else.
