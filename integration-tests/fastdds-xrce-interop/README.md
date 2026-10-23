@@ -38,7 +38,7 @@ and a non-default domain (153).
 
 ## Self-contained: the Agent is built and managed by the test
 
-`MicroXRCEAgent` is built from source by this directory's `CMakeLists.txt` as an `ExternalProject` (with `UAGENT_SUPERBUILD=ON` so the Agent fetches its own fast-dds / fast-cdr / asio / tinyxml2 / micro-cdr in isolation from the Conan deps the test itself uses). The resulting binary path is injected as `MICRO_XRCE_AGENT_PATH` into the test binary.
+`MicroXRCEAgent` is built from source by the shared recipe [`integration-tests/cmake/MicroXrceAgent.cmake`](../cmake/MicroXrceAgent.cmake), which this directory's `CMakeLists.txt` includes and the C# transport-conformance lane uses too (D-BIND-56), as an `ExternalProject` (with `UAGENT_SUPERBUILD=ON` so the Agent fetches its own fast-dds / fast-cdr / asio / tinyxml2 / micro-cdr in isolation from the Conan deps the test itself uses). The resulting binary path is injected as `MICRO_XRCE_AGENT_PATH` into the test binary.
 
 A gtest `Environment` fixture spawns the Agent (`fork`+`execv` on Linux, `CreateProcess` on Windows) before any test runs and kills it on tear-down. The fixture polls until the Agent's UDP port is reachable, with a 15-second deadline so it tolerates slow start-up under CI load.
 
@@ -54,11 +54,11 @@ So there are **9 gtest cases in this one ctest entry**: the seven interop cases 
 
 No `MicroXRCEAgent` install, no Docker sidecar, no manual `&`-in-another-terminal step. `cmake build && ctest` is the whole workflow on every platform.
 
-The first build pulls in eProsima's full dependency tree (fast-dds + fast-cdr + asio + tinyxml2 + micro-cdr + the Agent itself) and takes ~10–15 minutes. `CMakeLists.txt` skips the superbuild entirely whenever the installed Agent binary already exists, so subsequent builds are instant. The install dir is a fixed path (`C:/fl-uxa-install` on Windows, `microxrcedds_agent-install/` under the build dir elsewhere) so it survives a fresh build directory — which is what lets CI cache it across runs (see below).
+The first build pulls in eProsima's full dependency tree (fast-dds + fast-cdr + asio + tinyxml2 + micro-cdr + the Agent itself) and takes ~10–15 minutes. The recipe skips the superbuild entirely whenever the installed Agent binary already exists, so subsequent builds are instant. The install dir is a fixed path (`C:/fl-uxa-install` on Windows, `microxrcedds_agent-install/` under the build dir elsewhere) so it survives a fresh build directory — which is what lets CI cache it across runs (see below).
 
 ## How it runs in CI
 
-The workflow `.github/workflows/ci.integration-test.fastdds-xrce-interop.yml` triggers on PRs touching `core/**`, `arrow-bridge/**`, `pubsub/**`, `pubsub-arrow/**`, `fastdds-pubsub-provider/**`, `xrcedds-pubsub-provider/**`, or this directory. It builds each Fletcher component, then builds and runs the test (Linux inside the devcontainer image; Windows natively). The Agent is spawned and torn down by the test fixture. The native Windows job additionally caches the third-party Conan binaries (boost, fast-dds — neither has a prebuilt binary on conancenter) and the Agent install (`C:/fl-uxa-install`) across runs, so a warm run only rebuilds the changed Fletcher components.
+The workflow `.github/workflows/ci.integration-test.fastdds-xrce-interop.yml` triggers on PRs touching `core/**`, `arrow-bridge/**`, `pubsub/**`, `pubsub-arrow/**`, `fastdds-pubsub-provider/**`, `xrcedds-pubsub-provider/**`, or this directory. It builds each Fletcher component, then builds and runs the test (Linux inside the devcontainer image; Windows natively). The Agent is spawned and torn down by the test fixture. The native Windows job additionally caches the third-party Conan binaries (boost, fast-dds — neither has a prebuilt binary on conancenter) and the Agent install (`C:/fl-uxa-install`) across runs — under one key, hashed from the shared recipe, that the transport-conformance lane uses too — so a warm run only rebuilds the changed Fletcher components.
 
 ## Running locally
 

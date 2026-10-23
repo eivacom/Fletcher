@@ -10,6 +10,15 @@ concurrency:
 on:
   workflow_call:
     inputs:
+      ref:
+        description: >-
+          The commit to check out, or empty for the default (the merge ref on a pull
+          request). ci.pr.yml passes the PR head when it builds the BIND-9a preview
+          bundle, so every artifact names one commit, the one the bundle names
+          (D-BIND-145; the package-bundle job checks the two are one tree).
+        required: false
+        type: string
+        default: ''
       devcontainer-image:
         description: >-
           Pre-built devcontainer image reference (e.g.
@@ -20,6 +29,23 @@ on:
           cd.protoc.yml wrapper does the same for tag-push releases.
         required: true
         type: string
+      release-artifacts:
+        description: >-
+          Build and upload the release artifacts (the Conan packages and the
+          static plugin binaries) as a tag push does, without a tag: ci.pr.yml
+          sets it for the BIND-9a per-push preview bundle (D-BIND-136, 139) and, since
+          BIND-9b-1, whenever the package consumer test runs (D-BIND-159).
+        required: false
+        type: boolean
+        default: false
+      package-version:
+        description: >-
+          The version of the Eiva.Fletcher.Protoc NuGet package (BIND-9b-5), replacing
+          conanfile.py's: ci.pr.yml passes the preview bundle's 0.6.0-pr.129.<run>, so the
+          bundle's five packages share one version (D-BIND-138). Empty keeps conanfile.py's.
+        required: false
+        type: string
+        default: ''
     outputs:
       conan-ref:
         description: >-
@@ -46,6 +72,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.ref }}
           sparse-checkout: |
             protoc/conanfile.py
             protoc/npm/package.json
@@ -78,6 +105,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.ref }}
           sparse-checkout: |
             protoc
             .github
@@ -93,7 +121,7 @@ jobs:
 
       - name: Get Conan reference
         id: get-ref
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.release-artifacts
         shell: bash
         working-directory: protoc
         run: |
@@ -101,12 +129,12 @@ jobs:
           echo "conan-ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Save Conan package
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.release-artifacts
         shell: bash
         run: conan cache save "${{ steps.get-ref.outputs.conan-ref }}:*" --file "fletcher-protoc-windows-conan-package.tgz"
 
       - name: Upload Windows Conan package .tgz artifact
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.release-artifacts
         uses: actions/upload-artifact@v7.0.1
         with:
           name: fletcher-protoc-windows
@@ -116,7 +144,7 @@ jobs:
       # Raw single-file binary for GitHub Release / the npm shim — extracted
       # from the build above, not rebuilt.
       - name: Extract static binary
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.release-artifacts
         shell: bash
         run: |
           set -euo pipefail
@@ -130,7 +158,7 @@ jobs:
           ls -lah protoc-gen-fletcher-windows-x64.exe
 
       - name: Upload Windows static binary
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.release-artifacts
         uses: actions/upload-artifact@v7.0.1
         with:
           name: fletcher-protoc-windows-static
@@ -143,8 +171,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.ref }}
           sparse-checkout: |
             protoc
+            gateway/deployers
             .github
             .conan-profiles
 
@@ -157,7 +187,7 @@ jobs:
       - name: Build and test
         shell: bash
         env:
-          ARTIFACT_NAME: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && 'fletcher-protoc-linux-conan-package.tgz' || '' }}
+          ARTIFACT_NAME: ${{ ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.release-artifacts) && 'fletcher-protoc-linux-conan-package.tgz' || '' }}
         run: |
           docker run --rm \
             -v "${GITHUB_WORKSPACE}:/workspace" \
@@ -167,6 +197,26 @@ jobs:
             bash -c '
               set -e
               conan create . --build=missing -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release -o "&:run_tests=True"
+              # BIND-9a-1 (D-BIND-140): the plugin links protobuf (and what protobuf
+              # needs) statically, so its binary carries their licences too; until now
+              # no plugin artifact did. Written on every run, as the gateway writes its
+              # own, so a dependency the deployer cannot describe fails here, not at
+              # release time. One notice for both platforms: the recipe takes the same
+              # static graph on each.
+              mkdir -p /workspace/protoc-licences
+              conan install --requires="fletcher-protoc/[*, include_prerelease]" \
+                --deployer=/workspace/gateway/deployers/third_party_licenses.py \
+                --deployer-folder=/workspace/protoc-licences -c tools.graph:skip_binaries=False \
+                -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release
+              cp /workspace/LICENSE /workspace/protoc-licences/LICENSE
+              cp /workspace/COPYING /workspace/protoc-licences/COPYING
+              # What the plugin links or compiles in must be in its notice: protobuf
+              # and zlib from the graph, and the vendored nanoarrow, which only reaches
+              # the notice through the recipe (BIND-9a review B4).
+              for lib in protobuf zlib nanoarrow; do
+                grep -qE "^  \* $lib " /workspace/protoc-licences/THIRD-PARTY-LICENSES.txt \
+                  || { echo "::error::the plugin notice does not cover $lib, which is linked into the plugin"; exit 1; }
+              done
               if [[ -n "$ARTIFACT_NAME" ]]; then
                 REF=$(conan inspect . --format json | python3 -c "import json,sys; d=json.load(sys.stdin); print(d[\"name\"]+\"/\"+d[\"version\"])")
                 conan cache save "$REF:*" --file "/workspace/$ARTIFACT_NAME"
@@ -184,7 +234,7 @@ jobs:
             '
 
       - name: Upload Linux Conan package .tgz artifact
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.release-artifacts
         uses: actions/upload-artifact@v7.0.1
         with:
           name: fletcher-protoc-linux
@@ -192,9 +242,78 @@ jobs:
           retention-days: 5
 
       - name: Upload Linux static binary
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.release-artifacts
         uses: actions/upload-artifact@v7.0.1
         with:
           name: fletcher-protoc-linux-static
           path: protoc-gen-fletcher-linux-x64
+          retention-days: 5
+
+      - name: Upload the plugin's licence files
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.release-artifacts
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: fletcher-protoc-licences
+          path: |
+            protoc-licences/LICENSE
+            protoc-licences/COPYING
+            protoc-licences/THIRD-PARTY-LICENSES.txt
+          retention-days: 5
+
+  # BIND-9b-5 (D-BIND-71, D-BIND-158): Eiva.Fletcher.Protoc, the C# locator for the plugin,
+  # packed from the two static binaries and the licence files the legs above uploaded, so the
+  # package carries exactly what the GitHub Release and the npm shim carry. The protoc
+  # component's package, at its version (or the bundle's); cd.protoc.yml releases it.
+  pack-nuget:
+    needs: [build-windows, build-linux]
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.release-artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+          sparse-checkout: |
+            protoc/nuget
+            protoc/include/fletcher
+            protoc/conanfile.py
+            dotnet/global.json
+            scripts
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: dotnet/global.json
+
+      - name: Download the static plugins and the licence files
+        uses: actions/download-artifact@v8.0.1
+        with:
+          pattern: fletcher-protoc-{linux-static,windows-static,licences}
+          merge-multiple: true
+          path: protoc-dist
+
+      - name: Pack and check
+        shell: bash
+        env:
+          PACKAGE_VERSION: ${{ inputs.package-version }}
+          SOURCE_COMMIT: ${{ inputs.ref || github.sha }}
+        run: |
+          set -euo pipefail
+          VERSION=$PACKAGE_VERSION
+          if [ -z "$VERSION" ]; then
+            VERSION=$(sed -n 's/^ *version *= *"\([^"]*\)".*/\1/p' protoc/conanfile.py | head -1)
+          fi
+          [ -n "$VERSION" ] || { echo "::error::no version for Eiva.Fletcher.Protoc"; exit 1; }
+          D="$PWD/protoc-dist"
+          dotnet pack protoc/nuget/Eiva.Fletcher.Protoc.csproj -c Release -o "$PWD/protoc-nuget" \
+            -p:Version="$VERSION" \
+            -p:FletcherPluginLinuxX64="$D/protoc-gen-fletcher-linux-x64" \
+            -p:FletcherPluginWinX64="$D/protoc-gen-fletcher-windows-x64.exe" \
+            -p:FletcherLicenceDir="$D" \
+            -p:FletcherSourceCommit="$SOURCE_COMMIT"
+          bash scripts/check_protoc_package.sh "$PWD/protoc-nuget/Eiva.Fletcher.Protoc.$VERSION.nupkg" "$D" "$SOURCE_COMMIT"
+
+      - name: Upload the package
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: fletcher-protoc-nuget
+          path: protoc-nuget/*.nupkg
           retention-days: 5

@@ -10,6 +10,15 @@ concurrency:
 on:
   workflow_call:
     inputs:
+      ref:
+        description: >-
+          The commit to check out, or empty for the default (the merge ref on a pull
+          request). ci.pr.yml passes the PR head when it builds the BIND-9a preview
+          bundle, so every artifact names one commit, the one the bundle names
+          (D-BIND-145; the package-bundle job checks the two are one tree).
+        required: false
+        type: string
+        default: ''
       devcontainer-image:
         description: >-
           Pre-built devcontainer image reference (e.g.
@@ -20,6 +29,15 @@ on:
           cd.gateway.yml wrapper does the same for tag-push releases.
         required: true
         type: string
+      release-artifacts:
+        description: >-
+          Build and upload the release archives (gateway-linux.tar.gz,
+          gateway-windows.zip) as a tag push does, without a tag: ci.pr.yml sets
+          it for the BIND-9a per-push preview bundle (D-BIND-135, 139) and, since
+          BIND-9b-1, whenever the package consumer test runs (D-BIND-159).
+        required: false
+        type: boolean
+        default: false
 
 # Gateway is distributed as a self-contained deploy that runs with zero setup
 # (no LD_LIBRARY_PATH / conanrun). It is built and packaged as a Conan
@@ -45,6 +63,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.ref }}
           sparse-checkout: |
             gateway
             core
@@ -105,16 +124,18 @@ jobs:
       # where the licence texts live. It is set on this invocation alone so it
       # cannot influence what runtime_deploy bundles.
       #
-      # The repository's own LICENSE joins it: the gateway is LGPL-3.0-or-later,
+      # The repository's own LICENSE joins it, with COPYING, the GPL-3.0 text the
+      # LGPL-3.0 incorporates (D-BIND-152): the gateway is LGPL-3.0-or-later,
       # and that licence wants its text distributed with the binary just as the
       # third-party ones do. The root LICENSE is present despite the
       # sparse-checkout because cone mode always keeps top-level files.
-      - name: Stage LICENSE + THIRD-PARTY-LICENSES.txt into dist/
+      - name: Stage LICENSE, COPYING and THIRD-PARTY-LICENSES.txt into dist/
         shell: bash
         working-directory: gateway
         run: |
           conan install --requires="fletcher-gateway/[*, include_prerelease]" --deployer=deployers/third_party_licenses.py --deployer-folder=dist -c tools.graph:skip_binaries=False -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release
           cp ../LICENSE dist/LICENSE
+          cp ../COPYING dist/COPYING
 
       # Self-contained bundle: gateway.exe + the runtime DLLs beside it (the
       # Windows loader searches the exe's own directory first), so it runs with
@@ -124,7 +145,7 @@ jobs:
       # two licence files from the step above, so zipping the folder ships the
       # exe and its attribution texts as one archive.
       - name: Bundle gateway + runtime libraries
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.release-artifacts
         shell: bash
         working-directory: gateway
         run: |
@@ -139,14 +160,14 @@ jobs:
           # `test` sees stay relative and POSIX.
           rm -rf zipcheck
           7z x -y -ozipcheck "${GITHUB_WORKSPACE}/gateway-windows.zip" >/dev/null
-          for required in gateway.exe LICENSE THIRD-PARTY-LICENSES.txt; do
+          for required in gateway.exe LICENSE COPYING THIRD-PARTY-LICENSES.txt; do
             test -f "zipcheck/${required}" \
               || { echo "::error::gateway-windows.zip does not contain ${required}"; exit 1; }
           done
           rm -rf zipcheck
 
       - name: Upload Windows bundle
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.release-artifacts
         uses: actions/upload-artifact@v7.0.1
         with:
           name: gateway-windows
@@ -158,6 +179,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.ref }}
           sparse-checkout: |
             gateway
             core
@@ -175,7 +197,7 @@ jobs:
       - name: Build dependencies, install, build, and test
         shell: bash
         env:
-          ARTIFACT_NAME: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && 'gateway-linux.tar.gz' || '' }}
+          ARTIFACT_NAME: ${{ ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.release-artifacts) && 'gateway-linux.tar.gz' || '' }}
         run: |
           docker run --rm \
             -v "${GITHUB_WORKSPACE}:/workspace" \
@@ -218,13 +240,15 @@ jobs:
               # invocation alone so it cannot influence what runtime_deploy
               # bundles.
               #
-              # The repository LICENSE joins it: the gateway is
+              # The repository LICENSE joins it, with COPYING, the GPL-3.0 text the
+              # LGPL-3.0 incorporates (D-BIND-152): the gateway is
               # LGPL-3.0-or-later, and that licence wants its text distributed
               # with the binary just as the third-party ones do. The root LICENSE
               # is present despite the sparse-checkout because cone mode always
               # keeps top-level files.
               conan install --requires="fletcher-gateway/[*, include_prerelease]" --deployer=deployers/third_party_licenses.py --deployer-folder=dist -c tools.graph:skip_binaries=False -pr:a="$PROFILE"
               cp /workspace/LICENSE dist/LICENSE
+              cp /workspace/COPYING dist/COPYING
               # Self-contained bundle: because the gateway is an `application`
               # package, runtime_deploy flattens the exe (with its $ORIGIN rpath)
               # AND every runtime shared library it links into dist/, so the
@@ -241,7 +265,7 @@ jobs:
                 tar -czf "/workspace/$ARTIFACT_NAME" -C dist .
                 rm -rf /tmp/tarcheck && mkdir -p /tmp/tarcheck
                 tar -xzf "/workspace/$ARTIFACT_NAME" -C /tmp/tarcheck
-                for required in gateway LICENSE THIRD-PARTY-LICENSES.txt; do
+                for required in gateway LICENSE COPYING THIRD-PARTY-LICENSES.txt; do
                   test -f "/tmp/tarcheck/$required" \
                     || { echo "::error::$ARTIFACT_NAME does not contain $required"; exit 1; }
                 done
@@ -249,7 +273,7 @@ jobs:
             '
 
       - name: Upload Linux binary
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.release-artifacts
         uses: actions/upload-artifact@v7.0.1
         with:
           name: gateway-linux

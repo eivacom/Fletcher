@@ -144,6 +144,9 @@ TEST(FletcherSamplePubSubTypeTest, SerializeCapturesEncoderExceptionDiagnostic) 
     EXPECT_FALSE(result);
     EXPECT_EQ(payload.length, 0u);
     EXPECT_THAT(data.serialize_error, testing::HasSubstr("encoder boom"));
+    // An encoder that THROWS is a defect in the caller's code, not a row that did not fit, so
+    // Publish must report it as kInternal - not as the overflow's kPayloadTooLarge.
+    EXPECT_FALSE(data.serialize_overflow);
 }
 
 // #60 hardening, restated for the per-publish diagnostic. One
@@ -260,9 +263,12 @@ TEST(FastDDSPubSubProviderTest, PublishThrowsWhenEncoderFails) {
     try {
         p.Publish({"pub", "encfail"}, bad);
         FAIL() << "Publish must throw when the row encoder fails to serialize";
-    } catch (const std::runtime_error& e) {
+    } catch (const PubSubError& e) {
         EXPECT_THAT(e.what(), testing::HasSubstr("failed to publish"));
         EXPECT_THAT(e.what(), testing::HasSubstr("encoder boom"));
+        // The contrast AnOversizedRowIsPayloadTooLarge draws: an encoder that THROWS is a defect in
+        // the caller's code and stays kInternal; only a row that does not fit is kPayloadTooLarge.
+        EXPECT_EQ(e.status(), PubSubStatus::kInternal) << e.what();
     }
 }
 
@@ -555,11 +561,14 @@ TEST(FastDDSPubSubProviderTest, DataSharingRoundTrip) {
     EXPECT_EQ(AwaitRow(received), 31);
 }
 
-// The mirror of the zero-copy oversize test, and what separates the two modes:
-// with no loan to encode into, the overflow happens inside serialize(), which
-// reports it to Fast DDS instead of throwing out of Publish. The sample is
-// dropped either way.
-TEST(FastDDSPubSubProviderTest, DataSharingOversizedRowDoesNotThrow) {
+// The mirror of the zero-copy oversize test: the regular (serialising) flow now reports an
+// oversized row the way the loaned flow always did, as kPayloadTooLarge out of Publish - the
+// status the seam spec's normative overflow mapping names. The overflow still happens inside
+// serialize(), which records it; WriteSample throws once write() has returned. Replaces
+// DataSharingOversizedRowDoesNotThrow, which pinned the previous behaviour: the row was dropped
+// and only logged, so no caller - C++, the gateway or a language binding - could learn it had
+// not been sent (BIND review, D-BIND-53).
+TEST(FastDDSPubSubProviderTest, AnOversizedRowIsPayloadTooLarge) {
     FastDDSPubSubProvider pub_provider(BoundedConfig());
     pub_provider.CreateTopic({"datasharing", "oversized"}, MakeSchema());
 
@@ -567,7 +576,14 @@ TEST(FastDDSPubSubProviderTest, DataSharingOversizedRowDoesNotThrow) {
         std::vector<uint8_t> blob(bound + 16, 0x5A);
         buf.Append(blob.data(), blob.size());
     };
-    EXPECT_NO_THROW(pub_provider.Publish({"datasharing", "oversized"}, oversized));
+    try {
+        pub_provider.Publish({"datasharing", "oversized"}, oversized);
+        ADD_FAILURE() << "an oversized row was accepted silently";
+    } catch (const PubSubError& e) {
+        EXPECT_EQ(e.status(), PubSubStatus::kPayloadTooLarge) << e.what();
+    }
+
+    // The refusal is about SIZE: the next ordinary row on the same writer still publishes.
     EXPECT_NO_THROW(pub_provider.Publish({"datasharing", "oversized"}, MakeEncoder(3)));
 }
 

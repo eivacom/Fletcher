@@ -1,0 +1,45 @@
+<!-- SPDX-License-Identifier: LGPL-3.0-or-later
+     Copyright (C) 2026 The Fletcher Authors
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- BIND-4d-v, the managed half of the per-row publish benchmark (D-BIND-48).
+
+       NOT in Fletcher.slnx, for the reason the integration suites are not:
+       `ci.dotnet.yml` builds and tests the solution, and a benchmark is neither
+       a unit test nor something CI runs. It is run by hand; see README.md. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- One TFM, overriding Directory.Build.props: the numbers are about the
+         runtime a consumer runs today, and the devcontainer and runners carry
+         the .NET 10 runtime only. -->
+    <TargetFrameworks>net10.0</TargetFrameworks>
+    <IsPackable>false</IsPackable>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <RootNamespace>Eiva.Fletcher.Benchmarks</RootNamespace>
+    <!-- The Linux allocation counter is read through an unmanaged function
+         pointer resolved from the preloaded library. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- BenchmarkDotNet refuses a Debug build; say so here rather than at run time. -->
+    <Configuration Condition="'$(Configuration)' == ''">Release</Configuration>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The PUBLIC surface only - no InternalsVisibleTo. What is measured is what
+         a consumer can call. -->
+    <ProjectReference Include="../../src/Fletcher/Fletcher.csproj" />
+  </ItemGroup>
+
+  <!-- The native shim, staged beside the binary exactly as Fletcher.Tests does:
+       `dotnet run -c Release -p:FletcherNativeShim=<path>`. -->
+  <ItemGroup Condition="'$(FletcherNativeShim)' != '' And Exists('$(FletcherNativeShim)')">
+    <None Include="$(FletcherNativeShim)"
+          Link="%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" Version="[0.15.8]" />
+  </ItemGroup>
+
+</Project>

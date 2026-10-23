@@ -227,6 +227,10 @@ The full install + `proto:gen` + `prebuild` recipe, plus the `tsconfig` paths al
 
 > **Not** [`@grpc/proto-loader`](https://www.npmjs.com/package/@grpc/proto-loader): that package loads `.proto` files at **runtime** into JavaScript objects via `protobufjs` reflection — a different problem from code generation. It does not produce the typed `TypedSchema<T>` objects that `FletcherClient.publish`/`subscribe` expect.
 
+## NuGet package (C# consumers)
+
+For C# projects the plugin ships as the **`Eiva.Fletcher.Protoc`** NuGet package (BIND-9b-5, D-BIND-71): both static binaries inside, and the MSBuild properties `$(FletcherProtocPlugin)` (this machine's plugin) and `$(FletcherProtoInclude)` (the folder of `fletcher/options.proto`). The project writes its own protoc call, with protoc from its side (`Google.Protobuf.Tools`). In a project that compiles `.proto` files with `Grpc.Tools`, the package also puts `fletcher/options.proto` on the import path and compiles it, so the options can be read from C# (D-BIND-158). The package's project and README are in [`nuget/`](nuget/); [`integration-tests/preview-bundle-consumer/`](../integration-tests/preview-bundle-consumer/) builds both kinds of project from the packed package on every PR that can change it.
+
 ## Proto to Arrow type mapping
 
 | Proto type | Arrow type | Notes |

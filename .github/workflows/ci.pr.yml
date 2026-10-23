@@ -32,6 +32,8 @@ jobs:
     outputs:
       core: ${{ steps.filter.outputs.core }}
       arrow-bridge: ${{ steps.filter.outputs.arrow-bridge }}
+      c-abi: ${{ steps.filter.outputs.c-abi }}
+      dotnet: ${{ steps.filter.outputs.dotnet }}
       fastdds-pubsub-provider: ${{ steps.filter.outputs.fastdds-pubsub-provider }}
       gateway: ${{ steps.filter.outputs.gateway }}
       gateway-client: ${{ steps.filter.outputs.gateway-client }}
@@ -41,17 +43,58 @@ jobs:
       xrcedds-pubsub-provider: ${{ steps.filter.outputs.xrcedds-pubsub-provider }}
       integration-fastdds-xrce: ${{ steps.filter.outputs.integration-fastdds-xrce }}
       integration-gateway-e2e: ${{ steps.filter.outputs.integration-gateway-e2e }}
+      integration-gateway-dotnet-e2e: ${{ steps.filter.outputs.integration-gateway-dotnet-e2e }}
+      integration-gateway-dotnet-crosslang: ${{ steps.filter.outputs.integration-gateway-dotnet-crosslang }}
       integration-gateway-fastdds-ts: ${{ steps.filter.outputs.integration-gateway-fastdds-ts }}
       integration-protoc-arrow: ${{ steps.filter.outputs.integration-protoc-arrow }}
+      integration-binding-abi: ${{ steps.filter.outputs.integration-binding-abi }}
+      integration-pubsub-transport: ${{ steps.filter.outputs.integration-pubsub-transport }}
       integration-protoc-coverage: ${{ steps.filter.outputs.integration-protoc-coverage }}
       integration-protoc-gateway-ts: ${{ steps.filter.outputs.integration-protoc-gateway-ts }}
       integration-pubsub-arrow-fastdds: ${{ steps.filter.outputs.integration-pubsub-arrow-fastdds }}
       integration-pubsub-conformance: ${{ steps.filter.outputs.integration-pubsub-conformance }}
       integration-protoc-gen-fletcher-npm: ${{ steps.filter.outputs.integration-protoc-gen-fletcher-npm }}
       integration-protoc-gen-fletcher-rust: ${{ steps.filter.outputs.integration-protoc-gen-fletcher-rust }}
+      integration-protoc-dotnet: ${{ steps.filter.outputs.integration-protoc-dotnet }}
       integration-protoc-plugin-cli: ${{ steps.filter.outputs.integration-protoc-plugin-cli }}
+      # BIND-9a (D-BIND-139): on the round's own branch every push builds the preview
+      # bundle, so dotnet, gateway and protoc run whatever the push touched. Removed
+      # with the bundle job when PR #129 merges (BIND-9b).
+      bundle: ${{ steps.bundle.outputs.bundle }}
+      # The preview's one version, computed here once so every job of the run uses the
+      # same (D-BIND-138, D-BIND-150): 0.6.0-pr.<PR>.<run>, and .<attempt> after it when a
+      # re-run rebuilt the run. A "re-run failed jobs" keeps the jobs that passed, and with
+      # them this output from the attempt that built them.
+      bundle-version: ${{ steps.bundle.outputs.version }}
+      # BIND-9b-1 (D-BIND-159): the packages are tested as a consumer gets them, from the
+      # PACKED files, on every pull request that can change them, not only on the round's
+      # branch: then dotnet, gateway and protoc run with their release artifacts, the
+      # package-consumer job (ci.package-consumer.yml) assembles them and runs the routes.
+      consumer: ${{ steps.bundle.outputs.bundle == 'true' || steps.filter.outputs.dotnet == 'true' || steps.filter.outputs.gateway == 'true' || steps.filter.outputs.protoc == 'true' }}
     steps:
       - uses: actions/checkout@v6
+      # The branch name is untrusted input: compared in the shell through an
+      # environment variable, never expanded into the script (actionlint). A head ref
+      # carries no repository, so a fork's PR from a branch of the same name must not
+      # pass for this one: the head must be this repository and the PR #129 (BIND-9a
+      # review B2).
+      - id: bundle
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          THIS_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          if [ "$HEAD_REF" = "feature/csharp-bindings" ] && [ "$HEAD_REPO" = "$THIS_REPO" ] && [ "$PR_NUMBER" = "129" ]; then
+            echo "bundle=true" >> "$GITHUB_OUTPUT"
+            version="0.6.0-pr.$PR_NUMBER.$RUN_NUMBER"
+            if [ "$RUN_ATTEMPT" -gt 1 ]; then version="$version.$RUN_ATTEMPT"; fi
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+          else
+            echo "bundle=false" >> "$GITHUB_OUTPUT"
+          fi
       # Filters list only positive patterns; we deliberately avoid '!'
       # negations. Reason: dorny/paths-filter v4 (with the default
       # predicate-quantifier: 'some') evaluates every pattern — including
@@ -89,6 +132,57 @@ jobs:
               - '.github/actions/pull-devcontainer-image/**'
               - '.conan-profiles/**'
               - '.devcontainer/**'
+            c-abi:
+              - 'c-abi/**'
+              - 'integration-tests/copy-probe/**'
+              - 'core/**'
+              - 'pubsub/**'
+              - 'arrow-bridge/**'
+              - 'fastdds-pubsub-provider/**'
+              - 'xrcedds-pubsub-provider/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.c-abi.yml'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.github/actions/conan-install/**'
+              - '.github/actions/install-cmake/**'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.conan-profiles/**'
+              - '.devcontainer/**'
+            # protoc/tests/golden is not a stray entry: Fletcher.Tests opens a
+            # codec over every .ipc the generator emits, so a changed golden has
+            # to re-run this lane. It is also in ci.dotnet.yml's sparse checkout,
+            # and the two must move together. Likewise the gateway's and the
+            # TypeScript client's wire-type tables: Fletcher.GatewayClient.Tests
+            # reads both and holds the managed client's table to them (BIND-8a).
+            dotnet:
+              - 'dotnet/**'
+              - 'c-abi/**'
+              - 'integration-tests/copy-probe/**'
+              - 'protoc/tests/golden/**'
+              - 'integration-tests/protoc-coverage/golden/**'
+              - 'gateway/src/schema_codec.cpp'
+              - 'gateway-client-ts/src/wire-types.ts'
+              # BIND-9a-0: the shim's notice is written by the gateway's deployer, and
+              # the shim and the packages are checked by these two scripts.
+              - 'gateway/deployers/**'
+              - 'scripts/check_shim_dependencies.sh'
+              - 'scripts/check_dotnet_packages.sh'
+              - 'scripts/shim_floors.env'
+              - 'COPYING'
+              # BIND-9a-4: the package README's snippets are checked against the
+              # consumer test's code.
+              - 'scripts/check_readme_snippets.py'
+              - 'integration-tests/preview-bundle-consumer/**'
+              # BIND-9b-5, 9b-6: what assembles and tests the packed folder.
+              - 'scripts/assemble_preview_bundle.sh'
+              - 'scripts/preview/**'
+              - 'scripts/check_protoc_package.sh'
+              - '.github/workflows/ci.package-consumer.yml'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.dotnet.yml'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.devcontainer/**'
             fastdds-pubsub-provider:
               - 'fastdds-pubsub-provider/**'
               - '.github/workflows/ci.pr.yml'
@@ -118,6 +212,7 @@ jobs:
               - '.devcontainer/**'
             protoc:
               - 'protoc/**'
+              - 'gateway/deployers/**'
               - '.github/workflows/ci.pr.yml'
               - '.github/workflows/ci.protoc.yml'
               - '.github/workflows/ci.setup-devcontainer-image.yml'
@@ -164,6 +259,7 @@ jobs:
               - 'fastdds-pubsub-provider/**'
               - 'xrcedds-pubsub-provider/**'
               - 'integration-tests/fastdds-xrce-interop/**'
+              - 'integration-tests/cmake/**'
               - '.github/workflows/ci.pr.yml'
               - '.github/workflows/ci.integration-test.fastdds-xrce-interop.yml'
               - '.github/actions/pull-devcontainer-image/**'
@@ -183,6 +279,55 @@ jobs:
               - '.github/workflows/ci.setup-devcontainer-image.yml'
               - '.conan-profiles/**'
               - '.devcontainer/**'
+            # The C# gateway client against a live gateway (BIND-8b): the gateway and
+            # its dependencies, the plugin that generates the lane's model, and the two
+            # managed packages the lane references.
+            integration-gateway-dotnet-e2e:
+              - 'core/**'
+              - 'pubsub/**'
+              - 'protoc/**'
+              - 'fastdds-pubsub-provider/**'
+              - 'gateway/**'
+              - 'dotnet/src/Fletcher.GatewayClient/**'
+              - 'dotnet/src/Fletcher.Model/**'
+              - 'dotnet/global.json'
+              - 'dotnet/Directory.Build.props'
+              - 'dotnet/Directory.Build.targets'
+              - 'integration-tests/gateway-dotnet-end-to-end/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.integration-test.gateway-dotnet-end-to-end.yml'
+              - '.github/actions/conan-install/**'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.conan-profiles/**'
+              - '.devcontainer/**'
+            # The C# gateway client's cross-language rows (BIND-8d): the gateway, the C++ and C#
+            # native peers (the shim and both providers), the TypeScript peer, the plugin that
+            # generates all three, and the protoc-coverage fixture and proto the rows come from.
+            integration-gateway-dotnet-crosslang:
+              - 'core/**'
+              - 'pubsub/**'
+              - 'protoc/**'
+              - 'fastdds-pubsub-provider/**'
+              - 'xrcedds-pubsub-provider/**'
+              - 'c-abi/**'
+              - 'gateway/**'
+              - 'gateway-client-ts/src/**'
+              - 'dotnet/src/**'
+              - 'dotnet/tests/Shared/**'
+              - 'dotnet/global.json'
+              - 'dotnet/Directory.Build.props'
+              - 'dotnet/Directory.Build.targets'
+              - 'integration-tests/gateway-dotnet-crosslang/**'
+              - 'integration-tests/protoc-coverage/proto/**'
+              - 'integration-tests/protoc-coverage/tests/coverage_fixture.hpp'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.integration-test.gateway-dotnet-crosslang.yml'
+              - '.github/actions/conan-install/**'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.conan-profiles/**'
+              - '.devcontainer/**'
             integration-gateway-fastdds-ts:
               - 'core/**'
               - 'pubsub/**'
@@ -197,12 +342,47 @@ jobs:
               - '.github/workflows/ci.setup-devcontainer-image.yml'
               - '.conan-profiles/**'
               - '.devcontainer/**'
+            integration-binding-abi:
+              - 'core/**'
+              - 'pubsub/**'
+              - 'arrow-bridge/**'
+              - 'fastdds-pubsub-provider/**'
+              - 'xrcedds-pubsub-provider/**'
+              - 'c-abi/**'
+              - 'dotnet/**'
+              - 'integration-tests/binding-abi-conformance/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.integration-test.binding-abi-conformance.yml'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.conan-profiles/**'
+              - '.devcontainer/**'
+            # BIND-4d-iii. The provider components are in the list because the shim
+            # statically links the transports this lane selects: a change to one of
+            # them changes what `fastdds` or `xrce` resolves to.
+            integration-pubsub-transport:
+              - 'core/**'
+              - 'pubsub/**'
+              - 'arrow-bridge/**'
+              - 'fastdds-pubsub-provider/**'
+              - 'xrcedds-pubsub-provider/**'
+              - 'c-abi/**'
+              - 'dotnet/**'
+              - 'integration-tests/pubsub-transport-conformance/**'
+              - 'integration-tests/cmake/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.integration-test.pubsub-transport-conformance.yml'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.conan-profiles/**'
+              - '.devcontainer/**'
             integration-protoc-arrow:
               - 'core/**'
               - 'protoc/**'
               - 'arrow-bridge/**'
               - 'pubsub/**'
               - 'integration-tests/protoc-arrow-bridge/**'
+              - 'integration-tests/accessor-capstone/**'
               - '.github/workflows/ci.pr.yml'
               - '.github/workflows/ci.integration-test.protoc-arrow-bridge.yml'
               - '.github/actions/pull-devcontainer-image/**'
@@ -252,6 +432,8 @@ jobs:
               - 'pubsub/**'
               - 'fastdds-pubsub-provider/**'
               - 'xrcedds-pubsub-provider/**'
+              - 'c-abi/**'
+              - 'integration-tests/copy-probe/**'
               - 'integration-tests/pubsub-conformance/**'
               - '.github/workflows/ci.pr.yml'
               - '.github/workflows/ci.integration-test.pubsub-conformance.yml'
@@ -273,8 +455,25 @@ jobs:
             integration-protoc-gen-fletcher-rust:
               - 'protoc/**'
               - 'integration-tests/protoc-gen-fletcher-rust/**'
+              - 'integration-tests/accessor-capstone/**'
               - '.github/workflows/ci.pr.yml'
               - '.github/workflows/ci.integration-test.protoc-gen-fletcher-rust.yml'
+              - '.github/actions/pull-devcontainer-image/**'
+              - '.github/actions/conan-install/**'
+              - '.github/workflows/ci.setup-devcontainer-image.yml'
+              - '.conan-profiles/**'
+              - '.devcontainer/**'
+            integration-protoc-dotnet:
+              - 'protoc/**'
+              - 'integration-tests/protoc-dotnet/**'
+              - 'integration-tests/accessor-capstone/**'
+              - 'dotnet/global.json'
+              - 'dotnet/Directory.Build.props'
+              - 'dotnet/Directory.Build.targets'
+              - 'dotnet/.editorconfig'
+              - 'dotnet/src/Fletcher.Model/**'
+              - '.github/workflows/ci.pr.yml'
+              - '.github/workflows/ci.integration-test.protoc-dotnet.yml'
               - '.github/actions/pull-devcontainer-image/**'
               - '.github/actions/conan-install/**'
               - '.github/workflows/ci.setup-devcontainer-image.yml'
@@ -323,6 +522,31 @@ jobs:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
 
+  # The binding ABI shim: the one SHARED library in the tree, statically linking
+  # the whole eProsima chain. It runs from BIND-0 on an ABI that exports a single
+  # function, so the Linux signal on that link is standing before there is any
+  # real code to break it (seam §12.4).
+  c-abi:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.c-abi == 'true' }}
+    uses: ./.github/workflows/ci.c-abi.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
+  # On the round's own branch the packages get a version of their own per run,
+  # 0.6.0-pr.<PR>.<run>[.<attempt>] (D-BIND-138, D-BIND-150), from detect-changes: NuGet
+  # caches by version.
+  dotnet:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.dotnet == 'true' || needs.detect-changes.outputs.consumer == 'true' }}
+    uses: ./.github/workflows/ci.dotnet.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+      package-version: ${{ needs.detect-changes.outputs.bundle-version }}
+      ref: ${{ needs.detect-changes.outputs.bundle == 'true' && github.event.pull_request.head.sha || '' }}
+    secrets: inherit
+
   pubsub:
     needs: [detect-changes, setup-devcontainer]
     if: ${{ needs.detect-changes.outputs.pubsub == 'true' }}
@@ -341,18 +565,23 @@ jobs:
 
   protoc:
     needs: [detect-changes, setup-devcontainer]
-    if: ${{ needs.detect-changes.outputs.protoc == 'true' }}
+    if: ${{ needs.detect-changes.outputs.protoc == 'true' || needs.detect-changes.outputs.consumer == 'true' }}
     uses: ./.github/workflows/ci.protoc.yml
     with:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+      release-artifacts: ${{ needs.detect-changes.outputs.consumer == 'true' }}
+      package-version: ${{ needs.detect-changes.outputs.bundle-version }}
+      ref: ${{ needs.detect-changes.outputs.bundle == 'true' && github.event.pull_request.head.sha || '' }}
     secrets: inherit
 
   gateway:
     needs: [detect-changes, setup-devcontainer]
-    if: ${{ needs.detect-changes.outputs.gateway == 'true' }}
+    if: ${{ needs.detect-changes.outputs.gateway == 'true' || needs.detect-changes.outputs.consumer == 'true' }}
     uses: ./.github/workflows/ci.gateway.yml
     with:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+      release-artifacts: ${{ needs.detect-changes.outputs.consumer == 'true' }}
+      ref: ${{ needs.detect-changes.outputs.bundle == 'true' && github.event.pull_request.head.sha || '' }}
     secrets: inherit
 
   fastdds-pubsub-provider:
@@ -379,13 +608,17 @@ jobs:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
 
-  # format-check-cpp, format-check-ts, license-headers, and action-lint
-  # are standalone workflows that trigger directly on `pull_request` with
-  # their own path filters (.github/workflows/{format-check-cpp,
-  # format-check-ts,license-headers,action-lint}.yml). They are not
-  # invoked from ci.pr.yml and therefore aren't part of the pr_gate
-  # aggregation — configure them as separate required status checks on
-  # the branch protection rule if needed.
+  # format-check-cpp, format-check-ts, format-check-cs, license-headers, and
+  # action-lint are standalone workflows that trigger directly on
+  # `pull_request` with their own path filters
+  # (.github/workflows/ci.{format-check-cpp,format-check-ts,format-check-cs,
+  # license-headers,action-lint}.yml). They are not invoked from ci.pr.yml and
+  # therefore aren't part of the pr_gate aggregation — configure them as
+  # separate required status checks on the branch protection rule if needed.
+  #
+  # format-check-cs joined that list at BIND-0 and this inventory did not say so
+  # until Copilot's review of #129 pointed at the gap from the other end. EVERY
+  # format lane is standalone; the C# one is not an omission from the gate.
 
   # ── Stage 2 (continued): integration tests ───────────────────────────────────
   #
@@ -410,10 +643,42 @@ jobs:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
 
+  integration-test-gateway-dotnet-end-to-end:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.integration-gateway-dotnet-e2e == 'true' }}
+    uses: ./.github/workflows/ci.integration-test.gateway-dotnet-end-to-end.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
+  integration-test-gateway-dotnet-crosslang:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.integration-gateway-dotnet-crosslang == 'true' }}
+    uses: ./.github/workflows/ci.integration-test.gateway-dotnet-crosslang.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
   integration-test-gateway-fastdds-ts:
     needs: [detect-changes, setup-devcontainer]
     if: ${{ needs.detect-changes.outputs.integration-gateway-fastdds-ts == 'true' }}
     uses: ./.github/workflows/ci.integration-test.gateway-fastdds-ts.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
+  integration-test-binding-abi-conformance:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.integration-binding-abi == 'true' }}
+    uses: ./.github/workflows/ci.integration-test.binding-abi-conformance.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
+  integration-test-pubsub-transport-conformance:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.integration-pubsub-transport == 'true' }}
+    uses: ./.github/workflows/ci.integration-test.pubsub-transport-conformance.yml
     with:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
@@ -478,6 +743,14 @@ jobs:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
 
+  integration-test-protoc-dotnet:
+    needs: [detect-changes, setup-devcontainer]
+    if: ${{ needs.detect-changes.outputs.integration-protoc-dotnet == 'true' }}
+    uses: ./.github/workflows/ci.integration-test.protoc-dotnet.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
   integration-test-protoc-plugin-cli:
     needs: [detect-changes, setup-devcontainer]
     if: ${{ needs.detect-changes.outputs.integration-protoc-plugin-cli == 'true' }}
@@ -486,6 +759,20 @@ jobs:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
     secrets: inherit
 
+  # The packed packages, gateway and code generator as one folder, tested as a consumer gets
+  # them (BIND-9a, D-BIND-139; BIND-9b-1, D-BIND-159): on the round's branch the folder is the
+  # 30-day preview bundle testers download; on every other pull request that can change the
+  # packages it is kept for a day, only for the test. BIND-9b-6 (D-BIND-162): the two jobs live
+  # in ci.package-consumer.yml, which cd.dotnet.yml calls as its gate too.
+  package-consumer:
+    needs: [detect-changes, dotnet, gateway, protoc]
+    if: ${{ needs.detect-changes.outputs.consumer == 'true' }}
+    uses: ./.github/workflows/ci.package-consumer.yml
+    with:
+      preview: ${{ needs.detect-changes.outputs.bundle == 'true' }}
+      version: ${{ needs.detect-changes.outputs.bundle-version }}
+      head-sha: ${{ github.event.pull_request.head.sha }}
+
   # ── Stage 3: PR gate ────────────────────────────────────────────────────────
   pr_gate:
     needs:
@@ -493,6 +780,8 @@ jobs:
       - setup-devcontainer
       - core
       - arrow-bridge
+      - c-abi
+      - dotnet
       - pubsub
       - pubsub-arrow
       - protoc
@@ -500,8 +789,12 @@ jobs:
       - fastdds-pubsub-provider
       - xrcedds-pubsub-provider
       - gateway-client
+      - integration-test-binding-abi-conformance
       - integration-test-fastdds-xrce-interop
+      - integration-test-pubsub-transport-conformance
       - integration-test-gateway-end-to-end
+      - integration-test-gateway-dotnet-end-to-end
+      - integration-test-gateway-dotnet-crosslang
       - integration-test-gateway-fastdds-ts
       - integration-test-protoc-arrow-bridge
       - integration-test-protoc-coverage
@@ -510,7 +803,9 @@ jobs:
       - integration-test-pubsub-conformance
       - integration-test-protoc-gen-fletcher-npm
       - integration-test-protoc-gen-fletcher-rust
+      - integration-test-protoc-dotnet
       - integration-test-protoc-plugin-cli
+      - package-consumer
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -526,6 +821,8 @@ jobs:
             ${{ needs.setup-devcontainer.result }},
             ${{ needs.core.result }},
             ${{ needs.arrow-bridge.result }},
+            ${{ needs.c-abi.result }},
+            ${{ needs.dotnet.result }},
             ${{ needs.pubsub.result }},
             ${{ needs.pubsub-arrow.result }},
             ${{ needs.protoc.result }},
@@ -533,14 +830,20 @@ jobs:
             ${{ needs.fastdds-pubsub-provider.result }},
             ${{ needs.xrcedds-pubsub-provider.result }},
             ${{ needs.gateway-client.result }},
+            ${{ needs.integration-test-binding-abi-conformance.result }},
             ${{ needs.integration-test-fastdds-xrce-interop.result }},
             ${{ needs.integration-test-gateway-end-to-end.result }},
+            ${{ needs.integration-test-gateway-dotnet-end-to-end.result }},
+            ${{ needs.integration-test-gateway-dotnet-crosslang.result }},
             ${{ needs.integration-test-gateway-fastdds-ts.result }},
             ${{ needs.integration-test-protoc-arrow-bridge.result }},
             ${{ needs.integration-test-protoc-coverage.result }},
             ${{ needs.integration-test-protoc-gateway-client-ts.result }},
             ${{ needs.integration-test-pubsub-arrow-fastdds.result }},
             ${{ needs.integration-test-pubsub-conformance.result }},
+            ${{ needs.integration-test-pubsub-transport-conformance.result }},
             ${{ needs.integration-test-protoc-gen-fletcher-npm.result }},
             ${{ needs.integration-test-protoc-gen-fletcher-rust.result }},
-            ${{ needs.integration-test-protoc-plugin-cli.result }}
+            ${{ needs.integration-test-protoc-dotnet.result }},
+            ${{ needs.integration-test-protoc-plugin-cli.result }},
+            ${{ needs.package-consumer.result }}

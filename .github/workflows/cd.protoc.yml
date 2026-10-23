@@ -32,6 +32,13 @@
 #
 # Triggers:
 #   * push: tags 'protoc-v*'     — real release.
+#   * workflow_dispatch          — a DRY RUN (BIND-9b-6, D-BIND-164): the build, the static binaries
+#                                  and Eiva.Fletcher.Protoc packed and checked; never npm, the
+#                                  Release or the feed. Dispatchable once this file is on main.
+#
+# BIND-9b-6 (D-BIND-71, D-BIND-163): the Release also carries Eiva.Fletcher.Protoc, the C# locator
+# ci.protoc packs, and the feed job pushes it to nuget.eiva.com from the self-hosted runner, once
+# the repository variable NUGET_EIVA_RUNNER is 'true' (cd.nuget-feed.yml).
 
 name: cd.protoc
 
@@ -39,6 +46,7 @@ on:
   push:
     tags:
       - 'protoc-v[0-9]*.[0-9]*.[0-9]*'
+  workflow_dispatch:
 
 jobs:
   setup-devcontainer:
@@ -50,10 +58,12 @@ jobs:
     uses: ./.github/workflows/ci.protoc.yml
     with:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+      release-artifacts: true
     secrets: inherit
 
   npm-publish:
     needs: release
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     # id-token: write is required for `npm publish --provenance` to mint
     # an OIDC token that npm exchanges for a signed Sigstore attestation
@@ -107,6 +117,7 @@ jobs:
     # named explicitly here so the verify-tag-version-conan step below
     # can reference ${{ needs.release.outputs.conan-ref }}.
     needs: [release, npm-publish]
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -145,7 +156,8 @@ jobs:
             fletcher-protoc-linux-conan-package.tgz \
             fletcher-protoc-windows-conan-package.tgz \
             protoc-gen-fletcher-linux-x64 \
-            protoc-gen-fletcher-windows-x64.exe; do
+            protoc-gen-fletcher-windows-x64.exe \
+            "Eiva.Fletcher.Protoc.${GITHUB_REF_NAME#protoc-v}.nupkg"; do
             if [ ! -f "$asset" ]; then
               echo "::error::Missing release asset: $asset"
               ls -lah
@@ -175,4 +187,16 @@ jobs:
             "fletcher-protoc-windows-conan-package.tgz" \
             "fletcher-protoc-linux-conan-package.tgz" \
             "protoc-gen-fletcher-linux-x64" \
-            "protoc-gen-fletcher-windows-x64.exe"
+            "protoc-gen-fletcher-windows-x64.exe" \
+            "Eiva.Fletcher.Protoc.${VERSION}.nupkg"
+
+  # BIND-9b-6 (D-BIND-153, D-BIND-163): Eiva.Fletcher.Protoc to nuget.eiva.com, skipped until the
+  # self-hosted runner exists; a release cut before then is pushed by dispatching
+  # cd.nuget-feed.yml with its tag. Pushes the Release's assets, so only the .nupkg above.
+  feed:
+    needs: create-release
+    if: github.event_name == 'push' && vars.NUGET_EIVA_RUNNER == 'true'
+    uses: ./.github/workflows/cd.nuget-feed.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets: inherit

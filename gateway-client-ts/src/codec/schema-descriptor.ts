@@ -40,6 +40,12 @@ export interface SchemaDescriptor {
   protoPackage?: string;
   /** Originating proto message name. */
   protoMessage?: string;
+  /**
+   * The schema as base64 Arrow IPC, the bytes a native publisher declares it with. The
+   * code generator writes it; `createTopic` then announces the schema as `schemaIpc`, which
+   * carries every field type, nullability and field number, where `fields` alone cannot.
+   */
+  schemaIpc?: string;
 }
 
 /**

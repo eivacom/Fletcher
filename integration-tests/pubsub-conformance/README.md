@@ -270,13 +270,19 @@ storage still lands at a different address than the *live* encode window.
 | `RefillMovementIsCountedNotFailed` | the refill counter is live: non-zero on a growable window, zero on a fixed one |
 | `JudgeArithmeticIsSound` | the pure verdict function, without a provider |
 
-Subjects: `SeamProbe` (a fixed-arena provider in this harness — the positive
+Subjects: `SeamProbe` (a fixed-arena provider — the positive
 control, proving the seam *permits* zero-copy), `InProcessLoopback` (the real
 `InProcessPubSubProvider` at the seam) and `InProcessViaPubSub` (the same
 provider through `Publisher`/`Subscriber`, so the layers *above* the seam are
 measured too). All same-process by construction: an address means nothing across
 an address space, so a cross-process or off-thread subject cannot be built here
 at all, and the ledger is unsynchronised to keep it that way.
+
+**Where the instrument lives (D-BIND-62).** The ledger, `Judge()` and
+`SeamProbeProvider` are in the test-only package
+[`fletcher-copy-probe`](../copy-probe/README.md), not in this harness, so that
+c-abi's probe shim scores a binding's real publish path with the same `Judge()`.
+The runners, the drivers and every clause stay here, unchanged.
 
 **Refill is permitted and its cost is published, not failed** — §3.1 clause 1
 allows bytes to move "inside a refill, which must preserve them verbatim", and
@@ -330,16 +336,41 @@ returned when `Take` returns and a buffered pre-schema backlog can outlive it.
 
 ### What green does NOT prove — read before trusting it
 
-- **`encode_copies == 0` claims what the interface PERMITS, and no more.** It
-  says a client that uses `AppendInPlace` (§3.1 clause 6) *can* send a row with
-  no copy at all. It does **not** say that a C#/Rust binding does so: none
-  exists, so the producer measured here is a **stand-in** written in this
-  harness, and any wider claim would rest on a stand-in standing for something
-  unbuilt (owner ruling 2026-09-04, "the guard claims what the interface permits,
-  measured with a stand-in"). It is also a permission rather than a guarantee at
-  the seam itself: a client that ignores the call composes its row elsewhere and
-  `Append`s it, pays one whole-row copy, and the seam cannot stop it —
-  `StagingProducerIsCaught` is that client, measured, at exactly 1.
+- **`encode_copies == 0` claims what the interface PERMITS, and — since
+  BIND-2d — what one real binding ACHIEVES.** It says a client that uses
+  `AppendInPlace` (§3.1 clause 6) *can* send a row with no copy at all, and
+  `InPlaceEncodeWritesIntoTheDeliveredWindow` measures that with a stand-in
+  producer written in this harness (owner ruling 2026-09-04, "the guard claims
+  what the interface permits, measured with a stand-in").
+  **`BindingProducerWritesInPlace` narrows the caveat**: its producer is the
+  codec behind `fletcher-c-abi` — the artifact `Eiva.Fletcher.Interop` ships per
+  RID — driven through `fl_codec_open` → `fl_rows_bind` → `fl_encode_row` into a
+  span of the probe's own window. The producer is no longer a stand-in.
+  **What is still not claimed:** the managed tier above the ABI (it does not
+  exist until BIND-3), and the publisher wrapper `fl_publisher_publish_row`,
+  which this instrument cannot score at all — it samples from inside the
+  `RowEncoder` frame, and the fusion resolves its own provider rather than
+  being handed the probe (D-BIND-34). **Both are now scored elsewhere (BIND-5b):**
+  `dotnet/tests/Fletcher.CopyOracle.Tests` runs C#'s `Publisher.Publish`
+  through `fl_publisher_publish_row` into the probe, which c-abi's probe shim
+  registers as `probe`. The score comes from the source of the window's payload
+  bytes (D-BIND-61). The negative controls are a staged managed publish and a
+  copied export.
+  It also remains a permission rather than a guarantee at the seam itself: a
+  client that ignores the call composes its row elsewhere and `Append`s it, pays
+  one whole-row copy, and the seam cannot stop it — `StagingProducerIsCaught` is
+  that client, measured, at exactly 1, and it is the live negative control for
+  the binding leg as much as for the stand-in one.
+- **The C# leg does not count the string transcode (D-BIND-1b).** .NET holds
+  strings as UTF-16 and the wire carries UTF-8. The conversion happens in
+  `Apache.Arrow`, not at the binding boundary: once when a `StringArray` is
+  built from .NET strings, and once when a handler reads a value back as a
+  string. An Arrow buffer is already UTF-8, so the publish path the oracle
+  scores never sees UTF-16, and the C# leg's row is one binary field in any case
+  (D-BIND-61's bound). So `encode_copies == 0` from C# means no copy from the
+  RecordBatch's buffers onward. It says nothing about the cost of getting a .NET
+  string into those buffers, which is real and grows with the text. Every wire
+  length is a count of UTF-8 bytes. `FletcherCodec`'s XML docs say the same.
 - **A producer is trusted to report what it wrote.** `AppendInPlace` commits the
   count the writer returns, checked against the room it was lent and not against
   what it actually touched, so a writer that reports more than it wrote publishes
@@ -496,11 +527,12 @@ in the same binary, compiled by the same compiler.
 
 Green therefore proves that **this tree's** attachment sets and refusals are
 reproducible from what this tree publishes about them, by a consumer given
-nothing else. It proves **nothing about a real C#/Rust binding** — none exists to
-measure — and nothing about a driver built by another compiler. Both claims are
-scoped that way deliberately, the same way `CopyAccounting`'s are: no real client
-exists yet, so any wider claim would rest on a stand-in standing for something
-unbuilt.
+nothing else. It proves **nothing about a real C#/Rust binding** and nothing
+about a driver built by another compiler. Both claims were scoped that way
+deliberately when no real client existed, so any wider claim would have rested on
+a stand-in standing for something unbuilt. The C# binding exists now, but
+neither entry has been run against it. `CopyAccounting`'s claim was widened
+because BIND-5b measured C#'s real publish path; these two have no such leg.
 
 What the stand-in *does* buy is that the published form is **complete enough to
 be sufficient**. It is handed `size()`, `KeyAt()` and `ValueAt()` and nothing
@@ -702,16 +734,18 @@ main thread, so each carries **its own mutex** and every comparison is made
 against a snapshot taken under it: unguarded, a foreign marker arriving during
 the read could be *missed*, which would be a green the arrangement did not earn.
 
-**The between-bounds row is dropped silently, and does not throw.** On the
-serialising publish flow — the one an empty document selects — the overflow is
-caught inside `serialize()`, which zeroes the payload length, so the sample never
-enters history, `write()` returns non-OK and `WriteSample` only logs it (pinned
-by `FastDDSPubSubProviderTest.DataSharingOversizedRowDoesNotThrow`). A typed
-`kPayloadTooLarge` exists only on the **loaned** flow, which is kept in the tree but not
-selectable (no `fletcher.loan_publish` property exists). So the bound case asserts
-**delivery** in both directions and no throw anywhere, and it publishes a third
-row *after* the oversized one which must arrive — nothing dead can pose as a
-working instance.
+**The between-bounds row is refused by name on the low-bound instance.** Its
+`Publish` throws `kPayloadTooLarge` — the status the seam spec's normative overflow
+mapping names — and the sample is not sent; the high-bound instance delivers it.
+The serialising publish flow (the one an empty document selects) records the
+overflow inside `serialize()` and `WriteSample` throws it once `write()` has
+returned, as the loaned flow always did (pinned by
+`FastDDSPubSubProviderTest.AnOversizedRowIsPayloadTooLarge`). **Until 2026-09** that
+flow dropped the row silently — caught, logged, `Publish` returning normally — and
+this case asserted the no-throw; the change came from the C# binding's review,
+which could not observe an overflow over any transport (BIND D-BIND-53). The case
+still asserts **delivery** in both directions, and publishes a third row *after*
+the refused one which must arrive — nothing dead can pose as a working instance.
 
 **These four cases are GREEN on the tree that first shipped them.** The property
 already held, so a passing run proves nothing by itself; the guard is the

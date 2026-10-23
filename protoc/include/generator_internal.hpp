@@ -58,6 +58,17 @@ struct FieldInfo {
     std::shared_ptr<const ir::IrNode> ir;
 };
 
+// What the C# backend writes for a .proto (BIND-6, D-BIND-76). Two tokens set it,
+// `csharp` and the modifier `csharp_model_only`, but they mean three things, so they
+// are folded into one value and the meaningless fourth combination (the modifier
+// alone) cannot be represented: it is None, as if no C# token had been passed.
+enum class CsharpOutput {
+    None,          // no `csharp`: no C# at all
+    ModelAndPair,  // `csharp`: <stem>.fletcher.cs and <stem>.fletcher.native.cs
+    ModelOnly,     // `csharp,csharp_model_only`: <stem>.fletcher.cs alone, for an
+                   // Apache.Arrow-only project (as C++'s `schema_only` opts out)
+};
+
 // Parsed form of the comma-separated --fletcher_opt=... plugin parameter.
 struct PluginOptions {
     bool schema_only = false;
@@ -65,6 +76,13 @@ struct PluginOptions {
     bool ipc = false;
     bool accessor = false;
     bool rust = false;
+    CsharpOutput csharp = CsharpOutput::None;
+    // `csharp_accessor` (BIND-7): <stem>.fletcher.accessor.cs and <stem>.fletcher.arrow.cs, the
+    // C# accessor and view. It needs `csharp`, whose model class they read into (D-BIND-99).
+    bool csharp_accessor = false;
+    // `csharp_gateway` (BIND-8c, D-BIND-109): <stem>.fletcher.gateway.cs, the typed publisher and
+    // subscriber over Eiva.Fletcher.GatewayClient. It needs `csharp`, whose model it converts with.
+    bool csharp_gateway = false;
     std::vector<MetadataRule> metadata_rules;
 };
 
@@ -108,5 +126,15 @@ std::vector<FieldInfo> GatherFields(const google::protobuf::Descriptor* msg,
 // a pure linkage change with no behavioural effect, guarded byte-for-byte by the
 // RBA-1 no-drift test.
 std::set<std::string> CollectCrossFileIncludes(const google::protobuf::FileDescriptor* file);
+
+// The walk CollectCrossFileIncludes derives its paths from (D-BIND-87): the
+// messages from OTHER .proto files that `file`'s fields name, as a field, a list
+// element at any depth or a map value, recursively through nested types. Each
+// backend derives its own cross-file dependency from this one set: C++ an include
+// path per message, C# whether a struct column is built through the other
+// class's public ToArrow (D-BIND-80), so the two cannot disagree on which types
+// come from elsewhere.
+std::set<const google::protobuf::Descriptor*> CollectCrossFileMessages(
+    const google::protobuf::FileDescriptor* file);
 
 }  // namespace fletcher
