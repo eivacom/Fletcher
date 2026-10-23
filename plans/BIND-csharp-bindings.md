@@ -2554,7 +2554,14 @@ preparation, a fresh-context review and the close.
   import folder (`reading.proto` cannot import `fletcher/options.proto`), no compiled
   `options.proto` (`Eiva.Fletcher.Protobuf` is missing); the no-`chmod` mutant survives, as
   measured above. protoc's own suite 195/195 and test_package 3/3 with the new `options.proto`;
-  the README snippets, `dotnet format` and actionlint clean.
+  the README snippets, `dotnet format` and actionlint clean. **First CI run (`9d4640d`, `ci.pr`
+  39933647250):** `pack-nuget` packed and checked the package (`0.6.0-pr.129.348`), but
+  `package-consumer` failed on both runners: MSBuild could not import the packed targets, whose
+  comment, edited after the rehearsal, said `rwxr--r--`, and XML forbids `--` in a comment. The
+  comment is fixed and `check_protoc_package.sh` now parses both build files as XML (a mutant with
+  the old comment is refused); both consumers re-rehearsed green on Windows and Linux. The same run
+  also failed `CSharpNativeToCpp` once on Linux (no probe in two 20 s attempts, the Fast DDS
+  "0 rows" kind), passing on Windows and in every earlier run: the new row's first such failure.
 
 **How test builds reach testers during development, and what changes at the merge** (recorded
 2026-10-20 at the maintainer's request, D-BIND-137 to 139). Until PR #129 merges, the per-push

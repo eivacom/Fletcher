@@ -13,7 +13,7 @@
 #   * the two plugins are there, under tools/linux-x64/ and tools/win-x64/, byte for byte
 #     the binaries the release and the npm shim carry;
 #   * fletcher/options.proto is there, the tree's, with its csharp_namespace (D-BIND-158);
-#   * build/ holds exactly the package's props and targets;
+#   * build/ holds exactly the package's props and targets, both well-formed XML;
 #   * LICENSE, COPYING and THIRD-PARTY-LICENSES.txt are at the root, the plugin's own, and the
 #     README the nuspec names;
 #   * nothing a project would reference or load: no lib/, ref/ or runtimes/, no dependencies;
@@ -29,6 +29,7 @@ OPTIONS="$HERE/../protoc/include/fletcher/options.proto"
 
 python3 - "$PKG" "$DIST" "$OPTIONS" "$COMMIT" <<'PY'
 import re, sys, zipfile
+import xml.etree.ElementTree as ET
 
 pkg, dist, options, commit = sys.argv[1:5]
 z = zipfile.ZipFile(pkg)
@@ -60,6 +61,13 @@ if "include/fletcher/options.proto" in names and \
 build = sorted(n for n in names if n.startswith("build/"))
 if build != ["build/Eiva.Fletcher.Protoc.props", "build/Eiva.Fletcher.Protoc.targets"]:
     err(f"build/ holds {build}, not exactly the props and the targets")
+# MSBuild refuses to import a file that is not well-formed XML (a "--" in a comment did it once),
+# and every consumer's build then fails, so the package refuses it first.
+for name in build:
+    try:
+        ET.fromstring(z.read(name))
+    except ET.ParseError as e:
+        err(f"{name} is not well-formed XML: {e}")
 loadable = [n for n in names if n.split("/")[0] in ("lib", "ref", "runtimes")]
 if loadable:
     err(f"carries what a project would reference or load: {loadable}")
