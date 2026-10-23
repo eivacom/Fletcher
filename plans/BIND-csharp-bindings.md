@@ -2428,7 +2428,8 @@ after the merge the consumer test runs on the PACKED packages, in `ci.pr` and as
 `cd.dotnet` before anything is published (159). **Slices (160):** 9b-0 the rulings; 9b-1
 packaging hardening; 9b-2 the codec's null refusal; 9b-3 NativeAOT on Windows and over
 `fastdds`; 9b-4 the C#-native cross-language lane; 9b-5 `Eiva.Fletcher.Protoc`; 9b-6
-`cd.dotnet.yml`; 9b-7 the licence research and the 9a review's remaining debts; 9b-8 the merge
+`cd.dotnet.yml`; 9b-7 the licence research and the 9a review's remaining debts (and, added at
+9b-4's CI, the Windows net8.0 `SubscriberArrow` timer-flush failures); 9b-8 the merge
 preparation, a fresh-context review and the close.
 
 - **9b-1 done on CI 2026-10-22** (`ed2ddce`, `ci.pr` 39798973114, every workflow green: the strip
@@ -2492,6 +2493,15 @@ preparation, a fresh-context review and the close.
   the solution builds clean with the pin, and `dotnet format` is clean. Two mutants are caught: the
   child on another topic (30 s deadline, 299 published, exit 1) and a different row (the child
   refuses it, exit 1).
+- **9b-4 done on CI 2026-10-23** (`1087014`, `ci.pr` 39924157760, 60/60 on attempt 2, every
+  workflow green; the lane's 11 tests passed first time on Windows and Linux). Attempt 1 failed one
+  test 9b-4 does not touch: `Fletcher.Tests` `SubscriberArrowTests.ATimerHandlerThatCancelsDuringADeliveryDoesNotDeadlock`
+  on Windows net8.0 ("the timeout flush never ran": a 20 ms batch timer not firing within 5 s),
+  the same symptom as the watch-listed `OnlyDroppedRowsStillDeliverAnEmptyBatch` (BIND-9a's close).
+  On the maintainer's ruling: the failed job re-run (green), the test added to PR #129's watch
+  list, and, a second test of the class failing the same way, **an investigation item for 9b-7**:
+  `SubscriberArrow`'s timeout flushes on the Windows runner under .NET 8 (thread-pool starvation
+  the likeliest cause, several tests blocking pool threads on purpose).
 - **9b-4, 2026-10-23 (D-BIND-161): the C#-native cross-language rows.** In BIND-8d's lane
   (`integration-tests/gateway-dotnet-crosslang`), on the maintainer's ruling, as five topics of
   `crosslang.proto` driven peer to peer: `NativeToCpp` and `CppToNative` (Fast DDS),
@@ -2590,7 +2600,8 @@ from `main` after the merge:**
   (D-BIND-156): the C++ codec refuses it, naming the column.**
 - **Cross-language pub/sub, the C#-native rows (ruled 2026-10-14, at BIND-6's close).**
   **Where, RULED AGAIN 2026-10-23 (D-BIND-161): in `integration-tests/gateway-dotnet-crosslang`,
-  BIND-8d's lane, as five peer-to-peer topics, not a lane of its own.** A lane of
+  BIND-8d's lane, as five peer-to-peer topics, not a lane of its own.** **Met by 9b-4 (`1087014`,
+  green on CI 2026-10-23).** A lane of
   its own, on Linux and Windows, in which the GENERATED native pairs exchange rows over Fast DDS
   across processes: C# → C++ and C++ → C#; C# → TypeScript and TypeScript → C# through the gateway;
   C# → C# between two processes. One shared `.proto` reaching every mapped shape (scalars, lists,
