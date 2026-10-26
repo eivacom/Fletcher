@@ -108,6 +108,8 @@ jobs:
           ref: ${{ inputs.ref }}
           sparse-checkout: |
             protoc
+            gateway/deployers
+            scripts
             .github
             .conan-profiles
 
@@ -118,6 +120,29 @@ jobs:
         shell: bash
         working-directory: protoc
         run: conan create . --build=missing -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release -o "&:run_tests=True"
+
+      # BIND-9b-7 (review T13, M6): the notice is written on this leg too, off the Windows
+      # graph, and checked as the Linux one is; pack-nuget then requires the two to name the
+      # same libraries, as ci.dotnet's pack job does for the shim's two legs. The Linux
+      # notice is the one shipped, so this one is uploaded only to be compared.
+      - name: Write and check the plugin's notice
+        shell: bash
+        run: |
+          set -euo pipefail
+          NOTICE="$PWD/protoc-notice-windows"
+          mkdir -p "$NOTICE"
+          conan install --requires="fletcher-protoc/[*, include_prerelease]" \
+            --deployer=gateway/deployers/third_party_licenses.py --deployer-folder="$NOTICE" \
+            -c tools.graph:skip_binaries=False -pr:a="$PWD/.conan-profiles/Windows-msvc194-x86_64-Release"
+          bash scripts/check_third_party_notice.sh "$NOTICE/THIRD-PARTY-LICENSES.txt" protobuf zlib nanoarrow
+
+      - name: Upload the Windows notice
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.release-artifacts
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: protoc-notice-windows
+          path: protoc-notice-windows/THIRD-PARTY-LICENSES.txt
+          retention-days: 5
 
       - name: Get Conan reference
         id: get-ref
@@ -203,7 +228,8 @@ jobs:
               # no plugin artifact did. Written on every run, as the gateway writes its
               # own, so a dependency the deployer cannot describe fails here, not at
               # release time. One notice for both platforms: the recipe takes the same
-              # static graph on each.
+              # static graph on each, which pack-nuget checks against the Windows leg
+              # since BIND-9b-7 (review T13, M6).
               mkdir -p /workspace/protoc-licences
               conan install --requires="fletcher-protoc/[*, include_prerelease]" \
                 --deployer=/workspace/gateway/deployers/third_party_licenses.py \
@@ -264,6 +290,8 @@ jobs:
   # packed from the two static binaries and the licence files the legs above uploaded, so the
   # package carries exactly what the GitHub Release and the npm shim carry. The protoc
   # component's package, at its version (or the bundle's); cd.protoc.yml releases it.
+  # BIND-9b-7 (review T13, M6): before packing, the two legs' notices must name the same
+  # libraries, or the one notice shipped would be wrong for one of the plugins.
   pack-nuget:
     needs: [build-windows, build-linux]
     if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.release-artifacts
@@ -289,6 +317,25 @@ jobs:
           pattern: fletcher-protoc-{linux-static,windows-static,licences}
           merge-multiple: true
           path: protoc-dist
+
+      - name: Download the Windows notice
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: protoc-notice-windows
+          path: protoc-notice-windows
+
+      - name: Require the two legs' notices to name the same libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The notice's own list of libraries: the bullets between its first two rules,
+          # not the licence texts after them, which have bullets of their own.
+          listed() { awk '/^=+$/ {n++; next} n == 1 && /^  \* / {print}' "$1" | sort; }
+          if ! diff <(listed protoc-dist/THIRD-PARTY-LICENSES.txt) <(listed protoc-notice-windows/THIRD-PARTY-LICENSES.txt); then
+            echo "::error::the Linux and Windows plugins are built from different third-party libraries (above); one notice cannot cover both"
+            exit 1
+          fi
+          listed protoc-dist/THIRD-PARTY-LICENSES.txt
 
       - name: Pack and check
         shell: bash

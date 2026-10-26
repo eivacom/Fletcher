@@ -2730,6 +2730,27 @@ preparation, a fresh-context review and the close.
   the merge. Noted for the release: `cd.protoc` attaches the two plugin binaries and the Protoc
   package, no loose `options.proto`; outside NuGet the file is in the package's `include/` and in
   the `fletcher-protoc` Conan package. No code changes.
+- **9b-7, part 5, 2026-10-26: review T13 and M6, the plugin's notice.** The review found the
+  plugin's one notice read off the Linux graph only, its content unasserted, the Windows graph
+  never compared; and the notice reached neither the GitHub Release nor the npm shim (M6). The
+  content assertion came with part 1 (`check_third_party_notice.sh` on `ci.protoc`: protobuf,
+  zlib, nanoarrow and the Apache NOTICE files). **Built, on the maintainer's scope ruling:**
+  `ci.protoc`'s Windows leg writes the notice through the same deployer off its own graph and runs
+  the same check on every run, uploading it as `protoc-notice-windows` when release artifacts are
+  built; `pack-nuget` then requires the two legs' notices to name the same libraries, the shim's
+  comparison verbatim (`ci.dotnet`'s pack job), and ships the Linux one as before. `cd.protoc`
+  attaches `LICENSE`, `COPYING` and `THIRD-PARTY-LICENSES.txt` to the Release beside the binaries
+  (the asset check requires them), and stages the same three files into `protoc/npm` before
+  `npm publish`, refusing to publish unless `npm pack --dry-run` lists all three; `package.json`'s
+  `files` names them, the npm README says what they are, and `.gitignore` keeps the staged copies
+  out of the tree. The Windows notice artifact is named outside the `fletcher-protoc-*` pattern
+  the release downloads, so the two same-named files never collide. Rehearsed: actionlint clean
+  on both workflows; in the devcontainer, the deployer off the cached `fletcher-protoc` writes the
+  notice (nanoarrow 0.8.0, protobuf 3.21.12, zlib 1.3.2) and the check passes; the comparison
+  catches a notice with zlib dropped from its list; the npm check passes with the three files
+  staged (node 24.15.0, the tarball lists them) and refuses a `package.json` whose `files` omits
+  the notice. Not rehearsed locally: the Windows leg's deployer run (no local MSVC build of the
+  plugin); it is the shape `ci.dotnet`'s Windows leg runs on every push, and meets CI first.
 
 **How test builds reach testers during development, and what changes at the merge** (recorded
 2026-10-20 at the maintainer's request, D-BIND-137 to 139). Until PR #129 merges, the per-push

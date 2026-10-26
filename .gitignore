@@ -30,6 +30,12 @@
 *.log
 debug.log
 
+# The licence files cd.protoc stages into the npm shim before publishing (BIND-9b-7,
+# review T13, M6): copies of ci.protoc's artifact, never tracked here.
+protoc/npm/LICENSE
+protoc/npm/COPYING
+protoc/npm/THIRD-PARTY-LICENSES.txt
+
 # .NET build output (dotnet/). Scoped to that directory rather than a bare
 # **/bin/: protoc/npm/bin/protoc-gen-fletcher.js is a tracked launcher script,
 # and a blanket rule would quietly stop tracking it.

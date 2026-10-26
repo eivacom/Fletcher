@@ -7,16 +7,22 @@
 #   setup-devcontainer
 #       │
 #       └── release (ci.protoc.yml)
-#               │  produces 4 artifacts:
+#               │  produces 6 artifacts:
 #               │    fletcher-protoc-{linux,windows}            (Conan .tgz)
 #               │    fletcher-protoc-{linux,windows}-static     (raw binary)
+#               │    fletcher-protoc-licences                   (LICENSE, COPYING,
+#               │                                                THIRD-PARTY-LICENSES.txt)
+#               │    fletcher-protoc-nuget                      (Eiva.Fletcher.Protoc)
 #               ▼
-#         npm-publish                            ── @eiva/protoc-gen-fletcher
-#               │
+#         npm-publish                            ── @eiva/protoc-gen-fletcher,
+#               │                                   with the licence files
 #               ▼
 #         create-release                         ── GitHub Release with
 #                                                   npm link prepended to
-#                                                   auto-generated notes
+#                                                   auto-generated notes;
+#                                                   the licence files beside
+#                                                   the binaries (BIND-9b-7,
+#                                                   review T13, M6)
 #
 # All build jobs (shared + static) live in ci.protoc.yml as the single
 # source of truth. On tag-push it produces both the Conan tarballs and
@@ -91,6 +97,26 @@ jobs:
           package-json: protoc/npm/package.json
           tag-prefix: protoc-v
 
+      # BIND-9b-7 (review T13, M6): the package ships LICENSE, COPYING and the plugin's
+      # THIRD-PARTY-LICENSES.txt, the files ci.protoc's Linux leg wrote and checked, so a
+      # consumer who never opens the Release still receives the notices of what the native
+      # plugin it downloads links statically. package.json's "files" lists them; the publish
+      # is refused if the tarball would not carry all three.
+      - name: Stage the licence files into the package
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: fletcher-protoc-licences
+          path: protoc/npm
+
+      - name: Require the licence files in the tarball
+        working-directory: protoc/npm
+        run: |
+          set -euo pipefail
+          for f in LICENSE COPYING THIRD-PARTY-LICENSES.txt; do
+            test -s "$f" || { echo "::error::protoc/npm/$f is missing or empty"; exit 1; }
+            npm pack --dry-run --json | grep -q "\"path\": *\"$f\"" || { echo "::error::npm pack would not carry $f"; exit 1; }
+          done
+
       - name: Resolve dist-tag
         id: dist-tag
         working-directory: protoc/npm
@@ -134,14 +160,19 @@ jobs:
           conan-ref: ${{ needs.release.outputs.conan-ref }}
           tag-prefix: protoc-v
 
-      # Download all four upstream artifacts at once:
+      # Download the upstream artifacts at once:
       #   - fletcher-protoc-linux + fletcher-protoc-windows
       #       → shared-linked Conan-package tarballs (from ci.protoc.yml)
       #   - fletcher-protoc-linux-static + fletcher-protoc-windows-static
       #       → static-linked raw binaries (from build-static-* jobs)
-      # `merge-multiple: true` flattens each artifact's single file into
-      # the current directory, matching the file names the gh release
-      # create command below expects.
+      #   - fletcher-protoc-licences → LICENSE, COPYING, THIRD-PARTY-LICENSES.txt
+      #       (BIND-9b-7, review T13, M6: attached beside the binaries)
+      #   - fletcher-protoc-nuget → Eiva.Fletcher.Protoc
+      # `merge-multiple: true` flattens each artifact's files into the
+      # current directory, matching the file names the gh release create
+      # command below expects. (protoc-notice-windows, the Windows leg's
+      # notice, is named outside this pattern: it exists to be compared
+      # in ci.protoc's pack-nuget, not to be shipped.)
       - name: Download all release artifacts
         uses: actions/download-artifact@v8.0.1
         with:
@@ -157,7 +188,8 @@ jobs:
             fletcher-protoc-windows-conan-package.tgz \
             protoc-gen-fletcher-linux-x64 \
             protoc-gen-fletcher-windows-x64.exe \
-            "Eiva.Fletcher.Protoc.${GITHUB_REF_NAME#protoc-v}.nupkg"; do
+            "Eiva.Fletcher.Protoc.${GITHUB_REF_NAME#protoc-v}.nupkg" \
+            LICENSE COPYING THIRD-PARTY-LICENSES.txt; do
             if [ ! -f "$asset" ]; then
               echo "::error::Missing release asset: $asset"
               ls -lah
@@ -188,7 +220,10 @@ jobs:
             "fletcher-protoc-linux-conan-package.tgz" \
             "protoc-gen-fletcher-linux-x64" \
             "protoc-gen-fletcher-windows-x64.exe" \
-            "Eiva.Fletcher.Protoc.${VERSION}.nupkg"
+            "Eiva.Fletcher.Protoc.${VERSION}.nupkg" \
+            "LICENSE" \
+            "COPYING" \
+            "THIRD-PARTY-LICENSES.txt"
 
   # BIND-9b-6 (D-BIND-153, D-BIND-163): Eiva.Fletcher.Protoc to nuget.eiva.com, skipped until the
   # self-hosted runner exists; a release cut before then is pushed by dispatching
