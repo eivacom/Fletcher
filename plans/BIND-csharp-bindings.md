@@ -2707,6 +2707,17 @@ preparation, a fresh-context review and the close.
   failed 8 of 10 before, `Fletcher.Tests` 5 of 5 and `Fletcher.GatewayClient.Tests` 3 of 3 green
   (the gateway case at its 2.0 s window); actionlint clean (it caught two apostrophes in the Linux
   leg's comment, inside its single-quoted script).
+- **9b-7 parts 1 to 3 done on CI 2026-10-26** (`0847e07`, `ci.pr` 40343220117, 60/60 on attempt
+  2, every side workflow green; bundle `fletcher-preview-0.6.0-pr.129.355`). The timer fix read on
+  CI: every `dotnet` job green on the first attempt, the net8.0 Windows case in 0.12 s, and one trx
+  per framework uploaded by both legs. The first attempt's one red was new and elsewhere:
+  `integration-test-gateway-end-to-end / windows`, "a valid --provider-config document reaches the
+  provider and the gateway starts", the gateway over Fast DDS exiting with 0xC0000005 before READY
+  and writing nothing to stderr, the lane's first failure in 29 runs on this branch; on the
+  maintainer's ruling re-run (green) and watched, to be investigated if it recurs (the repository
+  knows that a stale shared-memory segment under `C:\ProgramData\eprosima\fastdds_interprocess`
+  produces this crash at `create_participant`). `205abce`'s own run (40334195069) had every Fast
+  DDS lane green on 3.4.3, Windows included; its one red was the timer flake part 3 fixed.
 
 **How test builds reach testers during development, and what changes at the merge** (recorded
 2026-10-20 at the maintainer's request, D-BIND-137 to 139). Until PR #129 merges, the per-push
