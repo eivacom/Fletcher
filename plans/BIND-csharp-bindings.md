@@ -2751,6 +2751,14 @@ preparation, a fresh-context review and the close.
   staged (node 24.15.0, the tarball lists them) and refuses a `package.json` whose `files` omits
   the notice. Not rehearsed locally: the Windows leg's deployer run (no local MSVC build of the
   plugin); it is the shape `ci.dotnet`'s Windows leg runs on every push, and meets CI first.
+- **9b-7 part 5 done on CI 2026-10-26** (`e5b56fa`, with `6063be6` and `e4653de`; `ci.pr`
+  40361897100, 61/61 on the first attempt, every side workflow green; bundle
+  `fletcher-preview-0.6.0-pr.129.356`). The Windows leg's deployer wrote its notice covering three
+  packages and the check passed; `pack-nuget`'s comparison found the two legs' lists identical
+  (nanoarrow 0.8.0, protobuf 3.21.12, zlib 1.3.2); the `protoc-notice-windows` artifact exists
+  beside `fletcher-protoc-licences`. The Release and npm steps run only on a `protoc-v*` tag, so
+  their first execution is the merge-time release (9b-8's dry run exercises the build and the
+  comparison, never npm or the Release, D-BIND-164).
 
 **How test builds reach testers during development, and what changes at the merge** (recorded
 2026-10-20 at the maintainer's request, D-BIND-137 to 139). Until PR #129 merges, the per-push
