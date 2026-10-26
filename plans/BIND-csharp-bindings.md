@@ -2624,7 +2624,12 @@ preparation, a fresh-context review and the close.
   the `__schema` reader turns data-sharing off (`MakeSchemaChannelReaderQos`, a unit test pins it,
   the provider README says why); the schema writer and the data endpoints keep `AUTOMATIC`. Local
   runs cannot show the fix (the failure never reproduced here); they show no regression, and the
-  proof is the lane staying green on the Linux runner over several runs.
+  proof is the lane staying green on the Linux runner over several runs. **9b-6 done on CI
+  2026-10-26** (`c13c809`, with `fed14f7`, `acdf706` and `53457c6`): `acdf706`'s `ci.pr`
+  (40302936835) 61/61, and `53457c6` every workflow green on the first attempt (`ci.pr`
+  40306845298, 61/61; `acdf706`'s one red, `ci.check-test-matrix`, was the provider's new test
+  missing from bucket 4's count, fixed there). `CSharpNativeToCpp` passed on Linux in both runs
+  since the fix, after three failures in four before it; it stays watched.
 
 **How test builds reach testers during development, and what changes at the merge** (recorded
 2026-10-20 at the maintainer's request, D-BIND-137 to 139). Until PR #129 merges, the per-push
