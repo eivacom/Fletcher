@@ -2655,6 +2655,28 @@ preparation, a fresh-context review and the close.
   libraries, the four new ones among them); mutants caught: a notice without flatcc's `NOTICE`, one without the portable
   headers' licences, and the provider recipe without its licence folder (fails `package()` naming the re-check);
   actionlint clean (it caught an apostrophe ending `ci.protoc`'s quoted script, fixed).
+- **9b-7, part 2, 2026-10-26 (D-BIND-167 to 169): Fast DDS 3.4.0 to 3.4.3.** Raised by the
+  maintainer: 3.4.1 to 3.4.3 fix about nineteen CVEs that the shim and the gateway would otherwise
+  ship statically, and it does not fix the data-sharing defect (#6490 merged after 3.4.3, on a line
+  now end of life), so D-BIND-165 and the gateway lane's retry stay. Measured: ConanCenter's 3.4.3
+  recipe resolves the same graph as 3.4.0 (fast-cdr 2.3.0, foonathan-memory 0.7.3, asio 1.29.0,
+  tinyxml2 10.0.0), so no other pin or notice entry moves; its `thirdparty/` is byte-identical for
+  the four compiled-in libraries, used by the same `src/cpp` files, its `LICENSE` identical and no
+  `NOTICE` (compared against eProsima's v3.4.3 tag), so the licence folder only renames to
+  `fast-dds-3.4.3`. All five pins move (the provider's `FAST_DDS_VERSION`, its benchmarks,
+  `fastdds-xrce-interop`, `pubsub-conformance`, `pubsub-transport-conformance`'s agent) and the
+  forward-looking version lines with them; measurements that name 3.4.0 stay. **Two findings, each
+  ruled:** 3.4.3 refuses an infinite reliable `max_blocking_time` (eProsima's "Fix several CVEs"),
+  which broke the built-in `lossless` profile, now 30 s (D-BIND-168); and 3.4.3 is ConanCenter's
+  prebuilt binary, built against an older glibc, so the shim's glibc floor drops to 2.34 and is
+  restated (D-BIND-169; the C++ runtime keeps the distributions at Ubuntu 24.04 and later).
+  Rehearsed in the devcontainer on 3.4.3: the provider's suite 133/133 (after D-BIND-168; 132/133
+  before, `LosslessDeliversEverySampleInOrder` refused at `create_datawriter`); the shim, the gateway
+  and the three notices rebuilt and checked (`fast-dds 3.4.3`, `filewatch as vendored by fast-dds
+  3.4.3`); the stripped shim self-contained at glibc 2.34 and `GLIBCXX_3.4.32`; the cross-language
+  lane 5 of 5 on two CPUs; the NativeAOT smoke over `inprocess` and `fastdds`; clang-format clean.
+  The other Fast DDS lanes (conformance, XRCE interop, `gateway-fastdds-ts`) and Windows meet 3.4.3
+  first on CI.
 
 **How test builds reach testers during development, and what changes at the merge** (recorded
 2026-10-20 at the maintainer's request, D-BIND-137 to 139). Until PR #129 merges, the per-push

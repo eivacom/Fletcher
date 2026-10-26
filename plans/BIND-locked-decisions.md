@@ -3796,3 +3796,39 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   shim's, the gateway's (newly checked) and the plugin's notices. **Declined:** reading the texts out
   of the fast-dds Conan source folder at build time (a cache detail, absent for binary-only
   installs); documenting only (does not meet MIT's or Apache's conditions for binaries we ship).
+
+- **D-BIND-167 - Fast DDS moves from 3.4.0 to 3.4.3 in this round, before the first release.**
+  *LOCKED BY THE MAINTAINER 2026-10-26 (BIND-9b-7), moving the daily status's one open decision
+  into BIND.* The shim and the gateway link Fast DDS statically, so the merge-time release would
+  ship 3.4.0 with the CVEs 3.4.1 to 3.4.3 fix (about nineteen: 8, 2 and 9 by their release notes);
+  3.4.3 (2026-06-17) is the 3.4 line's last release and is on ConanCenter. It is not expected to
+  cure the data-sharing defect: the likely fix, eProsima/Fast-DDS#6490, merged to master on
+  2026-07-30, after 3.4.3, and the line is end of life, so D-BIND-165 and the gateway lane's retry
+  stay. All five pins move together (the provider's `FAST_DDS_VERSION`, its benchmarks,
+  `fastdds-xrce-interop`, `pubsub-conformance`, `pubsub-transport-conformance`'s agent), with
+  whatever the 3.4.3 recipe moves beside it, and the licence folder is re-checked against 3.4.3's
+  `thirdparty/` (D-BIND-166's guard). The 3.6.x upgrade that would carry #6490 stays outside the
+  round. **Declined:** none offered; the maintainer raised it.
+
+- **D-BIND-168 - the built-in `lossless` profile blocks for 30 s, not forever.** *LOCKED BY THE
+  MAINTAINER 2026-10-26 (BIND-9b-7, found by the 3.4.3 upgrade).* Fast DDS 3.4.3 refuses an
+  infinite `max_blocking_time` on a RELIABLE writer or reader (`check_qos`, "Reliability max
+  blocking time is not consistent"; added by eProsima's "Fix several CVEs", 2026-05-27, and kept by
+  every later version), so on 3.4.3 a topic selecting `lossless` failed to create
+  (`LosslessDeliversEverySampleInOrder` failed every run). It is now 30 s: past the 20 s
+  participant lease, so a crashed or vanished reader still frees the writer first, as before; only a
+  live reader that stops taking samples for over 30 s makes `Publish` give up on that sample, which
+  is dropped and logged as any failed write is today. The profile's text, its README transcription,
+  the README table, the public header and the test that pins it say so. **Declined:** an hour (the
+  old stall in practice, sidestepping the CVE fix); staying on 3.4.0. **Left for later:** making a
+  timed-out `Publish` report the timeout instead of only logging it (the error vocabulary).
+
+- **D-BIND-169 - the linux-x64 shim's stated glibc floor is 2.34.** *LOCKED BY THE MAINTAINER
+  2026-10-26 (BIND-9b-7).* With Fast DDS 3.4.3, ConanCenter's prebuilt binary, the shim's highest
+  `GLIBC_` symbol version is 2.34 (3.4.0 was built in the devcontainer, whose glibc 2.38 headers
+  gave it 2.38). `scripts/shim_floors.env`, the package README, `dotnet/README.md`, the preview README
+  and the tester note now state 2.34, and the checks that require the measured floor to equal the
+  stated one keep guarding it. The practical floor is unchanged: `GLIBCXX_3.4.32` (GCC 13's
+  libstdc++) already means Ubuntu 24.04, Debian 13 or RHEL 10 (D-BIND-154). **Declined:** building
+  Fast DDS from source in CI to keep 2.38 (a Fast DDS build on both legs of every run, for a floor
+  no supported distribution is affected by).

@@ -69,7 +69,7 @@ pair), `csharp_gateway` (the gateway pair), `csharp_accessor` (the Arrow view an
 
 ## Platform requirements
 
-- **linux-x64:** glibc 2.38 and the GCC 13 C++ runtime (`GLIBCXX_3.4.32`) or newer, so Ubuntu
+- **linux-x64:** glibc 2.34 and the GCC 13 C++ runtime (`GLIBCXX_3.4.32`) or newer, so Ubuntu
   24.04, Debian 13, RHEL 10 or newer.
 - **win-x64:** the latest Visual C++ 2015-2022 redistributable (x64), 14.40 or newer.
 - .NET 8 or .NET 10.

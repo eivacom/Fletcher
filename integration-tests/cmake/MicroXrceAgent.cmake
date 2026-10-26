@@ -75,12 +75,12 @@ else()
     #
     # Left to itself the Agent's superbuild clones Fast DDS from the moving `3.x` branch
     # (Micro-XRCE-DDS-Agent's CMakeLists: `set(_fastdds_tag 3.x)`), so an Agent built today gets
-    # whatever Fast DDS released most recently while this repo pins fast-dds/3.4.0. Nobody chooses
+    # whatever Fast DDS released most recently while this repo pins fast-dds/3.4.3. Nobody chooses
     # that version and nothing pins it, which is how the Agent here ended up on 3.6 — and its
     # from-source build on MSVC 19.4 then failed inside create_participant with
     # "foonathan::memory ... received invalid size/alignment 64, max supported is 56", a node-size
-    # table Fast DDS fixes at build time for the toolchains it knows. Conan's 3.4.0 has no such
-    # problem; every other suite in this repo creates participants against it constantly.
+    # table Fast DDS fixes at build time for the toolchains it knows. Conan's 3.4.0 (3.4.3 since
+    # BIND-9b-7) has no such problem; every other suite in this repo creates participants against it constantly.
     #
     # UAGENT_USE_SYSTEM_FASTDDS/FASTCDR switch the superbuild from cloning those two to
     # find_package(fastdds 3) / find_package(fastcdr 2); CMAKE_PREFIX_PATH is what lets them

@@ -2,7 +2,7 @@
 
 Implements `fletcher::PubSubProvider` using [eProsima Fast DDS](https://fast-dds.docs.eprosima.com/) (RTPS). Transports `EncodedRow` byte buffers over a DDS domain; the built-in QoS is a RELIABLE, VOLATILE, KEEP_LAST 25 latest-value stream, with named profiles for other shapes.
 
-> **Targets Fast DDS 3.4.x** (`fast-dds/3.4.0` from Conan Center). The provider's public API names **no eProsima type at all**: it is configured by `fletcher::ProviderConfig` plus a Fast DDS XML profiles document, so the Fast DDS headers are *not* exposed transitively and a consumer never needs them (see [QoS configuration](#qos-configuration) and [Consuming the package](#consuming-the-package)). The XML you write is Fast DDS 3.4's own profiles grammar, and v3 consolidated the legacy `eprosima::fastrtps` namespace into `eprosima::fastdds`, which matters if you paste profiles out of a 2.x application.
+> **Targets Fast DDS 3.4.x** (`fast-dds/3.4.3` from Conan Center, 3.4.0 until BIND-9b-7, D-BIND-167). The provider's public API names **no eProsima type at all**: it is configured by `fletcher::ProviderConfig` plus a Fast DDS XML profiles document, so the Fast DDS headers are *not* exposed transitively and a consumer never needs them (see [QoS configuration](#qos-configuration) and [Consuming the package](#consuming-the-package)). The XML you write is Fast DDS 3.4's own profiles grammar, and v3 consolidated the legacy `eprosima::fastrtps` namespace into `eprosima::fastdds`, which matters if you paste profiles out of a 2.x application.
 
 ## How it works
 
@@ -77,7 +77,7 @@ Both ends ship `AUTOMATIC` again. The table above is kept as the historical meas
 
 **Follow-up, not done — the Fast DDS 3.6.x upgrade** (checked 2026-10-16):
 
-- **Pins.** Every Fast DDS dependency pins `fast-dds/3.4.0`: `fastdds-pubsub-provider/conanfile.py`, `fastdds-pubsub-provider/benchmarks/conanfile.py`, `integration-tests/fastdds-xrce-interop/conanfile.py`, `integration-tests/pubsub-conformance/conanfile.py`. The 3.4 line is end of life since v3.4.3 (2026-06-17).
+- **Pins.** Every Fast DDS dependency pins `fast-dds/3.4.3` since BIND-9b-7 (D-BIND-167; 3.4.0 before it), for the CVEs 3.4.1 to 3.4.3 fix; none of them is #6490, so the data-sharing workarounds stay. The pins: `fastdds-pubsub-provider/conanfile.py` (`FAST_DDS_VERSION`, which also names the licence folder for the code Fast DDS vendors, D-BIND-166), `fastdds-pubsub-provider/benchmarks/conanfile.py`, `integration-tests/fastdds-xrce-interop/conanfile.py`, `integration-tests/pubsub-conformance/conanfile.py`, `integration-tests/pubsub-transport-conformance/agent/conanfile.py`. The 3.4 line is end of life since v3.4.3 (2026-06-17).
 - **Likely fix.** eProsima/Fast-DDS#6490, "Fix datasharing infinite loop", merged to master 2026-07-30. Its only release is the 2.14.x backport (#6494, v2.14.7); on the 3.6.x branch it sits 35 commits after v3.6.2 (2026-07-02, the latest 3.x release), so no 3.x release has it yet — 3.6.3 would. It is **not confirmed** to be this defect: confirm by running `gateway-fastdds-ts` repeatedly against a 3.6.x build.
 - **Recipe.** ConanCenter's `fast-dds` recipe stops at 3.4.3, so 3.6 needs a recipe of our own (e.g. published to conan-eiva).
 - **Options.** Wait for 3.6.3; build the 3.6.x branch at a pinned commit; or take 3.6.2 now — off the end-of-life line, but probably without the fix, so the retry stays. Any upgrade moves all four pins together and re-runs the Fast DDS lanes.
@@ -444,14 +444,16 @@ these two the defaults — eProsima's own mechanism, not a Fletcher convention.
       </topic>
     </data_reader>
     <!-- every sample, in order: commands, events, logs. A reader that stops taking samples stalls
-         the publisher; a crashed peer frees it when its participant lease expires (20 s by
-         default); the slowest reader can hold the publisher back once 25 samples are in flight -->
+         the publisher, for up to 30 s per sample, after which that sample is dropped and logged
+         (Fast DDS 3.4.3 refuses an infinite blocking time); a crashed peer frees it sooner, when
+         its participant lease expires (20 s by default); the slowest reader can hold the
+         publisher back once 25 samples are in flight -->
     <data_writer profile_name="lossless">
       <qos>
         <durability><kind>VOLATILE</kind></durability>
         <reliability>
           <kind>RELIABLE</kind>
-          <max_blocking_time>DURATION_INFINITY</max_blocking_time>
+          <max_blocking_time><sec>30</sec><nanosec>0</nanosec></max_blocking_time>
         </reliability>
       </qos>
       <topic>
@@ -537,7 +539,7 @@ bound:
 | `latest` | RELIABLE, VOLATILE, KEEP_LAST 1 | a live state that changes and must not be missed while live (the newest value, resent if a datagram is lost, nothing replayed to a late subscriber) | 2 slots, ~130 KiB | a reader more than one sample behind loses the older one |
 | `store_latest` | RELIABLE, TRANSIENT_LOCAL, KEEP_LAST 1 | state, configuration, status: the last value, replayed to a late subscriber | 2 slots, ~130 KiB | holds shared memory for replay |
 | `store_history` | RELIABLE, TRANSIENT_LOCAL, KEEP_LAST 25 | track tails, recent events: the last 25 values, replayed to a late subscriber | 26 slots, ~1.7 MB | holds shared memory for replay |
-| `lossless` | RELIABLE, VOLATILE, KEEP_ALL, infinite `max_blocking_time`, 20 ms heartbeat | commands, events, logs: every sample, in order | 26 slots, ~1.7 MB | can stall the publisher — a reader that stops taking samples blocks every future `Publish` until it (or its participant's 20 s lease) goes away |
+| `lossless` | RELIABLE, VOLATILE, KEEP_ALL, 30 s `max_blocking_time`, 20 ms heartbeat | commands, events, logs: every sample, in order | 26 slots, ~1.7 MB | can stall the publisher — a reader that stops taking samples blocks each `Publish` until it (or its participant's 20 s lease) goes away, or for 30 s, after which that sample is dropped and logged (infinite until Fast DDS 3.4.3 refused it, D-BIND-168) |
 | `default_writer` / `default_reader` | RELIABLE, VOLATILE, KEEP_LAST 25 | the built-in "stream" semantics, what a topic with no profile runs on | 26 slots, ~1.7 MB | a reader that falls more than 25 samples behind loses the oldest |
 
 `profile` only picks each endpoint's own QoS; it is not an agreement between the two. Mixing pairs
@@ -585,7 +587,7 @@ as absent.
   late-joining reader with no error anywhere (see [Zero-copy: the plain
   sample](#zero-copy-the-plain-sample)); the built-in default carries it too, guarded by
   `integration-tests/gateway-fastdds-ts`.
-- **Under the `lossless`-shaped configuration (RELIABLE + KEEP_ALL + infinite `max_blocking_time`,
+- **Under the `lossless`-shaped configuration (RELIABLE + KEEP_ALL + infinite `max_blocking_time`, as measured on 3.4.0,
   not the built-in default), a flat-out intraprocess publisher (publisher and subscriber in ONE
   process, no pacing) can lose a tail of samples.** Measured with `benchmarks/bench_e2e`'s 198 B
   throughput arm, 200 000 samples: reader data-sharing `AUTOMATIC` — 3 of 3 one-core runs lost
@@ -1110,7 +1112,7 @@ compile error there.
 
 The library is STATIC, so consumers still *link* the Fast DDS chain (`transitive_libs` is kept);
 they just do not *see* it. If your own code uses Fast DDS directly for its own reasons, require
-`fast-dds/3.4.0` explicitly — as `benchmarks/conanfile.py` does.
+`fast-dds/3.4.3` explicitly — as `benchmarks/conanfile.py` does.
 
 ## CI pipeline
 

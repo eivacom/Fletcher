@@ -12,9 +12,9 @@ import os
 # thirdparty/ folder is not in the Conan graph, so its licence texts are carried in
 # third_party/fast-dds-<version>/ and packaged for the notice deployer; a different version has no
 # such folder and fails package(), so an upgrade re-checks what the new Fast DDS vendors.
-FAST_DDS_VERSION = "3.4.0"
+FAST_DDS_VERSION = "3.4.3"
 
-# Name, version, licence and homepage of each library in that folder, read off Fast DDS 3.4.0's
+# Name, version, licence and homepage of each library in that folder, read off Fast DDS 3.4.3's
 # thirdparty/ (versions from the vendored headers). Only what src/cpp compiles in: optionparser
 # serves its tools and android-ifaddrs Android, neither in this library.
 FAST_DDS_VENDORED = {

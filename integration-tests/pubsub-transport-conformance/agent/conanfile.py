@@ -24,7 +24,7 @@ class XrceAgentForTransportConformanceConan(ConanFile):
         # Directly, so Fast DDS and Fast CDR reach CMakeDeps WITH headers - the
         # Agent compiles against them. The same reason as in
         # integration-tests/fastdds-xrce-interop/conanfile.py.
-        self.requires("fast-dds/3.4.0")
+        self.requires("fast-dds/3.4.3")
 
     def layout(self):
         cmake_layout(self)

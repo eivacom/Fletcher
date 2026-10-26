@@ -97,7 +97,7 @@ What it cannot:
   obligations (risk N-8).
 
 Deployment facts that apply with or without AOT: one build per RID (`linux-x64`,
-`win-x64`); the Linux shim needs **glibc 2.38 and `GLIBCXX_3.4.32` or newer** and only the
+`win-x64`); the Linux shim needs **glibc 2.34 and `GLIBCXX_3.4.32` or newer** and only the
 system's `libstdc++`, `libm`, `libgcc_s` and `libc`; and the shim must come from the
 same commit as the managed packages: its binding ABI version is checked at load (exact
 minor before 1.0), nothing finer. Proven by `tests/Fletcher.AotSmoke` on Linux in CI;

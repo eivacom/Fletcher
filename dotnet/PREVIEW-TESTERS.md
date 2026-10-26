@@ -49,7 +49,7 @@ and runs. In short:
 3. To use the gateway, unpack `gateway/` for your platform and run it; connect
    `Eiva.Fletcher.GatewayClient` to it.
 
-Needed on the machine: .NET 8 or .NET 10; on Linux glibc 2.38 and the GCC 13 C++ runtime or newer
+Needed on the machine: .NET 8 or .NET 10; on Linux glibc 2.34 and the GCC 13 C++ runtime or newer
 (Ubuntu 24.04, Debian 13, RHEL 10 or newer); on Windows the latest Visual C++ 2015-2022
 redistributable (x64), 14.40 or newer.
 

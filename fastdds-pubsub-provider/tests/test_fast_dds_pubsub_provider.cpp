@@ -2912,7 +2912,7 @@ TEST(FastDDSPubSubProviderTest, StoreLatestReplaysTheLastValueToALateSubscriber)
     EXPECT_THAT(rows, testing::ElementsAre(3, 4));
 }
 
-// `lossless` (KEEP_ALL, infinite max_blocking_time, 20 ms heartbeat) loses nothing even past its
+// `lossless` (KEEP_ALL, a 30 s max_blocking_time, 20 ms heartbeat) loses nothing even past its
 // 25-deep history: 300 rows, published back to back, all arrive in order. In-process delivery runs
 // on the listener (see "Why the listener and not a reader thread" in the README), so `Publish`
 // never blocks here even though the profile exists to block a slow remote reader instead of

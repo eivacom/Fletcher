@@ -86,7 +86,7 @@ class PubsubConformanceIntegrationConan(ConanFile):
         # green. Nothing that reads a Fast DDS header is added here.
         #
         # Same require, same reason, as fastdds-pubsub-provider/benchmarks.
-        self.requires("fast-dds/3.4.0")
+        self.requires("fast-dds/3.4.3")
 
     def layout(self):
         cmake_layout(self)

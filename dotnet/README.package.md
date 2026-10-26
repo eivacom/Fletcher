@@ -227,9 +227,9 @@ nothing in this section applies to them.
 
 ### Platform requirements
 
-- **linux-x64:** glibc 2.38 and the GCC 13 C++ runtime (`libstdc++` with `GLIBCXX_3.4.32`) or
-  newer: Ubuntu 24.04, Debian 13, RHEL 10 or newer. The shim loads only `libstdc++`, `libgcc_s`,
-  `libm` and `libc`.
+- **linux-x64:** glibc 2.34 and the GCC 13 C++ runtime (`libstdc++` with `GLIBCXX_3.4.32`) or
+  newer: Ubuntu 24.04, Debian 13, RHEL 10 or newer (the C++ runtime sets that floor). The shim
+  loads only `libstdc++`, `libgcc_s`, `libm` and `libc`.
 - **win-x64:** the latest Visual C++ 2015-2022 redistributable (x64), 14.40 or newer. Otherwise
   the shim loads only DLLs every Windows has.
 
