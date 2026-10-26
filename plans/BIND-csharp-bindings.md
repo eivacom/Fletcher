@@ -2614,7 +2614,17 @@ preparation, a fresh-context review and the close.
   the schema is not). Not proven: the C++ peer now prints Fast DDS's match and loss statuses as
   `STATUS` lines (a `FastDDSStatusListener`), and a failed delivery's message shows each peer's
   lines for the topic, so the next failure says whether the schema channel matched, whether a data
-  reader followed, or whether samples were lost.
+  reader followed, or whether samples were lost. **The next failure did (`fed14f7`, `ci.pr`
+  39971702812, every other job and workflow green):** `STATUS gateway.crosslang/CrossLang/NativeToCpp
+  schema reader matched 1 (1)` and nothing more: the schema channel matched and the schema sample
+  never arrived, so no data reader was ever opened. That is Fast DDS 3.4.0's data-sharing reader
+  defect dropping a late-joining reader's `TRANSIENT_LOCAL` backlog, here the one sample the schema
+  channel holds, and it hangs any subscription that starts before a same-host publisher in another
+  process declares its topic. **Fixed in the provider, on the maintainer's ruling (D-BIND-165):**
+  the `__schema` reader turns data-sharing off (`MakeSchemaChannelReaderQos`, a unit test pins it,
+  the provider README says why); the schema writer and the data endpoints keep `AUTOMATIC`. Local
+  runs cannot show the fix (the failure never reproduced here); they show no regression, and the
+  proof is the lane staying green on the Linux runner over several runs.
 
 **How test builds reach testers during development, and what changes at the merge** (recorded
 2026-10-20 at the maintainer's request, D-BIND-137 to 139). Until PR #129 merges, the per-push

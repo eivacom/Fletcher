@@ -325,6 +325,16 @@ TEST(FletcherSamplePubSubTypeTest, TheSchemaChannelPoolIsSizedForOneSample) {
     EXPECT_EQ(1, rqos.resource_limits().allocated_samples);
 }
 
+// D-BIND-165: the schema reader takes its one sample from the TRANSIENT_LOCAL backlog when it
+// matches after the write, which Fast DDS 3.4.0's data-sharing reader can drop; so data-sharing is
+// off there, and only there: the writer and the data endpoints keep Fast DDS's default.
+TEST(FletcherSamplePubSubTypeTest, TheSchemaChannelReaderDoesNotUseDataSharing) {
+    EXPECT_EQ(eprosima::fastdds::dds::OFF,
+              fletcher::internal::MakeSchemaChannelReaderQos().data_sharing().kind());
+    EXPECT_EQ(eprosima::fastdds::dds::AUTO,
+              fletcher::internal::MakeSchemaChannelWriterQos().data_sharing().kind());
+}
+
 // The guard at the top of serialize() accounts for the row's OWN 4-byte length prefix
 // (EncodeEnvelopeBody's ROW_LEN) as well as the sample's — even an EMPTY row needs it. A buffer one
 // byte too small for that must be refused quietly, before the encoder ever runs, rather than

@@ -73,7 +73,7 @@ The reader side of this was `off()` for a time — the one place this provider o
 
 The provider was not the one dropping them: the pre-schema buffer in place when this was measured logged on every discard, and that log never fired. That a 0.5 MB pool is reliable where a 6.6 MB one — the built-in profile's pool at the time, `max_samples` 100 — is not points below the provider as well.
 
-Both ends ship `AUTOMATIC` again. The table above is kept as the historical measurement, and `integration-tests/gateway-fastdds-ts` is the guard going forward: it re-verifies the cross-process case, three runs at a time, because this defect is invisible to the provider's own test suite — that suite is single-process, so Fast DDS serves it over intra-process delivery, which bypasses data-sharing altogether. Its TS → C++ case still hits the defect intermittently in CI (`peer RECV lines: []`), so by owner ruling 2026-10-16 it retries the publish → receive exchange **once** with a fresh client and row: a pass on the retry logs that the first attempt hit this defect, and a second loss fails naming it and pointing here. The real fix is a Fast DDS upgrade; when one carries it, drop the retry. The `__schema` channel runs on the same Fast DDS default (AUTOMATIC) — see the Fast DDS 3.4.0 data-sharing reader defect in [Known limits of the document](#known-limits-of-the-document).
+Both ends ship `AUTOMATIC` again. The table above is kept as the historical measurement, and `integration-tests/gateway-fastdds-ts` is the guard going forward: it re-verifies the cross-process case, three runs at a time, because this defect is invisible to the provider's own test suite — that suite is single-process, so Fast DDS serves it over intra-process delivery, which bypasses data-sharing altogether. Its TS → C++ case still hits the defect intermittently in CI (`peer RECV lines: []`), so by owner ruling 2026-10-16 it retries the publish → receive exchange **once** with a fresh client and row: a pass on the retry logs that the first attempt hit this defect, and a second loss fails naming it and pointing here. The real fix is a Fast DDS upgrade; when one carries it, drop the retry. The `__schema` channel's READER is the exception since BIND-9b-6 (D-BIND-165): data-sharing OFF, because its one sample, written once, reaches a reader that matches later only through the backlog this defect drops, and losing it left a subscription that never delivered anything (the cross-language lane's subscriber-first row, on the Linux runner: schema reader matched, no schema). Its writer, and every data endpoint, keep `AUTOMATIC`.
 
 **Follow-up, not done — the Fast DDS 3.6.x upgrade** (checked 2026-10-16):
 
@@ -681,8 +681,9 @@ policies where Fletcher and Fast DDS genuinely differ are `durability`, `history
 `resource_limits`, which is why the starting-point block spells all three out.
 
 The companion schema channel (`__schema` topic) always uses `RELIABLE` + `KEEP_LAST(depth=1)` +
-`TRANSIENT_LOCAL`, data-sharing at Fast DDS's default. Its sample is carried as a Fletcher sample
-(`SchemaBytesPubSubType`) — a row (the IPC bytes) plus the `max_payload_bytes` attachment — the
+`TRANSIENT_LOCAL`, the writer with data-sharing at Fast DDS's default and the reader with
+data-sharing OFF (D-BIND-165, see [Zero-copy: the plain sample](#zero-copy-the-plain-sample)).
+Its sample is carried as a Fletcher sample (`SchemaBytesPubSubType`) — a row (the IPC bytes) plus the `max_payload_bytes` attachment — the
 same plain, bounded type as the data channel. **No profile name is ever consulted for it**: it is
 a Fletcher-internal implementation detail and not configurable. It is bounded at the fixed
 `kSchemaPayloadBytes` (`pubsub/include/fletcher/pubsub/payload_bound.hpp`), not a property.

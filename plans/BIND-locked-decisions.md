@@ -3754,3 +3754,17 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   part on each push, and the release-only step with logic, the tag check
   (`verify-tag-version-dotnet`), is tested by `ci.action-lint`. **Declined:** running `cd.dotnet` in
   dry-run mode from `ci.pr` (a second full build of three components on every push).
+
+- **D-BIND-165 - the Fast DDS provider's `__schema` reader turns data-sharing off.** *LOCKED BY THE
+  MAINTAINER 2026-10-26 (BIND-9b-6, the cross-language lane's `CSharpNativeToCpp` failures).* The
+  row failed on the Linux runner in three of four runs and never locally (0 of 30): the C++ peer,
+  subscribed before the C# native peer declared the topic, printed `schema reader matched 1` and
+  nothing more, so its schema sample, written once and reaching a later-matched reader only through
+  the `TRANSIENT_LOCAL` backlog, never arrived, and the subscription delivered nothing at all. That
+  backlog is what Fast DDS 3.4.0's data-sharing reader can drop with no error (the provider README's
+  measured defect; reader `off()` passed every time). So `MakeSchemaChannelReaderQos` sets
+  data-sharing `OFF`; the schema writer and every data endpoint keep `AUTOMATIC`. The channel
+  carries one small sample per topic, so shared memory buys it nothing, and the fix holds for every
+  application, not only the test. Revisit with the Fast DDS upgrade that fixes the defect.
+  **Declined:** turning data-sharing off in the lane's own profile only (the product keeps the
+  hang); recording it and waiting for Fast DDS 3.6.3 (CI red half the time on Linux until then).

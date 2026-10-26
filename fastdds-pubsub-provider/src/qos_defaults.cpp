@@ -303,6 +303,15 @@ DataWriterQos MakeSchemaChannelWriterQos() {
     return qos;
 }
 
+// As the writer, and data-sharing OFF (BIND-9b-6, D-BIND-165). The schema is written ONCE, so a
+// reader that matches the publisher after that write must get it from the TRANSIENT_LOCAL backlog,
+// and Fast DDS 3.4.0's data-sharing reader can drop that backlog for a late joiner with no error at
+// either end (README, "Zero-copy: the plain sample"). For a data topic that loses rows; here it
+// lost the only sample, so the arrival never resolved and the subscription delivered nothing, ever:
+// the cross-language lane's subscriber-first row did this on the Linux runner, its reader matched
+// and no schema delivered. The writer keeps Fast DDS's default; the channel carries one small
+// sample per topic, so shared memory buys it nothing. Revisit with the Fast DDS upgrade that fixes
+// the defect.
 DataReaderQos MakeSchemaChannelReaderQos() {
     DataReaderQos qos = DATAREADER_QOS_DEFAULT;
     qos.reliability().kind = RELIABLE_RELIABILITY_QOS;
@@ -314,6 +323,7 @@ DataReaderQos MakeSchemaChannelReaderQos() {
     qos.resource_limits().max_instances = 1;
     qos.resource_limits().max_samples_per_instance = 1;
     qos.resource_limits().allocated_samples = 1;
+    qos.data_sharing().off();
     return qos;
 }
 
