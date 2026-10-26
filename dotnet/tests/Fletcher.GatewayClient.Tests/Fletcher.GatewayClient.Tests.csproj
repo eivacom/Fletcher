@@ -12,6 +12,9 @@
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <RootNamespace>Eiva.Fletcher.GatewayClient.Tests</RootNamespace>
     <RollForward>LatestMajor</RollForward>
+    <!-- D-BIND-170: the window deadline is a timer callback on the thread pool, and the pool's
+         starvation pace on a saturated 4-core runner reaches seconds. See Fletcher.Tests. -->
+    <ThreadPoolMinThreads>32</ThreadPoolMinThreads>
   </PropertyGroup>
 
   <ItemGroup>

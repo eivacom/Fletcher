@@ -19,6 +19,17 @@
          .NET 10 runtime only, and rolling forward is how the net8.0-compiled
          assemblies get executed rather than merely compiled. -->
     <RollForward>LatestMajor</RollForward>
+    <!-- D-BIND-170. A batch deadline is a System.Threading.Timer callback, so it needs a
+         thread-pool worker, and the pool starts with one worker per core (four on the CI
+         runner). This suite parks workers on purpose (the schema waits, Task.Run waits, the
+         deferred work, the drains, timer handlers that sleep), so with four test classes
+         running at once every worker can be blocked when a flush falls due. The pool then
+         adds a thread only at its starvation pace: one per 500 ms on a quiet machine, one
+         per (threads x 1 s) once the machine's CPU passes 80 %, which the Windows job
+         reaches with four test processes on four cores - a 100 ms flush took 4 s there and
+         the timer tests' 5 s limit tripped. A minimum of 32 means a flush never waits for
+         an injection; the threads are created on demand, so an idle minimum costs nothing. -->
+    <ThreadPoolMinThreads>32</ThreadPoolMinThreads>
   </PropertyGroup>
 
   <ItemGroup>

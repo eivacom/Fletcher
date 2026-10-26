@@ -179,7 +179,11 @@ jobs:
               echo "::endgroup::"
               dotnet restore Fletcher.slnx --locked-mode
               dotnet build Fletcher.slnx -c Release --no-restore -p:FletcherNativeShim="$SHIM" -p:FletcherProbeShim="$PROBE"
-              dotnet test Fletcher.slnx -c Release --no-build --logger "trx;LogFileName=linux.trx"
+              # One results file per target framework (D-BIND-170): with a fixed LogFileName
+              # the net10.0 leg overwrote the file of the net8.0 leg, so the per-test
+              # timings of a failure never reached the uploaded artifact. (No apostrophes
+              # here: this script is single-quoted.)
+              dotnet test Fletcher.slnx -c Release --no-build --logger "trx;LogFilePrefix=linux"
 
               # D-BIND-81: a consumer of the generated pair, published with NativeAOT for both
               # TFMs. Warnings are errors (Directory.Build.props), so any trim or AOT warning
@@ -326,7 +330,8 @@ jobs:
           dotnet --info
           dotnet restore Fletcher.slnx --locked-mode
           dotnet build Fletcher.slnx -c Release --no-restore -p:FletcherNativeShim="${{ steps.shim.outputs.path }}" -p:FletcherProbeShim="${{ steps.shim.outputs.probe }}"
-          dotnet test Fletcher.slnx -c Release --no-build --logger "trx;LogFileName=windows.trx"
+          # One results file per target framework (D-BIND-170), as on the Linux leg.
+          dotnet test Fletcher.slnx -c Release --no-build --logger "trx;LogFilePrefix=windows"
 
       # BIND-9b-3 (D-BIND-88, D-BIND-160): the Linux leg's D-BIND-81 smoke, on Windows. ILC
       # compiles, the MSVC linker links (the ILCompiler package finds it with vswhere, which

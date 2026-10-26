@@ -2676,7 +2676,37 @@ preparation, a fresh-context review and the close.
   3.4.3`); the stripped shim self-contained at glibc 2.34 and `GLIBCXX_3.4.32`; the cross-language
   lane 5 of 5 on two CPUs; the NativeAOT smoke over `inprocess` and `fastdds`; clang-format clean.
   The other Fast DDS lanes (conformance, XRCE interop, `gateway-fastdds-ts`) and Windows meet 3.4.3
-  first on CI.
+  first on CI. **On CI:** `205abce`'s `ci.pr` (40334195069) passed every Fast DDS lane on 3.4.3,
+  Windows included, the gateway notice check and the floor; its one red was the timer flake below.
+- **9b-7, part 3, 2026-10-26 (D-BIND-170): the Windows .NET 8 timer flakes.** `205abce`'s `ci.pr`
+  failed `dotnet / windows` on net8.0 `SubscriberArrowTests.OnlyDroppedRowsStillDeliverAnEmptyBatch`
+  ("no report of the dropped row", the 100 ms flush not within 5 s; net10.0 428/428 in the same
+  job), the test's second failure and the class's third. On the maintainer's ruling, investigated
+  before any re-run. **The cause, reproduced:** the deadline is a `System.Threading.Timer` callback
+  on the thread pool, whose minimum is the core count (four on the runner); the suite parks pool
+  workers on purpose, so with four test classes running at once every worker can be blocked when a
+  flush falls due, and the callback waits for the pool's starvation injection: 500 ms per thread
+  on a quiet machine, (threads x 1 s) per thread once the machine's CPU passes 80 percent, which
+  the Windows job reaches with four test processes on four cores (the net8.0 leg runs at that
+  peak; both legs run on the same .NET 10 runtime). A probe on a 4-core pool with four workers
+  blocked: 506 ms idle, 4061 ms saturated, 113 ms with a minimum of 32; the suite under eighteen
+  busy processes with `DOTNET_PROCESSOR_COUNT=4`: 8 of 10 runs failed a timer test at 5.0 s (this
+  one three times; `FlushesAtTheTimeout`, `UnsubscribingFromInsideATimeoutFlushIsSafe`,
+  `ATimeoutFlushAndARowLimitFlushMayOverlap`, `UnsubscribeWaitsForATimerHandlerStillRunning`,
+  `ATimerHandlerThatCancelsDuringADeliveryDoesNotDeadlock` the others), 15 of 15 green at 0.11 to
+  0.16 s with the minimum raised. The passing net10.0 legs of the three failing CI runs show the
+  100 ms case at 0.14, 0.52, 1.13 and 2.90 s, the same tail; a 20-core pool never reproduces it,
+  which is why 92 local runs saw nothing. **Found beside it:** both target frameworks wrote
+  `TestResults/<os>.trx`, so the passing net10.0 leg overwrote the failing net8.0 leg's file in
+  every one of the three failures, and no failure's per-test timings ever reached the artifact.
+  **Built:** `ThreadPoolMinThreads` 32 in `Fletcher.Tests` and `Fletcher.GatewayClient.Tests` (the
+  gateway client's `AWindowFlushesWhenItsDeadlinePasses`, once red on the same runner, is the same
+  mechanism; its 2 s window stays), `LogFilePrefix` on both `ci.dotnet` legs (`linux_net8.0_<stamp>.trx`
+  and so on; the upload globs match as before). The library is unchanged; the 5 s waits stay.
+  Rehearsed: both projects rebuilt, the knob in all four runtime configs; under the saturation that
+  failed 8 of 10 before, `Fletcher.Tests` 5 of 5 and `Fletcher.GatewayClient.Tests` 3 of 3 green
+  (the gateway case at its 2.0 s window); actionlint clean (it caught two apostrophes in the Linux
+  leg's comment, inside its single-quoted script).
 
 **How test builds reach testers during development, and what changes at the merge** (recorded
 2026-10-20 at the maintainer's request, D-BIND-137 to 139). Until PR #129 merges, the per-push

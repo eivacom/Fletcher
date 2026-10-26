@@ -3832,3 +3832,32 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   libstdc++) already means Ubuntu 24.04, Debian 13 or RHEL 10 (D-BIND-154). **Declined:** building
   Fast DDS from source in CI to keep 2.38 (a Fast DDS build on both legs of every run, for a floor
   no supported distribution is affected by).
+
+- **D-BIND-170 - the test assemblies start with a thread-pool minimum of 32 workers, and each CI
+  leg keeps one trx per target framework.** *LOCKED BY THE MAINTAINER 2026-10-26 (BIND-9b-7, the
+  watch-listed timer flakes, investigated on the maintainer's ruling before any re-run).* The batch
+  deadline is a `System.Threading.Timer` callback, so it needs a thread-pool worker; the pool starts
+  with one worker per core (four on the runner), and the suites park workers on purpose
+  (`SchemaArrival.WaitAsync`, by its stated cost; `Task.Run` waits; `DispatchAfterDelivery`; the
+  drain after a cancel from inside a delivery; timer handlers that sleep), so with four test
+  classes running at once every worker can be blocked when a flush falls due. The callback then
+  waits for the pool's starvation injection: one thread per 500 ms on a quiet machine, one per
+  (threads x 1 s) once the machine's CPU is above 80 percent, which the Windows job reaches by
+  running four test processes on four cores; the net8.0 leg runs at that peak, and both legs run
+  on the same .NET 10 runtime, so the framework is not the difference. Measured with a probe on a
+  4-core pool with four workers blocked: a 100 ms timer fired after 506 ms idle, 4061 ms
+  saturated, 113 ms with a minimum of 32; the suite under the same saturation failed a timer test
+  in 8 of 10 runs at the 5 s limit and passed 15 of 15 at 0.11 to 0.16 s with the minimum raised;
+  the passing net10.0 legs of the three failing runs show the 100 ms case at 0.14, 0.52, 1.13 and
+  2.90 s; a 20-core pool never reproduces it (the 92 earlier local runs). The minimum is
+  `ThreadPoolMinThreads` in `Fletcher.Tests` and `Fletcher.GatewayClient.Tests` (a runtime-config
+  knob the test host honours; threads are created on demand, so an idle minimum costs nothing),
+  the tests' 5 s waits stay, and the library is unchanged: a flush on the pool is .NET's shape for
+  a timer, and an application that blocks its own pool delays its flushes as it delays every
+  timer. Found beside it: both target frameworks wrote `TestResults/<os>.trx`, so the passing leg
+  overwrote the failing leg's results in every one of the three failures; the legs now log with
+  `LogFilePrefix`, one file per framework. **Declined:** longer waits in the tests (the mechanism
+  stays, and 4 s steps reach any limit); a dedicated timer thread per batcher (C++'s shape, a
+  thread per subscription for a test-runner condition); serialising the test projects on CI (a
+  slower job for a cause the minimum removes). **Watch list:** the two `SubscriberArrow` entries
+  and the gateway client's deadline case close with this on a green run.
