@@ -2630,6 +2630,31 @@ preparation, a fresh-context review and the close.
   40306845298, 61/61; `acdf706`'s one red, `ci.check-test-matrix`, was the provider's new test
   missing from bucket 4's count, fixed there). `CSharpNativeToCpp` passed on Linux in both runs
   since the fix, after three failures in four before it; it stays watched.
+- **9b-7, part 1, 2026-10-26 (D-BIND-152, D-BIND-166): the licence research.** Read off Fast DDS
+  3.4.0's source: it compiles in, outside the Conan graph, nlohmann/json 3.11.3 (MIT, discovery
+  server database), filewatch (MIT, file watching), PEGTL 2.8.3 (MIT, SQL filters and the IDL
+  parser; three headers Fast DDS updated say BSL-1.0) and Boost.Interprocess and Boost.Thread 1.73
+  (BSL-1.0, the shared-memory transport); optionparser and android-ifaddrs are not in the library.
+  Fast DDS, Fast CDR, Micro-CDR and Micro XRCE-DDS carry no `NOTICE`; nanoarrow 0.8.0 and flatcc do,
+  and the vendored copies had dropped both. They had also dropped the `LICENSE` of flatcc's portable
+  headers' folder (Apache-2.0, crediting the MathGeoLib author too), and four of those headers carry
+  their own (`pstdint.h` BSD-3-Clause, three MIT); found while showing the maintainer the notice.
+  **Built, on the maintainer's ruling:** nanoarrow's `NOTICE.txt`, flatcc's `NOTICE`, and
+  `flatcc/portable/LICENSE` and `LICENSES.txt` beside nanoarrow's licence in `pubsub/` and `protoc/`
+  (both recipes package them); `fastdds-pubsub-provider/third_party/fast-dds-3.4.0/` with the four
+  libraries' texts, which the recipe packages as vendored entries (`via: fast-dds 3.4.0`; the
+  deployer prints "Compiled in from source by: fast-dds 3.4.0 (texts packaged by
+  fletcher-fastdds-pubsub-provider/…)") and without which it fails, so `FAST_DDS_VERSION` cannot
+  move without a re-check; `scripts/check_third_party_notice.sh`, run on the shim's notice
+  (`ci.dotnet`), the plugin's (`ci.protoc`) and, new, the gateway's on both legs (`ci.gateway`, the
+  9a review's vendored-licence check). **M7 closed with it:** `ci.pr`'s `gateway` filter gains
+  `core/`, `pubsub/` and `fastdds-pubsub-provider/`, and its `dotnet` filter those and
+  `xrcedds-pubsub-provider/`, so a change that drops a vendored licence reruns the lanes that ship
+  it. Rehearsed in the devcontainer: pubsub, the provider, protoc, the shim and the gateway rebuilt;
+  the three notices written as CI writes them and all three checks pass (the shim's lists twelve
+  libraries, the four new ones among them); mutants caught: a notice without flatcc's `NOTICE`, one without the portable
+  headers' licences, and the provider recipe without its licence folder (fails `package()` naming the re-check);
+  actionlint clean (it caught an apostrophe ending `ci.protoc`'s quoted script, fixed).
 
 **How test builds reach testers during development, and what changes at the merge** (recorded
 2026-10-20 at the maintainer's request, D-BIND-137 to 139). Until PR #129 merges, the per-push

@@ -175,6 +175,7 @@ jobs:
           sparse-checkout: |
             protoc
             gateway/deployers
+            scripts
             .github
             .conan-profiles
 
@@ -212,11 +213,10 @@ jobs:
               cp /workspace/COPYING /workspace/protoc-licences/COPYING
               # What the plugin links or compiles in must be in its notice: protobuf
               # and zlib from the graph, and the vendored nanoarrow, which only reaches
-              # the notice through the recipe (BIND-9a review B4).
-              for lib in protobuf zlib nanoarrow; do
-                grep -qE "^  \* $lib " /workspace/protoc-licences/THIRD-PARTY-LICENSES.txt \
-                  || { echo "::error::the plugin notice does not cover $lib, which is linked into the plugin"; exit 1; }
-              done
+              # the notice through the recipe (BIND-9a review B4), with the Apache NOTICE files
+              # of nanoarrow and of the flatcc it bundles (BIND-9b-7, D-BIND-166).
+              bash /workspace/scripts/check_third_party_notice.sh \
+                /workspace/protoc-licences/THIRD-PARTY-LICENSES.txt protobuf zlib nanoarrow
               if [[ -n "$ARTIFACT_NAME" ]]; then
                 REF=$(conan inspect . --format json | python3 -c "import json,sys; d=json.load(sys.stdin); print(d[\"name\"]+\"/\"+d[\"version\"])")
                 conan cache save "$REF:*" --file "/workspace/$ARTIFACT_NAME"

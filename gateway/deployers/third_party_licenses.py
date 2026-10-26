@@ -162,7 +162,10 @@ def _vendored_entries(conanfile):
                 ref=SimpleNamespace(name=meta["name"], version=meta["version"]),
                 license=meta.get("license"),
                 homepage=meta.get("homepage"),
-                vendored_in=str(dep.ref),
+                # `via` (BIND-9b-7, D-BIND-166): code a THIRD-party package compiles in from its
+                # own vendored folder, whose texts a Fletcher package carries for it.
+                vendored_in=(f"{meta['via']} (texts packaged by {dep.ref})"
+                             if meta.get("via") else str(dep.ref)),
             )
             found.setdefault((meta["name"], meta["version"]), (entry, files))
     return [found[key] for key in sorted(found)]

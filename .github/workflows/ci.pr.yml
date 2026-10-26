@@ -178,6 +178,13 @@ jobs:
               - 'scripts/preview/**'
               - 'scripts/check_protoc_package.sh'
               - '.github/workflows/ci.package-consumer.yml'
+              # BIND-9b-7 (M7): what the shim links, whose vendored licence texts its notice
+              # carries, and the check that requires them.
+              - 'core/**'
+              - 'pubsub/**'
+              - 'fastdds-pubsub-provider/**'
+              - 'xrcedds-pubsub-provider/**'
+              - 'scripts/check_third_party_notice.sh'
               - '.github/workflows/ci.pr.yml'
               - '.github/workflows/ci.dotnet.yml'
               - '.github/workflows/ci.setup-devcontainer-image.yml'
@@ -195,6 +202,12 @@ jobs:
               - '.devcontainer/**'
             gateway:
               - 'gateway/**'
+              # BIND-9b-7 (the BIND-9a review's M7): what the gateway links, whose vendored
+              # licence texts its notice carries, and the check that requires them.
+              - 'core/**'
+              - 'pubsub/**'
+              - 'fastdds-pubsub-provider/**'
+              - 'scripts/check_third_party_notice.sh'
               - '.github/workflows/ci.pr.yml'
               - '.github/workflows/ci.gateway.yml'
               - '.github/workflows/ci.setup-devcontainer-image.yml'
@@ -213,6 +226,7 @@ jobs:
             protoc:
               - 'protoc/**'
               - 'gateway/deployers/**'
+              - 'scripts/check_third_party_notice.sh'
               - '.github/workflows/ci.pr.yml'
               - '.github/workflows/ci.protoc.yml'
               - '.github/workflows/ci.setup-devcontainer-image.yml'

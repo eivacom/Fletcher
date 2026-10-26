@@ -3768,3 +3768,31 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   application, not only the test. Revisit with the Fast DDS upgrade that fixes the defect.
   **Declined:** turning data-sharing off in the lane's own profile only (the product keeps the
   hang); recording it and waiting for Fast DDS 3.6.3 (CI red half the time on Linux until then).
+
+## Rulings of 2026-10-26 — BIND-9b-7, the licence research
+
+- **D-BIND-166 - the texts of code compiled in from another project's vendored folder, and the
+  Apache-2.0 NOTICE files, are carried in the repository and reach every notice through the
+  vendored-licence mechanism.** *LOCKED BY THE MAINTAINER 2026-10-26 (BIND-9b-7, the research
+  D-BIND-152 asked for before the first release).* Found: Fast DDS 3.4.0 compiles in, from its own
+  `thirdparty/` and outside the Conan graph, nlohmann/json 3.11.3 (MIT), filewatch (MIT), PEGTL
+  2.8.3 (MIT, with three files Fast DDS updated to BSL-1.0) and Boost.Interprocess and Boost.Thread
+  1.73 (BSL-1.0); its optionparser serves only its tools and android-ifaddrs only Android. nanoarrow
+  0.8.0 and the flatcc it bundles each ship a `NOTICE` (Apache-2.0 section 4(d)), which the
+  vendored copies dropped (nanoarrow's flatcc copy carries flatcc's LICENSE only). Found while
+  showing the notice: flatcc's portable headers, compiled in through its runtime, are under their
+  folder's own `LICENSE` (Apache-2.0, with an attribution for the MathGeoLib author), which
+  nanoarrow's copy dropped, and four of them carry their own licence (`pstdint.h` BSD-3-Clause,
+  Paul Hsieh; `punaligned.h`, `pmemaccess.h`, `prestrict.h` MIT). Fast DDS, Fast
+  CDR, Micro-CDR and Micro XRCE-DDS carry no `NOTICE`. So: `pubsub` and `protoc` carry nanoarrow's
+  `NOTICE.txt` and flatcc's `NOTICE` (from the upstream release tag; flatcc's identical at v0.6.1
+  and master) beside nanoarrow's licence, with the portable folder's `LICENSE` (upstream, also
+  identical at v0.6.1 and master) and `LICENSES.txt` (the four files' licence comments, verbatim);
+  `fastdds-pubsub-provider` carries the four libraries' texts in `third_party/fast-dds-<version>/` (verbatim from Fast DDS 3.4.0's source, and upstream at
+  the vendored version where its source has none), packages them as vendored entries naming Fast DDS
+  as the package that compiles them in, and fails `package()` for a Fast DDS version without that
+  folder, so an upgrade re-checks what the new version vendors. One script,
+  `scripts/check_third_party_notice.sh`, requires the libraries and the two NOTICE files in the
+  shim's, the gateway's (newly checked) and the plugin's notices. **Declined:** reading the texts out
+  of the fast-dds Conan source folder at build time (a cache detail, absent for binary-only
+  installs); documenting only (does not meet MIT's or Apache's conditions for binaries we ship).

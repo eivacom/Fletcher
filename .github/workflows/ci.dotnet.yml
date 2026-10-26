@@ -421,11 +421,11 @@ jobs:
           cp LICENSE COPYING dotnet/native/licences/
           listed dotnet/native/licences/THIRD-PARTY-LICENSES.txt
           # Compiled into the shim from source, so not in the Conan graph: their texts
-          # come from the fletcher-* packages that vendor them, and must be here.
-          for lib in nanoarrow micro-cdr micro-xrce-dds-client fast-dds; do
-            listed dotnet/native/licences/THIRD-PARTY-LICENSES.txt | grep -q "^  \* $lib " \
-              || { echo "::error::THIRD-PARTY-LICENSES.txt does not cover $lib, which is linked into the shim"; exit 1; }
-          done
+          # come from the fletcher-* packages that vendor them, and must be here; since
+          # BIND-9b-7 (D-BIND-166) also what Fast DDS compiles in from its own thirdparty/,
+          # and nanoarrow's and flatcc's Apache NOTICE files.
+          bash scripts/check_third_party_notice.sh dotnet/native/licences/THIRD-PARTY-LICENSES.txt \
+            nanoarrow micro-cdr micro-xrce-dds-client fast-dds nlohmann-json filewatch taocpp-pegtl "boost 1.73.0"
 
       # The commit the packages name in their README and nuspec (BIND-9a-2, D-BIND-145): the one
       # checked out, `ref` when ci.pr passes the PR head for the preview bundle (whose
