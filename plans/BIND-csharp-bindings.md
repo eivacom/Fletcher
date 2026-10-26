@@ -2718,6 +2718,18 @@ preparation, a fresh-context review and the close.
   knows that a stale shared-memory segment under `C:\ProgramData\eprosima\fastdds_interprocess`
   produces this crash at `create_participant`). `205abce`'s own run (40334195069) had every Fast
   DDS lane green on 3.4.3, Windows included; its one red was the timer flake part 3 fixed.
+- **9b-7, part 4, 2026-10-26: review T10, closed by 9b-5.** The review's finding (2026-10-21) was
+  that the bundle's loose `protoc/fletcher/options.proto` is never used by the consumer. Since 9b-5
+  the `options.proto` a tester receives is the package's: `Eiva.Fletcher.Protoc` carries
+  `include/fletcher/options.proto`, the Fletcher consumer refuses to build unless the package's
+  `FletcherProtoInclude` holds it, and the gRPC consumer imports it from the package and reads both
+  options back, on both runners and both frameworks in every `ci.pr` run (D-BIND-158). The loose
+  copy in the bundle keeps one use, the outside-NuGet route of `README-preview.md`'s hand-run
+  `protoc` command (`-I path/to/bundle/protoc`), which no test executes: that command is T12's
+  item, so the loose copy's exercise belongs to T12, and the copy itself retires with the bundle at
+  the merge. Noted for the release: `cd.protoc` attaches the two plugin binaries and the Protoc
+  package, no loose `options.proto`; outside NuGet the file is in the package's `include/` and in
+  the `fletcher-protoc` Conan package. No code changes.
 
 **How test builds reach testers during development, and what changes at the merge** (recorded
 2026-10-20 at the maintainer's request, D-BIND-137 to 139). Until PR #129 merges, the per-push
