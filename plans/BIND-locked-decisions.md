@@ -3977,3 +3977,39 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   gave to 9b-8, can only run on `main`, so they are the runbook's first post-merge step, before
   any tag. **Declined:** the bump and the retirement now (option B), which ends the previews for
   the rest of the round and makes BIND-10 write against a version that is already bumped.
+- **D-BIND-175 - the managed tier, `options.proto` and the generator's output get an additional
+  permission under GPL-3.0 section 7, the Fletcher Linking Exception (`LICENSE-EXCEPTION`); the
+  rest of Fletcher stays LGPL-3.0-or-later alone.** *LOCKED BY THE MAINTAINER 2026-10-27 (BIND-9b
+  review Q1, option (b) of four); the wording is a DRAFT until EIVA legal has reviewed it.*
+  D-BIND-140 reasoned about the native shim only, and "for the preview". Three more things end up
+  inside a consumer's own binary: the four managed assemblies, which NativeAOT, single-file
+  publishing and trimming compile or merge into the application (LGPL-3.0 section 4(d)(0), not
+  4(d)(1)); `options.proto`, which the Protoc package compiles into the consumer's assembly by
+  default since D-BIND-158; and the generator's output, whose licence no document stated. The
+  exception lets a consumer convey an application compiled with unmodified released managed
+  assemblies on its own terms, without sections 4(d) and 4(e) but with 4(a) to 4(c) (the notice,
+  the licence texts, the copyright line where the application shows such lines); it puts the code
+  generated from `options.proto` and the generator's output under the consumer's own terms. A
+  modified managed assembly and every native library, the shim included, stay LGPL alone, so
+  D-BIND-140's relinking route still applies to the shim. The scope is named in the exception
+  text by component, so no source file's header changes and `ci.license-headers` keeps its
+  exact SPDX check; only `LICENSE-EXCEPTION` joins its denylist. Every git author in the
+  history also commits with an `eiva.com` address (some commits use a GitHub or personal one), and
+  `AUTHORS` names EIVA A/S only, so EIVA appears to hold the copyright and can grant the
+  exception; EIVA legal is asked to confirm that with the text.
+  **The wiring, once legal has approved the text:** `LICENSE-EXCEPTION` packed into the four
+  packages and `Eiva.Fletcher.Protoc` beside `LICENSE` and `COPYING`, staged by `ci.dotnet` and
+  `ci.protoc`, required by `check_dotnet_packages.sh` and `check_protoc_package.sh`, and attached
+  to the `dotnet-v*` and `protoc-v*` Releases; the package README's licence section, the
+  Protoc README's, `dotnet/README.md`, the root `README.md`'s licence section and `CONTRIBUTING.md`
+  (a contribution to the named parts is made under the exception too) say what it permits.
+  `PackageLicenseExpression` stays `LGPL-3.0-or-later`: NuGet accepts only SPDX-listed
+  identifiers, a custom exception is not one, and the expression remains true, the exception
+  only adding permissions. The bump commit (runbook step 1) does not go before the wiring.
+  **Declined:** (a) plain LGPL with the obligations documented, which leaves NativeAOT
+  impractical for a closed-source application; (c) relicensing the managed tier permissively,
+  which gives up the LGPL for modified copies of it; (d) NativeAOT stated unsupported for
+  non-LGPL applications, which contradicts what the packages advertise. **Not covered:** the
+  C++ libraries (static Conan packages) and `gateway-client-ts` (which a bundler merges into a
+  web application) raise the same section 4(d)(0) question for their consumers; they are outside
+  this ruling.
