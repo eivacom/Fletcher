@@ -2802,8 +2802,11 @@ preparation, a fresh-context review and the close.
   path (Git Bash's `/c/...` is not mapped; on CI's Linux runner the script runs as committed);
   mutants caught: the old loader (the RID message), and a "below the floor" image that passes;
   the loader-floor guard catches a drifted number; `dotnet format`, actionlint and the README
-  snippet check clean. The minimal runs meet CI with this push, over packages that carry the
-  fixed loader.
+  snippet check clean. **Done on CI:** `78ab5b2`, every workflow green on the first attempt
+  (`ci.pr` 40504806485, 61/61, bundle `pr.129.358`); `minimal.sh`'s first CI run, over packages
+  carrying the fixed loader, passed on `runtime:8.0-noble` and `runtime:10.0-noble` (the shim
+  loaded from `runtimes/linux-x64/native/`) and was refused on `runtime:8.0-bookworm-slim` (glibc
+  2.36) with the OS's reason and the floor in the message.
 
 **How test builds reach testers during development, and what changes at the merge** (recorded
 2026-10-20 at the maintainer's request, D-BIND-137 to 139). Until PR #129 merges, the per-push
