@@ -2817,12 +2817,14 @@ preparation, a fresh-context review and the close.
   the pack job puts `fletcher-shim-<rid>.conan.lock` beside the packages,
   `check_dotnet_packages.sh` requires both, `cd.dotnet` attaches them to the Release, and the
   package README's relinking route downloads and passes it. The gateway and the code generator
-  are the next question. **Rehearsed** in the devcontainer: the check green from an empty home
-  (6 packages: asio, cmake, fast-cdr, fast-dds, foonathan-memory, tinyxml2) and five mutants
-  caught; the README's route with the lockfile, from an empty home, built the shim with the
-  locked `foonathan-memory` revision (2023, not ConanCenter's newest); actionlint, shellcheck
-  and the README snippet check clean. **On CI** (`f99bbee`): the lockfile written and checked
-  green on both legs, Windows included (the same six packages; CI resolved
+  get no lockfile, on the maintainer's ruling: they have no relinking route (standalone
+  executables, linked into nobody's work) and link only permissively licensed third-party code,
+  whose notice they already ship (D-BIND-173). **Rehearsed** in the devcontainer: the check
+  green from an empty home (6 packages: asio, cmake, fast-cdr, fast-dds, foonathan-memory,
+  tinyxml2) and five mutants caught; the README's route with the lockfile, from an empty home,
+  built the shim with the locked `foonathan-memory` revision (2023, not ConanCenter's newest);
+  actionlint, shellcheck and the README snippet check clean. **On CI** (`f99bbee`): the lockfile
+  written and checked green on both legs, Windows included (the same six packages; CI resolved
   `foonathan-memory#5d07f0...`, ConanCenter's newest); `dotnet / pack` red: on Linux MSBuild
   stamped the README's `\` line continuations as `/` and the packed-README comparison failed all
   four packages. Fixed on the maintainer's ruling: single-line commands, no backslash in the

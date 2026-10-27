@@ -3950,8 +3950,16 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   unlocked, a revision ConanCenter does not have, an extra package, revisions stripped, and a
   lockfile that keeps the `fletcher-*` entries. **Not covered:** ConanCenter serving an old
   revision is its policy, not a guarantee (a mirror needs EIVA's own Conan remote); archiving
-  the third-party sources with each release (option C) was declined for its size; the gateway
-  and the code generator are asked separately. **Found on CI** (`f99bbee`, the lockfiles green on
+  the third-party sources with each release (option C) was declined for its size. **The gateway
+  and the code generator get no lockfile** (the maintainer's ruling, 2026-10-27): they have no
+  relinking route. The shim is LGPL code linked into the user's own application, so the user
+  must be able to rebuild what we shipped; the gateway and the `protoc-gen-fletcher` plugin are
+  standalone executables we ship whole, which nobody links into their own work. What they link
+  statically is third-party code under permissive licences only (the gateway: Boost, the Fast
+  DDS chain, nlohmann_json, zlib, bzip2; the plugin: protobuf), whose duty is the notice each
+  release already carries in `THIRD-PARTY-LICENSES.txt`. A lockfile there would buy only a
+  reproducible rebuild from source, which no licence asks of us, at the cost of a check on every
+  pull request and two more release assets each. **Found on CI** (`f99bbee`, the lockfiles green on
   both legs): `dotnet pack` on Linux wrote the README's `\` line continuations as `/`, because
   MSBuild fixes the stamped text's item spec as if it were a path, and `check_dotnet_packages.sh`
   failed all four packages on the packed-README comparison. On the maintainer's ruling the
