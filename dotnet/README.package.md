@@ -242,8 +242,9 @@ check the package version or the commit, so use a shim built from the commit thi
 Fletcher is licensed under the LGPL-3.0-or-later (`LICENSE` in this package, with `COPYING`, the
 GNU GPL-3.0 text it incorporates). The shim is a shared library that the .NET assembly loads at run
 time, so you may replace it with one you build from the corresponding source, commit `@COMMIT@`.
-With [Conan 2](https://conan.io) and a C++ toolchain, from the repository's root, where `<profile>`
-is `Linux-gcc13-x86_64-Release` or `Windows-msvc194-x86_64-Release`:
+With [Conan 2](https://conan.io), CMake 3.15 or newer and the C++ toolchain the profile names (GCC 13
+on Linux, the Visual Studio 2022 C++ tools, MSVC 14.4x, on Windows), where `<profile>` is
+`Linux-gcc13-x86_64-Release` or `Windows-msvc194-x86_64-Release`:
 
 <!-- snippet: none -->
 ```bash

@@ -68,6 +68,11 @@ The project is copied into the work folder (a temporary folder by default) so th
 repository's build applies to it. Linux, or Git Bash on Windows; it needs the .NET 8 and .NET 10
 runtimes and network access to nuget.org.
 
+Two runs on one network at once disturb each other: the `fastdds` route uses a fixed domain, so a
+second consumer on the same network (two Docker containers on the default bridge, say) delivers
+its rows to the first, which fails on the duplicates (found rehearsing BIND-9b-7). Run rehearsals
+one at a time, or set `FLETCHER_PREVIEW_DDS_DOMAIN` to a different domain for each.
+
 CI: the `package-consumer` job of [`ci.package-consumer.yml`](../../.github/workflows/ci.package-consumer.yml),
 which [`ci.pr.yml`](../../.github/workflows/ci.pr.yml) calls and, as the gate before a release,
 [`cd.dotnet.yml`](../../.github/workflows/cd.dotnet.yml) (BIND-9b-6, D-BIND-162), after

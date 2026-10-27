@@ -2759,6 +2759,23 @@ preparation, a fresh-context review and the close.
   beside `fletcher-protoc-licences`. The Release and npm steps run only on a `protoc-v*` tag, so
   their first execution is the merge-time release (9b-8's dry run exercises the build and the
   comparison, never npm or the Release, D-BIND-164).
+- **9b-7, part 6, 2026-10-27 (D-BIND-171): review T12, closed without a new test.** The review
+  found neither the packages' relinking route nor `README-preview.md`'s outside-NuGet `protoc`
+  command executed by any test (T10's loose `options.proto` folded in here). A test of both, read
+  from the text a reader receives, was ruled, built and rehearsed (the `protoc` half green on Linux
+  and Windows; the relinking route green from empty Conan homes on both, both frameworks on the
+  rebuilt shim; seven mutants caught), then withdrawn on the maintainer's review: `ci.dotnet`
+  already builds the shim the route's way on both platforms and runs the whole suite on it on every
+  pull request that can change it, so the test added only the README's seven lines at the cost of a
+  native build in the release gate; and `README-preview.md` and the loose `options.proto` retire at
+  the merge. **Kept:** `dotnet/README.package.md`'s relinking route now names CMake 3.15 or newer and
+  the profile's compiler (GCC 13; the Visual Studio 2022 C++ tools, MSVC 14.4x): the Windows
+  rehearsal failed first for want of CMake, which it did not name. The consumer test's README notes
+  that two runs on one network disturb each other's `fastdds` route (fixed domain), found when two
+  rehearsal containers crossed and failed on duplicate rows. Rehearsal notes, for whoever runs the
+  route by hand on a workstation with Visual Studio 2026: the 2022 toolset beside it needs
+  `tools.microsoft.msbuild:vs_version=18` in Conan's global config, CMake on PATH (VS ships one),
+  and a short work folder (a deep one hits MSBuild's path limit in a test package).
 
 **How test builds reach testers during development, and what changes at the merge** (recorded
 2026-10-20 at the maintainer's request, D-BIND-137 to 139). Until PR #129 merges, the per-push

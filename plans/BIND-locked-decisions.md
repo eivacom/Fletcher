@@ -3861,3 +3861,27 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   thread per subscription for a test-runner condition); serialising the test projects on CI (a
   slower job for a cause the minimum removes). **Watch list:** the two `SubscriberArrow` entries
   and the gateway client's deadline case close with this on a green run.
+
+- **D-BIND-171 - review T12 closes without a new test: the relinking route stands on the CI that
+  already builds it, and the package README names everything the route needs.** *LOCKED BY THE
+  MAINTAINER 2026-10-27 (BIND-9b-7, review T12, with the bundle's loose `options.proto` folded in
+  from T10).* The maintainer first ruled a test that runs both hand-run routes from the text a
+  reader receives (the preview README's `protoc` command on every consumer run, the packages'
+  relinking route on the release gate, every dry run and a weekly schedule); it was built and
+  rehearsed, then withdrawn on the maintainer's review of it the same day, for two reasons found
+  while explaining it. **First,** `ci.dotnet` already runs the relinking route's substance on every
+  pull request that can change the shim, on both platforms: `conan create` of the same components
+  from the repository, then the whole managed suite on that Conan-built shim, which is the one the
+  package carries (stripped on Linux); so a shim a user builds with Conan is proven a drop-in each
+  time, and only the README's seven lines (component list, deploy command, output path) were
+  untested, at the cost of a 10 to 20 minute native build in the release gate that a GitHub or
+  ConanCenter outage could block. **Second,** `README-preview.md` and the bundle's loose
+  `options.proto` retire with the preview at the merge (9b-8), so a test of them would be removed
+  within weeks. **Kept:** what the rehearsals found. The route was run by hand from empty Conan
+  homes on Linux (devcontainer) and Windows (Git Bash) against bundle `pr.129.356`, both frameworks
+  green on the rebuilt shim; on Windows it failed first for want of CMake, which the README did
+  not name, so `dotnet/README.package.md` now names CMake 3.15 or newer and the profile's compiler
+  (GCC 13; the Visual Studio 2022 C++ tools, MSVC 14.4x). The consumer test's README notes that two
+  runs on one network disturb each other's `fastdds` route. **Declined:** the test as first ruled
+  (above); a static check that the README's component list matches `ci.dotnet`'s (offered as
+  optional, not taken).
