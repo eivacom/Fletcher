@@ -3966,3 +3966,14 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   README's commands are single lines and it holds no backslash, the stamping target says why, and the comparison stays the guard; escaping `\` as `%5C`
   in `Directory.Build.targets` was the alternative, not taken (untestable here: Windows does not
   convert).
+- **D-BIND-174 - 9b-8 is the fresh-context review of BIND-9b and a merge runbook; the
+  `0.6.0-alpha` bump and the preview retirement are the last two commits before the merge.**
+  *LOCKED BY THE MAINTAINER 2026-10-27 (BIND-9b-8, option A of two).* BIND-T and BIND-10 still
+  land on PR #129, so the two changes D-BIND-138 and D-BIND-139 put "in the merge" wait for
+  them: testers keep a preview bundle per push until then, and the version BIND-10's documents
+  name is the one the bump writes. 9b-8 does now what does not depend on them: the review, and
+  the runbook in the tracker (what the bump touches, what the retirement removes and keeps, and
+  the order after the merge). The first dry runs of `cd.dotnet` and `cd.protoc`, which D-BIND-164
+  gave to 9b-8, can only run on `main`, so they are the runbook's first post-merge step, before
+  any tag. **Declined:** the bump and the retirement now (option B), which ends the previews for
+  the rest of the round and makes BIND-10 write against a version that is already bumped.

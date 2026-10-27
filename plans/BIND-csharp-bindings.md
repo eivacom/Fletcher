@@ -2833,6 +2833,21 @@ preparation, a fresh-context review and the close.
   lockfile check green on both legs (the same six packages), the packed README of all four
   packages matching, both lockfiles beside the packages and in the bundle's `nuget/`, and both
   consumers (with `minimal.sh`) green on Linux and Windows.
+- **9b-8, 2026-10-27 (D-BIND-174): the fresh-context review and the merge runbook.** On the
+  maintainer's ruling (option A) 9b-8 is the review of BIND-9b and the runbook below; the
+  `0.6.0-alpha` bump and the preview retirement are the last two commits before the merge, after
+  BIND-T and BIND-10, and the first dry runs move to the runbook's first post-merge step.
+  **Review** (`plans/reviews/BIND-9b-codereview.md`, `BIND-9b-conformance.md`, at `b23f472`; three
+  fresh-context reviewers): every ruling 153 to 173 met in the tree (154 as amended by 169), no
+  defect in the machinery or the tests, 4 BLOCKERs in shipped text (B1 the Protoc README's snippet
+  fails as written, B2 "Windows NativeAOT is not yet exercised" in every package, B3 the relinking
+  route's CMake floor is 3.20 not 3.15, B4 the npm README swaps `COPYING` and `LICENSE`) and 5
+  questions (Q1 the LGPL analysis for the release and for code compiled into the consumer's binary,
+  Q2 the feed runner and key reachable from pull-request code in a public repository, Q3 the Protoc
+  package released without the consumer gate, Q4 where users get the packages after the
+  retirement, Q5 the gate's non-preview path first running at the retirement). Two DEBT items
+  are already folded into the runbook: the loose `options.proto` (M4) and the dry runs dispatched
+  one after the other (M3).
 
 **How test builds reach testers during development, and what changes at the merge** (recorded
 2026-10-20 at the maintainer's request, D-BIND-137 to 139). Until PR #129 merges, the per-push
@@ -2857,6 +2872,64 @@ from `main` after the merge:**
   change them (D-BIND-159, wired in 9b-1).
 - **Previews cleared before the first `-alpha`:** the remaining bundles deleted and testers told to
   clear their NuGet caches (D-BIND-138).
+
+**The merge runbook (9b-8, D-BIND-174).** The bump and the retirement are the last two commits on
+the branch, after BIND-T and BIND-10, each shown and pushed on its own and green on CI before the
+merge; the rest runs from `main`. Taken at `b23f472`; re-check every list against the tree when it
+runs, since BIND-T and BIND-10 land in between.
+
+1. **The bump commit, `0.6.0-alpha` in lockstep** (D-BIND-138; the shared MAJOR.MINOR rule):
+   - the recipes' `version` and every `fletcher-*` pin: `core`, `pubsub`, `arrow-bridge`,
+     `pubsub-arrow`, `fastdds-pubsub-provider`, `xrcedds-pubsub-provider`, `protoc`, `c-abi`
+     (shipped inside `Interop`, never tagged) and `integration-tests/copy-probe`; `gateway`
+     pins by range and needs no edit;
+   - `gateway/VERSION`, `gateway-client-ts/package.json`, `protoc/npm/package.json` (and their
+     `package-lock.json` root entries, through `npm install --package-lock-only`);
+   - `dotnet/Directory.Build.props` (`VersionPrefix` 0.6.0, `VersionSuffix` alpha), then the
+     dotnet lock files that record the `Interop` project range (`[0.5.0-alpha, )` in
+     `Fletcher.Tests`, `CopyOracle.Tests`, `AotSmoke`, `Benchmarks`), re-written by a
+     `dotnet restore --force-evaluate`, never by hand;
+   - the install snippets in `README.md` and the component READMEs (`core`, `pubsub`,
+     `arrow-bridge`, `pubsub-arrow`, `fastdds-pubsub-provider`, `xrcedds-pubsub-provider`).
+     **Left as they are:** the benchmark READMEs' recorded runs (they name the revision measured),
+     the vendored code, and the third-party `0.5.x` in the two `Cargo.lock` files;
+   - check: `git grep -nE "0\.5\.[0-9]+-alpha"` outside `plans/` finds only what is left on
+     purpose.
+2. **The retirement commit** (D-BIND-139, D-BIND-159):
+   - `ci.pr`: the `bundle` step, its `bundle` and `bundle-version` outputs, the
+     `bundle == 'true'` term in `consumer`, the `package-version` and `ref` inputs they feed to
+     the `dotnet`, `protoc` and `gateway` calls, the `preview` and `version` inputs to
+     `package-consumer`, and the `scripts/preview/**` filter line; the path filters then decide
+     alone, as on `main`;
+   - `ci.package-consumer.yml`: the `preview`, `version` and `head-sha` inputs and the 30-day
+     upload; the version comes from the packed `Interop`, as on every other pull request today,
+     and the 1-day hand-over artifact stays;
+   - `scripts/assemble_preview_bundle.sh` STAYS (the package-bundle job assembles with it) but
+     loses `README-preview.md` and its placeholder check, the loose `options.proto` (its copy and
+     its `need` line; D-BIND-171; `run.sh` and `minimal.sh` never read it, and
+     `ci.package-consumer.yml`'s `protoc/include/fletcher` sparse-checkout entry goes with it) and
+     the `feature/csharp-bindings` default in `VERSION`, and is renamed with its callers if the
+     word "preview" is to go; `scripts/preview/` and `dotnet/PREVIEW-TESTERS.md` are deleted;
+     whether the `ref` and `package-version` inputs of `ci.dotnet`, `ci.protoc` and `ci.gateway`
+     go with their callers is decided in the commit (review M9);
+   - `integration-tests/preview-bundle-consumer/` STAYS (it is the consumer test, `minimal.sh`
+     included); a rename is cosmetic and goes with the script's or not at all;
+   - every document that points at the preview, the package README, `dotnet/README.md` and the
+     workflow comments among them (`git grep -niE "preview bundle|PREVIEW-TESTERS|README-preview"`).
+3. **Merge** PR #129 (out of draft, its body refreshed, the watch list read).
+4. **Dry runs on `main`** (D-BIND-164): dispatch `cd.dotnet` and `cd.protoc`, one after the other
+   (both call `ci.protoc`, whose concurrency group cancels a second run on the same ref; review
+   M3), both green and recorded in this tracker before any tag.
+5. **Clear the previews** (D-BIND-138): delete the remaining `fletcher-preview-*` artifacts and tell
+   the testers to clear their NuGet caches, because `0.6.0-pr.129.N` sorts above `0.6.0-alpha`.
+6. **Tag `0.6.0-alpha`**, each tag on the merge commit and its workflow green before the next:
+   `core`, `pubsub`, `arrow-bridge`, `pubsub-arrow`, `fastdds-pubsub-provider`,
+   `xrcedds-pubsub-provider`, then `gateway`, `gateway-client`, `protoc` (also
+   `Eiva.Fletcher.Protoc`), and `dotnet` last. Every CD builds from its own tree, so the order is
+   for reading the results, not a build dependency.
+7. **The NuGet feed** (D-BIND-163), whenever an admin has done the three steps above (runner,
+   `NUGET_EIVA_API_KEY`, `NUGET_EIVA_RUNNER`): dispatch `cd.nuget-feed.yml` with the `dotnet-v`
+   and `protoc-v` tags cut before it.
 
 **Acceptance**
 
