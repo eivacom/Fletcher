@@ -252,18 +252,27 @@ GNU GPL-3.0 text it incorporates). The shim is a shared library that the .NET as
 time, so you may replace it with one you build from the corresponding source, commit `@COMMIT@`.
 With [Conan 2](https://conan.io), CMake 3.15 or newer and the C++ toolchain the profile names (GCC 13
 on Linux, the Visual Studio 2022 C++ tools, MSVC 14.4x, on Windows), where `<profile>` is
-`Linux-gcc13-x86_64-Release` or `Windows-msvc194-x86_64-Release`:
+`Linux-gcc13-x86_64-Release` or `Windows-msvc194-x86_64-Release`, and `<rid>` is `linux-x64` or
+`win-x64`:
 
 <!-- snippet: none -->
 ```bash
 git clone https://github.com/eivacom/Fletcher.git
 cd Fletcher
 git checkout @COMMIT@
+curl -fLO https://github.com/eivacom/Fletcher/releases/download/dotnet-v@VERSION@/fletcher-shim-<rid>.conan.lock
 for component in core pubsub fastdds-pubsub-provider xrcedds-pubsub-provider c-abi; do
-  conan create $component --build=missing -pr:a=.conan-profiles/<profile>
+  conan create $component --build=missing -pr:a=.conan-profiles/<profile> \
+    --lockfile=fletcher-shim-<rid>.conan.lock --lockfile-partial
 done
-conan install --requires="fletcher-c-abi/[*, include_prerelease]" --deployer=direct_deploy --deployer-folder=shim -pr:a=.conan-profiles/<profile>
+conan install --requires="fletcher-c-abi/[*, include_prerelease]" --deployer=direct_deploy --deployer-folder=shim \
+  -pr:a=.conan-profiles/<profile> --lockfile=fletcher-shim-<rid>.conan.lock --lockfile-partial
 ```
+
+The lockfile, attached to the GitHub Release `dotnet-v@VERSION@` (in a preview bundle, in its
+`nuget/` folder), pins the third-party packages the shim was built from, Fast DDS and what it
+brings, to the exact versions and Conan recipe revisions of this release. Without it, Conan takes
+ConanCenter's newest recipe revision of each, which may build them differently.
 
 The shim is then `shim/direct_deploy/fletcher-c-abi/lib/libfletcher-c-abi.so` (Linux) or
 `shim/direct_deploy/fletcher-c-abi/bin/fletcher-c-abi.dll` (Windows). Put it in place of the file

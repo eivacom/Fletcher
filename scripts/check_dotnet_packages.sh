@@ -21,7 +21,9 @@
 #     loader's message for a shim the OS refuses states the same floors;
 #   * BIND-9b-1 (D-BIND-157): Eiva.Fletcher.Interop is at most 12 MB packed;
 #   * given a <commit> (D-BIND-145): the README names it, and so does the nuspec's
-#     <repository commit>, which SourceLink and NuGet show.
+#     <repository commit>, which SourceLink and NuGet show;
+#   * BIND-9b-7 (review L14, D-BIND-173): the shim's two lockfiles are beside the packages,
+#     for a release to attach; scripts/check_conan_lockfile.sh checked their content.
 set -euo pipefail
 
 DIR=${1:?usage: check_dotnet_packages.sh <folder> [<commit>]}
@@ -117,5 +119,12 @@ for id in Eiva.Fletcher Eiva.Fletcher.Interop Eiva.Fletcher.Model Eiva.Fletcher.
     err "$PKG depends on a package that carries native assets (D-BIND-13)"
   fi
   echo "$PKG: checked"
+done
+for rid in linux-x64 win-x64; do
+  if [ -s "$DIR/fletcher-shim-$rid.conan.lock" ]; then
+    echo "$DIR/fletcher-shim-$rid.conan.lock: present"
+  else
+    err "no fletcher-shim-$rid.conan.lock beside the packages, the lockfile a release attaches for the relinking route (D-BIND-173)"
+  fi
 done
 exit $fail

@@ -8,7 +8,7 @@ feed, and the round has not merged. Every push to the branch makes a new bundle,
 
 | Folder | Contents |
 |---|---|
-| `nuget/` | `Eiva.Fletcher`, `Eiva.Fletcher.Interop` (the native shim for linux-x64 and win-x64), `Eiva.Fletcher.Model`, `Eiva.Fletcher.GatewayClient`, version `@VERSION@`, with their symbol packages; and `Eiva.Fletcher.Protoc`, the code generator for C# projects, at the same version |
+| `nuget/` | `Eiva.Fletcher`, `Eiva.Fletcher.Interop` (the native shim for linux-x64 and win-x64), `Eiva.Fletcher.Model`, `Eiva.Fletcher.GatewayClient`, version `@VERSION@`, with their symbol packages; and `Eiva.Fletcher.Protoc`, the code generator for C# projects, at the same version; and `fletcher-shim-linux-x64.conan.lock`, `fletcher-shim-win-x64.conan.lock`, the Conan lockfiles the packages' relinking route uses |
 | `gateway/` | The Fletcher gateway built from the same commit: `gateway-linux.tar.gz`, `gateway-windows.zip`. Use this gateway with `Eiva.Fletcher.GatewayClient`; the released 0.5 gateway does not accept the schema the client announces |
 | `protoc/` | The code generator outside NuGet, for C++ or a script: `protoc-gen-fletcher-linux-x64`, `protoc-gen-fletcher-windows-x64.exe`, and `fletcher/options.proto` |
 

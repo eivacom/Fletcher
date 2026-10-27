@@ -3925,3 +3925,30 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   3.0 (it sits exactly at GCC 13's C++ runtime, but it is not a named distribution; with the
   floor read off the profile it adds nothing); Debian 13 and RHEL 10 runs (no official .NET image,
   more setup for distributions above the floor); the Windows container run (above).
+- **D-BIND-173 - each release attaches the shim's Conan lockfile, third-party packages only, one
+  per platform, and the relinking route uses it.** *LOCKED BY THE MAINTAINER 2026-10-27 (BIND-9b-7,
+  review L14; option A of four).* The relinking route rebuilt the shim from the commit the
+  packages name, but took every third-party package from ConanCenter as it stands on the day:
+  the recipes pin versions (Fast DDS 3.4.3 brings fast-cdr 2.3.0, foonathan-memory 0.7.3,
+  tinyxml2 10.0.0, asio 1.29.0) but not recipe revisions, which ConanCenter replaces in place,
+  and build tools resolve by range (`cmake/[>=3.16]` gave 4.4.4). Seen while building this: a
+  local cache resolved `foonathan-memory/0.7.3#e15d68...` (2023), CI the same day
+  `#5d07f0...`. **Now:** `ci.dotnet` writes the lockfile of the graph the shim is built from
+  (`--lockfile-out` on the `conan install` that writes the notice), removes the `fletcher-*`
+  entries (`conan lock remove --requires="fletcher-*/*"`: the commit pins those, and their recipe
+  revisions hash the checkout, line endings included), and checks it with
+  `scripts/check_conan_lockfile.sh`: in an empty Conan home holding only the checkout's five
+  fletcher recipes, the shim's graph resolved from ConanCenter with the lockfile as the README
+  passes it (`--lockfile-partial`) has exactly the locked packages, recipe revisions included;
+  a graph, not a build, about 7 s a leg, so D-BIND-171 stands. The pack job puts
+  `fletcher-shim-linux-x64.conan.lock` and `fletcher-shim-win-x64.conan.lock` beside the
+  packages (so a preview bundle carries them in `nuget/`), `check_dotnet_packages.sh` requires
+  both, and `cd.dotnet` attaches them to the GitHub Release. The package README's route
+  downloads the release's lockfile and passes it to every `conan create` and the `conan install`.
+  **Rehearsed:** the README's route with the lockfile, from an empty Conan home, built the shim
+  with the locked 2023 revision fetched from ConanCenter; mutants caught: a package left
+  unlocked, a revision ConanCenter does not have, an extra package, revisions stripped, and a
+  lockfile that keeps the `fletcher-*` entries. **Not covered:** ConanCenter serving an old
+  revision is its policy, not a guarantee (a mirror needs EIVA's own Conan remote); archiving
+  the third-party sources with each release (option C) was declined for its size; the gateway
+  and the code generator are asked separately.

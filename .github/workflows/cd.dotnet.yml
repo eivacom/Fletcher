@@ -16,7 +16,8 @@
 #               │
 #               ▼
 #         release                         tag == Directory.Build.props version; the .nupkg and
-#               │                         .snupkg attached to the GitHub Release (D-BIND-153)
+#               │                         .snupkg attached to the GitHub Release (D-BIND-153),
+#               │                         with the shim's two Conan lockfiles (D-BIND-173)
 #               ▼
 #         feed (cd.nuget-feed.yml)        the Release's packages to nuget.eiva.com, from the
 #                                         self-hosted runner, once NUGET_EIVA_RUNNER is 'true'
@@ -108,6 +109,10 @@ jobs:
               [ -s "packages/$id.$VERSION.$ext" ] || { echo "::error::missing release asset $id.$VERSION.$ext"; ls -l packages; exit 1; }
             done
           done
+          # BIND-9b-7 (review L14, D-BIND-173): the shim's lockfiles, for the relinking route.
+          for rid in linux-x64 win-x64; do
+            [ -s "packages/fletcher-shim-$rid.conan.lock" ] || { echo "::error::missing release asset fletcher-shim-$rid.conan.lock"; ls -l packages; exit 1; }
+          done
           ls -l packages
 
       # D-BIND-153: the Release carries the packages whatever the feed's state, so consumers can
@@ -120,7 +125,7 @@ jobs:
             --repo "${{ github.repository }}" \
             --title "${{ github.ref_name }}" \
             --generate-notes \
-            packages/*.nupkg packages/*.snupkg
+            packages/*.nupkg packages/*.snupkg packages/*.conan.lock
 
   # D-BIND-153, D-BIND-163: skipped until the self-hosted runner exists; a release cut before then
   # is pushed later by dispatching cd.nuget-feed.yml with its tag.

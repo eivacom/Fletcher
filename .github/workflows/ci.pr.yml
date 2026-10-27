@@ -168,6 +168,8 @@ jobs:
               - 'scripts/check_shim_dependencies.sh'
               - 'scripts/check_dotnet_packages.sh'
               - 'scripts/shim_floors.env'
+              # BIND-9b-7 (D-BIND-173): and its lockfile by this one.
+              - 'scripts/check_conan_lockfile.sh'
               - 'COPYING'
               # BIND-9a-4: the package README's snippets are checked against the
               # consumer test's code.

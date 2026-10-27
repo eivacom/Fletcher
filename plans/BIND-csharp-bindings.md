@@ -2807,6 +2807,21 @@ preparation, a fresh-context review and the close.
   carrying the fixed loader, passed on `runtime:8.0-noble` and `runtime:10.0-noble` (the shim
   loaded from `runtimes/linux-x64/native/`) and was refused on `runtime:8.0-bookworm-slim` (glibc
   2.36) with the OS's reason and the floor in the message.
+- **9b-7, part 8, 2026-10-27 (D-BIND-173): review L14, the shim's lockfile with the release.**
+  The relinking route took the third-party packages from ConanCenter as it stands on the day
+  (versions pinned, recipe revisions and build tools not). **Ruled (option A) and built:**
+  `ci.dotnet` writes the lockfile of the graph each leg builds the shim from, third-party
+  packages only, and checks it with `scripts/check_conan_lockfile.sh` (an empty Conan home, the
+  five fletcher recipes exported, the shim's graph resolved from ConanCenter with
+  `--lockfile-partial`: exactly the locked packages, revisions included; seconds, no build);
+  the pack job puts `fletcher-shim-<rid>.conan.lock` beside the packages,
+  `check_dotnet_packages.sh` requires both, `cd.dotnet` attaches them to the Release, and the
+  package README's relinking route downloads and passes it. The gateway and the code generator
+  are the next question. **Rehearsed** in the devcontainer: the check green from an empty home
+  (6 packages: asio, cmake, fast-cdr, fast-dds, foonathan-memory, tinyxml2) and five mutants
+  caught; the README's route with the lockfile, from an empty home, built the shim with the
+  locked `foonathan-memory` revision (2023, not ConanCenter's newest); actionlint, shellcheck
+  and the README snippet check clean. The Windows leg meets CI with the push.
 
 **How test builds reach testers during development, and what changes at the merge** (recorded
 2026-10-20 at the maintainer's request, D-BIND-137 to 139). Until PR #129 merges, the per-push

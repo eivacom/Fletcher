@@ -168,10 +168,16 @@ jobs:
               echo "stripped: $(stat -c %s "$SHIM") -> $(stat -c %s "$NATIVE/libfletcher-c-abi.so") bytes, $(echo "$EXPORTS_AFTER" | wc -l) exports unchanged"
               SHIM="$NATIVE/libfletcher-c-abi.so"
               bash /workspace/scripts/check_shim_dependencies.sh "$SHIM"
+              # BIND-9b-7 (review L14, D-BIND-173): the lockfile of the same graph, third-party
+              # packages only, which a release attaches for the relinking route; checked to
+              # resolve exactly that graph from ConanCenter in an empty Conan home.
+              LOCK="$NATIVE/fletcher-shim-linux-x64.conan.lock"
               conan install --requires="fletcher-c-abi/[*, include_prerelease]" -o "fletcher-c-abi/*:with_probe_shim=True" \
                 --deployer=/workspace/gateway/deployers/third_party_licenses.py --deployer-folder="$NATIVE" \
-                -c tools.graph:skip_binaries=False -pr:a=$PROFILE
+                -c tools.graph:skip_binaries=False -pr:a=$PROFILE --lockfile-out="$LOCK"
               test -s "$NATIVE/THIRD-PARTY-LICENSES.txt"
+              conan lock remove --requires="fletcher-*/*" --lockfile="$LOCK" --lockfile-out="$LOCK"
+              bash /workspace/scripts/check_conan_lockfile.sh "$LOCK" "$PROFILE"
 
               cd /workspace/dotnet
               echo "::group::dotnet --info"
@@ -203,7 +209,7 @@ jobs:
             '
 
       # Handed to the pack job, which packs once for both RIDs (BIND-9a-0).
-      - name: Upload the Linux shim and its notice
+      - name: Upload the Linux shim, its notice and its lockfile
         uses: actions/upload-artifact@v7.0.1
         with:
           name: dotnet-native-linux-x64
@@ -308,12 +314,17 @@ jobs:
           NATIVE="$PWD/dotnet/native/win-x64"
           mkdir -p "$NATIVE"
           cp "${{ steps.shim.outputs.path }}" "$NATIVE/"
+          # BIND-9b-7 (review L14, D-BIND-173): the lockfile, as on the Linux leg.
+          LOCK="$NATIVE/fletcher-shim-win-x64.conan.lock"
           conan install --requires="fletcher-c-abi/[*, include_prerelease]" -o "fletcher-c-abi/*:with_probe_shim=True" \
             --deployer=gateway/deployers/third_party_licenses.py --deployer-folder="$NATIVE" \
-            -c tools.graph:skip_binaries=False -pr:a="$PWD/.conan-profiles/Windows-msvc194-x86_64-Release"
+            -c tools.graph:skip_binaries=False -pr:a="$PWD/.conan-profiles/Windows-msvc194-x86_64-Release" \
+            --lockfile-out="$LOCK"
           test -s "$NATIVE/THIRD-PARTY-LICENSES.txt"
+          conan lock remove --requires="fletcher-*/*" --lockfile="$LOCK" --lockfile-out="$LOCK"
+          bash scripts/check_conan_lockfile.sh "$LOCK" "$PWD/.conan-profiles/Windows-msvc194-x86_64-Release"
 
-      - name: Upload the Windows shim and its notice
+      - name: Upload the Windows shim, its notice and its lockfile
         uses: actions/upload-artifact@v7.0.1
         with:
           name: dotnet-native-win-x64
@@ -398,13 +409,13 @@ jobs:
           image: ${{ inputs.devcontainer-image }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Download the Linux shim and its notice
+      - name: Download the Linux shim, its notice and its lockfile
         uses: actions/download-artifact@v8.0.1
         with:
           name: dotnet-native-linux-x64
           path: dotnet/native/linux-x64
 
-      - name: Download the Windows shim and its notice
+      - name: Download the Windows shim, its notice and its lockfile
         uses: actions/download-artifact@v8.0.1
         with:
           name: dotnet-native-win-x64
@@ -452,6 +463,11 @@ jobs:
                   -p:FletcherLicenceDir=/workspace/dotnet/native/licences \
                   -p:FletcherSourceCommit=$SOURCE_COMMIT
               done
+              # BIND-9b-7 (review L14, D-BIND-173): the two lockfiles travel with the packages,
+              # so a release attaches them and a preview bundle carries them in nuget/.
+              for RID in linux-x64 win-x64; do
+                cp /workspace/dotnet/native/\$RID/fletcher-shim-\$RID.conan.lock /workspace/dotnet/artifacts/
+              done
             "
 
       # D-BIND-13 and D-BIND-134 on the PACKED packages: Interop carries exactly the two
@@ -472,4 +488,5 @@ jobs:
           path: |
             dotnet/artifacts/*.nupkg
             dotnet/artifacts/*.snupkg
+            dotnet/artifacts/*.conan.lock
           retention-days: 5
