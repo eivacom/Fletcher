@@ -17,7 +17,8 @@
 #   * BIND-9a-2 (D-BIND-140 to 142, D-BIND-149): every package carries its README.md at
 #     its root, named by the nuspec, and it is dotnet/README.package.md with exactly the
 #     version and the commit filled in (so nothing was lost or mangled on the way, and
-#     the floors it states are the ones in shim_floors.env);
+#     the floors it states are the ones in shim_floors.env); BIND-9b-7 (D-BIND-172): the
+#     loader's message for a shim the OS refuses states the same floors;
 #   * BIND-9b-1 (D-BIND-157): Eiva.Fletcher.Interop is at most 12 MB packed;
 #   * given a <commit> (D-BIND-145): the README names it, and so does the nuspec's
 #     <repository commit>, which SourceLink and NuGet show.
@@ -27,6 +28,7 @@ DIR=${1:?usage: check_dotnet_packages.sh <folder> [<commit>]}
 COMMIT=${2:-}
 HERE=$(cd "$(dirname "$0")" && pwd)
 TEMPLATE="$HERE/../dotnet/README.package.md"
+LOADER="$HERE/../dotnet/src/Fletcher.Interop/NativeLoader.cs"
 # shellcheck source=shim_floors.env
 . "$HERE/shim_floors.env"
 fail=0
@@ -63,6 +65,8 @@ PY
 
 for fact in "glibc $GLIBC_FLOOR" "GLIBCXX_$GLIBCXX_FLOOR"; do
   grep -qF "$fact" "$TEMPLATE" || err "dotnet/README.package.md does not state $fact, the floor in scripts/shim_floors.env (D-BIND-149)"
+  # The loader quotes the floor when the OS refuses a shim that is there (D-BIND-172).
+  grep -qF "$fact" "$LOADER" || err "dotnet/src/Fletcher.Interop/NativeLoader.cs does not state $fact, the floor in scripts/shim_floors.env (D-BIND-172)"
 done
 
 for id in Eiva.Fletcher Eiva.Fletcher.Interop Eiva.Fletcher.Model Eiva.Fletcher.GatewayClient; do

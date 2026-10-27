@@ -74,6 +74,13 @@ await client.publish('telemetry', Telemetry, {
 | `linux/x64` | `protoc-gen-fletcher-linux-x64` |
 | `win32/x64` | `protoc-gen-fletcher-windows-x64.exe` |
 
+The downloaded binary loads the C++ runtime of the compiler it is built with, so the machine that runs code generation needs:
+
+- **`linux/x64`:** glibc 2.34 and the GCC 13 C++ runtime (libstdc++ with `GLIBCXX_3.4.32`) or newer; for example Ubuntu 24.04, Debian 13 or RHEL 10. On Ubuntu 22.04, Debian 12 or RHEL 9 the plugin does not start, and the system reports `GLIBCXX_3.4.32' not found`.
+- **`win32/x64`:** the Visual C++ 2015-2022 redistributable (x64), 14.40 or newer; without it the plugin does not start, because `MSVCP140.dll` and `VCRUNTIME140.dll` are missing.
+
+These follow the build profiles; see [Platform requirements of the prebuilt plugin](https://github.com/eivacom/Fletcher/blob/main/protoc/README.md#platform-requirements-of-the-prebuilt-plugin).
+
 Adding macOS / arm64 is tracked in [Fletcher's issue tracker](https://github.com/eivacom/Fletcher/issues).
 
 ## Environment variables

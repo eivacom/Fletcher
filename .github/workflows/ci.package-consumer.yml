@@ -181,3 +181,12 @@ jobs:
       - name: Consume them
         shell: bash
         run: bash integration-tests/preview-bundle-consumer/run.sh bundle "$RUNNER_TEMP/preview-consumer"
+
+      # BIND-9b-7 (review T14, D-BIND-172): the Fletcher consumer just built, run on machines that
+      # hold only the OS and .NET (Microsoft's runtime images): green on Ubuntu 24.04, the oldest
+      # distribution the README names, and refused with the loader's floor message on Debian 12.
+      # The Windows floor rests on the exact dumpbin list ci.dotnet checks and on that message.
+      - name: Run it on minimal machines, at and below the floor
+        if: runner.os == 'Linux'
+        shell: bash
+        run: bash integration-tests/preview-bundle-consumer/minimal.sh "$RUNNER_TEMP/preview-consumer"

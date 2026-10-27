@@ -67,6 +67,8 @@ tar -xzf gateway-linux.tar.gz
 
 To build from source instead of using a release binary, see [Building](#building) below.
 
+**Platform requirements.** The release binaries are built with the repository's two Conan profiles, and their floors are those profiles': on Linux (`Linux-gcc13-x86_64-Release`), glibc 2.38 and the GCC 13 C++ runtime (`libstdc++` with `GLIBCXX_3.4.32`) or newer, for example Ubuntu 24.04, Debian 13 or RHEL 10; on Windows (`Windows-msvc194-x86_64-Release`), the Visual C++ 2015-2022 redistributable (x64), 14.40 or newer, beside DLLs every Windows has. Measured on the 2026-10-27 binaries (BIND-9b-7, D-BIND-172). The gateway's glibc floor is above the C# shim's 2.34 because code compiled from source in the devcontainer (Ubuntu 24.04's glibc 2.39 headers) calls `strtol` and its siblings, which those headers bind to the glibc 2.38 symbols `__isoc23_strtol` and kin.
+
 ### Licences in the archive
 
 Both archives carry two licence files next to the executable. Keep both with the binary if you redistribute the gateway.

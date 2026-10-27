@@ -78,29 +78,88 @@ internal static class NativeLoader
         // The development route. There is no NuGet layout in a source build, so
         // the shim is staged beside the test binary or under a `runtimes` folder
         // by the build; probing both keeps `dotnet test` working from a plain
-        // checkout without a packaging step.
+        // checkout without a packaging step. It is also where an installed
+        // package's shim is found again when the ordinary route failed, so the
+        // failure can say why.
+        return LoadFromCandidates(
+            CandidatePaths(AssemblyDirectory(assembly), AppContext.BaseDirectory, RuntimeInformation.RuntimeIdentifier),
+            RuntimeInformation.RuntimeIdentifier);
+    }
+
+    /// <summary>Load the first candidate that exists and loads; otherwise throw, saying why.</summary>
+    /// <remarks>
+    /// Thrown, not returned as zero. Returning zero hands the caller the runtime's own
+    /// message, which lists what it tried and never names the cause. Two causes are told
+    /// apart (BIND-9b-7, review T14, D-BIND-172):
+    /// <list type="bullet">
+    ///   <item>No candidate exists: the RID is not one the package ships, or a source build
+    ///   did not stage the shim.</item>
+    ///   <item>A candidate exists and the operating system refused it: almost always a machine
+    ///   below the platform floor the shim is built for (an older glibc or C++ runtime, a
+    ///   missing Visual C++ redistributable). The operating system's own reason is quoted,
+    ///   because it names the missing piece (for example "version `GLIBCXX_3.4.32' not
+    ///   found"), and the floor is stated beside it. Blaming the RID here, as this did before,
+    ///   sends the reader looking for a platform that is in fact supported.</item>
+    /// </list>
+    /// Internal, with the candidates passed in, so a test can hand it a file that exists and
+    /// cannot load.
+    /// </remarks>
+    internal static IntPtr LoadFromCandidates(IEnumerable<string> candidates, string rid)
+    {
         List<string> probed = [];
-        foreach (string candidate in CandidatePaths(AssemblyDirectory(assembly), AppContext.BaseDirectory, RuntimeInformation.RuntimeIdentifier))
+        List<string> refused = [];
+        foreach (string candidate in candidates)
         {
             probed.Add(candidate);
-            if (File.Exists(candidate) && NativeLibrary.TryLoad(candidate, out handle))
+            if (!File.Exists(candidate))
             {
-                return handle;
+                continue;
+            }
+
+            try
+            {
+                return NativeLibrary.Load(candidate);
+            }
+            catch (Exception e) when (e is DllNotFoundException or BadImageFormatException)
+            {
+                refused.Add($"{candidate}: {e.Message}");
             }
         }
 
-        // Thrown, not returned as zero. Returning zero hands the caller the
-        // runtime's own message, which lists what it tried and never mentions the
-        // RID - and the RID is the answer nine times out of ten.
+        string alsoProbed = probed.Count == 0 ? string.Empty : " Also probed: " + string.Join("; ", probed) + ".";
+        if (refused.Count > 0)
+        {
+            throw new DllNotFoundException(
+                $"Fletcher found its native shim '{NativeMethods.LibraryName}' for RID '{rid}', but the " +
+                "operating system could not load it: " + string.Join("; ", refused) + ". This almost " +
+                "always means the machine is below the platform floor the shim is built for: " +
+                PlatformFloor(rid) + "." + alsoProbed);
+        }
+
         throw new DllNotFoundException(
             $"Fletcher could not load its native shim '{NativeMethods.LibraryName}' for RID " +
-            $"'{RuntimeInformation.RuntimeIdentifier}'. Eiva.Fletcher.Interop ships one native " +
+            $"'{rid}'. Eiva.Fletcher.Interop ships one native " +
             "asset per supported RID; if yours is not among them the package cannot run on this " +
             "platform, and no managed fallback exists because the wire codec is native by design " +
             "(D-BIND-1). In a source build, the shim is produced by `conan create c-abi` and must " +
-            "be staged beside the test binary." +
-            (probed.Count == 0 ? string.Empty : " Also probed: " + string.Join("; ", probed) + "."));
+            "be staged beside the test binary." + alsoProbed);
     }
+
+    /// <summary>The platform floor of the shim for <paramref name="rid"/>, as the build profile that
+    /// produces it sets it (D-BIND-172).</summary>
+    /// <remarks>
+    /// The numbers are <c>scripts/shim_floors.env</c>'s and the package README's, and
+    /// <c>scripts/check_dotnet_packages.sh</c> requires this file to state the same ones, so a
+    /// floor that moves fails the pack until it moves here too.
+    /// </remarks>
+    internal static string PlatformFloor(string rid) => rid switch
+    {
+        "linux-x64" => "on linux-x64, glibc 2.34 and the GCC 13 C++ runtime (libstdc++ with GLIBCXX_3.4.32) " +
+            "or newer, as the Linux-gcc13 build profile produces it, for example Ubuntu 24.04, Debian 13 or RHEL 10",
+        "win-x64" => "on win-x64, the Visual C++ 2015-2022 redistributable (x64), 14.40 or newer, as the " +
+            "Windows-msvc194 build profile requires",
+        _ => $"Eiva.Fletcher.Interop ships no shim for '{rid}', so this file is not one of the package's",
+    };
 
     /// <summary>
     /// The directory of <paramref name="assembly"/>'s file, or <see langword="null"/> when it

@@ -3885,3 +3885,43 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   runs on one network disturb each other's `fastdds` route. **Declined:** the test as first ruled
   (above); a static check that the README's component list matches `ci.dotnet`'s (offered as
   optional, not taken).
+
+- **D-BIND-172 - the platform floors are the build profiles', tested on a minimal Ubuntu 24.04 and
+  below the floor on Debian 12, and a shim the OS refuses is reported as such.** *LOCKED BY THE
+  MAINTAINER 2026-10-27 (BIND-9b-7, review T14).* **The floors follow the two Conan profiles**,
+  the maintainer's principle: `Linux-gcc13-x86_64-Release` builds with GCC 13, so the C++ runtime
+  floor is GCC 13's (`GLIBCXX_3.4.32`); `Windows-msvc194-x86_64-Release` builds with MSVC 14.40,
+  so the floor is the Visual C++ redistributable 14.40. glibc is not a profile setting (the build
+  machine's headers and ConanCenter's prebuilt binaries set it), so it stays measured: 2.34 for the
+  shim (D-BIND-169) and 2.38 for the gateway, whose code compiled in the devcontainer calls
+  `strtol` and its siblings, bound by glibc 2.39's headers to the 2.38 `__isoc23_*` symbols. The
+  named distributions (Ubuntu 24.04, Debian 13, RHEL 10) all carry a newer C++ runtime than GCC
+  13's and are examples that meet the floor, not the floor. The package README, the preview README,
+  the gateway README and `shim_floors.env` say so. **Tested on a minimal machine, every consumer
+  run on Linux:** `integration-tests/preview-bundle-consumer/minimal.sh` runs the Fletcher consumer
+  `run.sh` built, with the bundle's gateway, in Microsoft's .NET runtime images (the OS and .NET,
+  nothing else): green on Ubuntu 24.04 (`runtime:8.0-noble`, `runtime:10.0-noble`), the oldest
+  distribution named; refused on Debian 12 (`runtime:8.0-bookworm-slim`, glibc 2.36, GCC 12's C++
+  runtime), where the message must quote the OS's `GLIBCXX_3.4.32' not found` and the floor.
+  **Windows** keeps the exact `dumpbin` list `ci.dotnet` checks on every run (the maintainer's
+  choice over a Windows Server Core container run, which would cost several minutes a run and
+  could not be rehearsed here). **The loader's message**, found wrong while scoping this: a shim
+  that is there and refused by the OS was reported as a perhaps-unshipped RID, which on Debian 12
+  named 'linux-x64', a supported RID, and nothing about glibc or the C++ runtime. Now
+  `NativeLoader.LoadFromCandidates` reports a present-but-refused shim with the OS's own reason
+  and the floor of its RID's profile (`PlatformFloor`), and keeps the RID message for no shim at
+  all; three unit tests pin it, and `check_dotnet_packages.sh` requires the loader to state the
+  floors in `shim_floors.env`, as it requires of the README. **The code generator has the same
+  floors, stated nowhere until now:** the prebuilt `protoc-gen-fletcher` (the Release asset, the
+  npm package's download, the Protoc NuGet package's content) links protobuf and zlib statically
+  but loads the C++ runtime, measured at glibc 2.34 and `GLIBCXX_3.4.32` on Linux and MSVCP140 and
+  VCRUNTIME140 on Windows. `main` has the same floors (identical profiles, the same GCC 13 build
+  image), so this is not a regression of the round; but a developer on Ubuntu 22.04 or Debian 12
+  saw "Supported platforms: linux/x64" and then the OS's refusal. `protoc/README.md`, the npm
+  README and the Protoc NuGet README now state the floors, and two workflow comments that said the
+  plugin has no DLL dependencies (`ci.protoc`, `ci.integration-test.protoc-plugin-cli`) now say it
+  needs the redistributable. Stated, not tested: the plugin's dependencies come from the same
+  profiles as the shim's, whose floors the minimal runs test. **Declined:** testing on Azure Linux
+  3.0 (it sits exactly at GCC 13's C++ runtime, but it is not a named distribution; with the
+  floor read off the profile it adds nothing); Debian 13 and RHEL 10 runs (no official .NET image,
+  more setup for distributions above the floor); the Windows container run (above).

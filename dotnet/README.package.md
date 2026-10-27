@@ -227,11 +227,19 @@ nothing in this section applies to them.
 
 ### Platform requirements
 
-- **linux-x64:** glibc 2.34 and the GCC 13 C++ runtime (`libstdc++` with `GLIBCXX_3.4.32`) or
-  newer: Ubuntu 24.04, Debian 13, RHEL 10 or newer (the C++ runtime sets that floor). The shim
-  loads only `libstdc++`, `libgcc_s`, `libm` and `libc`.
-- **win-x64:** the latest Visual C++ 2015-2022 redistributable (x64), 14.40 or newer. Otherwise
-  the shim loads only DLLs every Windows has.
+The shim is built with Fletcher's two Conan build profiles, and each profile sets the floor of
+the machines it runs on:
+
+- **linux-x64**, built with GCC 13 (profile `Linux-gcc13-x86_64-Release`): glibc 2.34 and the
+  GCC 13 C++ runtime (`libstdc++` with `GLIBCXX_3.4.32`) or newer, for example Ubuntu 24.04,
+  Debian 13 or RHEL 10. The shim loads only `libstdc++`, `libgcc_s`, `libm` and `libc`. Every
+  pull request runs a consumer of these packages on a minimal Ubuntu 24.04 that has only .NET.
+- **win-x64**, built with the Visual Studio 2022 C++ tools, MSVC 14.40 (profile
+  `Windows-msvc194-x86_64-Release`): the Visual C++ 2015-2022 redistributable (x64), 14.40 or
+  newer. Otherwise the shim loads only DLLs every Windows has.
+
+Below the floor the shim does not load, and `Eiva.Fletcher.Interop` says so: its message quotes
+the operating system's reason (for example a missing `GLIBCXX_3.4.32`) and states the floor.
 
 When the shim is loaded, `Eiva.Fletcher.Interop` checks that it speaks the binding ABI this
 package was built against, and refuses one that does not, with a message saying so. It does not

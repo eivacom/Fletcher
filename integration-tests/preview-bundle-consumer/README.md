@@ -31,6 +31,14 @@ gateway and plugin working together as shipped, on Linux and Windows.
 - **Reach the bundled gateway** through `Eiva.Fletcher.GatewayClient`: the bundle's gateway is
   started over `inprocess`, and the generated gateway pair carries the same rows across it, row by
   row and as one batch.
+- **On minimal machines, at and below the floor** ([`minimal.sh`](minimal.sh), Linux; BIND-9b-7,
+  review T14, D-BIND-172). The Fletcher consumer `run.sh` built, with the bundle's gateway, runs
+  in Microsoft's .NET runtime images, which hold the operating system and .NET and nothing else:
+  on Ubuntu 24.04 (`runtime:8.0-noble`, `runtime:10.0-noble`), the oldest distribution the
+  package README names, every route must pass; on Debian 12 (`runtime:8.0-bookworm-slim`, glibc
+  2.36 and GCC 12's C++ runtime) it must fail with the loader's message for a shim that is there
+  and refused, quoting the operating system's reason (`GLIBCXX_3.4.32' not found`) and the floor.
+  The Windows floor rests on the exact `dumpbin` list `ci.dotnet` checks and on the same message.
 
 Each route must deliver exactly the rows sent, field for field (a nested message, a Timestamp, a
 repeated field, a map), and nothing more: a route that receives through a queue waits briefly
@@ -62,11 +70,14 @@ marker lines around it, and paste the region, unindented, into the README under 
 
 ```bash
 bash integration-tests/preview-bundle-consumer/run.sh <unpacked bundle> [<work folder>]
+bash integration-tests/preview-bundle-consumer/minimal.sh <the same work folder>
 ```
 
 The project is copied into the work folder (a temporary folder by default) so that nothing of the
 repository's build applies to it. Linux, or Git Bash on Windows; it needs the .NET 8 and .NET 10
-runtimes and network access to nuget.org.
+runtimes and network access to nuget.org. `minimal.sh` needs Docker with Linux containers and
+access to `mcr.microsoft.com`; from Git Bash on Windows, Docker Desktop does not map the `/c/...`
+paths Git Bash gives it, so rehearse it on Linux (as CI runs it).
 
 Two runs on one network at once disturb each other: the `fastdds` route uses a fixed domain, so a
 second consumer on the same network (two Docker containers on the default bridge, say) delivers
@@ -81,4 +92,5 @@ only this folder checked out. It runs on every pull request that can change what
 (the `dotnet`, `gateway` or `protoc` filter, or the round's own branch; D-BIND-159), against the
 packages just packed: on `feature/csharp-bindings` the 30-day preview bundle, elsewhere the same
 folder assembled for the run and kept for a day. It stays after the round merges, and BIND-9b
-also makes it the gate `cd.dotnet` passes before a release is published.
+also makes it the gate `cd.dotnet` passes before a release is published. On the Linux runner the
+job then runs `minimal.sh` over the same work folder (D-BIND-172).

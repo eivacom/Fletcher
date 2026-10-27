@@ -215,6 +215,15 @@ void Read(const std::shared_ptr<arrow::RecordBatch>& batch) {
 
 > The exact getter names mirror your proto field names; replace `id` / `opt_count` with your own. This snippet is mirrored by a compile-checked integration test (`integration-tests/protoc-arrow-bridge/tests/test_accessor_readme_example.cpp`), and the cross-language C++/Rust parity is proven by the capstone in [`integration-tests/accessor-capstone/`](../integration-tests/accessor-capstone/).
 
+## Platform requirements of the prebuilt plugin
+
+The prebuilt plugin binaries, the `protoc-gen-fletcher-*` assets of each [`protoc-v*`](https://github.com/eivacom/Fletcher/releases?q=protoc) GitHub Release that the npm package downloads and the NuGet package carries, are built with the two Conan profiles in [`.conan-profiles/`](../.conan-profiles/). Protobuf and zlib are linked in; the C++ runtime is not, so the machine that runs code generation needs the runtime of the profile's compiler:
+
+- **linux-x64:** glibc 2.34 and the GCC 13 C++ runtime (libstdc++ with `GLIBCXX_3.4.32`) or newer, as `Linux-gcc13-x86_64-Release` produces it; for example Ubuntu 24.04, Debian 13 or RHEL 10. On Ubuntu 22.04, Debian 12 or RHEL 9 the plugin does not start, and the system reports `GLIBCXX_3.4.32' not found`.
+- **win-x64:** the Visual C++ 2015-2022 redistributable (x64), 14.40 or newer, as `Windows-msvc194-x86_64-Release` (`compiler.runtime=dynamic`) requires; without it the plugin does not start, because `MSVCP140.dll` and `VCRUNTIME140.dll` are missing.
+
+A plugin you build from source with your own Conan profile needs only your toolchain's runtime.
+
 ## npm package (TypeScript / JS consumers)
 
 For TypeScript / JavaScript projects that consume Fletcher topics via `@eiva/fletcher-gateway-client`, the plugin ships as the [**`@eiva/protoc-gen-fletcher`**](https://www.npmjs.com/package/@eiva/protoc-gen-fletcher) npm package — a Node shim that downloads the platform-matching native binary from this repo's GitHub Releases on first invocation and exposes it as `protoc-gen-fletcher` in `node_modules/.bin/`.

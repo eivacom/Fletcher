@@ -21,6 +21,20 @@ TypeScript projects do, and take protoc itself from your side, for example from
 On Linux the package makes the plugin executable before your build steps run. On any other
 platform `FletcherProtocPlugin` is empty and the build warns (`FLETCHERPROTOC001`).
 
+## Platform requirements
+
+The plugin loads the C++ runtime of the compiler it is built with, so the machine that builds
+your project needs:
+
+- **linux-x64:** glibc 2.34 and the GCC 13 C++ runtime (libstdc++ with `GLIBCXX_3.4.32`) or
+  newer; for example Ubuntu 24.04, Debian 13 or RHEL 10. On Ubuntu 22.04, Debian 12 or RHEL 9 the
+  plugin does not start, and the system reports `GLIBCXX_3.4.32' not found`.
+- **win-x64:** the Visual C++ 2015-2022 redistributable (x64), 14.40 or newer; without it the
+  plugin does not start, because `MSVCP140.dll` and `VCRUNTIME140.dll` are missing.
+
+These are the floors of the build profiles, `Linux-gcc13-x86_64-Release` and
+`Windows-msvc194-x86_64-Release`, the same as the `Eiva.Fletcher` packages' native shim.
+
 ## Generating C#
 
 ```xml

@@ -176,4 +176,71 @@ public sealed class NativeLoaderTests
         Assert.Equal(2, aot.Length);
         Assert.All(aot, p => Assert.StartsWith(app, p, StringComparison.Ordinal));
     }
+
+    /// <summary>
+    /// BIND-9b-7 (review T14, D-BIND-172): a shim that is THERE but the operating system will not
+    /// load is reported as such, with the operating system's reason and the platform floor, not
+    /// as an unsupported RID.
+    /// </summary>
+    /// <remarks>
+    /// Found running the packed consumer on Debian 12, below the floor: the package's shim was in
+    /// place and refused for want of GLIBCXX_3.4.32, and the message said the RID 'linux-x64' was
+    /// perhaps not shipped. A file of the shim's name that is not a library stands in for a shim
+    /// the loader refuses; a missing candidate before it shows that only the present one is
+    /// reported as refused.
+    /// </remarks>
+    [Fact]
+    public void AShimThatIsThereButWillNotLoadIsReportedWithTheReasonAndTheFloor()
+    {
+        string folder = Path.Combine(Path.GetTempPath(), "fletcher-refused-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            string missing = Path.Combine(folder, "absent", "libfletcher-c-abi.so");
+            string present = Path.Combine(folder, "libfletcher-c-abi.so");
+            File.WriteAllText(present, "not a shared library");
+
+            DllNotFoundException e = Assert.Throws<DllNotFoundException>(
+                () => NativeLoader.LoadFromCandidates([missing, present], "linux-x64"));
+
+            Assert.Contains("found its native shim", e.Message, StringComparison.Ordinal);
+            Assert.Contains("the operating system could not load it: " + present + ":", e.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain(missing + ":", e.Message, StringComparison.Ordinal);
+            Assert.Contains("glibc 2.34", e.Message, StringComparison.Ordinal);
+            Assert.Contains("GLIBCXX_3.4.32", e.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain("if yours is not among them", e.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// When no candidate exists at all, the message is still the one about the RID: that is the
+    /// cause when nothing was found (D-BIND-172 keeps it).
+    /// </summary>
+    [Fact]
+    public void NoShimAtAllIsStillReportedAgainstTheRid()
+    {
+        string missing = Path.Combine(Path.GetTempPath(), "fletcher-absent-" + Guid.NewGuid().ToString("N"), "libfletcher-c-abi.so");
+
+        DllNotFoundException e = Assert.Throws<DllNotFoundException>(
+            () => NativeLoader.LoadFromCandidates([missing], "linux-musl-x64"));
+
+        Assert.Contains("for RID 'linux-musl-x64'", e.Message, StringComparison.Ordinal);
+        Assert.Contains("if yours is not among them", e.Message, StringComparison.Ordinal);
+        Assert.Contains("Also probed: " + missing, e.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("found its native shim", e.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>Each shipped RID's floor is the one its build profile sets (D-BIND-172).</summary>
+    [Fact]
+    public void EachShippedRidStatesTheFloorOfItsBuildProfile()
+    {
+        Assert.Contains("Linux-gcc13", NativeLoader.PlatformFloor("linux-x64"), StringComparison.Ordinal);
+        Assert.Contains("14.40", NativeLoader.PlatformFloor("win-x64"), StringComparison.Ordinal);
+        Assert.Contains("Windows-msvc194", NativeLoader.PlatformFloor("win-x64"), StringComparison.Ordinal);
+        Assert.Contains("ships no shim", NativeLoader.PlatformFloor("osx-arm64"), StringComparison.Ordinal);
+    }
 }

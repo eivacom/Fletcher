@@ -59,9 +59,12 @@ on:
 # single-file binary (protoc-gen-fletcher-*, for GitHub Release / the
 # @eiva/protoc-gen-fletcher npm shim and direct downloads). protoc links
 # protobuf + zlib statically (the recipe pins protobuf static and static is the
-# profile default), so the raw binary has no runtime DLL dependencies — same
-# way Google ships protoc.exe. cd.protoc.yml's create-release job downloads
-# both artifacts on tag-push.
+# profile default), so the raw binary needs no library of ours beside it. It
+# does load the C++ runtime dynamically, as both profiles make it: libstdc++
+# (GLIBCXX_3.4.32, GCC 13) on Linux, and on Windows MSVCP140/VCRUNTIME140
+# from the VC++ redistributable (compiler.runtime=dynamic); protoc/README.md
+# states those floors (D-BIND-172). cd.protoc.yml's create-release job
+# downloads both artifacts on tag-push.
 
 jobs:
   # Fast pre-flight: verify that conanfile.py and package.json carry the same

@@ -2776,6 +2776,34 @@ preparation, a fresh-context review and the close.
   route by hand on a workstation with Visual Studio 2026: the 2022 toolset beside it needs
   `tools.microsoft.msbuild:vs_version=18` in Conan's global config, CMake on PATH (VS ships one),
   and a short work folder (a deep one hits MSBuild's path limit in a test package).
+- **9b-7, part 7, 2026-10-27 (D-BIND-172): review T14, the floors on a minimal machine.** The
+  review found the floors never tested on a machine without development tools (no Visual Studio,
+  no compilers). Scoping it first showed the floors hold: the consumer built from bundle
+  `pr.129.356`, run in Microsoft's .NET runtime images, passed every route on Ubuntu 24.04 (glibc
+  2.39, `GLIBCXX_3.4.33`) on both frameworks, and was refused on Debian 12 (glibc 2.36, GCC 12's
+  runtime). It also showed the loader's message for that refusal blaming the RID. **Ruled and
+  built:** the floors are the two Conan profiles' (the maintainer's principle; glibc stays
+  measured), stated so in the package, preview and gateway READMEs and `shim_floors.env`; the
+  gateway's own glibc floor, 2.38 (four `__isoc23_strto*` symbols from code compiled in the
+  devcontainer), is stated for the first time; `NativeLoader.LoadFromCandidates` tells a shim the OS
+  refused (its reason, the profile's floor) from no shim at all (the RID message, kept), with three
+  unit tests and `check_dotnet_packages.sh` requiring the loader to state the floors;
+  `integration-tests/preview-bundle-consumer/minimal.sh`, run by `ci.package-consumer`'s Linux leg
+  after `run.sh` over its work folder, runs that consumer at the floor (Ubuntu 24.04, both
+  frameworks, all routes) and below it (Debian 12, must fail quoting the OS's
+  `GLIBCXX_3.4.32' not found` and the floor). Windows keeps the exact `dumpbin` list, on the
+  maintainer's ruling. **The code generator**, on the maintainer's ruling after comparing with
+  `main`: its prebuilt binary has the same floors (glibc 2.34, `GLIBCXX_3.4.32`; the VC++
+  redistributable on Windows), as on `main`, and no README said so; `protoc/README.md`, the npm
+  and the Protoc NuGet READMEs now do, and the `ci.protoc` and `protoc-plugin-cli` comments that
+  claimed no DLL dependencies are corrected. **Rehearsed:** the loader tests 11/11 on Windows on both frameworks against
+  the CI-built shim; `minimal.sh` green over the devcontainer-built consumer with the fixed loader
+  in place (built at the bundle's version), from a scratch copy that hands Docker Desktop a Windows
+  path (Git Bash's `/c/...` is not mapped; on CI's Linux runner the script runs as committed);
+  mutants caught: the old loader (the RID message), and a "below the floor" image that passes;
+  the loader-floor guard catches a drifted number; `dotnet format`, actionlint and the README
+  snippet check clean. The minimal runs meet CI with this push, over packages that carry the
+  fixed loader.
 
 **How test builds reach testers during development, and what changes at the merge** (recorded
 2026-10-20 at the maintainer's request, D-BIND-137 to 139). Until PR #129 merges, the per-push
