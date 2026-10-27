@@ -262,11 +262,9 @@ cd Fletcher
 git checkout @COMMIT@
 curl -fLO https://github.com/eivacom/Fletcher/releases/download/dotnet-v@VERSION@/fletcher-shim-<rid>.conan.lock
 for component in core pubsub fastdds-pubsub-provider xrcedds-pubsub-provider c-abi; do
-  conan create $component --build=missing -pr:a=.conan-profiles/<profile> \
-    --lockfile=fletcher-shim-<rid>.conan.lock --lockfile-partial
+  conan create $component --build=missing -pr:a=.conan-profiles/<profile> --lockfile=fletcher-shim-<rid>.conan.lock --lockfile-partial
 done
-conan install --requires="fletcher-c-abi/[*, include_prerelease]" --deployer=direct_deploy --deployer-folder=shim \
-  -pr:a=.conan-profiles/<profile> --lockfile=fletcher-shim-<rid>.conan.lock --lockfile-partial
+conan install --requires="fletcher-c-abi/[*, include_prerelease]" --deployer=direct_deploy --deployer-folder=shim -pr:a=.conan-profiles/<profile> --lockfile=fletcher-shim-<rid>.conan.lock --lockfile-partial
 ```
 
 The lockfile, attached to the GitHub Release `dotnet-v@VERSION@` (in a preview bundle, in its

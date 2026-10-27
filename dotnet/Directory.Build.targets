@@ -69,7 +69,10 @@
       <_FletcherReadmeFile>$(IntermediateOutputPath)README.md</_FletcherReadmeFile>
       <_FletcherReadmeText>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)README.package.md').Replace('@VERSION@', '$(PackageVersion)').Replace('@COMMIT@', '$(_FletcherReadmeCommit)').TrimEnd())</_FletcherReadmeText>
     </PropertyGroup>
-    <!-- Escaped, so the text stays one line item: a bare ';' in it would split it. -->
+    <!-- Escaped, so the text stays one line item: a bare ';' in it would split it. On Linux,
+         MSBuild still turns every '\' in it into '/' (it fixes item specs as if they were
+         paths), so README.package.md has no backslash, line continuations included; the
+         packed-README check fails if one comes back (BIND-9b-7, D-BIND-173). -->
     <WriteLinesToFile File="$(_FletcherReadmeFile)" Lines="$([MSBuild]::Escape($(_FletcherReadmeText)))" Overwrite="true" WriteOnlyWhenDifferent="true" />
     <ItemGroup>
       <None Include="$(_FletcherReadmeFile)" Pack="true" PackagePath="README.md" Visible="false" />

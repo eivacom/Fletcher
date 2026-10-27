@@ -2821,7 +2821,12 @@ preparation, a fresh-context review and the close.
   (6 packages: asio, cmake, fast-cdr, fast-dds, foonathan-memory, tinyxml2) and five mutants
   caught; the README's route with the lockfile, from an empty home, built the shim with the
   locked `foonathan-memory` revision (2023, not ConanCenter's newest); actionlint, shellcheck
-  and the README snippet check clean. The Windows leg meets CI with the push.
+  and the README snippet check clean. **On CI** (`f99bbee`): the lockfile written and checked
+  green on both legs, Windows included (the same six packages; CI resolved
+  `foonathan-memory#5d07f0...`, ConanCenter's newest); `dotnet / pack` red: on Linux MSBuild
+  stamped the README's `\` line continuations as `/` and the packed-README comparison failed all
+  four packages. Fixed on the maintainer's ruling: single-line commands, no backslash in the
+  README, the reason in `Directory.Build.targets` (D-BIND-173).
 
 **How test builds reach testers during development, and what changes at the merge** (recorded
 2026-10-20 at the maintainer's request, D-BIND-137 to 139). Until PR #129 merges, the per-push

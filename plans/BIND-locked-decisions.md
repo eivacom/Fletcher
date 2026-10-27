@@ -3951,4 +3951,10 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   lockfile that keeps the `fletcher-*` entries. **Not covered:** ConanCenter serving an old
   revision is its policy, not a guarantee (a mirror needs EIVA's own Conan remote); archiving
   the third-party sources with each release (option C) was declined for its size; the gateway
-  and the code generator are asked separately.
+  and the code generator are asked separately. **Found on CI** (`f99bbee`, the lockfiles green on
+  both legs): `dotnet pack` on Linux wrote the README's `\` line continuations as `/`, because
+  MSBuild fixes the stamped text's item spec as if it were a path, and `check_dotnet_packages.sh`
+  failed all four packages on the packed-README comparison. On the maintainer's ruling the
+  README's commands are single lines and it holds no backslash, the stamping target says why, and the comparison stays the guard; escaping `\` as `%5C`
+  in `Directory.Build.targets` was the alternative, not taken (untestable here: Windows does not
+  convert).
