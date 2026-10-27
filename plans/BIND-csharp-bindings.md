@@ -2826,7 +2826,11 @@ preparation, a fresh-context review and the close.
   `foonathan-memory#5d07f0...`, ConanCenter's newest); `dotnet / pack` red: on Linux MSBuild
   stamped the README's `\` line continuations as `/` and the packed-README comparison failed all
   four packages. Fixed on the maintainer's ruling: single-line commands, no backslash in the
-  README, the reason in `Directory.Build.targets` (D-BIND-173).
+  README, the reason in `Directory.Build.targets` (D-BIND-173). **Done on CI:** `d52dd42`, every
+  workflow green on the first attempt (`ci.pr` 40526778017, 61/61, bundle `pr.129.360`): the
+  lockfile check green on both legs (the same six packages), the packed README of all four
+  packages matching, both lockfiles beside the packages and in the bundle's `nuget/`, and both
+  consumers (with `minimal.sh`) green on Linux and Windows.
 
 **How test builds reach testers during development, and what changes at the merge** (recorded
 2026-10-20 at the maintainer's request, D-BIND-137 to 139). Until PR #129 merges, the per-push
