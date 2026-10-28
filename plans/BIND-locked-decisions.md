@@ -567,8 +567,9 @@ expose the schema metadata and per-field metadata by position, not `Metadata(key
 and keeps `Metadata(key)` as a shortcut.)*
 
 - **D-BIND-28 — NuGet packages are published to EIVA's internal feed first; NuGet.org is a
-  later, separate step.** *LOCKED BY THE MAINTAINER 2026-09-14.* `cd.dotnet.yml` pushes the
-  three packages and their `.snupkg` symbol packages to `https://nuget.eiva.com/v3/index.json`.
+  later, separate step.** *LOCKED BY THE MAINTAINER 2026-09-14.* **⛔ SUPERSEDED 2026-10-28 BY
+  D-BIND-176: the packages go to nuget.org, from a GitHub-hosted runner.** `cd.dotnet.yml` pushes
+  the three packages and their `.snupkg` symbol packages to `https://nuget.eiva.com/v3/index.json`.
   Facts established 2026-09-14 and binding on BIND-9: the feed is a **BaGetter** server
   (Kestrel; service index exposes `PackagePublish/2.0.0` at `/api/v2/package` and
   `SymbolPackagePublish/4.9.0` at `/api/v2/symbol`); **reads are anonymous**, **publish requires
@@ -3640,9 +3641,10 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
 `GLIBCXX_3.4.32` from one GCC 13 iostream symbol.
 
 - **D-BIND-153 - the release never waits on the self-hosted runner.** *LOCKED BY THE MAINTAINER
-  2026-10-22 (BIND-9b Q1).* `cd.dotnet.yml` packs on a GitHub-hosted runner and attaches the four
-  `.nupkg` and their `.snupkg` to the GitHub Release on every tag; the `nuget.eiva.com` push is a
-  job of its own on the self-hosted runner with `NUGET_EIVA_API_KEY` (D-BIND-28), which runs once
+  2026-10-22 (BIND-9b Q1).* **⛔ SUPERSEDED 2026-10-28 BY D-BIND-176: there is no self-hosted
+  runner; the Release attach stands.** `cd.dotnet.yml` packs on a GitHub-hosted runner and
+  attaches the four `.nupkg` and their `.snupkg` to the GitHub Release on every tag; the
+  `nuget.eiva.com` push is a job of its own on the self-hosted runner with `NUGET_EIVA_API_KEY` (D-BIND-28), which runs once
   the runner exists (re-run for a release cut before it). Until then consumers use the Release
   assets as a local package source. So the merge of PR #129 never waits on admin setup.
   **Declined:** publishing to the feed only, which makes the runner a precondition of the merge.
@@ -3736,7 +3738,8 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   route and the generator from the gate).
 
 - **D-BIND-163 - the feed push is skipped until the runner exists, and a manual workflow pushes a
-  Release later.** *LOCKED BY THE MAINTAINER 2026-10-23 (BIND-9b-6 Q2).* `cd.dotnet`'s and
+  Release later.** *LOCKED BY THE MAINTAINER 2026-10-23 (BIND-9b-6 Q2).* **⛔ SUPERSEDED
+  2026-10-28 BY D-BIND-176: no runner, no variable, no `cd.nuget-feed.yml`.** `cd.dotnet`'s and
   `cd.protoc`'s feed jobs run only when the repository variable `NUGET_EIVA_RUNNER` is `'true'`,
   which an admin sets once the `[self-hosted, eiva-network]` runner exists; until then a release
   run is green with its GitHub Release assets (D-BIND-153). Both call
@@ -4013,3 +4016,39 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   C++ libraries (static Conan packages) and `gateway-client-ts` (which a bundler merges into a
   web application) raise the same section 4(d)(0) question for their consumers; they are outside
   this ruling.
+- **D-BIND-176 - the NuGet packages go to nuget.org, pushed from a GitHub-hosted runner with
+  Trusted Publishing; there is no self-hosted runner and no internal feed.** *LOCKED BY THE
+  MAINTAINER 2026-10-28 (BIND-9b review Q2, recast).* The maintainer's correction: Fletcher is a
+  public repository on GitHub-hosted runners, so it cannot reach `nuget.eiva.com`, and its
+  packages are published on nuget.org, where EIVA has an organization account. It supersedes
+  D-BIND-28 (internal feed first), D-BIND-153 (the release never waits on the runner) and
+  D-BIND-163 (the feed skipped until the runner exists), and answers review Q2: with no
+  self-hosted runner, nothing in the public repository reaches EIVA's network. **How:** the
+  `feed` job of `cd.dotnet` and of `cd.protoc` becomes a `nuget-org` job in the same file, not a
+  reusable workflow, because a Trusted Publishing policy names the workflow file. It runs after
+  the GitHub Release on a tag push only (a dispatch stays a dry run, D-BIND-164), on
+  `ubuntu-latest`, in the GitHub environment `nuget-org`, with `id-token: write` and
+  `contents: read`. It downloads the same gated artifact the Release attached, logs in with
+  `NuGet/login@v1` immediately before the push (the key lives one hour), and runs `dotnet nuget
+  push --skip-duplicate`, so a re-run after a partial push is safe; the `.snupkg` goes with its
+  `.nupkg` to nuget.org's symbol server. `cd.dotnet` pushes `Eiva.Fletcher.Interop` and
+  `Eiva.Fletcher.Model` before the two packages that depend on them. `cd.nuget-feed.yml`, the
+  `eiva-network` label in `actionlint.yaml`, `NUGET_EIVA_API_KEY` and `NUGET_EIVA_RUNNER` go.
+  The GitHub Release keeps the packages and the shim's lockfiles. **Admin steps, before the first
+  tag (runbook step 7 moves before step 6):** on nuget.org, EIVA's organization requests the
+  `Eiva.` ID prefix reservation (all five IDs were free on 2026-10-28) and gets two Trusted
+  Publishing policies, owned by the organization, for owner `eivacom`, repository `Fletcher`,
+  workflow files `cd.dotnet.yml` and `cd.protoc.yml`, environment `nuget-org`, scoped to
+  `Eiva.Fletcher*`. A policy goes inactive while the member who created it is not in the
+  organization, so a maintainer who stays creates them. The login names that member's nuget.org
+  profile name, kept in the environment variable `NUGET_USER`. On GitHub: the environment
+  `nuget-org`, deployable from the `dotnet-v*` and `protoc-v*` tags only, and a tag ruleset that
+  lets only the maintainers create, move or delete release tags. The fork approval policy (all
+  outside contributors) stays. **Why Trusted Publishing:** no long-lived key in a public
+  repository, and no key to expire between alpha releases (a nuget.org API key lasts at most a
+  year). **Not reversible:** nuget.org cannot delete a version, only unlist it, and never
+  re-uses its number, so `0.6.0-alpha` is final on its first push: D-BIND-175's wiring is in
+  the packages before it, and the dry runs on `main` come first (runbook step 4). The login and
+  the push run for the first time at that tag; no dry run can exercise them. **Declined:** an
+  API key in an environment secret, which lives up to a year in a public repository and expires
+  between releases.
