@@ -40,6 +40,17 @@ bool ValidateServiceMethod(const google::protobuf::MethodDescriptor* method,
                            const std::set<const google::protobuf::Descriptor*>& generated_msgs,
                            std::string* reason);
 
+// The topic of a pub/sub method as a segment list (D-BIND-180): the package split on '.',
+// then the service, then the method. `package nexus.topics.v1;`, `LivePoints.Snapshot` gives
+// {"nexus", "topics", "v1", "LivePoints", "Snapshot"}; no package gives {"LivePoints",
+// "Snapshot"}. The ONE derivation every backend emits (C++'s TopicSegments(), C#'s Segments,
+// TypeScript's constant through TopicKey), so a method names the same topic in every language.
+std::vector<std::string> MethodTopicSegments(const google::protobuf::MethodDescriptor* method);
+
+// The segments joined with '/': the topic's string form, the one the seam's join and the
+// gateway's split agree on (C++'s TopicKey(), C#'s Key, TypeScript's constant).
+std::string TopicKey(const std::vector<std::string>& segments);
+
 // Per-field information gathered before code generation. Mirrors the schema
 // model produced by GatherFields: one entry per supported (mapped) field, with
 // field-level-flatten sub-messages inlined.

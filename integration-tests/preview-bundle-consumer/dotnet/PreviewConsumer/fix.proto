@@ -27,7 +27,7 @@ message Fix {
   map<string, int32> tags = 6;
 }
 
-// One topic per method that takes a stream: preview.consumer/FixFeed/Report carries Fix rows.
+// One topic per method that takes a stream: preview/consumer/FixFeed/Report carries Fix rows.
 service FixFeed {
   rpc Report(stream Fix) returns (google.protobuf.Empty);
 }

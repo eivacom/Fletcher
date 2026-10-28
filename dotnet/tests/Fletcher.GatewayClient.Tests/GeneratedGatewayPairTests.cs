@@ -44,7 +44,7 @@ public sealed class GeneratedGatewayPairTests
 
         await Telemetry_ReportGatewayPublisher.CreateAsync(client);
 
-        Assert.Equal("golden.pair/Telemetry/Report", Telemetry_ReportGatewayPublisher.TopicKey);
+        Assert.Equal("golden/pair/Telemetry/Report", Telemetry_ReportGatewayPublisher.TopicKey);
         global::Apache.Arrow.Schema? declared = gateway.DeclaredSchema(Telemetry_ReportGatewayPublisher.TopicKey);
         Assert.NotNull(declared);
         Assert.Equal(Reading.Schema.FieldsList.Select(f => (f.Name, f.DataType.TypeId, f.IsNullable)),

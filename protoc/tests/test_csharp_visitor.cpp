@@ -1223,10 +1223,11 @@ TEST(CsVisitorPair, TheModelFileSpellsEachTopicAsAStaticClass) {
     ASSERT_NE(file, nullptr);
     const std::string cs = FileOf(GenerateWith(file, "csharp"), "csharp_pair.fletcher.cs");
     ExpectContains(cs, "public static class Telemetry_ReportTopic\n{\n");
-    ExpectContains(cs,
-                   "    public static global::System.Collections.Generic.IReadOnlyList<string> "
-                   "Segments { get; } = new[] { \"golden.pair\", \"Telemetry\", \"Report\" };\n");
-    ExpectContains(cs, "    public const string Key = \"golden.pair/Telemetry/Report\";\n");
+    ExpectContains(
+        cs,
+        "    public static global::System.Collections.Generic.IReadOnlyList<string> "
+        "Segments { get; } = new[] { \"golden\", \"pair\", \"Telemetry\", \"Report\" };\n");
+    ExpectContains(cs, "    public const string Key = \"golden/pair/Telemetry/Report\";\n");
     // Ping is not pub/sub, and says why in C++'s words.
     ExpectContains(cs,
                    "// Skipped: Telemetry.Ping \xE2\x80\x94 request is not streaming (pub/sub "

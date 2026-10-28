@@ -583,6 +583,9 @@ struct PubSubMethod {
     std::string method;
     const Descriptor* input = nullptr;
     std::string skip_reason;  // empty when eligible
+    // The topic's segments, every backend's (D-BIND-180): the package's parts, the service
+    // and the method, so a C#, C++ and TypeScript publisher of one method share a topic.
+    std::vector<std::string> topic;
     std::string Base() const { return service + "_" + method; }
 };
 
@@ -598,7 +601,8 @@ std::vector<PubSubMethod> PubSubMethods(const FileDescriptor* file) {
         const auto* svc = file->service(si);
         for (int mi = 0; mi < svc->method_count(); ++mi) {
             const auto* m = svc->method(mi);
-            PubSubMethod p{svc->name(), m->name(), m->input_type(), {}};
+            PubSubMethod p{
+                svc->name(), m->name(), m->input_type(), {}, fletcher::MethodTopicSegments(m)};
             fletcher::ValidateServiceMethod(m, generated, &p.skip_reason);
             out.push_back(std::move(p));
         }
@@ -606,38 +610,22 @@ std::vector<PubSubMethod> PubSubMethods(const FileDescriptor* file) {
     return out;
 }
 
-// The topic's segments, C++'s form: the package is ONE segment, dots kept
-// (D-BIND-72 point 6), so a C# and a C++ publisher of one method share a topic.
-std::vector<std::string> TopicSegments(const FileDescriptor* file, const PubSubMethod& p) {
-    std::vector<std::string> segments;
-    if (!file->package().empty()) segments.push_back(file->package());
-    segments.push_back(p.service);
-    segments.push_back(p.method);
-    return segments;
-}
-
-std::string TopicKey(const std::vector<std::string>& segments) {
-    std::string key;
-    for (size_t i = 0; i < segments.size(); ++i) key += (i > 0 ? "/" : "") + segments[i];
-    return key;
-}
-
 // `public static class <Svc>_<Method>Topic` in the model layer (D-BIND-77).
-std::string GenerateTopicClass(const FileDescriptor* file, const PubSubMethod& p) {
-    const auto segments = TopicSegments(file, p);
+std::string GenerateTopicClass(const PubSubMethod& p) {
+    const auto& segments = p.topic;
     std::ostringstream o;
     o << "/// <summary>The topic of " << p.service << "." << p.method
       << ": the segments a C++ publisher of the same method uses.</summary>\n"
       << "public static class " << p.Base() << "Topic\n{\n"
-      << "    /// <summary>The topic's segments, the package being one segment with its dots "
-         "kept.</summary>\n"
+      << "    /// <summary>The topic's segments: one per part of the package, then the service "
+         "and the method.</summary>\n"
       << "    public static global::System.Collections.Generic.IReadOnlyList<string> Segments "
          "{ get; } = new[] { ";
     for (size_t i = 0; i < segments.size(); ++i)
         o << (i > 0 ? ", " : "") << CsStringLiteral(segments[i]);
     o << " };\n\n"
       << "    /// <summary>The segments joined with '/'.</summary>\n"
-      << "    public const string Key = " << CsStringLiteral(TopicKey(segments)) << ";\n"
+      << "    public const string Key = " << CsStringLiteral(fletcher::TopicKey(segments)) << ";\n"
       << "}\n";
     return o.str();
 }
@@ -1079,7 +1067,7 @@ std::string CsVisitor::GenerateFile() {
         if (!p.skip_reason.empty())
             o << "// Skipped: " << p.service << "." << p.method << " — " << p.skip_reason << "\n";
         else
-            o << GenerateTopicClass(file_, p);
+            o << GenerateTopicClass(p);
     }
     return o.str();
 }

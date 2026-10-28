@@ -41,10 +41,12 @@ Every snippet below is taken from a test that compiles and runs it against these
 Linux and Windows, so it works as shown.
 
 **1. Describe the data.** A message is a row; a `service` method that takes a `stream` of it and
-returns `google.protobuf.Empty` names a topic, here `preview.consumer/FixFeed/Report`, and the
-generated classes are named after it (`FixFeed_Report...`). The message must be declared in the
-same file, and a method that streams its replies is skipped. A `google.protobuf.Timestamp` becomes a lossless
-`Eiva.Fletcher.Model.Timestamp`, a `repeated` field a list, a `map` a list of key/value pairs.
+returns `google.protobuf.Empty` names a topic, here `preview/consumer/FixFeed/Report`: each part of
+the package is a segment, then the service and the method, in every language Fletcher generates
+for. The generated classes are named after it (`FixFeed_Report...`). The message must be
+declared in the same file, and a method that streams its replies is skipped. A
+`google.protobuf.Timestamp` becomes a lossless `Eiva.Fletcher.Model.Timestamp`, a `repeated` field a
+list, a `map` a list of key/value pairs.
 
 <!-- snippet: proto -->
 ```proto
@@ -69,7 +71,7 @@ message Fix {
   map<string, int32> tags = 6;
 }
 
-// One topic per method that takes a stream: preview.consumer/FixFeed/Report carries Fix rows.
+// One topic per method that takes a stream: preview/consumer/FixFeed/Report carries Fix rows.
 service FixFeed {
   rpc Report(stream Fix) returns (google.protobuf.Empty);
 }

@@ -19,7 +19,7 @@ built with `conan build .`, like `arrow-bridge/benchmarks`; the managed project 
 Every arm, C++ and C#, publishes the same row of
 `integration-tests/protoc-arrow-bridge/proto/pubsub.proto`'s `Telemetry`
 (`device_id = 42`, `value = 3.14`, `timestamp = 1700000000000`, `metric_name = "cpu.temperature"`)
-to the generated publisher's own topic, `integration.pubsub/TelemetryFeed/TelemetryStream`, over an
+to the generated publisher's own topic, `integration/pubsub/TelemetryFeed/TelemetryStream`, over an
 `inprocess` provider **with no subscriber**.
 
 **Both harnesses validate before they time anything** and exit non-zero on a mismatch:
@@ -185,7 +185,9 @@ M2 − M2b = 31 − 16 = **15 = C3**: Fletcher's managed layer adds **no** nativ
 so every native allocation it causes is the shim's. M2's 31 is therefore 5 (Apache.Arrow's buffers,
 M2a) + 11 (Apache.Arrow's export, M2b − M2a) + 15 (the shim, C3). Over C1's 4 (the provider's
 buffer, its growth and the joined key, paid by every arm), C2 adds 3: **2 are `ToSegments`** — the
-vector, and `"integration.pubsub"`, 18 bytes, past libstdc++'s 15-byte small-string buffer — and
+vector, and `"integration.pubsub"`, 18 bytes, past libstdc++'s 15-byte small-string buffer (measured
+when the package was one segment; since D-BIND-180 it is `"integration"` and `"pubsub"`, both inside
+the buffer, so a re-run should show one allocation fewer) — and
 **1 is the shim's own encoder lambda**, which captures three references (24 bytes) where
 libstdc++'s `std::function` stores 16 inline. That last one is attributed by reading `binding.cpp`,
 not measured separately; C4 − C1 = 1 is consistent with it (C4 hoists `ToSegments` but still wraps

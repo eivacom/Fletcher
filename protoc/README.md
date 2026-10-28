@@ -12,6 +12,8 @@ Generated `<Msg>Subscriber` classes do exactly that behind `SubscribeInPlace(cb)
 
 The generated `<Msg>Publisher` constructor and the `<Msg>Subscriber` `Subscribe` / `SubscribeInPlace` methods each take an optional `fletcher::TopicOptions` after the callback/provider argument — `<Msg>Publisher pub(provider, {.profile = "latest"});`, `sub.Subscribe(cb, {.profile = "latest_reader"})` — omitting it means the provider's defaults, and `profile` / `max_payload_bytes` carry the provider's own semantics (see the FastDDS provider README's [Per-topic options](../fastdds-pubsub-provider/README.md#per-topic-options)).
 
+The topic of a generated publisher and subscriber is a `/` path: one segment per part of the proto package, then the service, then the method, so `package nexus.topics.v1;` with `rpc Snapshot(stream Point) returns (google.protobuf.Empty)` in `service LivePoints` is `nexus/topics/v1/LivePoints/Snapshot` (`TopicSegments()` holds the list, `TopicKey()` the joined string). The TypeScript and C# outputs name the same topic, so every language meets on it ([D-BIND-180](../docs/pubsub-interface-spec.md#35--topic-segments) in the seam spec).
+
 ## Building locally
 
 Requires [Conan 2](https://docs.conan.io/2/) and CMake 3.15+.

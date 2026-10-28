@@ -682,9 +682,11 @@ and keeps `Metadata(key)` as a shortcut.)*
   **Exceptions the maintainer has made to the carve-out**, each knowingly, so `main` keeps the
   defect until #129 lands:
   - **2026-09-25, D-BIND-53 as amended:** Fast DDS's silent drop of an oversized row.
-  - **2026-10-02, the TypeScript topic path for a dotted package.** For `package eiva.nav;` the
-    TypeScript backend emitted `'eiva/nav/Svc/Method'`, which the gateway splits into four
-    segments, while C++ registers `{"eiva.nav", "Svc", "Method"}`: two different topics. Reproduced
+  - **2026-10-02, the TypeScript topic path for a dotted package.** **⛔ SUPERSEDED 2026-10-28 BY
+    D-BIND-180: every backend now splits the package on `.`, the form TypeScript had.** For
+    `package eiva.nav;` the TypeScript backend emitted `'eiva/nav/Svc/Method'`, which the
+    gateway splits into four segments, while C++ registers `{"eiva.nav", "Svc", "Method"}`: two
+    different topics. Reproduced
     by `TopicPath.DottedPackageAgreesAcrossBackends`. The maintainer ruled C++'s form canonical
     (the package is one segment, dots kept), so the TypeScript backend changed. By the carve-out's
     own test this fix would go to `main` on its own (it is wanted without the bindings), but the
@@ -2457,6 +2459,8 @@ and keeps `Metadata(key)` as a shortcut.)*
      **Settled 2026-10-02:** reproduced by `TopicPath.DottedPackageAgreesAcrossBackends`, and the
      maintainer ruled C++'s form canonical. The TypeScript backend now emits
      `'eiva.nav/Svc/Method'` (D-BIND-30's exceptions), so this point stands as written.
+     **⛔ SUPERSEDED 2026-10-28 BY D-BIND-180:** the package's parts are segments of their own in
+     every backend, `{"eiva", "nav", "Svc", "Method"}`, `eiva/nav/Svc/Method`.
 
   **Left to BIND-6 and BIND-8:** the opt-token spelling that selects the pairs; how the model layer
   spells a topic without `Eiva.Fletcher`'s `TopicPath` (the native pair keeps `TopicPath`);
@@ -2614,7 +2618,10 @@ what D-BIND-49 and D-BIND-72 left to BIND-6.
   native and an Arrow-only build).
 
 - **D-BIND-77 - a service method's topic is spelled in the model layer as a static class per method,
-  `<Svc>_<Method>Topic`, with `Segments` and `Key`.** *LOCKED BY THE MAINTAINER 2026-10-07.* D-BIND-72
+  `<Svc>_<Method>Topic`, with `Segments` and `Key`.** *LOCKED BY THE MAINTAINER 2026-10-07.*
+  **Its example amended 2026-10-28 by D-BIND-180:** the segments are now
+  `{"eiva", "nav", "Svc", "Method"}` and the key `eiva/nav/Svc/Method`; the class and its members
+  are unchanged. D-BIND-72
   puts C#'s topic in the model layer, because the native pair and BIND-8's gateway pair both need it,
   and the model layer cannot use `Eiva.Fletcher`'s `TopicPath`. In `<stem>.fletcher.cs`:
   `public static class <Svc>_<Method>Topic { public static IReadOnlyList<string> Segments { get; } =
@@ -4109,3 +4116,44 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   anything is published. **Declined:** (B) a dispatch before the merge, which needs the
   workflow on `main`; a throwaway pull request now, which costs a full CI run and a public pull
   request for a path the two steps above run anyway.
+
+- **D-BIND-180 - a generated topic is a `/`-separated path: the proto package's dots become
+  segment boundaries, in every generator.** *LOCKED BY THE MAINTAINER 2026-10-28 (a reported issue
+  in the C# preview).* For `package nexus.topics.v1;`, service `LivePoints`, method `Snapshot`, the
+  topic is the segment list `{"nexus", "topics", "v1", "LivePoints", "Snapshot"}`, written
+  `nexus/topics/v1/LivePoints/Snapshot`, in C++, C# (native and gateway pairs) and TypeScript. A
+  file with no package gives `{"LivePoints", "Snapshot"}`, as today. It supersedes the ruling of
+  2026-10-02 (D-BIND-30's second exception: C++'s form canonical, the package one segment with its
+  dots kept), D-BIND-72 point 6 and the example in D-BIND-77.
+  **Why:** a reporter compared the C# preview (`nexus.topics.v1/LivePoints/Snapshot`) with the
+  released TypeScript plugin (`nexus/topics/v1/LivePoints/Snapshot`) and read the dots as a C#
+  notation. Everywhere below the generators a topic is already a list of segments joined with `/`
+  (the seam's `JoinSegments`, the Fast DDS and XRCE names, the gateway's split, C#'s `TopicPath`),
+  and a dot has no meaning there; one visible rule, "a topic is a `/` path", is what a user of any
+  binding expects, and the package hierarchy becomes the topic hierarchy.
+  **No collision:** the last two segments are always the service and the method, so a package's
+  parts cannot be mistaken for them; two methods share a topic only if package, service and method
+  are all equal, as before. Length is unchanged (`.` and `/` are one byte each; the seam's 246-byte
+  bound still applies to the joined name).
+  **How:** the three generators build the segment list in ONE function of the plugin,
+  `MethodTopicSegments` beside `ValidateServiceMethod` (before, each had its own: C++'s
+  `EmitTopicSegments`, C#'s `TopicSegments`, TypeScript's `topic_path`), which splits the package
+  on `.`; TypeScript's constant and C#'s `Key` are that list joined with `/`, C++'s
+  `TopicSegments()` and C#'s `Segments` are the list. `TopicPath.*AgreesAcrossBackends` checks the
+  exact list and string, not only that the three agree. The rule is written once in
+  `docs/pubsub-interface-spec.md` and the generator's README.
+  **Not changed:** the seam. A hand-written segment may still contain a `.` (the six rules of
+  `RequireSegments` stand), because the rule is about how a generated topic is derived from a
+  package, not about which bytes a segment may hold; refusing `.` would break hand-written topics
+  for no gain.
+  **Not compatible with 0.5:** a C++ application generated from a dotted package with 0.5.x or
+  earlier names `nexus.topics.v1/LivePoints/Snapshot`; one generated with 0.6.0-alpha names
+  `nexus/topics/v1/LivePoints/Snapshot`. They do not see each other on Fast DDS or XRCE, and nothing
+  reports it. They must be rebuilt together; 0.6.0-alpha is a new MINOR, which by the versioning
+  rule promises no compatibility with 0.5, and its release notes name the change and who must
+  rebuild. TypeScript applications from the released plugin already use this form and now reach
+  C++ and C#. C# is not yet released. Single-segment packages (`package test;`) are unaffected.
+  **Declined:** keeping the dotted form (the 2026-10-02 ruling; it leaves released TypeScript
+  apps unable to reach C++ and the form surprising to users); an alias or a fallback that tries
+  both names (it hides a mismatch instead of removing it, and doubles discovery); refusing `.` in a
+  segment at the seam (above).

@@ -10,7 +10,9 @@
 // must carry C++'s segments and key exactly: a C# and a C++ publisher of one method
 // register the same topic (BIND-6's acceptance; review blocker B5). A dotted proto
 // package is the case that can make them disagree; a single-segment package is the
-// control.
+// control. Agreeing is not enough: each case also names the exact segments, a
+// package's parts being segments of their own (D-BIND-180), so the three cannot
+// agree on a different rule.
 //
 // Runs the real ArrowRowGenerator over an in-memory descriptor pool and captures
 // its outputs through an in-memory GeneratorContext. Touches no golden.
@@ -160,7 +162,7 @@ std::vector<std::string> SplitOnSlash(const std::string& s) {
     return out;
 }
 
-void ExpectBackendsAgree(const std::string& package) {
+void ExpectBackendsAgree(const std::string& package, const std::vector<std::string>& expected) {
     const Outputs out = Generate(package);
     const auto segments = CppSegments(out.header);
     const auto key = CppTopicKey(out.header);
@@ -168,6 +170,8 @@ void ExpectBackendsAgree(const std::string& package) {
     ASSERT_FALSE(segments.empty()) << out.header;
     ASSERT_FALSE(key.empty()) << out.header;
     ASSERT_FALSE(ts.empty()) << out.ts;
+
+    EXPECT_EQ(segments, expected) << "C++ TopicSegments() for package '" << package << "'";
 
     EXPECT_EQ(ts, key) << "TS topic constant and C++ TopicKey() differ for package '" << package
                        << "'";
@@ -190,6 +194,16 @@ void ExpectBackendsAgree(const std::string& package) {
 
 }  // namespace
 
-TEST(TopicPath, SingleSegmentPackageAgreesAcrossBackends) { ExpectBackendsAgree("test"); }
+TEST(TopicPath, SingleSegmentPackageAgreesAcrossBackends) {
+    ExpectBackendsAgree("test", {"test", "Svc", "Method"});
+}
 
-TEST(TopicPath, DottedPackageAgreesAcrossBackends) { ExpectBackendsAgree("eiva.nav"); }
+TEST(TopicPath, DottedPackageAgreesAcrossBackends) {
+    ExpectBackendsAgree("eiva.nav", {"eiva", "nav", "Svc", "Method"});
+}
+
+// The reported case (D-BIND-180): every part of the package is a segment, so the topic is
+// nexus/topics/v1/Svc/Method in every backend, never nexus.topics.v1/Svc/Method.
+TEST(TopicPath, VersionedPackageIsOneSegmentPerPart) {
+    ExpectBackendsAgree("nexus.topics.v1", {"nexus", "topics", "v1", "Svc", "Method"});
+}

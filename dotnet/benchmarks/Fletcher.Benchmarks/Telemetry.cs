@@ -25,7 +25,7 @@ internal static class Telemetry
     internal const string MetricName = "cpu.temperature";
 
     /// <summary>The generated C++ publisher's topic, segment for segment.</summary>
-    internal static readonly TopicPath Topic = TopicPath.Of("integration.pubsub", "TelemetryFeed", "TelemetryStream");
+    internal static readonly TopicPath Topic = TopicPath.Of("integration", "pubsub", "TelemetryFeed", "TelemetryStream");
 
     /// <summary>Pinned in bench_publish.cpp's <c>kCanonicalRowHex</c>. Change both or neither.</summary>
     internal const string CanonicalRowHex =

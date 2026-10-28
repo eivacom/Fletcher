@@ -310,17 +310,12 @@ std::string TsVisitor::GenerateFile() {
                 continue;
             }
 
-            // The package is ONE segment, dots kept, as in the C++ TopicSegments() and
-            // TopicKey(): the gateway splits this string on '/', so turning dots into
-            // slashes would name a different topic than a C++ publisher of the same
-            // method (TopicPath.DottedPackageAgreesAcrossBackends).
-            const std::string pkg = file_->package();
-            std::string topic_path;
-            if (!pkg.empty()) topic_path += pkg + "/";
-            topic_path += svc->name() + "/" + method->name();
-
+            // The segments every backend emits, joined with '/' (D-BIND-180): the gateway
+            // splits this string on '/' into the list C++'s TopicSegments() holds, so a
+            // TypeScript client and a C++ or C# publisher of one method share a topic
+            // (TopicPath.DottedPackageAgreesAcrossBackends).
             o << "export const " << svc->name() << "_" << method->name() << "Topic = '"
-              << topic_path << "';\n\n";
+              << fletcher::TopicKey(fletcher::MethodTopicSegments(method)) << "';\n\n";
         }
     }
 

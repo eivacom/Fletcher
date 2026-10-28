@@ -791,19 +791,19 @@ public sealed class Topic
 /// <summary>The topic of Feed.Send: the segments a C++ publisher of the same method uses.</summary>
 public static class Feed_SendTopic
 {
-    /// <summary>The topic's segments, the package being one segment with its dots kept.</summary>
-    public static global::System.Collections.Generic.IReadOnlyList<string> Segments { get; } = new[] { "golden.names", "Feed", "Send" };
+    /// <summary>The topic's segments: one per part of the package, then the service and the method.</summary>
+    public static global::System.Collections.Generic.IReadOnlyList<string> Segments { get; } = new[] { "golden", "names", "Feed", "Send" };
 
     /// <summary>The segments joined with '/'.</summary>
-    public const string Key = "golden.names/Feed/Send";
+    public const string Key = "golden/names/Feed/Send";
 }
 
 /// <summary>The topic of Feed.Describe: the segments a C++ publisher of the same method uses.</summary>
 public static class Feed_DescribeTopic
 {
-    /// <summary>The topic's segments, the package being one segment with its dots kept.</summary>
-    public static global::System.Collections.Generic.IReadOnlyList<string> Segments { get; } = new[] { "golden.names", "Feed", "Describe" };
+    /// <summary>The topic's segments: one per part of the package, then the service and the method.</summary>
+    public static global::System.Collections.Generic.IReadOnlyList<string> Segments { get; } = new[] { "golden", "names", "Feed", "Describe" };
 
     /// <summary>The segments joined with '/'.</summary>
-    public const string Key = "golden.names/Feed/Describe";
+    public const string Key = "golden/names/Feed/Describe";
 }

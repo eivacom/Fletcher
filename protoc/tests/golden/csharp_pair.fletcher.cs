@@ -305,11 +305,11 @@ public sealed class Marks
 /// <summary>The topic of Telemetry.Report: the segments a C++ publisher of the same method uses.</summary>
 public static class Telemetry_ReportTopic
 {
-    /// <summary>The topic's segments, the package being one segment with its dots kept.</summary>
-    public static global::System.Collections.Generic.IReadOnlyList<string> Segments { get; } = new[] { "golden.pair", "Telemetry", "Report" };
+    /// <summary>The topic's segments: one per part of the package, then the service and the method.</summary>
+    public static global::System.Collections.Generic.IReadOnlyList<string> Segments { get; } = new[] { "golden", "pair", "Telemetry", "Report" };
 
     /// <summary>The segments joined with '/'.</summary>
-    public const string Key = "golden.pair/Telemetry/Report";
+    public const string Key = "golden/pair/Telemetry/Report";
 }
 
 // Skipped: Telemetry.Ping — request is not streaming (pub/sub requires 'stream' on request)
@@ -317,9 +317,9 @@ public static class Telemetry_ReportTopic
 /// <summary>The topic of Telemetry.Mark: the segments a C++ publisher of the same method uses.</summary>
 public static class Telemetry_MarkTopic
 {
-    /// <summary>The topic's segments, the package being one segment with its dots kept.</summary>
-    public static global::System.Collections.Generic.IReadOnlyList<string> Segments { get; } = new[] { "golden.pair", "Telemetry", "Mark" };
+    /// <summary>The topic's segments: one per part of the package, then the service and the method.</summary>
+    public static global::System.Collections.Generic.IReadOnlyList<string> Segments { get; } = new[] { "golden", "pair", "Telemetry", "Mark" };
 
     /// <summary>The segments joined with '/'.</summary>
-    public const string Key = "golden.pair/Telemetry/Mark";
+    public const string Key = "golden/pair/Telemetry/Mark";
 }

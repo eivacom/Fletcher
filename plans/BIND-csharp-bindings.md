@@ -2869,7 +2869,11 @@ preparation, a fresh-context review and the close.
   questions are ruled. **Blockers fixed:** B1 the `Eiva.Fletcher.Protoc` README shows the consumer
   test's two csproj regions, checked by `ci.protoc`'s `pack-nuget`; B2 Windows NativeAOT is
   exercised, and both READMEs say so; B3 CMake 3.20 in the relinking route; B4 the npm README's
-  licence files the right way round.
+  licence files the right way round (`2f07789`). **A reported issue:** the C# preview named
+  `nexus.topics.v1/LivePoints/Snapshot` where the released TypeScript plugin named
+  `nexus/topics/v1/LivePoints/Snapshot`; on the maintainer's ruling every generator now splits the
+  package on `.`, through one function, and the 2026-10-02 dotted form is superseded (D-BIND-180;
+  the 0.6.0-alpha Release notes name who must rebuild, runbook step 7).
 
 **How test builds reach testers during development, and what changes at the merge** (recorded
 2026-10-20 at the maintainer's request, D-BIND-137 to 139). Until PR #129 merges, the per-push
@@ -2971,7 +2975,10 @@ runs, since BIND-T and BIND-10 land in between.
    `Eiva.Fletcher.Protoc`, to nuget.org), and `dotnet` last (the four packages to nuget.org).
    Every CD builds from its own tree, so the order is for reading the results, not a build
    dependency. The nuget.org login and push run for the first time here; a failed `nuget-org`
-   job is re-run after the cause is fixed (`--skip-duplicate`).
+   job is re-run after the cause is fixed (`--skip-duplicate`). The `protoc` and `dotnet`
+   Release notes say that a generated topic is now one segment per package part (D-BIND-180):
+   C++ applications generated from a dotted package with 0.5.x must be rebuilt with 0.6.0-alpha
+   together, or they do not see each other.
 
 **Acceptance**
 

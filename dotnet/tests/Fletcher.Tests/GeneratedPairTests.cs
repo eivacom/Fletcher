@@ -69,13 +69,13 @@ public sealed class GeneratedPairTests : IDisposable
         r.At.WithUnit(TimeUnit.Nanosecond).Value + " ns");
 
     [Fact]
-    public void TheTopicIsCppsForm()
+    public void TheTopicIsOneSegmentPerPackagePart()
     {
-        // D-BIND-72 point 6 and D-BIND-77: the package is one segment, dots kept, so a
-        // C# and a C++ publisher of one method name the same topic.
-        Assert.Equal(new[] { "golden.pair", "Telemetry", "Report" }, Telemetry_ReportTopic.Segments);
-        Assert.Equal("golden.pair/Telemetry/Report", Telemetry_ReportTopic.Key);
-        Assert.Equal(TopicPath.Of("golden.pair", "Telemetry", "Report"), Telemetry_ReportPublisher.Topic);
+        // D-BIND-180 and D-BIND-77: each part of the package is a segment, as in every
+        // backend, so a C#, a C++ and a TypeScript publisher of one method name the same topic.
+        Assert.Equal(new[] { "golden", "pair", "Telemetry", "Report" }, Telemetry_ReportTopic.Segments);
+        Assert.Equal("golden/pair/Telemetry/Report", Telemetry_ReportTopic.Key);
+        Assert.Equal(TopicPath.Of("golden", "pair", "Telemetry", "Report"), Telemetry_ReportPublisher.Topic);
         Assert.Equal(Telemetry_ReportPublisher.Topic, Telemetry_ReportSubscriber.Topic);
         Assert.Equal(Telemetry_ReportTopic.Key, Telemetry_ReportPublisher.TopicKey);
         Assert.Same(Reading.Schema, Telemetry_ReportPublisher.Schema);
@@ -273,6 +273,6 @@ public sealed class GeneratedPairTests : IDisposable
         publisher.Publish(sent);
 
         Assert.Equal(new[] { "1700000000:123456789," + long.MinValue + ":-1", "", "-1:999999999" }, seen);
-        Assert.Equal("golden.pair/Telemetry/Mark", Telemetry_MarkTopic.Key);
+        Assert.Equal("golden/pair/Telemetry/Mark", Telemetry_MarkTopic.Key);
     }
 }

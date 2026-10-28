@@ -935,16 +935,16 @@ std::string GenerateMessageClass(const std::string& cls, const std::vector<Field
 // Per-class helpers shared by publisher and subscriber generation
 // -----------------------------------------------------------------------
 
-void EmitTopicSegments(std::ostringstream& o, const std::string& package,
-                       const std::string& svc_name, const std::string& method_name) {
+void EmitTopicSegments(std::ostringstream& o, const std::vector<std::string>& segments) {
     o << "    /// Returns the hierarchical topic path derived from the proto\n"
       << "    /// service and method names. Used by the Publisher/Subscriber to\n"
       << "    /// register, look up, and route messages on the pub/sub layer.\n";
     o << "    static const std::vector<std::string>& TopicSegments() {\n"
       << "        static const std::vector<std::string> kSegments = {";
-    if (!package.empty()) o << "\n            \"" << package << "\",";
-    o << "\n            \"" << svc_name << "\"," << "\n            \"" << method_name << "\"\n"
-      << "        };\n"
+    // D-BIND-180: one segment per package part, then the service and the method.
+    for (size_t i = 0; i < segments.size(); ++i)
+        o << "\n            \"" << segments[i] << "\"" << (i + 1 < segments.size() ? "," : "\n");
+    o << "        };\n"
       << "        return kSegments;\n"
       << "    }\n\n";
 }
@@ -961,8 +961,7 @@ void EmitSchema(std::ostringstream& o, const std::string& msg_class) {
 // Publisher class generation for a single service method
 // -----------------------------------------------------------------------
 
-std::string GeneratePublisherClass(const google::protobuf::MethodDescriptor* method,
-                                   const std::string& package) {
+std::string GeneratePublisherClass(const google::protobuf::MethodDescriptor* method) {
     const std::string svc_name = method->service()->name();
     const std::string method_name = method->name();
     const std::string cls = svc_name + "_" + method_name + "Publisher";
@@ -971,7 +970,7 @@ std::string GeneratePublisherClass(const google::protobuf::MethodDescriptor* met
     std::ostringstream o;
     o << "class " << cls << " {\n public:\n";
 
-    EmitTopicSegments(o, package, svc_name, method_name);
+    EmitTopicSegments(o, MethodTopicSegments(method));
     EmitSchema(o, msg_class);
 
     // Topic key (segments joined with '/')
@@ -979,9 +978,8 @@ std::string GeneratePublisherClass(const google::protobuf::MethodDescriptor* met
       << "    /// with '/'). Useful for logging, diagnostics, and WebGateway URLs\n"
       << "    /// where a single string is expected instead of path segments.\n";
     o << "    static const std::string& TopicKey() {\n"
-      << "        static const std::string kKey = \"";
-    if (!package.empty()) o << package << "/";
-    o << svc_name << "/" << method_name << "\";\n"
+      << "        static const std::string kKey = \"" << TopicKey(MethodTopicSegments(method))
+      << "\";\n"
       << "        return kKey;\n"
       << "    }\n\n";
 
@@ -1030,8 +1028,7 @@ std::string GeneratePublisherClass(const google::protobuf::MethodDescriptor* met
 // Subscriber class generation for a single service method
 // -----------------------------------------------------------------------
 
-std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* method,
-                                    const std::string& package) {
+std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* method) {
     const std::string svc_name = method->service()->name();
     const std::string method_name = method->name();
     const std::string cls = svc_name + "_" + method_name + "Subscriber";
@@ -1040,7 +1037,7 @@ std::string GenerateSubscriberClass(const google::protobuf::MethodDescriptor* me
     std::ostringstream o;
     o << "class " << cls << " {\n public:\n";
 
-    EmitTopicSegments(o, package, svc_name, method_name);
+    EmitTopicSegments(o, MethodTopicSegments(method));
     EmitSchema(o, msg_class);
 
     // Constructor — subscriber does not call CreateTopic; the schema
@@ -1234,8 +1231,8 @@ std::string GenerateFile(const google::protobuf::FileDescriptor* file, bool sche
                       << "\n";
                     continue;
                 }
-                o << GeneratePublisherClass(method, file->package()) << "\n"
-                  << GenerateSubscriberClass(method, file->package()) << "\n";
+                o << GeneratePublisherClass(method) << "\n"
+                  << GenerateSubscriberClass(method) << "\n";
             }
         }
     }
@@ -1731,6 +1728,26 @@ bool ValidateServiceMethod(const google::protobuf::MethodDescriptor* method,
         return false;
     }
     return true;
+}
+
+std::vector<std::string> MethodTopicSegments(const google::protobuf::MethodDescriptor* method) {
+    std::vector<std::string> segments;
+    const std::string& package = method->service()->file()->package();
+    if (!package.empty()) {
+        // protoc accepts only non-empty identifier parts, so no segment comes out empty.
+        std::istringstream parts(package);
+        std::string part;
+        while (std::getline(parts, part, '.')) segments.push_back(part);
+    }
+    segments.push_back(method->service()->name());
+    segments.push_back(method->name());
+    return segments;
+}
+
+std::string TopicKey(const std::vector<std::string>& segments) {
+    std::string key;
+    for (size_t i = 0; i < segments.size(); ++i) key += (i > 0 ? "/" : "") + segments[i];
+    return key;
 }
 
 // -----------------------------------------------------------------------
