@@ -27,6 +27,17 @@ it would be defined once per assembly and collide in an app that references two;
 and it takes `Apache.Arrow` only, so a gateway or WASM app can use the generated
 model without native assets (D-BIND-72). User-defined messages are not in it.
 
+## Getting the packages
+
+Released versions are on [nuget.org](https://www.nuget.org/packages/Eiva.Fletcher): the four
+packages above, pushed by `cd.dotnet` when a `dotnet-v*` tag is cut, and the code generator
+`Eiva.Fletcher.Protoc`, pushed by `cd.protoc` from a `protoc-v*` tag (D-BIND-176). The generator's
+version has the packages' `MAJOR.MINOR` and a `PATCH` of its own. Every version so far is a
+prerelease (`-alpha`), which NuGet takes only when asked: reference a prerelease version in the
+`PackageReference`, or pass `--prerelease` to `dotnet add package`. The GitHub Release of each tag
+carries the same files; the `dotnet-v*` Release also carries `fletcher-shim-<rid>.conan.lock`, the
+lockfile the package README's relinking route rebuilds the native shim with (D-BIND-173).
+
 ## Layout
 
 ```

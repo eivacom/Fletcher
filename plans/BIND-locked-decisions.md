@@ -4079,3 +4079,16 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   the merge commit that `ci.pr` tested end to end, which leaves every later protoc-only tag
   ungated; (c) release the package from `cd.dotnet`, which would tie its version to the dotnet
   tag and leave a protoc-only fix no way to NuGet without one.
+
+- **D-BIND-178 - the shipped READMEs say where the packages come from.** *LOCKED BY THE
+  MAINTAINER 2026-10-28 (BIND-9b review Q4, L6).* Once the preview bundle retires,
+  `README-preview.md` and `PREVIEW-TESTERS.md` go and nothing shipped said where the packages are.
+  With D-BIND-176 the answer is nuget.org, and each tag's GitHub Release carries the same files.
+  **How:** `dotnet/README.md` gets a section "Getting the packages" (nuget.org for the four
+  packages from `dotnet-v*` and `Eiva.Fletcher.Protoc` from `protoc-v*`; the generator's
+  `MAJOR.MINOR` is the packages'; a prerelease is taken only when the reference names one or with
+  `--prerelease`; the `dotnet-v*` Release also carries the shim's lockfiles, D-BIND-173), and
+  `README.package.md` step 2 and `protoc/nuget/README.md` one sentence each. They say "released
+  versions", so a preview build of the same README stays true. **Declined:** the package READMEs
+  only (the repository's own README would still not say it); leaving it to BIND-10, which
+  documents the round but would leave the merge without it.

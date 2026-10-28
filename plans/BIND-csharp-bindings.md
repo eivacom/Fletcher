@@ -2862,7 +2862,8 @@ preparation, a fresh-context review and the close.
   `cd.dotnet` and `cd.protoc`, `cd.nuget-feed.yml` and `.github/actionlint.yaml` deleted; the
   npm jobs in the environment `npm`, `439fe2c`). Q3 (b): `cd.protoc` passes the consumer gate
   before npm, the Release or nuget.org, building the dotnet packages and the gateway for it
-  (D-BIND-177).
+  (D-BIND-177, `e660083`). Q4: "Getting the packages" in `dotnet/README.md` and a sentence in
+  `README.package.md` step 2 and `protoc/nuget/README.md` (nuget.org; D-BIND-178).
 
 **How test builds reach testers during development, and what changes at the merge** (recorded
 2026-10-20 at the maintainer's request, D-BIND-137 to 139). Until PR #129 merges, the per-push

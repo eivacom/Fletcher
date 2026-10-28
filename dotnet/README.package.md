@@ -78,7 +78,9 @@ service FixFeed {
 **2. Reference the packages** in your project. `FletcherVersion` is the version of these
 packages, `@VERSION@`. `Eiva.Fletcher.Protoc` brings the code generator, `protoc-gen-fletcher`;
 `FletcherProtocVersion` is its version, which has the same `MAJOR.MINOR` as these packages.
-`Google.Protobuf.Tools` brings `protoc`.
+`Google.Protobuf.Tools` brings `protoc`. Released versions of all five Fletcher packages are on
+nuget.org, and the GitHub Releases `dotnet-v@VERSION@` and `protoc-v<version>` carry the same
+files.
 
 <!-- snippet: csproj-references -->
 ```xml

@@ -91,6 +91,10 @@ separate `protoc-v*` Release; `README-preview.md` and `PREVIEW-TESTERS.md` were 
 Reviewer: a "Getting the packages" section in `dotnet/README.md` and a sentence in
 `README.package.md` step 2.
 
+**Ruled 2026-10-28: all three READMEs, D-BIND-178.** The reviewer's section and sentence, with
+the answer D-BIND-176 gives (nuget.org, and each tag's Release carries the same files), and one
+sentence in `protoc/nuget/README.md`.
+
 **Q5 (T10) — the gate's non-preview path has never run on CI.** `ci.package-consumer.yml:95-104,
 141-147` (version from the `Interop` file name, `BUNDLE_PROTOC_VERSION_MUST_MATCH=0`, the 1-day
 artifact) is what `cd.dotnet`'s gate takes; every run on this branch takes the preview path. Options:

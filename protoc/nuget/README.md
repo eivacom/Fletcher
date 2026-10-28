@@ -77,6 +77,11 @@ file.
 Generated code and the `Eiva.Fletcher` runtime packages are compatible when their
 `MAJOR.MINOR` versions are equal.
 
+Released versions are on nuget.org, and the GitHub Release `protoc-v<version>` of
+[eivacom/Fletcher](https://github.com/eivacom/Fletcher) carries the same file. A prerelease
+version (`-alpha`) is taken only when the reference names one, or with
+`dotnet add package --prerelease`.
+
 ## Licence
 
 LGPL-3.0-or-later (`LICENSE`, with the GPL text it incorporates in `COPYING`). The plugin links
