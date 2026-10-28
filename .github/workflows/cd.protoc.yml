@@ -6,13 +6,19 @@
 #
 #   setup-devcontainer
 #       │
-#       └── release (ci.protoc.yml)
-#               │  produces 6 artifacts:
-#               │    fletcher-protoc-{linux,windows}            (Conan .tgz)
-#               │    fletcher-protoc-{linux,windows}-static     (raw binary)
-#               │    fletcher-protoc-licences                   (LICENSE, COPYING,
-#               │                                                THIRD-PARTY-LICENSES.txt)
-#               │    fletcher-protoc-nuget                      (Eiva.Fletcher.Protoc)
+#       ├── release (ci.protoc.yml)
+#       │       │  produces 6 artifacts:
+#       │       │    fletcher-protoc-{linux,windows}            (Conan .tgz)
+#       │       │    fletcher-protoc-{linux,windows}-static     (raw binary)
+#       │       │    fletcher-protoc-licences                   (LICENSE, COPYING,
+#       │       │                                                THIRD-PARTY-LICENSES.txt)
+#       │       │    fletcher-protoc-nuget                      (Eiva.Fletcher.Protoc)
+#       ├── dotnet  (ci.dotnet.yml)   ┐ built only for the gate,
+#       └── gateway (ci.gateway.yml)  ┘ never released here
+#               ▼
+#         gate (ci.package-consumer.yml)         ── the consumer test on exactly
+#               │                                   the files released below
+#               │                                   (BIND-9b-8 Q3, D-BIND-177)
 #               ▼
 #         npm-publish                            ── @eiva/protoc-gen-fletcher,
 #               │                                   with the licence files
@@ -39,8 +45,9 @@
 # Triggers:
 #   * push: tags 'protoc-v*'     — real release.
 #   * workflow_dispatch          — a DRY RUN (BIND-9b-6, D-BIND-164): the build, the static binaries
-#                                  and Eiva.Fletcher.Protoc packed and checked; never npm, the
-#                                  Release or nuget.org. Dispatchable once this file is on main.
+#                                  and Eiva.Fletcher.Protoc packed and checked, and the gate; never
+#                                  npm, the Release or nuget.org. Dispatchable once this file is on
+#                                  main.
 #
 # BIND-9b-6 (D-BIND-71, D-BIND-176): the Release also carries Eiva.Fletcher.Protoc, the C# locator
 # ci.protoc packs, and the nuget-org job then pushes it to nuget.org by Trusted Publishing.
@@ -66,8 +73,31 @@ jobs:
       release-artifacts: true
     secrets: inherit
 
+  # BIND-9b-8 Q3 (D-BIND-177): npm and nuget.org never re-use a version, so nothing is published
+  # until the packed files pass the consumer test, as in cd.dotnet (D-BIND-159). The dotnet
+  # packages and the gateway are built here only so the gate can generate code with this run's
+  # plugin and reach a gateway; cd.dotnet and cd.gateway release them.
+  dotnet:
+    needs: setup-devcontainer
+    uses: ./.github/workflows/ci.dotnet.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
+  gateway:
+    needs: setup-devcontainer
+    uses: ./.github/workflows/ci.gateway.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+      release-artifacts: true
+    secrets: inherit
+
+  gate:
+    needs: [release, dotnet, gateway]
+    uses: ./.github/workflows/ci.package-consumer.yml
+
   npm-publish:
-    needs: release
+    needs: gate
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     # D-BIND-176: deployable from the release tags only, as the nuget-org environment is.
@@ -140,7 +170,7 @@ jobs:
         run: npm publish --access public --provenance --tag ${{ steps.dist-tag.outputs.tag }}
 
   create-release:
-    # `release` is also a transitive dep (via npm-publish), but it's
+    # `release` is also a transitive dep (via gate and npm-publish), but it's
     # named explicitly here so the verify-tag-version-conan step below
     # can reference ${{ needs.release.outputs.conan-ref }}.
     needs: [release, npm-publish]

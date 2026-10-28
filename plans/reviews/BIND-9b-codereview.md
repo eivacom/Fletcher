@@ -80,6 +80,11 @@ it after `check_protoc_package.sh` (structure only); `cd.dotnet`'s gate tests an
 (b) `cd.protoc` runs the consumer test first; (c) release the package from `cd.dotnet`. Reviewer:
 (a) now, (b) later.
 
+**Ruled 2026-10-28: (b) now, D-BIND-177.** nuget.org and npm never re-use a version (D-BIND-176),
+so `cd.protoc` builds the dotnet packages and the gateway beside the plugin and passes the same
+`ci.package-consumer.yml` gate as `cd.dotnet` before npm, the Release or nuget.org. The wrong
+comment went with `cd.nuget-feed.yml`.
+
 **Q4 (L6) — after the retirement no shipped document says where the packages come from.** Until the
 feed runner exists they are the `dotnet-v*` Release assets, and `Eiva.Fletcher.Protoc` is on the
 separate `protoc-v*` Release; `README-preview.md` and `PREVIEW-TESTERS.md` were the only guides.

@@ -4,11 +4,12 @@
 name: ci.package-consumer
 
 # BIND-9b-6 (D-BIND-159, D-BIND-162): the packed packages tested as a consumer gets them, in ONE
-# place for both callers: ci.pr.yml on every pull request that can change them (and, on the
-# round's branch, the preview bundle), and cd.dotnet.yml as the gate before a release attaches
-# anything or pushes to nuget.org. The caller runs ci.dotnet, ci.gateway and ci.protoc first, with
-# their release artifacts; this workflow assembles them into one folder and runs the consumer test
-# on exactly those files. Moved here from ci.pr.yml's package-bundle and package-consumer jobs.
+# place for every caller: ci.pr.yml on every pull request that can change them (and, on the
+# round's branch, the preview bundle), and cd.dotnet.yml and cd.protoc.yml (D-BIND-177) as the
+# gate before a release attaches anything or publishes to nuget.org or npm. The caller runs
+# ci.dotnet, ci.gateway and ci.protoc first, with their release artifacts; this workflow assembles
+# them into one folder and runs the consumer test on exactly those files. Moved here from
+# ci.pr.yml's package-bundle and package-consumer jobs.
 
 on:
   workflow_call:
@@ -45,9 +46,9 @@ jobs:
   # BIND-9a (D-BIND-139): on the round's own branch it is the preview bundle, the only way a
   # build reaches testers before PR #129 merges, uploaded as one 30-day artifact; never a tag,
   # a release or a registry push. BIND-9b-1 (D-BIND-159): on every other pull request that can
-  # change the packages, and in cd.dotnet (BIND-9b-6), it is assembled the same way and kept for
-  # a day, only for package-consumer, so the packed files are tested before anything reaches main
-  # or a release.
+  # change the packages, and in cd.dotnet (BIND-9b-6) and cd.protoc (D-BIND-177), it is assembled
+  # the same way and kept for a day, only for package-consumer, so the packed files are tested
+  # before anything reaches main or a release.
   package-bundle:
     runs-on: ubuntu-latest
     outputs:

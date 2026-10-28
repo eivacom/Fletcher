@@ -86,11 +86,12 @@ one at a time, or set `FLETCHER_PREVIEW_DDS_DOMAIN` to a different domain for ea
 
 CI: the `package-consumer` job of [`ci.package-consumer.yml`](../../.github/workflows/ci.package-consumer.yml),
 which [`ci.pr.yml`](../../.github/workflows/ci.pr.yml) calls and, as the gate before a release,
-[`cd.dotnet.yml`](../../.github/workflows/cd.dotnet.yml) (BIND-9b-6, D-BIND-162), after
-`package-bundle`, on plain `ubuntu-24.04` and `windows-2022` runners (not the devcontainer), with
-only this folder checked out. It runs on every pull request that can change what a consumer gets
-(the `dotnet`, `gateway` or `protoc` filter, or the round's own branch; D-BIND-159), against the
-packages just packed: on `feature/csharp-bindings` the 30-day preview bundle, elsewhere the same
-folder assembled for the run and kept for a day. It stays after the round merges, and BIND-9b
-also makes it the gate `cd.dotnet` passes before a release is published. On the Linux runner the
-job then runs `minimal.sh` over the same work folder (D-BIND-172).
+[`cd.dotnet.yml`](../../.github/workflows/cd.dotnet.yml) (BIND-9b-6, D-BIND-162) and
+[`cd.protoc.yml`](../../.github/workflows/cd.protoc.yml) (D-BIND-177), after `package-bundle`, on
+plain `ubuntu-24.04` and `windows-2022` runners (not the devcontainer), with only this folder
+checked out. It runs on every pull request that can change what a consumer gets (the `dotnet`,
+`gateway` or `protoc` filter, or the round's own branch; D-BIND-159), against the packages just
+packed: on `feature/csharp-bindings` the 30-day preview bundle, elsewhere the same folder
+assembled for the run and kept for a day. It stays after the round merges, and BIND-9b also makes
+it the gate `cd.dotnet` and `cd.protoc` pass before a release is published. On the Linux runner
+the job then runs `minimal.sh` over the same work folder (D-BIND-172).

@@ -4059,3 +4059,23 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   the push run for the first time at that tag; no dry run can exercise them. **Declined:** an
   API key in an environment secret, which lives up to a year in a public repository and expires
   between releases.
+
+- **D-BIND-177 - `cd.protoc` passes the consumer gate before it publishes anything.** *LOCKED BY
+  THE MAINTAINER 2026-10-28 (BIND-9b review Q3, M2).* `cd.protoc` released
+  `Eiva.Fletcher.Protoc` and `@eiva/protoc-gen-fletcher` after `check_protoc_package.sh`, which
+  checks the package's structure only; the consumer test that `cd.dotnet` runs as its gate
+  (D-BIND-159) used another build of the plugin. With nuget.org and npm both refusing to re-use a
+  version (D-BIND-176), a broken plugin would be final on its first publish. **How:** `cd.protoc`
+  gets the jobs `cd.dotnet` has: `dotnet` (`ci.dotnet.yml`) and `gateway` (`ci.gateway.yml` with
+  its release artifacts) beside `release` (`ci.protoc.yml`), and `gate`
+  (`ci.package-consumer.yml`, D-BIND-162) after the three. `npm-publish` waits on `gate`, so the
+  Release and the `nuget-org` job, which follow it, do too. The dotnet packages and the gateway
+  are built only for the gate and released by their own workflows. The gate's non-preview path
+  reads the bundle's version off `Eiva.Fletcher.Interop` and lets `Eiva.Fletcher.Protoc` carry
+  its own (`BUNDLE_PROTOC_VERSION_MUST_MATCH=0`), so a protoc version that differs from the
+  dotnet packages' is tested as it ships. A dispatch runs the gate too (a dry run, D-BIND-164).
+  **Cost:** a `protoc-v*` tag builds the dotnet packages and the gateway as well, about
+  `cd.dotnet`'s run time. **Declined:** (a) accept it for now, since the `0.6.0-alpha` tags share
+  the merge commit that `ci.pr` tested end to end, which leaves every later protoc-only tag
+  ungated; (c) release the package from `cd.dotnet`, which would tie its version to the dotnet
+  tag and leave a protoc-only fix no way to NuGet without one.

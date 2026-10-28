@@ -779,7 +779,8 @@ jobs:
   # them (BIND-9a, D-BIND-139; BIND-9b-1, D-BIND-159): on the round's branch the folder is the
   # 30-day preview bundle testers download; on every other pull request that can change the
   # packages it is kept for a day, only for the test. BIND-9b-6 (D-BIND-162): the two jobs live
-  # in ci.package-consumer.yml, which cd.dotnet.yml calls as its gate too.
+  # in ci.package-consumer.yml, which cd.dotnet.yml and cd.protoc.yml (D-BIND-177) call as their
+  # gate too.
   package-consumer:
     needs: [detect-changes, dotnet, gateway, protoc]
     if: ${{ needs.detect-changes.outputs.consumer == 'true' }}

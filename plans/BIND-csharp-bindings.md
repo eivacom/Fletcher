@@ -2859,7 +2859,10 @@ preparation, a fresh-context review and the close.
   the packages go to nuget.org (a public repository on GitHub-hosted runners cannot reach
   `nuget.eiva.com`): Trusted Publishing from a GitHub-hosted job in the environment `nuget-org`,
   no self-hosted runner, no feed workflow (D-BIND-176, `09294f9`; built: the `nuget-org` jobs of
-  `cd.dotnet` and `cd.protoc`, `cd.nuget-feed.yml` and `.github/actionlint.yaml` deleted).
+  `cd.dotnet` and `cd.protoc`, `cd.nuget-feed.yml` and `.github/actionlint.yaml` deleted; the
+  npm jobs in the environment `npm`, `439fe2c`). Q3 (b): `cd.protoc` passes the consumer gate
+  before npm, the Release or nuget.org, building the dotnet packages and the gateway for it
+  (D-BIND-177).
 
 **How test builds reach testers during development, and what changes at the merge** (recorded
 2026-10-20 at the maintainer's request, D-BIND-137 to 139). Until PR #129 merges, the per-push
@@ -2930,8 +2933,9 @@ runs, since BIND-T and BIND-10 land in between.
      workflow comments among them (`git grep -niE "preview bundle|PREVIEW-TESTERS|README-preview"`).
 3. **Merge** PR #129 (out of draft, its body refreshed, the watch list read).
 4. **Dry runs on `main`** (D-BIND-164): dispatch `cd.dotnet` and `cd.protoc`, one after the other
-   (both call `ci.protoc`, whose concurrency group cancels a second run on the same ref; review
-   M3), both green and recorded in this tracker before any tag.
+   (both call `ci.protoc`, `ci.dotnet` and `ci.gateway`, whose concurrency groups cancel a second
+   run on the same ref, and both run the gate, D-BIND-177; review M3), both green and recorded
+   in this tracker before any tag.
 5. **Clear the previews** (D-BIND-138): delete the remaining `fletcher-preview-*` artifacts and tell
    the testers to clear their NuGet caches, because `0.6.0-pr.129.N` sorts above `0.6.0-alpha`.
 6. **nuget.org and GitHub set up for the push** (D-BIND-176), before any tag, because the first
