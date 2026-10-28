@@ -252,10 +252,10 @@ check the package version or the commit, so use a shim built from the commit thi
 Fletcher is licensed under the LGPL-3.0-or-later (`LICENSE` in this package, with `COPYING`, the
 GNU GPL-3.0 text it incorporates). The shim is a shared library that the .NET assembly loads at run
 time, so you may replace it with one you build from the corresponding source, commit `@COMMIT@`.
-With [Conan 2](https://conan.io), CMake 3.15 or newer and the C++ toolchain the profile names (GCC 13
-on Linux, the Visual Studio 2022 C++ tools, MSVC 14.4x, on Windows), where `<profile>` is
-`Linux-gcc13-x86_64-Release` or `Windows-msvc194-x86_64-Release`, and `<rid>` is `linux-x64` or
-`win-x64`:
+With [Conan 2](https://conan.io), CMake 3.20 or newer (the XRCE-DDS provider requires it) and
+the C++ toolchain the profile names (GCC 13 on Linux, the Visual Studio 2022 C++ tools, MSVC
+14.4x, on Windows), where `<profile>` is `Linux-gcc13-x86_64-Release` or
+`Windows-msvc194-x86_64-Release`, and `<rid>` is `linux-x64` or `win-x64`:
 
 <!-- snippet: none -->
 ```bash
@@ -280,10 +280,10 @@ of the same name under `runtimes/<rid>/native/` in this package, or of the copy 
 published application.
 
 **NativeAOT.** The packages are trimming- and NativeAOT-compatible (a NativeAOT consumer is
-published and run in CI on Linux; Windows NativeAOT is not yet exercised), and the shim stays a
-separate shared library beside a NativeAOT application. Linking the shim statically into the application is
-not supported, and an application that did so would form a different combined work under the
-LGPL, with the obligations that brings.
+published and run in CI on Linux and Windows, for .NET 8 and .NET 10), and the shim stays a
+separate shared library beside a NativeAOT application. Linking the shim statically into the
+application is not supported, and an application that did so would form a different combined
+work under the LGPL, with the obligations that brings.
 
 ## Third-party licences
 

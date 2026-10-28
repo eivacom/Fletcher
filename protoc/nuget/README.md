@@ -1,5 +1,11 @@
 <!-- SPDX-License-Identifier: LGPL-3.0-or-later
      Copyright (C) 2026 The Fletcher Authors
+
+     Maintainers: every fenced code block here is checked when the package is packed
+     (scripts/check_readme_snippets.py, run by ci.protoc's pack-nuget job; BIND-9b review B1). A
+     block must equal the region of the same name in
+     integration-tests/preview-bundle-consumer/dotnet/PreviewConsumer/PreviewConsumer.csproj, which
+     the consumer test builds and runs; dotnet/README.package.md says how the markers work.
 -->
 # Eiva.Fletcher.Protoc
 
@@ -37,24 +43,54 @@ These are the floors of the build profiles, `Linux-gcc13-x86_64-Release` and
 
 ## Generating C#
 
+Reference the packages; `FletcherVersion` is the `Eiva.Fletcher` packages' version and
+`FletcherProtocVersion` this package's, with the same `MAJOR.MINOR`. `Google.Protobuf.Tools`
+brings `protoc`. A project that only generates code needs `Eiva.Fletcher.Model` and the package
+its generated code uses (`Eiva.Fletcher` for the native pair, `Eiva.Fletcher.GatewayClient` for
+the gateway pair).
+
+<!-- snippet: csproj-references -->
 ```xml
 <ItemGroup>
-  <PackageReference Include="Eiva.Fletcher.Protoc" Version="..." PrivateAssets="all" />
-  <PackageReference Include="Google.Protobuf.Tools" Version="3.36.1" GeneratePathProperty="true" PrivateAssets="all" />
+  <PackageReference Include="Eiva.Fletcher" Version="[$(FletcherVersion)]" />
+  <PackageReference Include="Eiva.Fletcher.GatewayClient" Version="[$(FletcherVersion)]" />
+  <PackageReference Include="Eiva.Fletcher.Model" Version="[$(FletcherVersion)]" />
+  <!-- The plugin, and protoc with the well-known .proto files, used at build time only. -->
+  <PackageReference Include="Eiva.Fletcher.Protoc" Version="[$(FletcherProtocVersion)]" PrivateAssets="all" />
+  <PackageReference Include="Google.Protobuf.Tools" Version="[3.36.1]" GeneratePathProperty="true" PrivateAssets="all" />
 </ItemGroup>
+```
+
+Then call protoc with the plugin on your `.proto` files (`fix.proto` here) before every compile.
+Its output folder must exist, and on Linux protoc from a NuGet package must be made executable
+(this package does that for the plugin).
+`--fletcher_opt` chooses the output: `csharp` (the model, topics and the native pair),
+`csharp_gateway`, `csharp_accessor`, and `csharp_model_only` to leave the native pair out.
+
+<!-- snippet: csproj-generate -->
+```xml
+<PropertyGroup>
+  <Protoc Condition="$([MSBuild]::IsOSPlatform('Windows'))">$(PkgGoogle_Protobuf_Tools)/tools/windows_x64/protoc.exe</Protoc>
+  <Protoc Condition="!$([MSBuild]::IsOSPlatform('Windows'))">$(PkgGoogle_Protobuf_Tools)/tools/linux_x64/protoc</Protoc>
+</PropertyGroup>
 
 <Target Name="FletcherGenerate" BeforeTargets="BeforeCompile;CoreCompile">
-  <!-- protoc from Google.Protobuf.Tools; make it executable on Linux. -->
-  <Exec Command="&quot;$(Protoc)&quot; --plugin=protoc-gen-fletcher=&quot;$(FletcherProtocPlugin)&quot; --fletcher_out=$(IntermediateOutputPath)fletcher --fletcher_opt=csharp -I . -I &quot;$(FletcherProtoInclude)&quot; -I &quot;$(PkgGoogle_Protobuf_Tools)/tools&quot; my.proto" />
+  <PropertyGroup>
+    <FletcherOut>$(IntermediateOutputPath)fletcher</FletcherOut>
+  </PropertyGroup>
+  <!-- A NuGet package does not keep the executable bit (Eiva.Fletcher.Protoc sets its own). -->
+  <Exec Condition="!$([MSBuild]::IsOSPlatform('Windows'))" Command="chmod +x &quot;$(Protoc)&quot;" />
+  <RemoveDir Directories="$(FletcherOut)" />
+  <MakeDir Directories="$(FletcherOut)" />
+  <Exec Command="&quot;$(Protoc)&quot; --plugin=protoc-gen-fletcher=&quot;$(FletcherProtocPlugin)&quot; --fletcher_out=&quot;$(FletcherOut)&quot; --fletcher_opt=csharp,csharp_gateway,csharp_accessor -I . -I &quot;$(FletcherProtoInclude)&quot; -I &quot;$(PkgGoogle_Protobuf_Tools)/tools&quot; fix.proto" />
   <ItemGroup>
-    <Compile Include="$(IntermediateOutputPath)fletcher/*.cs" />
+    <Compile Include="$(FletcherOut)/*.cs" />
   </ItemGroup>
 </Target>
 ```
 
-The `Eiva.Fletcher` package README shows the whole project, tested on every build. `--fletcher_opt`
-chooses the output: `csharp` (the model, topics and the native pair), `csharp_gateway`,
-`csharp_accessor`, `csharp_model_only`.
+Both blocks are the project the release's consumer test builds and runs on Linux and Windows; the
+`Eiva.Fletcher` package README walks through the rest of it.
 
 ## Standard gRPC projects
 

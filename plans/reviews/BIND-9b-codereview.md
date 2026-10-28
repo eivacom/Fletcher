@@ -44,6 +44,13 @@ for both frameworks since 9b-3 (`2420e11`).
 "`COPYING` (the LGPL), `LICENSE`"; `COPYING` is the GNU GPL v3, `LICENSE` the LGPL. It ships in the
 npm tarball.
 
+**Fixed 2026-10-28.** B1: the README's "Generating C#" now shows the consumer test's
+`csproj-references` and `csproj-generate` regions (protoc from `Google.Protobuf.Tools`, the
+`chmod`, the `MakeDir`), and `ci.protoc`'s `pack-nuget` runs `check_readme_snippets.py` on it
+against `PreviewConsumer.csproj` before packing (a mutated copy fails). B2: both READMEs say the
+AOT smoke test is published and run on Linux and Windows. B3: CMake 3.20, with the reason. B4:
+`LICENSE` the LGPL, `COPYING` the GNU GPL v3.
+
 ## QUESTION
 
 **Q1 (L5, T11) — does the LGPL analysis cover the release, and code that ends up inside the

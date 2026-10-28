@@ -309,6 +309,12 @@ jobs:
             protoc/conanfile.py
             dotnet/global.json
             scripts
+            integration-tests/preview-bundle-consumer/dotnet/PreviewConsumer
+
+      # BIND-9b review B1: the package README's blocks are the consumer test's project, region
+      # for region, so what it shows builds and runs (package-consumer runs it).
+      - name: Check the README's snippets
+        run: python3 scripts/check_readme_snippets.py protoc/nuget/README.md integration-tests/preview-bundle-consumer/dotnet/PreviewConsumer/PreviewConsumer.csproj
 
       - uses: actions/setup-dotnet@v6
         with:

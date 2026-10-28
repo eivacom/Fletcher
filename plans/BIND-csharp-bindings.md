@@ -2865,8 +2865,11 @@ preparation, a fresh-context review and the close.
   (D-BIND-177, `e660083`). Q4: "Getting the packages" in `dotnet/README.md` and a sentence in
   `README.package.md` step 2 and `protoc/nuget/README.md` (nuget.org; D-BIND-178, `1d2c8e9`).
   Q5 (A): the retirement commit's `package-consumer` and the dry runs on `main` rehearse the
-  gate's non-preview path, written into runbook steps 2 and 4 (D-BIND-179). All five questions
-  are ruled; next, blockers B1 to B4.
+  gate's non-preview path, written into runbook steps 2 and 4 (D-BIND-179, `37d5d9f`). All five
+  questions are ruled. **Blockers fixed:** B1 the `Eiva.Fletcher.Protoc` README shows the consumer
+  test's two csproj regions, checked by `ci.protoc`'s `pack-nuget`; B2 Windows NativeAOT is
+  exercised, and both READMEs say so; B3 CMake 3.20 in the relinking route; B4 the npm README's
+  licence files the right way round.
 
 **How test builds reach testers during development, and what changes at the merge** (recorded
 2026-10-20 at the maintainer's request, D-BIND-137 to 139). Until PR #129 merges, the per-push

@@ -93,4 +93,4 @@ Adding macOS / arm64 is tracked in [Fletcher's issue tracker](https://github.com
 
 LGPL-3.0-or-later © The Fletcher Authors. The shim itself is in this repo at [`protoc/npm/`](https://github.com/eivacom/Fletcher/tree/main/protoc/npm); the native plugin source is in [`protoc/`](https://github.com/eivacom/Fletcher/tree/main/protoc).
 
-The package carries `COPYING` (the LGPL), `LICENSE` and `THIRD-PARTY-LICENSES.txt`, the notice of what the native plugin it downloads links statically (protobuf, zlib and nanoarrow, with their licence texts). The same three files are attached to each GitHub Release beside the binaries.
+The package carries `LICENSE` (the LGPL), `COPYING` (the GNU GPL v3 it incorporates) and `THIRD-PARTY-LICENSES.txt`, the notice of what the native plugin it downloads links statically (protobuf, zlib and nanoarrow, with their licence texts). The same three files are attached to each GitHub Release beside the binaries.

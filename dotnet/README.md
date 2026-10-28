@@ -111,8 +111,8 @@ Deployment facts that apply with or without AOT: one build per RID (`linux-x64`,
 `win-x64`); the Linux shim needs **glibc 2.34 and `GLIBCXX_3.4.32` or newer** and only the
 system's `libstdc++`, `libm`, `libgcc_s` and `libc`; and the shim must come from the
 same commit as the managed packages: its binding ABI version is checked at load (exact
-minor before 1.0), nothing finer. Proven by `tests/Fletcher.AotSmoke` on Linux in CI;
-Windows NativeAOT has not yet been exercised.
+minor before 1.0), nothing finer. Proven by `tests/Fletcher.AotSmoke`, published and run in CI
+on Linux and on Windows (`linux-x64` and `win-x64`, .NET 8 and .NET 10).
 
 ## Status — round BIND
 
