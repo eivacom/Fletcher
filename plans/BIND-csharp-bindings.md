@@ -876,7 +876,7 @@ Kind: 🟪 spec · 🟦 impl · 🔬 proof · ⚙ pipelines · 📓 docs
 | BIND-5 | `SubscriberArrow` batch-first + the copy oracle end-to-end from C# | A | 🔬 | BIND-4 | `pubsub-arrow` cases; copy oracle green with the **C#** producer (D-BIND-58) | 🟢 (closed on CI at `a43c384`, `ci.pr` run 36563607601, 50/50, after a fresh-context review whose 9 BLOCKERs were fixed; D-BIND-58 to 68; conformance 11 of 11) |
 | BIND-6 | C# backend on the IR: type table + visitor → `<stem>.fletcher.cs` | B | 🟦 | — (GIR) | `CsVisitor.*`, `CsVisitorPair.*`, `CsVisitorCrossFile.*`, `CsNames.*` and `CsTypeTable.*` in `protoc/tests` (named `CsharpVisitor.*` until review T-D5 corrected it, 2026-10-14); no-drift test unchanged | 🟢 (closed on CI at `63ab057`, `ci.pr` 38575041994, after a fresh-context review whose 5 BLOCKERs were fixed and 10 questions ruled, D-BIND-83 to 93; the minor debt carried as known, listed in BIND-6's section) |
 | BIND-7 | Arrow view + accessor emitters (`csharp_accessor`) + capstone third arm | B | 🟦 | BIND-6, BIND-3 | `accessor-capstone` C# arm `observed == expected`; `StructArray` windowing fixture at non-zero offset | 🟢 (closed on CI at `268dceb`, `ci.pr` 38746753749, after a fresh-context review whose 2 BLOCKERs were fixed and 5 questions ruled, D-BIND-103 to 107; rulings during the round D-BIND-94 to 102; the minor debt carried as known, listed in BIND-7's section) |
-| BIND-T | TS `Publisher`/`Subscriber` emitter | C | 🟦 | — | `TsVisitor.DescriptorByteIdentical` still green + new emitter cases | ⚪ |
+| BIND-T | TS `Publisher`/`Subscriber` emitter | C | 🟦 | — | `TsVisitor.DescriptorByteIdentical` still green + new emitter cases | 🔴 (rulings D-BIND-181 to 184, 2026-10-28; slices T-1 to T-5) |
 | BIND-8 | `Eiva.Fletcher.GatewayClient` (managed port; the codec exception) | C | 🟦 | — | Bucket 2 green (the Part 4 file set, not a count); `Package.GatewayClientHasNoRuntimesFolder` | 🟢 (closed on CI at `750d79d`, `ci.pr` 39375700668, 56/56, every side workflow green, after a fresh-context review whose 5 BLOCKERs were fixed and 12 questions ruled, D-BIND-121 to 132; rulings during the round D-BIND-108 to 120, and D-BIND-133 (slice 8f, batched delivery); one finding after the review fixed (A1); performance carried as known debt, listed in BIND-8's section) |
 | BIND-9a | A preview for testers (split from BIND-9 2026-10-20): one bundle per push to this branch, a 30-day CI artifact with the four NuGet packages (shim for both RIDs), the gateway binaries and the plugin binaries; nothing released before the merge (D-BIND-134 to 152) | D | ⚙ | BIND-3, BIND-8 | A consumer test using only the bundle publishes natively, generates code with the bundled plugin and reaches the bundled gateway, on Linux and Windows; `Interop` carries exactly the two shims; licence files in every package | 🟢 (closed on CI at `133631a`, `ci.pr` 39592797595, 60/60 on its third attempt after two one-off Windows timing failures in unchanged tests, every side workflow green, after a fresh-context review whose 6 BLOCKERs were fixed and 10 questions ruled, D-BIND-145 to 152; rulings during the item D-BIND-134 to 144; the review's deferred items listed in BIND-9b) |
 | BIND-9b | The rest of BIND-9: publish to nuget.org by Trusted Publishing (D-BIND-176; was `nuget.eiva.com` from a self-hosted job, D-BIND-28), size budget, glibc floor, `Eiva.Fletcher.Protoc`, NativeAOT on Windows and `fastdds`, C#-native cross-language rows | D | ⚙ | BIND-9a, all for release | `cd.dotnet.yml` dry run; packed-size check; asset-isolation + licence check | 🟢 (closed on CI at `9c9e2bc`, `ci.pr` 40702620300, 61/61 on the first attempt, every side workflow green, after a fresh-context review whose 4 BLOCKERs were fixed and 5 questions ruled, D-BIND-175 to 179; rulings during the item D-BIND-153 to 174; D-BIND-180 from a reported issue; the dry runs, the bump, the retirement and the tags are the merge runbook's, after BIND-T and BIND-10 (D-BIND-174); the review's DEBT and NITs listed in BIND-9b's section) |
@@ -1978,8 +1978,11 @@ the maintainer's choice, from `plans/reviews/BIND-7-codereview.md`:
 - **Purely additive** — `TsVisitor.DescriptorByteIdentical` stays green; existing
   hand-wired usage keeps working; no new runtime dependency.
 - New emitter cases in `protoc/tests/test_ts_visitor.cpp`; `tsc` typecheck passes.
-- End-to-end coverage against a live gateway in the extended
-  `integration-tests/protoc-gateway-client-ts`.
+- End-to-end coverage against a live gateway ~~in the extended
+  `integration-tests/protoc-gateway-client-ts`~~ **in the existing live lanes (D-BIND-184):**
+  `gateway-end-to-end`'s protoc-gen test over both providers, and `gateway-dotnet-crosslang`'s
+  TypeScript peer on the generated pair; `protoc-gateway-client-ts` stays byte-compat and gains
+  a typecheck of the pair.
 - Attachments and `Subscription`/unsubscribe are exposed, not hidden.
 - **A flatten-wrapper input, debt from D-BIND-90 (2026-10-14).** For a method whose
   input is a flatten wrapper, C++ writes no pair and the line `// Skipped: Svc.Method
@@ -2006,6 +2009,35 @@ the maintainer's choice, from `plans/reviews/BIND-7-codereview.md`:
   can declare only a flat message, and even that conflicts with the same message's
   native declaration (D-BIND-112's measurement). Then `gateway-dotnet-crosslang`'s
   TypeScript peer declares its own topic instead of relying on the C# client's.
+
+**BIND-T rulings, 2026-10-28** (D-BIND-181 to 184, asked one at a time after mapping the
+TypeScript generator, `gateway-client-ts` and the lanes that run them): the pair has C#'s gateway
+pair's shape, `create(client)` declaring the topic, `subscribe` returning the id (181); a method
+whose input is a flatten wrapper gets no TypeScript topic constant, only C++'s skip line, an
+exception to D-BIND-6 and 7 named in the release notes (182); the TypeScript client and the
+generated subscriber gain D-BIND-133's batched delivery, and the client an `onError` hook that
+both paths use (183); the live coverage runs in the existing gateway lanes (184). The null refusal
+needs no ruling: D-BIND-156 already gives TypeScript the same refusal and message.
+
+**Slices** (proposed with the rulings):
+
+- **T-1 the null refusal** (D-BIND-156): `encodePositional` refuses a null in a non-nullable field
+  whose parent is present, with C#'s message (`field '<path>' is not nullable, but row <n> has a
+  null there; …`); `gateway-client-ts` tests for a top-level, nested, list-element and map-value
+  null, and a null below an absent parent still encoding.
+- **T-2 `onError` and batched delivery** (D-BIND-183): `FletcherClientOptions.onError`,
+  `undecodableRows`, the per-row path moved onto them; `subscribeBatched` with its flush rules,
+  tested with fake timers.
+- **T-3 the generated pair** (D-BIND-181, 182): the emitter, the wrapper skip, the emitter cases
+  in `test_ts_visitor.cpp` (the skip line compared with C++'s header for the same file, as
+  D-BIND-90's C# test), the coverage goldens regenerated, the pair typechecked in
+  `protoc-gateway-client-ts`.
+- **T-4 the live lanes** (D-BIND-184): `gateway-end-to-end`'s protoc-gen test on the pair
+  (publish with attachments, subscribe, unsubscribe, batched) over both providers; the crosslang
+  TypeScript peer on `CrossLang_TsToCsPublisher` and siblings, its `uncaughtException` hook
+  replaced by `onError`.
+- **T-5 docs, review and close:** `gateway-client-ts/README.md` and `protoc/README.md`, then a
+  fresh-context review as for every item.
 
 ### BIND-8 — `Eiva.Fletcher.GatewayClient`
 
@@ -2999,7 +3031,9 @@ runs, since BIND-T and BIND-10 land in between.
    job is re-run after the cause is fixed (`--skip-duplicate`). The `protoc` and `dotnet`
    Release notes say that a generated topic is now one segment per package part (D-BIND-180):
    C++ applications generated from a dotted package with 0.5.x must be rebuilt with 0.6.0-alpha
-   together, or they do not see each other.
+   together, or they do not see each other. The `protoc` notes also say that TypeScript no longer
+   emits a topic constant for a method whose input is a flatten wrapper (D-BIND-182): an app
+   importing one stops compiling, as no C++ or C# code ever used that topic.
 
 **Acceptance**
 

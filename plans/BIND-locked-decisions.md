@@ -4159,3 +4159,75 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   apps unable to reach C++ and the form surprising to users); an alias or a fallback that tries
   both names (it hides a mismatch instead of removing it, and doubles discovery); refusing `.` in a
   segment at the seam (above).
+
+- **D-BIND-181 - the generated TypeScript pair has the C# gateway pair's shape.** *LOCKED BY THE
+  MAINTAINER 2026-10-28 (BIND-T Q1).* Per pub/sub method, `<Svc>_<Method>Publisher` and
+  `<Svc>_<Method>Subscriber`, named as C++'s pair and appended to `<stem>.fletcher.ts` after the
+  topic constants (D-BIND-7). Both borrow a connected `FletcherClient`, which must outlive them
+  (as D-BIND-115), and carry `static readonly topic` (the topic constant) and `static readonly
+  schema` (the message's `TypedSchema`). The publisher's constructor is private: `static async
+  create(client)` declares the topic with the `TypedSchema`, so with its `schemaIpc` (D-BIND-130),
+  and returns the publisher; `publish(row, attachments?)` resolves when the gateway has
+  acknowledged the row. The subscriber is `new <Svc>_<Method>Subscriber(client)`;
+  `subscribe(handler: (row, attachments) => void)` resolves to the subscription id, and
+  `unsubscribe(id)` ends it; `subscribeBatched` is D-BIND-183's. The row type is the message's
+  interface, so a call site never names it. No new runtime dependency.
+  **Declined:** the thinnest wrappers, constructors only, with the caller declaring the topic (a
+  publisher that forgets loses the full-fidelity schema); a `Subscription` object with its own
+  `unsubscribe()` (unlike the C# pair and `FletcherClient.subscribe`).
+
+- **D-BIND-182 - a method whose input is a flatten wrapper gets no TypeScript topic constant:
+  TypeScript writes C++'s skip line, as C# does since D-BIND-90.** *LOCKED BY THE MAINTAINER
+  2026-10-28 (BIND-T Q2; D-BIND-90's TypeScript half).* The TypeScript backend checks a method
+  against the message set C++ checks it against, flatten wrappers (`IsFlattenedWrapper`) and
+  recursive messages left out, so the shared `ValidateServiceMethod` gives C++'s reason and the
+  file has `// Skipped: Feed.Push — input message 'Batch' has no generated Arrow mapping in this
+  file` where it had `export const Feed_PushTopic = '…';`, and no pair.
+  **Why:** a flatten wrapper is dissolved into its single field wherever it is used, so it is not
+  a row, and C++ and C# generate no class for it. Since the generator's first commit (`072553c`,
+  2026-04-17) C++ left wrappers out of the set of generated messages while TypeScript built its
+  set from every message, so the one check answered differently; the IR rewrite (`8ef1d0e`) kept
+  the TypeScript output byte-identical, and D-BIND-90 aligned C# and left TypeScript as BIND-T's
+  debt. The constant named a topic no C++ or C# generated code ever uses, so it worked from
+  TypeScript to TypeScript only. One rule in all three languages is the maintainer's aim.
+  **An exception to D-BIND-6 and D-BIND-7,** for this case only: existing TypeScript output changes,
+  and an app importing such a constant stops compiling; the 0.6.0-alpha Release notes say so
+  (runbook step 7). The wrapper's own interface and `TypedSchema` stay: no other message names them
+  (a wrapper field is rendered as its inner type, D-BIND-119), and removing them would break more
+  for no agreement. **Test:** a TypeScript case takes the skip line from the C++ header generated
+  for the same file, as D-BIND-90's C# test does.
+  **Declined:** keeping the constant with the skip line beside it (the languages still differ);
+  removing the wrapper's interface and schema too.
+
+- **D-BIND-183 - the TypeScript gateway client and the generated subscriber gain D-BIND-133's
+  batched delivery, and the client an `onError` hook.** *LOCKED BY THE MAINTAINER 2026-10-28
+  (BIND-T Q3; D-BIND-133 (k)).* `FletcherClient.subscribeBatched(topic, schema, handler, options?)`
+  with `handler(rows: T[], attachments: Map<string, Uint8Array>[], status)`, `status` holding
+  `reason` (`'RowLimit' | 'Timeout' | 'Closing'`) and `rowsDropped`; `options` `{ maxRows,
+  timeoutMs }` with D-BIND-133's defaults (8000 rows, one minute), `Infinity` for no timeout, and
+  native's bounds and refusal. The generated subscriber gains `subscribeBatched(handler,
+  options?)`. D-BIND-133's rules hold: attachments parallel to the rows, a dropped row's left out;
+  a window of only dropped rows still delivers an empty one; `RowLimit` at the `maxRows`-th row,
+  `Timeout` counted from the window's first row; `unsubscribe`, `close` and the connection ending
+  flush the pending window as `Closing` first; the per-row `subscribe` is unchanged. **What
+  differs, and why:** the TypeScript client has no Arrow backend, so a window is the decoded rows,
+  not a `RecordBatch`, each row decoded as it arrives, and D-BIND-133 (e) and (f) (one decode per
+  window, the 2^31-2 byte ceiling) do not apply; JavaScript runs one handler at a time, so (g)
+  holds without a queue. **Errors:** `FletcherClientOptions.onError?(error)`, `error.reason`
+  `'HandlerThrew' | 'RowUndecodable'`, with the subscription id and the cause, and
+  `client.undecodableRows`, as C#'s `HandlerFaulted` and `UndecodableRows`; both paths use them,
+  so a throwing handler or an undecodable row no longer escapes `ws.onmessage` as an uncaught
+  exception and the receive loop carries on. Without `onError` the error goes to `console.error`.
+  **A known limit:** browsers throttle timers in hidden tabs, so a `Timeout` flush can come late
+  there (never lost); the README says so. Node is unaffected.
+  **Declined:** row by row only, as a recorded difference (the maintainer wants the three languages
+  consistent); batched delivery with errors escaping as today (unlike C#).
+
+- **D-BIND-184 - the TypeScript pair's live coverage runs in the existing gateway lanes.** *LOCKED
+  BY THE MAINTAINER 2026-10-28 (BIND-T Q4).* `gateway-end-to-end`'s protoc-gen test drives the pair
+  over both providers (publish with attachments, subscribe, unsubscribe, batched);
+  `gateway-dotnet-crosslang`'s TypeScript peer publishes and subscribes through the generated pair,
+  so the TypeScript rows to and from C++ and C# go through it; `protoc-gateway-client-ts` stays a
+  byte-compat test and gains a typecheck of the pair. BIND-T's acceptance bullet naming
+  `protoc-gateway-client-ts` is amended. **Declined:** building and starting a gateway in
+  `protoc-gateway-client-ts` (a second gateway build in CI, duplicating `gateway-end-to-end`).
