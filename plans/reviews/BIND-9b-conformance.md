@@ -18,7 +18,7 @@ BIND-10, or D-BIND-164 on `main`.
 | NativeAOT on `win-x64` and over `fastdds` | MET | `ci.dotnet` Windows and Linux legs, both frameworks; `AotSmoke/Program.cs`; the shipped README contradicts it (B2) |
 | Null in a non-nullable column | MET, with debts | see D-BIND-156; T1, T2 |
 | C#-native cross-language rows | MET | `CrossLangTests.cs` (5 facts), the C# native peer, both OS legs; 11/11 on CI |
-| Self-hosted runner registered, documented, sole use | PARTLY / AT MERGE | documented; registration an admin step (D-BIND-163); sole use not enforced (Q2) |
+| Self-hosted runner registered, documented, sole use | STRUCK by D-BIND-176 | no self-hosted runner; the nuget.org setup is runbook step 6 (Q2) |
 | `Eiva.Fletcher.Protoc` (D-BIND-71, 158) | MET; "same MAJOR.MINOR" PARTLY | `check_protoc_package.sh`; the Linux consumer runs the Exec; the edition refusal stated; MAJOR.MINOR not asserted (T3); the feed push AT MERGE |
 | LGPL relinking decision before the first external publication | PARTLY | D-BIND-140 ruled "for the preview"; whether it covers the release is Q1 |
 | `--locked-mode`, lock files committed | MET | `ci.dotnet`; 10 lock files |
@@ -28,7 +28,7 @@ BIND-10, or D-BIND-164 on `main`.
 
 | Ruling | Grade | Evidence or gap |
 |---|---|---|
-| 153 the release never waits on the runner | MET | Release on a GitHub-hosted job; the feed job of its own |
+| 153 the release never waits on the runner | MET; SUPERSEDED 2026-10-28 by D-BIND-176 | Release on a GitHub-hosted job; the feed job of its own |
 | 154 Ubuntu 24.04 and later | MET as amended by 169 | 154's text not marked amended (T7) |
 | 155 dynamic CRT | MET | as above |
 | 156 the C++ codec refuses; C# widened | MET | `nanoarrow_codec.cpp`, `arrow-bridge` codec, `GatewayRowCodec.cs`; tests in all three (7, 7, 5 + 3); TypeScript is BIND-T's; gaps T1, T2 |
@@ -38,7 +38,7 @@ BIND-10, or D-BIND-164 on `main`.
 | 160 slice order | MET | 9b-8 in progress |
 | 161 rows in the 8d lane, topic-named lines | MET | `CrossLangTests.cs` |
 | 162 the gate builds the gateway and protoc from the tag | MET | `cd.dotnet` |
-| 163 the feed gated on `NUGET_EIVA_RUNNER`, dispatchable | MET | `cd.dotnet`; `cd.nuget-feed.yml` |
+| 163 the feed gated on `NUGET_EIVA_RUNNER`, dispatchable | MET; SUPERSEDED 2026-10-28 by D-BIND-176 (nuget.org, no runner) | `cd.dotnet`; `cd.nuget-feed.yml` (deleted) |
 | 164 a dispatch is a dry run | MET as built / AT MERGE | the release job runs on `push` only |
 | 165 the schema reader without data-sharing | MET | `qos_defaults.cpp`; the test pins the factory, not the provider's call |
 | 166 vendored texts, NOTICE files, check | MET | the provider recipe refuses without them; the check on three lanes |

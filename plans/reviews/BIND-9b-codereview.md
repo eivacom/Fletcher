@@ -56,6 +56,8 @@ obligations; (b) a linking/static-compilation exception for the managed assembli
 `options.proto` and the generated code; (c) relicense the managed tier permissively; (d) state
 NativeAOT unsupported for non-LGPL applications. Reviewer L recommends (b), (a) at minimum; T
 recommends confirming D-BIND-140 (with D-BIND-173) for the release on the Q9 row.
+**Ruled 2026-10-27: (b), D-BIND-175** (`LICENSE-EXCEPTION`, a draft until EIVA legal has
+reviewed it; its wiring into the packages gates the bump).
 
 **Q2 (M1) — the self-hosted feed runner and `NUGET_EIVA_API_KEY` are reachable from pull-request
 code.** `cd.nuget-feed.yml:9-10` says the runner runs "never pull-request code"; nothing enforces it.
@@ -65,6 +67,11 @@ on any commit can read. Options: (a) a runner group limited to this repository a
 key in an environment whose rules allow only `main` and the release tags, `environment:` on the
 push job, a tag ruleset, approval for fork PRs; (b) accept, with an admin checklist. Reviewer:
 (a), before an admin registers the runner (runbook step 7).
+**Ruled 2026-10-28, recast: D-BIND-176.** The packages go to nuget.org (the maintainer's
+correction: a public repository on GitHub-hosted runners cannot reach `nuget.eiva.com`), pushed
+by Trusted Publishing from a GitHub-hosted job in the environment `nuget-org`; there is no
+self-hosted runner and no stored key. The environment admits only the release tags and a tag
+ruleset limits who cuts them (runbook step 6).
 
 **Q3 (M2) — `Eiva.Fletcher.Protoc` is released without the consumer gate.** `cd.protoc` publishes
 it after `check_protoc_package.sh` (structure only); `cd.dotnet`'s gate tests another build of it;

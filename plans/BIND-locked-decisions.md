@@ -4031,11 +4031,12 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   `contents: read`. It downloads the same gated artifact the Release attached, logs in with
   `NuGet/login@v1` immediately before the push (the key lives one hour), and runs `dotnet nuget
   push --skip-duplicate`, so a re-run after a partial push is safe; the `.snupkg` goes with its
-  `.nupkg` to nuget.org's symbol server. `cd.dotnet` pushes `Eiva.Fletcher.Interop` and
-  `Eiva.Fletcher.Model` before the two packages that depend on them. `cd.nuget-feed.yml`, the
-  `eiva-network` label in `actionlint.yaml`, `NUGET_EIVA_API_KEY` and `NUGET_EIVA_RUNNER` go.
+  `.nupkg` to nuget.org's symbol server. `cd.dotnet` pushes `Eiva.Fletcher.Interop` before
+  `Eiva.Fletcher`, which depends on it (Model and GatewayClient depend on neither).
+  `cd.nuget-feed.yml`, `.github/actionlint.yaml` (it held only the `eiva-network` label),
+  `NUGET_EIVA_API_KEY` and `NUGET_EIVA_RUNNER` go.
   The GitHub Release keeps the packages and the shim's lockfiles. **Admin steps, before the first
-  tag (runbook step 7 moves before step 6):** on nuget.org, EIVA's organization requests the
+  tag (runbook step 6, before the tags):** on nuget.org, EIVA's organization requests the
   `Eiva.` ID prefix reservation (all five IDs were free on 2026-10-28) and gets two Trusted
   Publishing policies, owned by the organization, for owner `eivacom`, repository `Fletcher`,
   workflow files `cd.dotnet.yml` and `cd.protoc.yml`, environment `nuget-org`, scoped to
@@ -4043,8 +4044,14 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   organization, so a maintainer who stays creates them. The login names that member's nuget.org
   profile name, kept in the environment variable `NUGET_USER`. On GitHub: the environment
   `nuget-org`, deployable from the `dotnet-v*` and `protoc-v*` tags only, and a tag ruleset that
-  lets only the maintainers create, move or delete release tags. The fork approval policy (all
-  outside contributors) stays. **Why Trusted Publishing:** no long-lived key in a public
+  lets only the maintainers create, move or delete release tags (`dotnet-v*`, `protoc-v*` and
+  `gateway-client-v*` at least). The fork approval policy (all outside contributors) stays.
+  **npm too (the maintainer, 2026-10-28):** npm never re-uses a version number either, and its
+  two jobs (`cd.protoc`'s `npm-publish`, `cd.gateway-client`'s `publish`) were guarded by the tag
+  alone, so both run in the GitHub environment `npm`, deployable from the `protoc-v*` and
+  `gateway-client-v*` tags only, and each package's Trusted Publisher on npmjs.com
+  (`@eiva/protoc-gen-fletcher`, `@eiva/fletcher-gateway-client`) names that environment, so no
+  other job can publish them. **Why Trusted Publishing:** no long-lived key in a public
   repository, and no key to expire between alpha releases (a nuget.org API key lasts at most a
   year). **Not reversible:** nuget.org cannot delete a version, only unlist it, and never
   re-uses its number, so `0.6.0-alpha` is final on its first push: D-BIND-175's wiring is in

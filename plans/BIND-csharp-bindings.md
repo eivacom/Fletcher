@@ -703,6 +703,11 @@ listed in `pr_gate`'s `results:`).
 
 ### CD — publishing to `nuget.eiva.com` (D-BIND-28)
 
+> **⛔ Superseded 2026-10-28 by D-BIND-176:** the packages go to nuget.org, pushed by Trusted
+> Publishing from a GitHub-hosted `nuget-org` job in `cd.dotnet.yml` and `cd.protoc.yml`; there
+> is no self-hosted runner, no `cd.nuget-feed.yml` and no `NUGET_EIVA_*` setting. The rest of this
+> section is the history.
+>
 > **Built by BIND-9b-6 (2026-10-23), and changed from the sketch below by D-BIND-153 and
 > D-BIND-162 to 164:** the Release is created on a GitHub-hosted runner from the packages the gate
 > tested, and the feed push is its own job, `cd.nuget-feed.yml`, skipped until the runner exists;
@@ -2847,7 +2852,14 @@ preparation, a fresh-context review and the close.
   package released without the consumer gate, Q4 where users get the packages after the
   retirement, Q5 the gate's non-preview path first running at the retirement). Two DEBT items
   are already folded into the runbook: the loose `options.proto` (M4) and the dry runs dispatched
-  one after the other (M3).
+  one after the other (M3). **Rulings:** Q1 (b), an additional permission under GPL-3.0 section 7
+  for the managed assemblies compiled into an application, `options.proto`'s generated code and
+  the generator's output (`LICENSE-EXCEPTION`, a draft until EIVA legal has reviewed it; its
+  wiring gates the bump; D-BIND-175, `3c436ad`). Q2, recast by the maintainer's correction that
+  the packages go to nuget.org (a public repository on GitHub-hosted runners cannot reach
+  `nuget.eiva.com`): Trusted Publishing from a GitHub-hosted job in the environment `nuget-org`,
+  no self-hosted runner, no feed workflow (D-BIND-176, `09294f9`; built: the `nuget-org` jobs of
+  `cd.dotnet` and `cd.protoc`, `cd.nuget-feed.yml` and `.github/actionlint.yaml` deleted).
 
 **How test builds reach testers during development, and what changes at the merge** (recorded
 2026-10-20 at the maintainer's request, D-BIND-137 to 139). Until PR #129 merges, the per-push
@@ -2922,22 +2934,34 @@ runs, since BIND-T and BIND-10 land in between.
    M3), both green and recorded in this tracker before any tag.
 5. **Clear the previews** (D-BIND-138): delete the remaining `fletcher-preview-*` artifacts and tell
    the testers to clear their NuGet caches, because `0.6.0-pr.129.N` sorts above `0.6.0-alpha`.
-6. **Tag `0.6.0-alpha`**, each tag on the merge commit and its workflow green before the next:
+6. **nuget.org and GitHub set up for the push** (D-BIND-176), before any tag, because the first
+   push of a version is final: on nuget.org, EIVA's organization has the `Eiva.` ID prefix
+   reserved and two Trusted Publishing policies, owned by the organization and created by a
+   maintainer who stays a member (owner `eivacom`, repository `Fletcher`, workflow files
+   `cd.dotnet.yml` and `cd.protoc.yml`, environment `nuget-org`, packages `Eiva.Fletcher*`); on
+   GitHub, the environment `nuget-org` deployable from the `dotnet-v*` and `protoc-v*` tags only,
+   with the variable `NUGET_USER` (that member's nuget.org profile name), the environment `npm`
+   deployable from the `protoc-v*` and `gateway-client-v*` tags only, and a tag ruleset that
+   lets only the maintainers create, move or delete release tags (`dotnet-v*`, `protoc-v*` and
+   `gateway-client-v*` at least); on npmjs.com, the Trusted Publisher of
+   `@eiva/protoc-gen-fletcher` and of `@eiva/fletcher-gateway-client` names the environment `npm`.
+   GitHub creates a missing environment, unprotected, the first time a job names it, so the
+   `npm` environment's tag rule is set before the next `protoc` or `gateway-client` tag.
+7. **Tag `0.6.0-alpha`**, each tag on the merge commit and its workflow green before the next:
    `core`, `pubsub`, `arrow-bridge`, `pubsub-arrow`, `fastdds-pubsub-provider`,
    `xrcedds-pubsub-provider`, then `gateway`, `gateway-client`, `protoc` (also
-   `Eiva.Fletcher.Protoc`), and `dotnet` last. Every CD builds from its own tree, so the order is
-   for reading the results, not a build dependency.
-7. **The NuGet feed** (D-BIND-163), whenever an admin has done the three steps above (runner,
-   `NUGET_EIVA_API_KEY`, `NUGET_EIVA_RUNNER`): dispatch `cd.nuget-feed.yml` with the `dotnet-v`
-   and `protoc-v` tags cut before it.
+   `Eiva.Fletcher.Protoc`, to nuget.org), and `dotnet` last (the four packages to nuget.org).
+   Every CD builds from its own tree, so the order is for reading the results, not a build
+   dependency. The nuget.org login and push run for the first time here; a failed `nuget-org`
+   job is re-run after the cause is fixed (`--skip-duplicate`).
 
 **Acceptance**
 
 - Part 5 as written: `ci.c-abi.yml`, `ci.dotnet.yml`, `ci.format-check-cs.yml`,
   the three integration lanes, `cd.dotnet.yml` mirroring the Conan CD shape and
-  publishing to `nuget.eiva.com` from a **self-hosted `publish` job** with the
-  `NUGET_EIVA_API_KEY` secret (D-BIND-28), packages also attached to the GitHub
-  Release, `verify-tag-version-dotnet`, no dist-tag step;
+  publishing to nuget.org by Trusted Publishing from a GitHub-hosted `nuget-org` job
+  (D-BIND-176, which superseded D-BIND-28's `nuget.eiva.com` and self-hosted runner),
+  packages also attached to the GitHub Release, `verify-tag-version-dotnet`, no dist-tag step;
   `ci.pr.yml` with 3 filters, 5 caller jobs, `pr_gate` `needs:` **and** `results:`;
   `ci.license-headers.yml` denylist updated.
 - **RID matrix** `win-x64` + `linux-x64` fanning in to a single `pack`
@@ -2997,10 +3021,12 @@ runs, since BIND-T and BIND-10 land in between.
   maps, nested and `optional` messages, Timestamp/Duration), compared field by field on the receiving
   side. The test-body rules for Fast DDS apply. The matrix and the reason for it are in BIND-6's open
   note (requested by the maintainer 2026-10-13).
-- The **self-hosted runner** registered, labelled, documented (what it runs, what it
+- ~~The **self-hosted runner** registered, labelled, documented (what it runs, what it
   must have installed), and used by no other job than the NuGet publish jobs:
   `cd.dotnet.yml`'s and, since D-BIND-71, `cd.protoc.yml`'s. Both are tag-triggered
-  and never run pull-request code.
+  and never run pull-request code.~~ **Struck 2026-10-28 by D-BIND-176:** there is no
+  self-hosted runner. In its place, the nuget.org and GitHub setup of runbook step 6: the
+  `nuget-org` environment admits only the release tags, and a tag ruleset limits who cuts them.
 - **`Eiva.Fletcher.Protoc` (D-BIND-71)**, the C# locator for the plugin: the two
   plugin binaries bundled per RID and a `build/*.props` setting
   `$(FletcherProtocPlugin)`. Packed and published by `cd.protoc.yml` under
@@ -3120,9 +3146,11 @@ Three actions remain besides, none an engineering one:
 1. **LGPL relinking decision** (owner: the maintainer): **ruled for the preview 2026-10-20
    (D-BIND-140)**, since the repository is public and BIND-9a's per-push bundle is already
    external (D-BIND-139).
-2. **The self-hosted publish runner** in the EIVA network and the `NUGET_EIVA_API_KEY`
+2. ~~**The self-hosted publish runner** in the EIVA network and the `NUGET_EIVA_API_KEY`
    secret on `nuget.eiva.com` (user actions outside a PR, D-BIND-28). NuGet.org Trusted
-   Publishing and the `Eiva.Fletcher.*` prefix are deferred until the packages go external.
+   Publishing and the `Eiva.Fletcher.*` prefix are deferred until the packages go external.~~
+   **Replaced 2026-10-28 by D-BIND-176:** nuget.org by Trusted Publishing; the prefix
+   reservation, the two policies, the environment and the tag ruleset are runbook step 6.
 3. **ADO**: 18689 pointed at the committed plan; 16353's accessor wording corrected.
 
 ---
@@ -3158,5 +3186,5 @@ Three actions remain besides, none an engineering one:
 - Docs updated incl. TD-009; round archived to `docs/archive/BIND/`.
 - **Released properly after the merge** (2026-10-20, BIND-9b): every package at `0.6.0-alpha`,
   bumped in lockstep; each supported package published by its CD workflow from `main` (the NuGet
-  packages to `nuget.eiva.com`); the per-push preview bundle job retired and the preview bundles
-  deleted.
+  packages to nuget.org, D-BIND-176); the per-push preview bundle job retired and the preview
+  bundles deleted.

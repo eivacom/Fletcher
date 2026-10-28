@@ -40,11 +40,10 @@
 #   * push: tags 'protoc-v*'     — real release.
 #   * workflow_dispatch          — a DRY RUN (BIND-9b-6, D-BIND-164): the build, the static binaries
 #                                  and Eiva.Fletcher.Protoc packed and checked; never npm, the
-#                                  Release or the feed. Dispatchable once this file is on main.
+#                                  Release or nuget.org. Dispatchable once this file is on main.
 #
-# BIND-9b-6 (D-BIND-71, D-BIND-163): the Release also carries Eiva.Fletcher.Protoc, the C# locator
-# ci.protoc packs, and the feed job pushes it to nuget.eiva.com from the self-hosted runner, once
-# the repository variable NUGET_EIVA_RUNNER is 'true' (cd.nuget-feed.yml).
+# BIND-9b-6 (D-BIND-71, D-BIND-176): the Release also carries Eiva.Fletcher.Protoc, the C# locator
+# ci.protoc packs, and the nuget-org job then pushes it to nuget.org by Trusted Publishing.
 
 name: cd.protoc
 
@@ -71,6 +70,8 @@ jobs:
     needs: release
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    # D-BIND-176: deployable from the release tags only, as the nuget-org environment is.
+    environment: npm
     # id-token: write is required for `npm publish --provenance` to mint
     # an OIDC token that npm exchanges for a signed Sigstore attestation
     # linking the package back to this exact workflow run. Matches the
@@ -225,13 +226,44 @@ jobs:
             "COPYING" \
             "THIRD-PARTY-LICENSES.txt"
 
-  # BIND-9b-6 (D-BIND-153, D-BIND-163): Eiva.Fletcher.Protoc to nuget.eiva.com, skipped until the
-  # self-hosted runner exists; a release cut before then is pushed by dispatching
-  # cd.nuget-feed.yml with its tag. Pushes the Release's assets, so only the .nupkg above.
-  feed:
+  # D-BIND-176: Eiva.Fletcher.Protoc to nuget.org, by Trusted Publishing, as cd.dotnet's nuget-org
+  # job does (a policy of its own names this file). nuget.org never deletes a version, so the
+  # first push of one is final; --skip-duplicate makes a re-run safe.
+  nuget-org:
     needs: create-release
-    if: github.event_name == 'push' && vars.NUGET_EIVA_RUNNER == 'true'
-    uses: ./.github/workflows/cd.nuget-feed.yml
-    with:
-      tag: ${{ github.ref_name }}
-    secrets: inherit
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: nuget-org
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download the package
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: fletcher-protoc-nuget
+          path: packages
+
+      - name: Check that the nuget.org user is set
+        env:
+          NUGET_USER: ${{ vars.NUGET_USER }}
+        run: |
+          if [ -z "$NUGET_USER" ]; then
+            echo "::error::the nuget-org environment has no NUGET_USER variable: set it to the nuget.org profile name of the member who created the Trusted Publishing policy (D-BIND-176)"
+            exit 1
+          fi
+
+      - name: NuGet login (OIDC token for a one-hour API key)
+        id: login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ vars.NUGET_USER }}
+
+      - name: Push the package
+        shell: bash
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+        run: |
+          set -euo pipefail
+          dotnet nuget push "packages/Eiva.Fletcher.Protoc.${GITHUB_REF_NAME#protoc-v}.nupkg" \
+            --source https://api.nuget.org/v3/index.json --api-key "$NUGET_API_KEY" --skip-duplicate

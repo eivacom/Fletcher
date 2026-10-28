@@ -1,9 +1,0 @@
-# SPDX-License-Identifier: LGPL-3.0-or-later
-# Copyright (C) 2026 The Fletcher Authors
-#
-# actionlint's configuration (read from here by ci.action-lint.yml's run).
-self-hosted-runner:
-  labels:
-    # BIND-9b-6 (D-BIND-28, D-BIND-163): the self-hosted runner inside the EIVA network that
-    # pushes to nuget.eiva.com, used only by cd.nuget-feed.yml.
-    - eiva-network

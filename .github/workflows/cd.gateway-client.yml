@@ -30,6 +30,8 @@ jobs:
   publish:
     needs: build-and-test
     runs-on: ubuntu-latest
+    # D-BIND-176: deployable from the release tags only, as cd.protoc's npm-publish is.
+    environment: npm
     permissions:
       id-token: write
       contents: read
