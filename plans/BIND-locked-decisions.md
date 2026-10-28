@@ -4092,3 +4092,20 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   versions", so a preview build of the same README stays true. **Declined:** the package READMEs
   only (the repository's own README would still not say it); leaving it to BIND-10, which
   documents the round but would leave the merge without it.
+
+- **D-BIND-179 - the gate's non-preview path is rehearsed by the retirement commit and the dry
+  runs on `main`.** *LOCKED BY THE MAINTAINER 2026-10-28 (BIND-9b review Q5, T10).*
+  `ci.package-consumer.yml`'s non-preview path (the version read off the packed
+  `Eiva.Fletcher.Interop`, `BUNDLE_PROTOC_VERSION_MUST_MATCH=0`, the 1-day artifact) is what
+  `cd.dotnet`'s gate and, since D-BIND-177, `cd.protoc`'s take, and no run on this branch has
+  taken it: every one builds the preview bundle. **How:** the retirement commit's own `ci.pr`
+  run is its first (runbook step 2; the commit touches `dotnet/` and `ci.package-consumer.yml`,
+  so `package-consumer` runs), confirmed green from its job list before the merge; the dry runs
+  of `cd.dotnet` and `cd.protoc` on `main` (runbook step 4, D-BIND-164) then run both release
+  gates on the commit the tags go on. Nothing reaches nuget.org or npm until both are green, so
+  a fault there stops a release, it does not publish one. **Not covered until a protoc-only
+  tag:** a `Eiva.Fletcher.Protoc` version that differs from the dotnet packages' (the bump keeps
+  them equal at `0.6.0-alpha`); if that path were wrong, that tag's gate would fail before
+  anything is published. **Declined:** (B) a dispatch before the merge, which needs the
+  workflow on `main`; a throwaway pull request now, which costs a full CI run and a public pull
+  request for a path the two steps above run anyway.

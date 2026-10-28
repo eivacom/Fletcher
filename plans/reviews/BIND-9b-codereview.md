@@ -101,6 +101,11 @@ artifact) is what `cd.dotnet`'s gate takes; every run on this branch takes the p
 (A) the runbook names the retirement commit's `package-consumer` as the gate's rehearsal; (B) a
 one-off dispatch before then. Reviewers T and M: (A).
 
+**Ruled 2026-10-28: (A), D-BIND-179.** Runbook step 2 names the retirement commit's
+`package-consumer` as the first non-preview run, to be confirmed green before the merge, and step
+4's dry runs on `main` rehearse both release gates (`cd.dotnet`, and `cd.protoc` since D-BIND-177)
+before any tag.
+
 ## DEBT
 
 - **M3 — the two dry runs can cancel each other.** `ci.protoc.yml:6-8`:

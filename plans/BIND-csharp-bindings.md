@@ -2863,7 +2863,10 @@ preparation, a fresh-context review and the close.
   npm jobs in the environment `npm`, `439fe2c`). Q3 (b): `cd.protoc` passes the consumer gate
   before npm, the Release or nuget.org, building the dotnet packages and the gateway for it
   (D-BIND-177, `e660083`). Q4: "Getting the packages" in `dotnet/README.md` and a sentence in
-  `README.package.md` step 2 and `protoc/nuget/README.md` (nuget.org; D-BIND-178).
+  `README.package.md` step 2 and `protoc/nuget/README.md` (nuget.org; D-BIND-178, `1d2c8e9`).
+  Q5 (A): the retirement commit's `package-consumer` and the dry runs on `main` rehearse the
+  gate's non-preview path, written into runbook steps 2 and 4 (D-BIND-179). All five questions
+  are ruled; next, blockers B1 to B4.
 
 **How test builds reach testers during development, and what changes at the merge** (recorded
 2026-10-20 at the maintainer's request, D-BIND-137 to 139). Until PR #129 merges, the per-push
@@ -2931,12 +2934,19 @@ runs, since BIND-T and BIND-10 land in between.
    - `integration-tests/preview-bundle-consumer/` STAYS (it is the consumer test, `minimal.sh`
      included); a rename is cosmetic and goes with the script's or not at all;
    - every document that points at the preview, the package README, `dotnet/README.md` and the
-     workflow comments among them (`git grep -niE "preview bundle|PREVIEW-TESTERS|README-preview"`).
+     workflow comments among them (`git grep -niE "preview bundle|PREVIEW-TESTERS|README-preview"`);
+   - **the gate's first non-preview run** (review Q5, T10; D-BIND-179): this commit's own `ci.pr`
+     run is the first to take `ci.package-consumer.yml`'s non-preview path (the version read off
+     the packed `Interop`, `BUNDLE_PROTOC_VERSION_MUST_MATCH=0`, the 1-day artifact). The commit
+     touches `dotnet/` and `ci.package-consumer.yml`, so the `dotnet` filter runs
+     `package-consumer`; it must be green, and its job list read to confirm it ran, before the
+     merge.
 3. **Merge** PR #129 (out of draft, its body refreshed, the watch list read).
 4. **Dry runs on `main`** (D-BIND-164): dispatch `cd.dotnet` and `cd.protoc`, one after the other
    (both call `ci.protoc`, `ci.dotnet` and `ci.gateway`, whose concurrency groups cancel a second
    run on the same ref, and both run the gate, D-BIND-177; review M3), both green and recorded
-   in this tracker before any tag.
+   in this tracker before any tag. They are the release gates' rehearsal (D-BIND-179): the same
+   `ci.package-consumer.yml` path the tags take, on the commit they will take it on.
 5. **Clear the previews** (D-BIND-138): delete the remaining `fletcher-preview-*` artifacts and tell
    the testers to clear their NuGet caches, because `0.6.0-pr.129.N` sorts above `0.6.0-alpha`.
 6. **nuget.org and GitHub set up for the push** (D-BIND-176), before any tag, because the first
