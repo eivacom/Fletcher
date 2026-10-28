@@ -49,3 +49,11 @@ BIND-10, or D-BIND-164 on `main`.
 | 171 T12 closed without a test, the README names CMake and the toolchain | MET | `README.package.md` (the CMake number wrong, B3) |
 | 172 the profiles' floors, the minimal-machine test, the loader message | MET | `minimal.sh` (cannot pass vacuously), `NativeLoader.cs`, `NativeLoaderTests.cs`; the gateway's 2.38 stated, not guarded (L10, T5) |
 | 173 the shim's lockfile; none for the gateway and protoc | MET | `ci.dotnet` both legs, `check_conan_lockfile.sh`, `check_dotnet_packages.sh`, `cd.dotnet`; green at `d52dd42` |
+
+**After the review, 2026-10-28.** The grades the review's findings left short now read: NativeAOT
+on `win-x64` MET with the README right (B2); the LGPL row ruled for the release (D-BIND-175's
+exception), its wiring AT MERGE after EIVA legal; D-BIND-154's text marked amended by 169 (T7);
+the self-hosted rows and 163 superseded by D-BIND-176; `cd.protoc` gated as `cd.dotnet` is
+(D-BIND-177), AT MERGE; the gate's non-preview path AT MERGE, first run at the retirement
+(D-BIND-179). "Same MAJOR.MINOR" stays PARTLY (T3, carried as known). **On CI:** `9c9e2bc`,
+`ci.pr` 40702620300 green 61/61 on the first attempt, every side workflow green; BIND-9b closed.

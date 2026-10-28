@@ -1285,7 +1285,7 @@ review's IDs (audited against the code 2026-10-20): C-D7 performance (per-row al
 managed decode, a codec planned per `PublishAsync`), G-D2, G-D4, T-D4, T-D6, T-D7, N6, N9 and N14;
 TypeScript batched delivery is a BIND-T parity item.
 
-## BIND-9a — a preview for testers (2026-10-20 to …)
+## BIND-9a — a preview for testers (2026-10-20 to 2026-10-22, CLOSED)
 
 **The rulings (2026-10-20).** Eight, one at a time, after checking the tree (D-BIND-134 to 141):
 all four packages; nothing released before the merge; one preview bundle per push to the branch,
@@ -1362,6 +1362,8 @@ before it were timing tests nobody had touched, one now given room on a slow run
 92 local runs could not reproduce, on the PR's watch list. The re-runs themselves confirmed one of
 the rulings: a partial re-run kept the run's version, as D-BIND-150 meant.
 
+## BIND-9b — the release machinery (2026-10-22 to 2026-10-28, CLOSED)
+
 **BIND-9b, the rulings.** Eight questions, one at a time (D-BIND-153 to 160). Two were reshaped
 with the maintainer on the way: `options.proto` has to reach standard gRPC projects too, so the
 protoc package wires itself into `Grpc.Tools`; and a test of released packages could only report a
@@ -1422,3 +1424,33 @@ by its tag. The code generator's release gained the same feed step and now attac
 package too. Three choices, each ruled by the maintainer: build the other two components for the
 check rather than wait for their releases, skip the feed step until it can run, and do the first
 trial runs on main after the merge, since GitHub cannot start these workflows from a branch.
+
+**9b-7, what the preview's review left.** Eight parts. Fast DDS compiles in third-party code that
+no package manager lists, so its licence texts and the NOTICE files of the libraries that have
+them are now carried and checked on three lanes. Fast DDS moved from 3.4.0 to 3.4.3 for about
+nineteen security fixes, which as a side effect lowered the shim's glibc floor to 2.34. A Windows
+timer test that kept failing on CI was finally reproduced: the suite parked the thread pool's few
+threads and the timer had none left, so both test projects now start with a larger pool. The
+plugin's notice is now compared across Linux and Windows and travels with its Release and the npm
+package. The floors were tested in Microsoft's bare runtime images, which also showed the loader
+blaming the wrong thing when a machine is too old; its message now names the floor. And the
+shim's release carries a lockfile of the third-party packages it was built from. One test, of the
+relinking route as written, was built and rehearsed and then withdrawn on the maintainer's review,
+since CI already builds the shim that route rebuilds; the README names what it needs instead.
+
+**9b-8, the review and a reported topic issue.** Three reviewers with fresh context found no defect
+in the machinery or the tests, but four sentences that would have misled a user, among them a
+snippet in the code generator's README that failed as written; it is now checked against the
+consumer test it came from. Five questions were ruled one at a time, and one of them changed the
+plan: the repository is public and its runners are GitHub's, so the packages go to nuget.org by
+Trusted Publishing, from a protected environment, with no runner or key of EIVA's to guard. The
+code generator's release now passes the same consumer test as the C# release before anything is
+published, since a published version can never be reused. During the review an issue was reported:
+the C# preview named a topic `nexus.topics.v1/LivePoints/Snapshot` where the TypeScript
+plugin named it `nexus/topics/v1/LivePoints/Snapshot`. The dotted form was a ruling of 2026-10-02;
+on the maintainer's new ruling every generator now builds the topic with one function, a segment
+per part of the package, so C++, C# and TypeScript agree by construction and a test compares them.
+
+**BIND-9b closed.** Everything it set out to build is on the branch and green on CI, on the first
+attempt. What remains is the release itself, which by the maintainer's ruling runs at the merge,
+after BIND-T and BIND-10, from the runbook in the tracker.

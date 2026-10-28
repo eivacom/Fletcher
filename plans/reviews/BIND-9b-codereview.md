@@ -8,8 +8,16 @@ the 9a review's remaining debts (9b-7). Commits `653893b..b23f472`.
 **Reviewed at:** `b23f472`. CI: `ci.pr` 40526778017 green 61/61 at `d52dd42`, every side workflow
 green; the later commits change `plans/` only.
 
-**Outcome: 4 BLOCKERs (all shipped text), 7 questions for a ruling, DEBT, NITs.** BIND-9b does not
-close until the blockers are fixed and the questions ruled.
+**Outcome: 4 BLOCKERs (all shipped text), 5 questions for a ruling, DEBT, NITs.** BIND-9b does not
+close until the blockers are fixed and the questions ruled. (This line said 7 questions until the
+close; there were always five, Q1 to Q5.)
+
+> **CLOSED 2026-10-28, on CI at `9c9e2bc` (`ci.pr` 40702620300, 61/61 on the first attempt, every
+> side workflow green).** All five questions ruled (D-BIND-175 to 179, Q2 recast by the move to
+> nuget.org); all four blockers fixed (`2f07789`). DEBT and NITs: M3 and M4 are in the runbook; L7
+> and M9 go with the retirement commit; T7 fixed in the close; T2 is BIND-10's; the rest (M5, T1,
+> T3, T4, L8, L9, L10/T5, M6, M7, M8, M10, M11, M12, T8, T9, T12, L-N) carried as known, listed in
+> the tracker's BIND-9b section.
 
 ## How this review was done, and its limit
 

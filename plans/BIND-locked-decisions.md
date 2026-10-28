@@ -3661,7 +3661,9 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   older build image and no second compiler. Recorded for later, should older distributions matter:
   GCC 12 alone lowers only the libstdc++ floor (to `3.4.30`), not glibc; linking libstdc++ and
   libgcc statically and building on an older image would give glibc 2.34 (Ubuntu 22.04, Debian 12,
-  RHEL 9). **Declined:** lowering the floor.
+  RHEL 9). **Declined:** lowering the floor. **Amended 2026-10-26 by D-BIND-169:** the shim's stated
+  glibc floor is 2.34, as Fast DDS 3.4.3's build needs no more; the gateway's stays 2.38, and
+  `GLIBCXX_3.4.32` still means Ubuntu 24.04 and later only.
 
 - **D-BIND-155 - the MSVC runtime stays dynamic.** *LOCKED BY THE MAINTAINER 2026-10-22 (BIND-9b
   Q3; confirms D-BIND-38 at BIND-9).* The Visual C++ 2015-2022 redistributable, 14.40 or newer,
