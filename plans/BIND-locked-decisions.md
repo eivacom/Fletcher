@@ -4234,3 +4234,50 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   byte-compat test and gains a typecheck of the pair. BIND-T's acceptance bullet naming
   `protoc-gateway-client-ts` is amended. **Declined:** building and starting a gateway in
   `protoc-gateway-client-ts` (a second gateway build in CI, duplicating `gateway-end-to-end`).
+
+- **D-BIND-185 - the TypeScript client reports an async handler's rejection through `onError`.**
+  *LOCKED BY THE MAINTAINER 2026-10-29 (BIND-T review Q1).* When a subscription's callback, per
+  row or batched, returns a thenable, the client reports its rejection as `HandlerThrew`, as it
+  reports a synchronous throw (D-BIND-183); the handler types still return `void`. **Why:** an
+  `async` lambda is the idiomatic TypeScript handler and TypeScript accepts it where `void` is
+  expected; its rejection escaped as an `unhandledRejection`, which ends a Node process by default,
+  while the generated subscriber says a failing callback is reported. C# can only document the rule
+  (D-BIND-125) because `async void` cannot be observed; TypeScript can catch it. **Declined:**
+  documenting "do not pass an async handler".
+
+- **D-BIND-186 - `unsubscribe` in the TypeScript client stops delivery at once, as C#'s does.**
+  *LOCKED BY THE MAINTAINER 2026-10-29 (BIND-T review Q2).* `unsubscribe(id)` removes the
+  subscription, a batched one delivering its pending window as `Closing` first, and only then sends
+  the request; its handler is not called again, whatever the gateway replies, and a failed request
+  still rejects. **Why:** C#'s `UnsubscribeAsync` removes before it sends; TypeScript kept the
+  subscription until the reply, so rows in flight reached a per-row handler, and a refused request
+  left a per-row subscription delivering and a batched one decoding and dropping every row. A
+  behaviour change for a per-row user, named in the gateway-client Release notes (D-BIND-188).
+  **Declined:** keeping delivery until the reply.
+
+- **D-BIND-187 - a pub/sub method whose input has no field TypeScript can carry keeps its topic
+  constant and gets `// No pair:`, no pair.** *LOCKED BY THE MAINTAINER 2026-10-29 (BIND-T review
+  Q3; as built in T-3, under D-BIND-181).* TypeScript writes no `TypedSchema` for such a message, so
+  there is nothing to bind; the line `// No pair: Svc.Method — input message 'M' has no field
+  TypeScript can carry` says why. C++ writes a pair over an empty row; a row with no fields carries
+  nothing, and no existing output changes. `protoc/README.md` states it. **Declined:** dropping the
+  constant too (breaks an app importing it); an empty interface, schema and pair (publishes rows
+  with nothing in them).
+
+- **D-BIND-188 - what changes for a 0.5.x TypeScript user is stated in the Release notes and both
+  npm READMEs.** *LOCKED BY THE MAINTAINER 2026-10-29 (BIND-T review Q4).* Runbook step 7 gains a
+  `gateway-client` paragraph (`publish` and `encodePositional` refuse a null or absent
+  non-nullable field and a null map key, D-BIND-156, 189; a throwing or async callback and an
+  undecodable row go to `onError` or `console.error` instead of escaping, 183, 185; `unsubscribe`
+  stops delivery at once, 186; the new exports) and two `protoc` points (a method with a recursive
+  input loses its constant too, 182; generated TypeScript with a pub/sub method needs
+  `@eiva/fletcher-gateway-client` 0.6). `gateway-client-ts/README.md` and `protoc/npm/README.md`
+  describe the pair and say to use the same MAJOR.MINOR of plugin and client (the lockstep rule,
+  D-BIND-138, stated where a TypeScript user reads). **Declined:** leaving it to the Release text.
+
+- **D-BIND-189 - the TypeScript encoder refuses a null map key.** *LOCKED BY THE MAINTAINER
+  2026-10-29 (BIND-T review Q5; D-BIND-131's TypeScript half, under D-BIND-156's parity).*
+  `encodePositional` throws `encodePositional: map key must not be null (field '<path>')`, C#'s
+  wording with this encoder's prefix, before anything is sent, for a `null` or `undefined` key of
+  any type. Before, a string key was written as the text `"null"` and an int key as 0.
+  **Declined:** carrying it as debt.

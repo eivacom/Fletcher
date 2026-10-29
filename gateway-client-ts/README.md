@@ -33,8 +33,35 @@ npm test       # vitest run
 
 ## Usage
 
+**With generated code** (recommended). For `service Positions { rpc Report(stream Position) returns (google.protobuf.Empty); }`,
+`protoc-gen-fletcher` with `--fletcher_opt=ts` writes a publisher and a subscriber that carry the
+topic and the schema, typed by the message ([`protoc/README.md`](../protoc/README.md#options)):
+
 ```ts
 import { FletcherClient } from '@eiva/fletcher-gateway-client';
+import { Positions_ReportPublisher, Positions_ReportSubscriber } from './positions.fletcher.js';
+
+const client = new FletcherClient({
+  url: 'ws://localhost:9090',
+  onError: (fault) => console.warn(fault.reason, fault.error),
+});
+await client.connect();
+
+// Declares the topic with the message's full schema.
+const publisher = await Positions_ReportPublisher.create(client);
+await publisher.publish({ x: 1.0, y: 2.0 });
+
+const subscriber = new Positions_ReportSubscriber(client);
+const id = await subscriber.subscribe((row, attachments) => console.log(row.x, row.y));
+await subscriber.unsubscribe(id);
+
+client.close();
+```
+
+**By hand**, with a schema written out field by field:
+
+```ts
+import { FletcherClient, WireTypeId } from '@eiva/fletcher-gateway-client';
 import type { SchemaDescriptor } from '@eiva/fletcher-gateway-client';
 
 const client = new FletcherClient({ url: 'ws://localhost:9090' });
@@ -42,8 +69,8 @@ await client.connect();
 
 const schema: SchemaDescriptor = {
   fields: [
-    { name: 'x', type: 'float64' },
-    { name: 'y', type: 'float64' },
+    { name: 'x', fieldNumber: 1, wireType: WireTypeId.FLOAT64, nullable: false },
+    { name: 'y', fieldNumber: 2, wireType: WireTypeId.FLOAT64, nullable: false },
   ],
 };
 

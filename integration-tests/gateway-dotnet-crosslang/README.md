@@ -77,7 +77,10 @@ than one: a late row of an earlier test must never count for the next (D-BIND-16
 Each publisher declares its topic with the schema's Arrow IPC bytes, the TypeScript peer included:
 its generated `CrossRow` carries them (`schemaIpc`, D-BIND-130), so its declaration is a native
 publisher's, byte for byte. (Until BIND-8e, TypeScript could announce only the lossy JSON schema,
-and the C# client declared the topic for it, D-BIND-117.)
+and the C# client declared the topic for it, D-BIND-117.) Since BIND-T the TypeScript peer
+publishes and subscribes through the generated pairs (`CrossLang_TsToCsPublisher.create(client)`
+declares the topic; `CrossLang_CsToTsSubscriber` and its siblings subscribe), so its rows go
+through the same generated code a TypeScript application uses (D-BIND-184).
 
 ## Live, not replayed
 

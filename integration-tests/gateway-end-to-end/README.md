@@ -26,6 +26,11 @@ Tests are split across two files by whether they need the proto-gen toolchain. E
 | `subscribe + publish using Telemetry are typed end-to-end` | Canonical typed happy path: `client.subscribe(topic, Telemetry, cb)` infers `row: ITelemetry` from the schema's phantom binding; `client.publish(topic, Telemetry, data)` infers `data: ITelemetry`. No `<T>` generic, no local `Row` interface at the call site. |
 | `client publish ↔ subscription round-trip` | Stress variant: three samples with distinct values across the three field types, still fully typed via `Telemetry`. |
 | `subscribe<ITelemetry> with gateway-supplied schema` | Gateway-supplied-schema flow: publisher announces `Telemetry` via `createTopic`, subscriber calls `subscribe<ITelemetry>(topic, cb)` without a local schema and gets typed delivery from the schema the gateway forwards. |
+| `generated TelemetryFeed pair: publishes and subscribes a typed row with its attachments, until unsubscribed` | The generated `TelemetryFeed_ReportPublisher.create(client)` declares its topic and publishes a row with an attachment; `TelemetryFeed_ReportSubscriber` receives both, typed. After `unsubscribe` a later row reaches a second client's subscriber (the sentinel) but not this one. |
+| `generated TelemetryFeed pair: subscribeBatched … as RowLimit` | `subscribeBatched` with `maxRows: 2` and no deadline delivers four rows as two `RowLimit` windows, in order. |
+| `generated TelemetryFeed pair: subscribeBatched … as Timeout` | With a 200 ms deadline every row arrives in a `Timeout` window, in order, however the rows fall into windows. |
+
+`proto/telemetry.proto`'s `service TelemetryFeed` exists for the generated pair: one method per pair case, so each case has a topic of its own (`integration/gateway/TelemetryFeed/<Method>`). Every case runs against both providers.
 
 ## Server binary
 

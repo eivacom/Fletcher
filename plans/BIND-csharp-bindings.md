@@ -2142,6 +2142,25 @@ needs no ruling: D-BIND-156 already gives TypeScript the same refusal and messag
   lane's `typecheck` script (not run on CI) fails only on the two faults T-3 fixed in
   `protoc-gateway-client-ts` (`rootDir`, `find-binary.ts`'s `Dirent`), none in the new cases;
   left as found.
+- **T-4 done on CI 2026-10-29** (`e577332`, `ci.pr` 40872463656, 61/61 on the first attempt, every
+  side workflow green): the pair cases green over both providers on Linux and Windows, and the
+  crosslang rows through the pairs on both legs.
+- **T-5, review 2026-10-29** (`plans/reviews/BIND-T-codereview.md`, `BIND-T-conformance.md`, at
+  `e577332` with T-5's README edits; three fresh-context reviewers): no defect in the emitter's
+  message set or the batcher's rules, 2 BLOCKERs in shipped text (B1 the client README's
+  hand-built `subscribe` example does not compile, checked: TS18046; B2 the batched deadline
+  described as counted from the window's first row, in the `.d.ts`, the README and D-BIND-183) and
+  5 questions, all ruled: an async handler's rejection reported through `onError` (D-BIND-185);
+  `unsubscribe` stops delivery at once, as C# (186); a method whose input has no field TypeScript
+  can carry keeps its constant and gets `// No pair:` (187); the changes for a 0.5.x user in the
+  Release notes and both npm READMEs, with the same-MAJOR.MINOR line (188); the null map key
+  refused (189). **To fix before the close, with the blockers and rulings:** T3 (a golden of a file
+  with pairs), T4/M5 (`gateway-end-to-end` type-checked on CI), T5/M8 (the pair's import aliased so
+  a message named `FletcherClient` compiles), T6 (bucket 2's TypeScript count), L6 to L8, M6, M7,
+  M9, the nits L9 to L13, T11 and T12, and T10's in-flight and refused `unsubscribe` with Q2.
+  **Carried as known:** M10 (the well-known-types CMake block copied three times; rows after a
+  batcher closes not counted), T9 (the live unsubscribe check cannot see the gateway side), the rest
+  of T10.
 
 ### BIND-8 — `Eiva.Fletcher.GatewayClient`
 
