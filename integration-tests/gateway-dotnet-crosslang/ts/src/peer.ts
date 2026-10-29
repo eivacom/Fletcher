@@ -39,12 +39,17 @@ function print(line: string): void {
   process.stdout.write(line + '\n');
 }
 
-// A row the client cannot decode throws inside its message handler, outside any code here:
-// reported as ERROR so the C# side names it rather than waiting for a row that never comes.
+// Anything else that escapes, printed as ERROR so the C# side names it rather than waiting for a
+// row that never comes.
 process.on('uncaughtException', (e) => print(`ERROR ${e.message}`));
 process.on('unhandledRejection', (e) => print(`ERROR ${(e as Error)?.message ?? String(e)}`));
 
-const client = new FletcherClient({ url: arg('--url') });
+// A row the client cannot decode, or a callback that throws, is reported here (D-BIND-183).
+const client = new FletcherClient({
+  url: arg('--url'),
+  onError: (fault) =>
+    print(`ERROR ${fault.reason}: ${(fault.error as Error)?.message ?? String(fault.error)}`),
+});
 await client.connect();
 
 // D-BIND-130: the generated CrossRow carries its schema as Arrow IPC, so the topics are declared

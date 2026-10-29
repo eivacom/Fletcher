@@ -29,7 +29,15 @@ import { ObjectBackend } from './codec/object-backend.js';
 import type { DecoderBackend } from './codec/object-backend.js';
 import { encodePositional } from './codec/positional-encoder.js';
 import type { SchemaDescriptor, TypedSchema } from './codec/schema-descriptor.js';
-import type { BackendType, FletcherClientOptions, MessageCallback } from './types.js';
+import { Batcher, resolveBatchOptions } from './batcher.js';
+import type { BatchCallback, BatchOptions } from './batcher.js';
+import type {
+  BackendType,
+  FletcherClientFault,
+  FletcherClientOptions,
+  FletcherFaultReason,
+  MessageCallback,
+} from './types.js';
 
 interface PendingRequest {
   resolve: (resp: ServerResponse) => void;
@@ -37,9 +45,11 @@ interface PendingRequest {
   expectedType: string;
 }
 
+// A subscription delivers each row to `callback`, or gathers rows into `batcher`'s windows.
 interface Subscription {
   schema: SchemaDescriptor;
-  callback: MessageCallback;
+  callback?: MessageCallback;
+  batcher?: Batcher<unknown>;
 }
 
 export class FletcherClient {
@@ -50,15 +60,18 @@ export class FletcherClient {
     backend: BackendType;
     reconnectDelay: number;
     wasmFactory?: () => Promise<unknown>;
+    onError?: (fault: FletcherClientFault) => void;
   };
   private pendingQueue: PendingRequest[] = [];
   private subscriptions = new Map<bigint, Subscription>();
+  private undecodable = 0;
 
   constructor(options: FletcherClientOptions) {
     this.opts = {
       url: options.url,
       backend: options.backend ?? 'object',
       reconnectDelay: options.reconnectDelay ?? 0,
+      onError: options.onError,
     };
 
     if (this.opts.backend === 'arrow') {
@@ -157,8 +170,67 @@ export class FletcherClient {
     return sub.subId;
   }
 
-  /** Unsubscribe from a subscription. */
+  /**
+   * Subscribe to a topic, delivering rows in windows (D-BIND-183, as the C# client's
+   * `SubscribeBatchedAsync` and the native `SubscriberArrow`). Returns the subscription ID.
+   *
+   * A window is delivered when it holds `maxRows` rows (`RowLimit`), when `timeoutMs` has
+   * passed since the previous window (`Timeout`; counted from the window's first row, so a
+   * row after a long quiet spell comes at once), or when the subscription ends through
+   * `unsubscribe`, `close` or the connection closing (`Closing`). Row `i`'s attachments are
+   * at index `i`. A row that does not decode is reported through `onError`, counted in the
+   * window's `rowsDropped`, and left out; a window of only such rows is delivered empty.
+   *
+   * In a browser tab that is hidden, timers are throttled, so a `Timeout` window can come
+   * late there; it is never lost.
+   */
+  subscribeBatched<T>(
+    topic: string,
+    schema: TypedSchema<T>,
+    callback: BatchCallback<T>,
+    options?: BatchOptions,
+  ): Promise<bigint>;
+  subscribeBatched(
+    topic: string,
+    schema: SchemaDescriptor,
+    callback: BatchCallback<Record<string, unknown>>,
+    options?: BatchOptions,
+  ): Promise<bigint>;
+  async subscribeBatched<T>(
+    topic: string,
+    schema: SchemaDescriptor | TypedSchema<T>,
+    callback: BatchCallback<T>,
+    options?: BatchOptions,
+  ): Promise<bigint> {
+    // Refused before anything is sent, as the C# client refuses its options.
+    const { maxRows, timeoutMs } = resolveBatchOptions(options);
+
+    const resp = await this.sendAndWait(buildSubscribe(topic), 'subscribed');
+    if (resp.type === 'error') {
+      throw new Error((resp as ErrorResponse).message);
+    }
+    const subId = (resp as SubscribedResponse).subId;
+    const batcher = new Batcher<T>(
+      (rows, attachments, status) =>
+        this.runCallback(subId, () => callback(rows, attachments, status)),
+      maxRows,
+      timeoutMs,
+    );
+    this.subscriptions.set(subId, { schema, batcher: batcher as Batcher<unknown> });
+    return subId;
+  }
+
+  /**
+   * How many rows did not decode against their subscription's schema and were dropped
+   * (each also reported through `onError`).
+   */
+  get undecodableRows(): number {
+    return this.undecodable;
+  }
+
+  /** Unsubscribe from a subscription. A batched one delivers its pending window first. */
   async unsubscribe(subId: bigint): Promise<void> {
+    this.subscriptions.get(subId)?.batcher?.close();
     const resp = await this.sendAndWait(buildUnsubscribe(subId), 'unsubscribed');
     if (resp.type === 'error') {
       throw new Error((resp as ErrorResponse).message);
@@ -212,8 +284,9 @@ export class FletcherClient {
     return (resp as TopicsListResponse).topics;
   }
 
-  /** Close the connection and clean up. */
+  /** Close the connection and clean up. Batched subscriptions deliver their pending windows first. */
   close(): void {
+    this.closeBatchers();
     this.subscriptions.clear();
     for (const p of this.pendingQueue) {
       p.reject(new Error('Client closed'));
@@ -245,6 +318,7 @@ export class FletcherClient {
 
       ws.onclose = () => {
         this.ws = null;
+        this.closeBatchers();
         for (const p of this.pendingQueue) {
           p.reject(new Error('WebSocket closed'));
         }
@@ -284,12 +358,59 @@ export class FletcherClient {
       }
 
       const sub = this.subscriptions.get(msg.subId);
-      if (sub) {
-        const envelope = deserializeEnvelope(msg.envelope);
-        const decoded = this.backend.decode(sub.schema, envelope.row);
-        sub.callback(decoded, envelope.attachments);
-      }
+      if (sub) this.deliver(msg.subId, sub, msg.envelope);
     }
+  }
+
+  // One row for `sub`: decoded, then to its callback or its window. Nothing here throws on to
+  // the WebSocket's handler (D-BIND-183): a row that does not decode, or a callback that
+  // throws, is reported and the next row is delivered as usual.
+  private deliver(subId: bigint, sub: Subscription, envelopeBytes: Uint8Array): void {
+    let decoded: unknown;
+    let attachments: Map<string, Uint8Array>;
+    try {
+      const envelope = deserializeEnvelope(envelopeBytes);
+      decoded = this.backend.decode(sub.schema, envelope.row);
+      attachments = envelope.attachments;
+    } catch (e) {
+      ++this.undecodable;
+      this.report(subId, 'RowUndecodable', e);
+      sub.batcher?.drop();
+      return;
+    }
+
+    if (sub.batcher) {
+      sub.batcher.add(decoded, attachments);
+    } else {
+      const callback = sub.callback!;
+      this.runCallback(subId, () => callback(decoded, attachments));
+    }
+  }
+
+  private runCallback(subId: bigint, call: () => void): void {
+    try {
+      call();
+    } catch (e) {
+      this.report(subId, 'HandlerThrew', e);
+    }
+  }
+
+  private report(subscriptionId: bigint, reason: FletcherFaultReason, error: unknown): void {
+    const fault: FletcherClientFault = { reason, subscriptionId, error };
+    if (!this.opts.onError) {
+      console.error(`FletcherClient: subscription ${subscriptionId}: ${reason}`, error);
+      return;
+    }
+    try {
+      this.opts.onError(fault);
+    } catch {
+      // The receive loop must survive whatever onError does.
+    }
+  }
+
+  // Every batched subscription ends: its pending window is delivered as `Closing`.
+  private closeBatchers(): void {
+    for (const sub of this.subscriptions.values()) sub.batcher?.close();
   }
 
   private sendAndWait(frame: string | Uint8Array, expectedType: string): Promise<ServerResponse> {

@@ -2058,6 +2058,37 @@ needs no ruling: D-BIND-156 already gives TypeScript the same refusal and messag
   element path without `item`: 1 fails). `gateway-client-ts/README.md` states the refusal. Every
   TypeScript publisher in the integration tests (end-to-end, fastdds-ts, the crosslang peer, the
   byte-compat vectors) sends complete rows, read before the change; CI runs them.
+- **T-1 done on CI 2026-10-29** (`56c7844`, `ci.pr` 40848132221, 61/61 on the first attempt,
+  every side workflow green): every TypeScript lane green on Linux and Windows, so no existing
+  TypeScript publisher sent an incomplete row. **Left for later, found in passing:** a `null` map
+  key in TypeScript is written as the string `"null"` (the encoder's `writeScalar` has no
+  refusal), where C++ and C# refuse it (D-BIND-131).
+- **T-2, 2026-10-29 (D-BIND-183): `onError`, `undecodableRows` and `subscribeBatched` in the
+  TypeScript client.** `FletcherClientOptions.onError(fault)` with `reason`
+  (`'HandlerThrew' | 'RowUndecodable'`), `subscriptionId` and `error`; without it,
+  `console.error`; what it throws is ignored. Both paths decode and call through one `deliver`,
+  so a row that does not decode or a callback that throws is reported and the next row goes on;
+  before, either escaped `ws.onmessage` as an uncaught exception. `subscribeBatched(topic, schema,
+  callback, options?)` keeps one `Batcher` per subscription (`src/batcher.ts`), D-BIND-133's
+  rules as C#'s `GatewayBatcher` has them: `RowLimit` at `maxRows`, `Timeout` armed by the
+  window's first row or drop and anchored to the previous flush, `Closing` on `unsubscribe`
+  (before the request is sent), `close` and the WebSocket closing; a dropped row counted in
+  `rowsDropped`, a window of only drops delivered empty; options refused before anything is sent.
+  **Found while building it:** `setTimeout` waits at most 2^31-1 ms (a longer delay fires at
+  once), so TypeScript's longest finite `timeoutMs` is that, about 24.8 days
+  (`MAX_BATCH_TIMEOUT_MS`), not C#'s 49.7; D-BIND-183's "native's bounds" is amended so. The
+  crosslang TypeScript peer now prints its `ERROR` line from `onError`, since an undecodable row
+  no longer escapes to its `uncaughtException` hook (moved here from T-4, or the lane would have
+  lost that report between the slices). Tests (`batched.test.ts`, 21 new, 66 in all, green in the
+  devcontainer, fake timers including `performance`): each flush reason and its edges, the
+  anchored deadline and a steady stream, `Infinity`, `maxRows` 0, the three ways to end, parallel
+  attachments, drops and an empty window, a throwing callback, the refused options, and on the
+  per-row path an undecodable row, a throwing callback, `console.error` without `onError`, and an
+  `onError` that throws. Six mutants caught (the deadline not anchored, an only-drops window
+  skipped, `unsubscribe` or the connection end not flushing, the callback's throw passed on,
+  `onError`'s throw escaping); a seventh was equivalent and is not counted.
+  `gateway-client-ts/README.md` documents both. The generated subscriber's `subscribeBatched` is
+  T-3's.
 
 ### BIND-8 — `Eiva.Fletcher.GatewayClient`
 

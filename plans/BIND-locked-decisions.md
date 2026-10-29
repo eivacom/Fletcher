@@ -4222,6 +4222,9 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   there (never lost); the README says so. Node is unaffected.
   **Declined:** row by row only, as a recorded difference (the maintainer wants the three languages
   consistent); batched delivery with errors escaping as today (unlike C#).
+  **Amended 2026-10-29 (T-2, as built):** the longest finite `timeoutMs` is 2^31-1 ms (about 24.8
+  days, `MAX_BATCH_TIMEOUT_MS`), the most `setTimeout` waits (a longer delay fires at once), not
+  native's 49.7 days; `maxRows` counts rows delivered, since a row is decoded as it arrives.
 
 - **D-BIND-184 - the TypeScript pair's live coverage runs in the existing gateway lanes.** *LOCKED
   BY THE MAINTAINER 2026-10-28 (BIND-T Q4).* `gateway-end-to-end`'s protoc-gen test drives the pair

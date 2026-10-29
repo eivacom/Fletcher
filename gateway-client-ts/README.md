@@ -71,10 +71,35 @@ client.close();
 | `connect()` | Open the WebSocket connection |
 | `createTopic(topic, schema?)` | Create a topic, optionally announcing its schema |
 | `subscribe(topic, schema, callback)` | Subscribe to a topic |
-| `unsubscribe(subId)` | Unsubscribe by subscription ID |
+| `subscribeBatched(topic, schema, callback, options?)` | Subscribe, receiving rows in windows (below) |
+| `unsubscribe(subId)` | Unsubscribe by subscription ID; a batched subscription delivers its pending window first |
 | `publish(topic, schema, data, attachments?)` | Publish a row to a topic |
 | `listTopics()` | List all topics on the gateway |
-| `close()` | Close the connection |
+| `close()` | Close the connection; batched subscriptions deliver their pending windows first |
+| `undecodableRows` | How many rows did not decode against their subscription's schema and were dropped |
+
+A subscription's callback never breaks the connection. When it throws, or a row sent to it does
+not decode, the client calls the `onError` option with the reason (`'HandlerThrew'` or
+`'RowUndecodable'`), the subscription ID and the error, and goes on with the next row. Without
+`onError` the fault is written to `console.error`.
+
+**Batched delivery.** `subscribeBatched` gathers rows into windows and calls
+`callback(rows, attachments, status)` once per window, with row `i`'s attachments at index `i`.
+These are the rules of the C# gateway client's `SubscribeBatchedAsync` and of the native
+`SubscriberArrow`. A window is delivered:
+
+- when it holds `options.maxRows` rows (default 8000), with `status.reason` `'RowLimit'`;
+- when `options.timeoutMs` (default 60000, `Infinity` for never) has passed since the previous
+  window, with `'Timeout'`. The deadline starts at a window's first row, so after a quiet spell
+  longer than the timeout a row is delivered at once;
+- when the subscription ends through `unsubscribe`, `close` or the connection closing, with
+  `'Closing'`.
+
+A row that does not decode is reported through `onError`, left out, and counted in the window's
+`status.rowsDropped`; a window of only such rows is delivered empty. `timeoutMs` above
+`MAX_BATCH_TIMEOUT_MS` (2^31-1 ms, about 24.8 days, the longest `setTimeout` waits) is refused.
+Browsers throttle timers in hidden tabs, so there a `'Timeout'` window can come late; it is
+never lost.
 
 `publish` throws, and sends nothing, when a field the schema marks not nullable is `null` or
 absent while its parent is present. In the generated schemas that is every field except an
@@ -90,6 +115,7 @@ accepted, as the native schema marks those nullable.
 | `url` | `string` | — | WebSocket URL, e.g. `ws://localhost:9090` |
 | `backend` | `'object' \| 'arrow'` | `'object'` | Decode backend |
 | `reconnectDelay` | `number` | `0` | Reconnect delay in ms (0 to disable) |
+| `onError` | `(fault) => void` | `console.error` | Called when a subscription's callback throws or a row does not decode |
 
 ## License
 
