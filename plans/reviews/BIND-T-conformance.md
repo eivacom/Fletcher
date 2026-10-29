@@ -30,3 +30,13 @@ records. MET, PARTLY, NOT MET.
 | 6, 7, 90 | MET with T3, T5 | |
 | Test matrix, generator row | MET | 201 |
 | Test matrix, bucket 2 `TS 38` | NOT UPDATED | 66 now (T6) |
+
+**After the review, 2026-10-29.** The grades the review's findings left short now read: "purely
+additive" MET (a golden holds a whole file with pairs byte for byte, T3; the import is aliased, T5;
+plugin and client move together, stated in both npm READMEs and the Release notes, D-BIND-188);
+the emitter cases and `tsc` MET (`gateway-end-to-end` type-checked on both legs, T4); live
+coverage MET on CI (`e577332`); the null refusal MET with the map key (D-BIND-189); 181 MET with
+the no-field input ruled (D-BIND-187); 182's Release note names recursive inputs; 183 MET with an
+async callback's rejection reported (D-BIND-185) and the deadline described as built (B2);
+bucket 2's count explained (T6). **On CI:** `d64e35c`, `ci.pr` 40894921645 green 61/61 on the first
+attempt, every side workflow green; BIND-T closed.

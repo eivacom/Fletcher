@@ -876,7 +876,7 @@ Kind: 🟪 spec · 🟦 impl · 🔬 proof · ⚙ pipelines · 📓 docs
 | BIND-5 | `SubscriberArrow` batch-first + the copy oracle end-to-end from C# | A | 🔬 | BIND-4 | `pubsub-arrow` cases; copy oracle green with the **C#** producer (D-BIND-58) | 🟢 (closed on CI at `a43c384`, `ci.pr` run 36563607601, 50/50, after a fresh-context review whose 9 BLOCKERs were fixed; D-BIND-58 to 68; conformance 11 of 11) |
 | BIND-6 | C# backend on the IR: type table + visitor → `<stem>.fletcher.cs` | B | 🟦 | — (GIR) | `CsVisitor.*`, `CsVisitorPair.*`, `CsVisitorCrossFile.*`, `CsNames.*` and `CsTypeTable.*` in `protoc/tests` (named `CsharpVisitor.*` until review T-D5 corrected it, 2026-10-14); no-drift test unchanged | 🟢 (closed on CI at `63ab057`, `ci.pr` 38575041994, after a fresh-context review whose 5 BLOCKERs were fixed and 10 questions ruled, D-BIND-83 to 93; the minor debt carried as known, listed in BIND-6's section) |
 | BIND-7 | Arrow view + accessor emitters (`csharp_accessor`) + capstone third arm | B | 🟦 | BIND-6, BIND-3 | `accessor-capstone` C# arm `observed == expected`; `StructArray` windowing fixture at non-zero offset | 🟢 (closed on CI at `268dceb`, `ci.pr` 38746753749, after a fresh-context review whose 2 BLOCKERs were fixed and 5 questions ruled, D-BIND-103 to 107; rulings during the round D-BIND-94 to 102; the minor debt carried as known, listed in BIND-7's section) |
-| BIND-T | TS `Publisher`/`Subscriber` emitter | C | 🟦 | — | `TsVisitor.DescriptorByteIdentical` still green + new emitter cases | 🔴 (rulings D-BIND-181 to 184, 2026-10-28; slices T-1 to T-5) |
+| BIND-T | TS `Publisher`/`Subscriber` emitter | C | 🟦 | — | `TsVisitor.DescriptorByteIdentical` still green + new emitter cases | 🟢 (closed on CI at `d64e35c`, `ci.pr` 40894921645, 61/61 on the first attempt, every side workflow green, after a fresh-context review whose 2 BLOCKERs were fixed and 5 questions ruled, D-BIND-185 to 189; rulings during the item D-BIND-181 to 184 and D-BIND-190; the review's carried debts listed in BIND-T's section) |
 | BIND-8 | `Eiva.Fletcher.GatewayClient` (managed port; the codec exception) | C | 🟦 | — | Bucket 2 green (the Part 4 file set, not a count); `Package.GatewayClientHasNoRuntimesFolder` | 🟢 (closed on CI at `750d79d`, `ci.pr` 39375700668, 56/56, every side workflow green, after a fresh-context review whose 5 BLOCKERs were fixed and 12 questions ruled, D-BIND-121 to 132; rulings during the round D-BIND-108 to 120, and D-BIND-133 (slice 8f, batched delivery); one finding after the review fixed (A1); performance carried as known debt, listed in BIND-8's section) |
 | BIND-9a | A preview for testers (split from BIND-9 2026-10-20): one bundle per push to this branch, a 30-day CI artifact with the four NuGet packages (shim for both RIDs), the gateway binaries and the plugin binaries; nothing released before the merge (D-BIND-134 to 152) | D | ⚙ | BIND-3, BIND-8 | A consumer test using only the bundle publishes natively, generates code with the bundled plugin and reaches the bundled gateway, on Linux and Windows; `Interop` carries exactly the two shims; licence files in every package | 🟢 (closed on CI at `133631a`, `ci.pr` 39592797595, 60/60 on its third attempt after two one-off Windows timing failures in unchanged tests, every side workflow green, after a fresh-context review whose 6 BLOCKERs were fixed and 10 questions ruled, D-BIND-145 to 152; rulings during the item D-BIND-134 to 144; the review's deferred items listed in BIND-9b) |
 | BIND-9b | The rest of BIND-9: publish to nuget.org by Trusted Publishing (D-BIND-176; was `nuget.eiva.com` from a self-hosted job, D-BIND-28), size budget, glibc floor, `Eiva.Fletcher.Protoc`, NativeAOT on Windows and `fastdds`, C#-native cross-language rows | D | ⚙ | BIND-9a, all for release | `cd.dotnet.yml` dry run; packed-size check; asset-isolation + licence check | 🟢 (closed on CI at `9c9e2bc`, `ci.pr` 40702620300, 61/61 on the first attempt, every side workflow green, after a fresh-context review whose 4 BLOCKERs were fixed and 5 questions ruled, D-BIND-175 to 179; rulings during the item D-BIND-153 to 174; D-BIND-180 from a reported issue; the dry runs, the bump, the retirement and the tags are the merge runbook's, after BIND-T and BIND-10 (D-BIND-174); the review's DEBT and NITs listed in BIND-9b's section) |
@@ -2198,6 +2198,21 @@ needs no ruling: D-BIND-156 already gives TypeScript the same refusal and messag
   options table, which now says the client does not reconnect (as C#, D-BIND-121); the unused copy
   in the client's options removed; a gateway-client Release-note line. The same table now says
   `backend: 'arrow'` is not implemented.
+- **D-BIND-190 done on CI 2026-10-29** (`d64e35c`, `ci.pr` 40894921645, 61/61 on the first attempt,
+  every side workflow green).
+- **BIND-T CLOSED 2026-10-29.** A TypeScript application gets, per pub/sub method, a generated
+  publisher and subscriber over the gateway client, typed by the message, declaring its topic with
+  the full schema; the client refuses what C++ and C# refuse, reports a failing callback or an
+  unreadable row instead of crashing, delivers in batches as C# does, and stops delivery at once on
+  `unsubscribe`. Proven against a live gateway over both providers and against C++ and C# in the
+  cross-language lane, on Linux and Windows. TypeScript reaches pub/sub through the gateway only;
+  the client has no Arrow backend, publishes one row per call and does not reconnect (D-BIND-190).
+  **Carried as known, by ID** (`plans/reviews/BIND-T-codereview.md`): M10 (the well-known-types
+  CMake block copied three times; rows after a batcher closes not counted), T9 (the live
+  unsubscribe check cannot see the gateway side), and the rest of T10 (a batch handler calling
+  `unsubscribe`/`close`, safe by reading; a row whose envelope parses but whose row does not;
+  `timeoutMs: 0`; a live connection drop under a pending window). The Release-note lines are in
+  runbook step 7 (D-BIND-182, 188, 190).
 
 ### BIND-8 — `Eiva.Fletcher.GatewayClient`
 

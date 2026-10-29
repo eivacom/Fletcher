@@ -1454,3 +1454,48 @@ per part of the package, so C++, C# and TypeScript agree by construction and a t
 **BIND-9b closed.** Everything it set out to build is on the branch and green on CI, on the first
 attempt. What remains is the release itself, which by the maintainer's ruling runs at the merge,
 after BIND-T and BIND-10, from the runbook in the tracker.
+
+## BIND-T — TypeScript publisher and subscriber (2026-10-28 to 2026-10-29, CLOSED)
+
+**The rulings.** Four, one at a time, after mapping the TypeScript generator, the gateway client
+and the lanes that run them (D-BIND-181 to 184): the generated pair takes the C# gateway pair's
+shape; a method whose input is a flatten wrapper loses its TypeScript topic name, as it never had
+one in C++ or C# (the two generators had used different message lists for this since their first
+version); the TypeScript client gains the batched delivery and the error reporting C# has; and the
+live tests run in the lanes that already start a gateway.
+
+**T-1, a missing required value.** The TypeScript client now refuses to publish a row with a null
+or absent field the schema requires, as C++ and C# do, naming the field. Building it showed that
+the generator marks every list element and map value as required only as a placeholder, while the
+real schema allows them to be empty; reading the placeholder would have refused rows C++ and C#
+accept.
+
+**T-2, errors and batches.** A handler that throws or a row that cannot be read is now reported
+through a callback the application gives, instead of escaping as an uncaught error; and rows can
+arrive in windows, with the C# client's rules. A browser timer cannot wait longer than about 24.8
+days, so that is TypeScript's longest window, where C#'s is 49.7.
+
+**T-3, the generated classes.** Each publish/subscribe method gets a publisher, which announces
+its topic with the full schema, and a subscriber, typed by the message and appended to the file so
+nothing before it changes. A message with nothing TypeScript can carry gets a note instead of
+classes that would not compile. The test lane's type check had never run on CI and was broken in
+two small places; it now runs on every push.
+
+**T-4, a live gateway.** The classes now carry rows through a real gateway over both of its
+back ends, and the cross-language test's TypeScript program sends and receives its rows to and
+from C# and C++ through them.
+
+**T-5, the review.** Three reviewers with fresh context found the design sound, and two errors in
+text we ship: a README example that did not compile, and the batching deadline described wrongly.
+Five questions were ruled (D-BIND-185 to 189): an asynchronous handler's failure is reported like
+any other; unsubscribing stops delivery at once, as in C#; a method whose message carries nothing
+keeps its topic name; the release notes and both npm READMEs say what changes for existing users
+and that the generator and client share a version; and a null map key is refused. Asked afterwards
+whether TypeScript now supports pub/sub, the session found that the client's documented reconnect
+option had never done anything; on the maintainer's ruling it is now said to do nothing, as the C#
+client does not reconnect either (D-BIND-190).
+
+**BIND-T closed.** TypeScript applications publish and subscribe through the gateway with
+generated, typed classes, proven against C++ and C# on Linux and Windows. **Lesson.** A reviewer
+grades what a document says against the code; an option the code never reads is invisible to that
+unless someone asks what the feature does for a user.

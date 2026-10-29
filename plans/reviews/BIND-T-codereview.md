@@ -11,6 +11,13 @@ run was in progress.
 **Outcome: 2 BLOCKERs (shipped text), 5 questions for a ruling, DEBT, NITs.** BIND-T does not
 close until the blockers are fixed and the questions ruled.
 
+> **CLOSED 2026-10-29, on CI at `d64e35c` (`ci.pr` 40894921645, 61/61 on the first attempt, every side
+> workflow green).** Both blockers fixed and all five questions ruled (D-BIND-185 to 189) in
+> `fef2532`, green on CI (`ci.pr` 40886951005); every DEBT and NIT fixed there too except M10, T9
+> and the rest of T10, carried as known and listed in the tracker's BIND-T section. Found after
+> the review and ruled: the client's `reconnectDelay` was documented but never read (D-BIND-190,
+> `d64e35c`).
+
 ## How this review was done, and its limit
 
 The method of BIND-4 to BIND-9b. Three reviewers with **fresh context** each took one area: (M) the
