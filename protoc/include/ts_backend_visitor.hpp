@@ -41,10 +41,15 @@ class TsVisitor {
                        std::map<const google::protobuf::Descriptor*, std::string> schema_ipc = {});
 
     // Generate the full .fletcher.ts file (header, cross-file imports,
-    // per-message interface + TypedSchema, service topic constants).
+    // per-message interface + TypedSchema, service topic constants, then the
+    // pub/sub pairs, D-BIND-181).
     std::string GenerateFile();
 
    private:
+    // `<Svc>_<Method>Publisher` and `<Svc>_<Method>Subscriber` over a FletcherClient (D-BIND-181,
+    // D-BIND-183): the topic constant and the input message's TypedSchema bound in.
+    std::string GeneratePair(const google::protobuf::MethodDescriptor* method);
+
     // Interface + TypedSchema for one message; "" for an empty (all-dropped) message.
     std::string GenerateMessage(const google::protobuf::Descriptor* msg);
 

@@ -560,7 +560,7 @@ tests between two implementations.
 | 2 gateway client | `test_schema_codec` 23, `test_publish_frame` 9, TS 38 | **70** | Port (BIND-8), true parity: managed code both sides. **Re-mapped at the BIND-8 review (D-BIND-128):** `test_schema_codec` tests the GATEWAY's own C++ (its JSON schema parser, the declared-schema measurement, base64, `FieldToJson`), all 23 recorded as gateway-internal; what the client owes it since D-BIND-112 is that its `schemaIpc` reads back as the same declaration, held by `ControlMessagesTests.BuildCreateTopicAnnouncesTheSchemaAsSchemaIpcAndNotAsJson` over every C++ `.ipc` golden and live by `gateway-dotnet-crosslang`. `test_publish_frame` and the TypeScript cases (two added by D-BIND-130) port one for one. |
 | 3 pub/sub semantics | `test_publisher_subscriber` 44, `test_segments` 5, `test_pubsub_arrow` 33 | **82** | Port over `inprocess`. **Split confirmed 2026-09-24: the `pubsub` cases are BIND-4's; `test_pubsub_arrow`'s are BIND-5's, whose acceptance row claims them and whose `SubscriberArrow` did not exist before it.** **#128 added 26 `pubsub` cases and 18 `pubsub-arrow` ones (D-BIND-57)**; of the 49 `pubsub` cases, **44 are mapped** - 12 of #128's over `inprocess`, 11 over real Fast DDS in the transport lane, because only a provider that knows options or has a schema channel can answer them - **and 5 are EXCLUDED**, 2 by D-BIND-47 and 3 by D-BIND-57. D-BIND-47's two: `UnsubscribeLastSubscriberUnsubscribesFromProvider` and `UnsubscribeWithRemainingSubscribersKeepsProviderSubscription` assert `mock->unsubscribe_count`, the fan-out's provider-level bookkeeping, which lives in the C++ `Subscriber` the binding WRAPS and does not reimplement - porting them would run that C++ a second time and call it a test of the binding, and the managed surface has no view of provider-level subscriptions by design (D-BIND-24). Reasoning and the full case-by-case mapping: `dotnet/tests/Fletcher.Tests/BucketThreeConformanceTests.cs`. |
 | 4 native providers | Fast DDS: `test_fast_dds_pubsub_provider` 71, `test_profile_document` 33; XRCE: `test_xrce_provider` 7, `test_xrce_document` 11 — **port as driver-selection tests (122)**; `test_fletcher_sample_pub_sub_type` 29 — **excluded**, provider-internal (the Fast DDS `TypeSupport`, a C++ type no managed code touches) | **151** | 122 by driver selection - ONE body over every transport (`integration-tests/pubsub-transport-conformance`), not a port per case; 28 excluded, documented. #128 added 45 of these. |
-| 5 generator | `test_type_mapper` 36, `test_option_metadata` 33, `test_schema_builder` 9, `test_schema_visitor` 9, `test_ir` 8, `test_schema_codec_lockstep` 2, `test_topic_path` 3, `test_ts_visitor` 6, `test_csharp_type_table` 26, `test_csharp_visitor` 63 | **195** | **Stay in C++** — they test a C++ generator; **extended** with `test_csharp_visitor`, `test_csharp_type_table` and the TS pub/sub emitter cases. |
+| 5 generator | `test_type_mapper` 36, `test_option_metadata` 33, `test_schema_builder` 9, `test_schema_visitor` 9, `test_ir` 8, `test_schema_codec_lockstep` 2, `test_topic_path` 3, `test_ts_visitor` 12, `test_csharp_type_table` 26, `test_csharp_visitor` 63 | **201** | **Stay in C++** — they test a C++ generator; **extended** with `test_csharp_visitor`, `test_csharp_type_table` and the TS pub/sub emitter cases. |
 | 6 no managed analogue | `test_owned_schema` 1 | **1** | Excluded, documented (an `ArrowSchemaDeepCopy` ENOMEM path). |
 | Conformance (inherited, not a port target) | `integration-tests/pubsub-conformance` 95 cases; `CallerTier` 22 of them | — | The **oracle** seam §9 hands BIND. BIND writes a C# arm of `CallerTier` and adds cases to the C++ suite (§12.1 expects it); each C# case names the C++ case it mirrors and a script checks the mapping is total. |
 
@@ -2089,6 +2089,36 @@ needs no ruling: D-BIND-156 already gives TypeScript the same refusal and messag
   `onError`'s throw escaping); a seventh was equivalent and is not counted.
   `gateway-client-ts/README.md` documents both. The generated subscriber's `subscribeBatched` is
   T-3's.
+- **T-3, 2026-10-29 (D-BIND-181, 182, 184): the generated TypeScript pair.** `TsVisitor` appends,
+  after everything the file had (D-BIND-7), one `import type { BatchCallback, BatchOptions,
+  FletcherClient }` (ES imports are hoisted wherever written, so the header stays as it was) and
+  per pub/sub method `<Svc>_<Method>Publisher` (static `topic` and `schema`; private constructor;
+  `static async create(client)` calls `createTopic(topic, schema)`, so with `schemaIpc`;
+  `publish(row, attachments?)`) and `<Svc>_<Method>Subscriber` (`subscribe(handler)`,
+  `subscribeBatched(handler, options?)`, `unsubscribe(id)`), each call one `FletcherClient` call,
+  the row typed as the message's interface; no parameter properties, so the output stays
+  erasable TypeScript. D-BIND-182 as ruled: the topic check's message set leaves out recursive
+  messages and flatten wrappers, so those methods get C++'s line and no constant. **Found while
+  building it:** a message with no field TypeScript can carry gets no `TypedSchema`
+  (`GenerateMessage` writes nothing), so its method keeps its topic constant and gets `// No pair:
+  Svc.Method — input message 'M' has no field TypeScript can carry` instead of a pair that would
+  not compile; C++ writes a pair over an empty row. Unit cases (`test_ts_visitor.cpp`, `TsPair`,
+  6 new, 202 in the plugin suite): the pair named as C++'s, its bound text line by line, appended
+  after the constants, the wrapper and recursive skips with the line taken from the C++ header
+  generated for the same file, the empty input, and no import without a method. The protoc-coverage
+  goldens have no pub/sub method and do not move. **The lane** (`protoc-gateway-client-ts`): a
+  TypeScript-only `proto/pair.proto` (one method, with the well-known-types include found as
+  `gateway-fastdds-ts` finds it) and `test/pair.test.ts`, which drives the generated pair over a
+  stub gateway (the statics, `create`'s declaration with `schemaIpc`, `publish`'s frame and
+  attachments, `subscribe` and `unsubscribe`, `subscribeBatched` with its options) and holds
+  three `@ts-expect-error` lines; both CI legs now run `npm run typecheck` after `npm test`. **Found
+  while wiring it:** the lane's `typecheck` script had never run on CI and failed on two things
+  unrelated to the pair, `rootDir` excluding the client source `paths` points at, and
+  `find-binary.ts`'s `Dirent` type under the current `@types/node`; both fixed. Rehearsed in the
+  devcontainer: the lane built from empty `build/`, 8 tests green, the typecheck green, and a
+  mutant that types the pair's rows as `any` fails it on all three lines. The test matrix counts
+  `test_ts_visitor` 12, generator total 201. `protoc/README.md` describes the pair and the skip.
+  The live lanes are T-4's.
 
 ### BIND-8 — `Eiva.Fletcher.GatewayClient`
 

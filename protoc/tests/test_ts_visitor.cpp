@@ -11,12 +11,19 @@
 // language writes or reads (found by integration-tests/gateway-dotnet-crosslang). This in-memory
 // unit test builds its own descriptor pool and never touches the schema/.ipc/view goldens.
 
+#include <google/protobuf/compiler/code_generator.h>
 #include <google/protobuf/descriptor.h>
 #include <google/protobuf/descriptor.pb.h>
+#include <google/protobuf/empty.pb.h>
+#include <google/protobuf/io/zero_copy_stream_impl_lite.h>
 #include <gtest/gtest.h>
 
+#include <map>
 #include <string>
+#include <tuple>
+#include <utility>
 
+#include "generator.hpp"
 #include "ts_backend_visitor.hpp"
 
 using namespace google::protobuf;
@@ -313,4 +320,215 @@ TEST(TsVisitor, ATypedSchemaCarriesItsSchemaIpcWhenGivenOne) {
     EXPECT_NE(ts.find("  protoMessage: 'Holder',\n};"), std::string::npos) << ts;
     EXPECT_EQ(fletcher::ts_backend::TsVisitor(file).GenerateFile().find("schemaIpc"),
               std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
+// BIND-T-3: the generated pair (D-BIND-181) and the methods that get none (D-BIND-182). These
+// run the real generator, so a case can compare TypeScript's output with the C++ header
+// generated for the same file.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+class MemoryContext : public compiler::GeneratorContext {
+   public:
+    io::ZeroCopyOutputStream* Open(const std::string& filename) override {
+        return new io::StringOutputStream(&files_[filename]);
+    }
+    const std::map<std::string, std::string>& files() const { return files_; }
+
+   private:
+    std::map<std::string, std::string> files_;
+};
+
+std::string Generated(const FileDescriptor* file, const std::string& opts,
+                      const std::string& name) {
+    MemoryContext ctx;
+    std::string error;
+    EXPECT_TRUE(fletcher::ArrowRowGenerator().Generate(file, opts, &ctx, &error)) << error;
+    const auto it = ctx.files().find(name);
+    EXPECT_NE(it, ctx.files().end()) << "no " << name << " emitted";
+    return it == ctx.files().end() ? std::string() : it->second;
+}
+
+// package feed.v1;
+// message Reading { int32 id = 1; optional double value = 2; }
+// message Batch { option (fletcher.flatten) = true; repeated Reading items = 1; }
+// message Node { Node next = 1; }   // recursive
+// message Tick {}                   // nothing TypeScript can carry
+// service Feed {
+//   rpc Send(stream Reading) returns (google.protobuf.Empty);
+//   rpc Push(stream Batch) returns (google.protobuf.Empty);
+//   rpc Loop(stream Node) returns (google.protobuf.Empty);
+//   rpc Beat(stream Tick) returns (google.protobuf.Empty);
+//   rpc Ping(Reading) returns (google.protobuf.Empty);  // not pub/sub
+// }
+const FileDescriptor* BuildFeedFixture(DescriptorPool& pool) {
+    FileDescriptorProto empty;
+    Empty::descriptor()->file()->CopyTo(&empty);
+    if (pool.BuildFile(empty) == nullptr) return nullptr;
+
+    FileDescriptorProto fdp;
+    fdp.set_name("feed.proto");
+    fdp.set_package("feed.v1");
+    fdp.set_syntax("proto3");
+    fdp.add_dependency("google/protobuf/empty.proto");
+    {
+        auto* m = fdp.add_message_type();
+        m->set_name("Reading");
+        AddField(m, "id", 1, FieldDescriptorProto::TYPE_INT32);
+        auto* value = AddField(m, "value", 2, FieldDescriptorProto::TYPE_DOUBLE);
+        value->set_proto3_optional(true);
+        value->set_oneof_index(0);
+        m->add_oneof_decl()->set_name("_value");
+    }
+    {
+        auto* m = fdp.add_message_type();
+        m->set_name("Batch");
+        SetMessageFlatten(m);
+        AddField(m, "items", 1, FieldDescriptorProto::TYPE_MESSAGE,
+                 FieldDescriptorProto::LABEL_REPEATED)
+            ->set_type_name(".feed.v1.Reading");
+    }
+    {
+        auto* m = fdp.add_message_type();
+        m->set_name("Node");
+        AddField(m, "next", 1, FieldDescriptorProto::TYPE_MESSAGE)->set_type_name(".feed.v1.Node");
+    }
+    fdp.add_message_type()->set_name("Tick");
+
+    auto* feed = fdp.add_service();
+    feed->set_name("Feed");
+    for (const auto& [name, input, streaming] : {std::tuple{"Send", ".feed.v1.Reading", true},
+                                                 {"Push", ".feed.v1.Batch", true},
+                                                 {"Loop", ".feed.v1.Node", true},
+                                                 {"Beat", ".feed.v1.Tick", true},
+                                                 {"Ping", ".feed.v1.Reading", false}}) {
+        auto* m = feed->add_method();
+        m->set_name(name);
+        m->set_input_type(input);
+        m->set_output_type(".google.protobuf.Empty");
+        m->set_client_streaming(streaming);
+    }
+    return pool.BuildFile(fdp);
+}
+
+void ExpectContains(const std::string& text, const std::string& needle) {
+    EXPECT_NE(text.find(needle), std::string::npos) << "missing:\n"
+                                                    << needle << "\n--- in:\n"
+                                                    << text;
+}
+
+}  // namespace
+
+TEST(TsPair, APubSubMethodGetsAPairNamedAsCpps) {
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildFeedFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const std::string header = Generated(file, "", "feed.fletcher.pb.h");
+    const std::string ts = Generated(file, "ts", "feed.fletcher.ts");
+
+    ExpectContains(header, "class Feed_SendPublisher");
+    ExpectContains(header, "class Feed_SendSubscriber");
+    ExpectContains(ts, "export class Feed_SendPublisher {\n");
+    ExpectContains(ts, "export class Feed_SendSubscriber {\n");
+}
+
+// The pair is thin: the topic constant and the message's TypedSchema bound in, every call one
+// FletcherClient call, the row typed as the message's interface.
+TEST(TsPair, ThePairBindsTheTopicAndTheSchema) {
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildFeedFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const std::string ts = Generated(file, "ts", "feed.fletcher.ts");
+
+    ExpectContains(ts, "export const Feed_SendTopic = 'feed/v1/Feed/Send';\n");
+    ExpectContains(ts,
+                   "  static readonly topic = Feed_SendTopic;\n"
+                   "  /** The schema rows travel under. */\n"
+                   "  static readonly schema = Reading;\n");
+    ExpectContains(ts, "  private constructor(client: FletcherClient) {\n");
+    ExpectContains(ts,
+                   "  static async create(client: FletcherClient): Promise<Feed_SendPublisher> {\n"
+                   "    await client.createTopic(Feed_SendTopic, Reading);\n"
+                   "    return new Feed_SendPublisher(client);\n"
+                   "  }\n");
+    ExpectContains(ts,
+                   "  publish(row: IReading, attachments?: Map<string, Uint8Array>): "
+                   "Promise<void> {\n"
+                   "    return this.client.publish(Feed_SendTopic, Reading, row, attachments);\n");
+    ExpectContains(ts, "  constructor(client: FletcherClient) {\n");
+    ExpectContains(ts,
+                   "    handler: (row: IReading, attachments: Map<string, Uint8Array>) => void,\n"
+                   "  ): Promise<bigint> {\n"
+                   "    return this.client.subscribe(Feed_SendTopic, Reading, handler);\n");
+    ExpectContains(ts,
+                   "  subscribeBatched(handler: BatchCallback<IReading>, options?: BatchOptions): "
+                   "Promise<bigint> {\n"
+                   "    return this.client.subscribeBatched(Feed_SendTopic, Reading, handler, "
+                   "options);\n");
+    ExpectContains(ts,
+                   "  unsubscribe(subscriptionId: bigint): Promise<void> {\n"
+                   "    return this.client.unsubscribe(subscriptionId);\n");
+}
+
+// D-BIND-7: the pairs and their import come after everything the file had before them.
+TEST(TsPair, ThePairsAreAppendedAfterTheTopicConstants) {
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildFeedFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const std::string ts = Generated(file, "ts", "feed.fletcher.ts");
+
+    const size_t pairs = ts.find(
+        "// Publisher and subscriber per pub/sub method (D-BIND-181).\n"
+        "import type {\n");
+    ASSERT_NE(pairs, std::string::npos) << ts;
+    EXPECT_GT(pairs, ts.rfind("Topic = '")) << ts;
+    EXPECT_GT(pairs, ts.rfind("// Skipped: ")) << ts;
+    EXPECT_GT(pairs, ts.rfind(": TypedSchema<")) << ts;
+}
+
+// D-BIND-182: a method whose input C++ generates no class for gets C++'s own line in TypeScript,
+// and no topic constant and no pair. A flatten wrapper and a recursive message are the two.
+TEST(TsPair, AWrapperOrRecursiveInputGetsCppsLineAndNoTopic) {
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildFeedFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const std::string header = Generated(file, "", "feed.fletcher.pb.h");
+    const std::string ts = Generated(file, "ts", "feed.fletcher.ts");
+
+    for (const auto& [method, input] : {std::pair{"Push", "Batch"}, {"Loop", "Node"}}) {
+        const std::string skipped = std::string("// Skipped: Feed.") + method +
+                                    " \xE2\x80\x94 input message '" + input +
+                                    "' has no generated Arrow mapping in this file\n";
+        ExpectContains(header, skipped);
+        ExpectContains(ts, skipped);
+        EXPECT_EQ(ts.find(std::string("Feed_") + method + "Topic"), std::string::npos) << ts;
+        EXPECT_EQ(ts.find(std::string("Feed_") + method + "Publisher"), std::string::npos) << ts;
+    }
+    ExpectContains(ts, "// Skipped: Feed.Ping \xE2\x80\x94 request is not streaming");
+}
+
+// A message with no field TypeScript can carry has no TypedSchema to bind, so its method keeps
+// its topic constant and gets a line instead of a pair.
+TEST(TsPair, AnInputWithoutFieldsGetsATopicAndNoPair) {
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildFeedFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const std::string ts = Generated(file, "ts", "feed.fletcher.ts");
+
+    ExpectContains(ts, "export const Feed_BeatTopic = 'feed/v1/Feed/Beat';\n");
+    ExpectContains(ts,
+                   "// No pair: Feed.Beat \xE2\x80\x94 input message 'Tick' has no field "
+                   "TypeScript can carry\n");
+    EXPECT_EQ(ts.find("Feed_BeatPublisher"), std::string::npos) << ts;
+}
+
+// A file with no pub/sub method imports nothing from the client beyond what it did before.
+TEST(TsPair, AFileWithoutAPubSubMethodHasNoPairImport) {
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const std::string ts = fletcher::ts_backend::TsVisitor(file).GenerateFile();
+    EXPECT_EQ(ts.find("FletcherClient"), std::string::npos) << ts;
 }

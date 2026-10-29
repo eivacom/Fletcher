@@ -297,8 +297,17 @@ std::string TsVisitor::GenerateFile() {
         o << GenerateMessage(msg);
     }
 
-    // Topic constants for service methods.
-    std::set<const Descriptor*> generated_msgs(messages.begin(), messages.end());
+    // Topic constants for service methods. A method is checked against the messages C++
+    // generates a class for, so recursive messages and flatten wrappers left out: the shared
+    // ValidateServiceMethod then gives C++'s reason and TypeScript writes C++'s line
+    // (D-BIND-182, D-BIND-90's TypeScript half). Before, every message was in the set, so a
+    // wrapper's method got a topic constant no C++ or C# code ever uses.
+    std::set<const Descriptor*> generated_msgs;
+    for (const auto* msg : messages) {
+        if (!fletcher::IsRecursive(msg) && !fletcher::IsFlattenedWrapper(msg))
+            generated_msgs.insert(msg);
+    }
+    std::vector<const google::protobuf::MethodDescriptor*> pubsub;
     for (int si = 0; si < file_->service_count(); ++si) {
         const auto* svc = file_->service(si);
         for (int mi = 0; mi < svc->method_count(); ++mi) {
@@ -316,9 +325,103 @@ std::string TsVisitor::GenerateFile() {
             // (TopicPath.DottedPackageAgreesAcrossBackends).
             o << "export const " << svc->name() << "_" << method->name() << "Topic = '"
               << fletcher::TopicKey(fletcher::MethodTopicSegments(method)) << "';\n\n";
+            pubsub.push_back(method);
         }
     }
 
+    // The pairs, appended after everything above so the output before them is unchanged
+    // (D-BIND-7). Their import may stand here: ES imports are hoisted, wherever they are written.
+    if (!pubsub.empty()) {
+        o << "// Publisher and subscriber per pub/sub method (D-BIND-181).\n"
+          << "import type {\n"
+          << "  BatchCallback,\n"
+          << "  BatchOptions,\n"
+          << "  FletcherClient,\n"
+          << "} from '@eiva/fletcher-gateway-client';\n\n";
+        for (const auto* method : pubsub) o << GeneratePair(method);
+    }
+
+    return o.str();
+}
+
+std::string TsVisitor::GeneratePair(const google::protobuf::MethodDescriptor* method) {
+    const std::string name = method->service()->name() + "_" + method->name();
+    const std::string where = method->service()->name() + "." + method->name();
+    const Descriptor* input = method->input_type();
+
+    // GenerateMessage writes nothing for a message without a field it can carry, so there is
+    // no TypedSchema to bind; C++ still writes its pair over an empty row.
+    if (cpp_backend::BuildFlattenedFieldList(input).empty()) {
+        return "// No pair: " + where + " — input message '" + input->name() +
+               "' has no field TypeScript can carry\n\n";
+    }
+
+    const std::string topic = name + "Topic";
+    const std::string schema = SchemaName(input);
+    const std::string row = InterfaceName(input);
+
+    std::ostringstream o;
+    o << "/**\n"
+      << " * Publishes `" << row << "` rows on " << where << " through a gateway.\n"
+      << " *\n"
+      << " * Borrows a connected `FletcherClient`, which must outlive it: one client serves every\n"
+      << " * pair of an application. Create it with `create`, which declares the topic with\n"
+      << " * `" << schema << "`.\n"
+      << " */\n"
+      << "export class " << name << "Publisher {\n"
+      << "  /** The topic's key. */\n"
+      << "  static readonly topic = " << topic << ";\n"
+      << "  /** The schema rows travel under. */\n"
+      << "  static readonly schema = " << schema << ";\n\n"
+      << "  private readonly client: FletcherClient;\n\n"
+      << "  private constructor(client: FletcherClient) {\n"
+      << "    this.client = client;\n"
+      << "  }\n\n"
+      << "  /** Declares the topic on the gateway with the row schema, and returns a publisher "
+         "for it. */\n"
+      << "  static async create(client: FletcherClient): Promise<" << name << "Publisher> {\n"
+      << "    await client.createTopic(" << topic << ", " << schema << ");\n"
+      << "    return new " << name << "Publisher(client);\n"
+      << "  }\n\n"
+      << "  /** Publishes one row, and resolves when the gateway has acknowledged it. */\n"
+      << "  publish(row: " << row << ", attachments?: Map<string, Uint8Array>): Promise<void> {\n"
+      << "    return this.client.publish(" << topic << ", " << schema << ", row, attachments);\n"
+      << "  }\n"
+      << "}\n\n";
+
+    o << "/**\n"
+      << " * Receives `" << row << "` rows published on " << where << ", through a gateway.\n"
+      << " *\n"
+      << " * Borrows a connected `FletcherClient`, which must outlive it. A callback that throws, "
+         "or\n"
+      << " * a row that does not decode, is reported through the client's `onError`.\n"
+      << " */\n"
+      << "export class " << name << "Subscriber {\n"
+      << "  /** The topic's key. */\n"
+      << "  static readonly topic = " << topic << ";\n"
+      << "  /** The schema rows travel under. */\n"
+      << "  static readonly schema = " << schema << ";\n\n"
+      << "  private readonly client: FletcherClient;\n\n"
+      << "  constructor(client: FletcherClient) {\n"
+      << "    this.client = client;\n"
+      << "  }\n\n"
+      << "  /** Delivers each row to `handler`; resolves to the subscription's id. */\n"
+      << "  subscribe(\n"
+      << "    handler: (row: " << row << ", attachments: Map<string, Uint8Array>) => void,\n"
+      << "  ): Promise<bigint> {\n"
+      << "    return this.client.subscribe(" << topic << ", " << schema << ", handler);\n"
+      << "  }\n\n"
+      << "  /** Delivers rows in windows (D-BIND-183); resolves to the subscription's id. */\n"
+      << "  subscribeBatched(handler: BatchCallback<" << row
+      << ">, options?: BatchOptions): Promise<bigint> {\n"
+      << "    return this.client.subscribeBatched(" << topic << ", " << schema
+      << ", handler, options);\n"
+      << "  }\n\n"
+      << "  /** Ends a subscription; a batched one delivers its pending window first. */\n"
+      << "  unsubscribe(subscriptionId: bigint): Promise<void> {\n"
+      << "    return this.client.unsubscribe(subscriptionId);\n"
+      << "  }\n"
+      << "}\n\n";
     return o.str();
 }
 
