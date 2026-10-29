@@ -3360,11 +3360,16 @@ language support table and the cross-language matrix go in a new "Languages" sec
 README (192); every codec names a nested field by Arrow's child names, so the two C++ codecs change
 `readings[].x` and `tags{}.value.x` to `readings.item.x` and `tags.value.x`, as C# and TypeScript
 already write (193, the BIND-9b review's T2); and the archive is split, as GIR's was (194).
+**Re-ruled the same day, D-BIND-195, superseding 193:** on the maintainer's question whether the
+bindings should not follow C++, every codec takes C++'s spelling (`readings[].x`,
+`tags{}.value.x`): C++ is the reference, `[]` and `{}` cannot be read as a field named `item` or
+`value`, and the C# native binding already shows it, so C#'s two transports agree.
 
 **Slices** (proposed with the rulings):
 
-- **10-1 the field paths** (D-BIND-193): `c-abi/src/nanoarrow_codec.cpp` and
-  `arrow-bridge/src/codec.cpp`, their tests, and the rule in the wire-format spec.
+- **10-1 the field paths** (D-BIND-195): the C# gateway client's field paths
+  (`GatewayRowCodec`) and the TypeScript encoder's take C++'s spelling, with their tests and the
+  client README; the rule in the wire-format spec.
 - **10-2 the root README and CONTRIBUTING:** the "Languages" section (D-BIND-192), the layout,
   generated-file and releasing tables, the dependency graph, "Consume in .NET"; CONTRIBUTING's
   layout and NuGet naming rows and the licence-header guidance for `.cs`, `.csproj`, `.slnx`.

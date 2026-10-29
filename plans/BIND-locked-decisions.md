@@ -4316,7 +4316,7 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   repository has no language support table for the matrix to sit beside, and the README is where a
   user looks first. **Declined:** a separate docs page.
 
-- **D-BIND-193 - every codec names a nested field by Arrow's child names.** *LOCKED BY THE
+- **D-BIND-193 - SUPERSEDED 2026-10-29 by D-BIND-195 (C++'s spelling).** Every codec names a nested field by Arrow's child names. *LOCKED BY THE
   MAINTAINER 2026-10-29 (BIND-10 Q3; the BIND-9b review's T2).* A list element is `item` and a map
   value `value`, as the Arrow schema names them: `readings.item.x`, `tags.value.x`. The C# gateway
   client and the TypeScript encoder already write this; the two C++ codecs
@@ -4333,3 +4333,17 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   the runbook runs, and move as its last step, after the tags. Links are updated each time.
   **Why:** the runbook still writes its records into the tracker after BIND-10 closes.
   **Declined:** everything at the merge; everything after the release.
+
+- **D-BIND-195 - every codec names a nested field as the C++ codecs do: `readings[].x`,
+  `tags{}.value.x`. Supersedes D-BIND-193.** *LOCKED BY THE MAINTAINER 2026-10-29 (BIND-10 Q3
+  re-ruled, on the maintainer's question whether the bindings should not follow C++).* A list
+  element is `[]` and a map value `{}.value`, as `c-abi/src/nanoarrow_codec.cpp` and
+  `arrow-bridge/src/codec.cpp` write them; the C# gateway client (`GatewayRowCodec`'s field paths,
+  used by every message that names a field) and the TypeScript encoder change from
+  `readings.item.x` and `tags.value.x`, with their tests and the client README, and the wire-format
+  spec states the rule. Error text only; no wire change. **Why:** C++ is the reference the bindings
+  follow everywhere else; `[]` and `{}` cannot be read as a field name, where `a.item.x` could be
+  the elements of list `a` or the field `item` of a struct `a`; and the C# native binding, whose
+  rows the C++ codec encodes, already shows this spelling, so C#'s two transports then agree.
+  **Declined:** Arrow's child names (D-BIND-193 as first ruled: the reference would follow its
+  bindings, and the ambiguity stays); documenting both.
