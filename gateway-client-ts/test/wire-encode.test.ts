@@ -211,6 +211,32 @@ describe('Positional encoder: a null where the schema promises a value', () => {
     );
   });
 
+  // D-BIND-189: a map key has no null bit on the wire, so a null one is refused, as C++ and C#
+  // refuse it (D-BIND-131); before, a string key was written as the text "null".
+  it('refuses a null string map key, naming the map', () => {
+    expect(() => encodePositional(schema, row({ m: new Map([[null, { x: 1 }]]) }))).toThrow(
+      "encodePositional: map key must not be null (field 'm')",
+    );
+  });
+
+  it('refuses an undefined int map key, naming the map', () => {
+    const intKeys: SchemaDescriptor = {
+      fields: [
+        {
+          name: 'counts',
+          fieldNumber: 1,
+          wireType: WireTypeId.MAP,
+          nullable: false,
+          mapKey: { name: '', fieldNumber: 0, wireType: WireTypeId.INT32, nullable: false },
+          mapValue: { name: '', fieldNumber: 0, wireType: WireTypeId.INT32, nullable: false },
+        },
+      ],
+    };
+    expect(() => encodePositional(intKeys, { counts: new Map([[undefined, 1]]) })).toThrow(
+      "encodePositional: map key must not be null (field 'counts')",
+    );
+  });
+
   it('accepts a null below a null struct: no value at all', () => {
     const decoded = new ObjectBackend().decode(schema, encodePositional(schema, row({ s: null })));
     expect(decoded.s).toBeNull();

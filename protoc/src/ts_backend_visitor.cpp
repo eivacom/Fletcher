@@ -331,15 +331,24 @@ std::string TsVisitor::GenerateFile() {
 
     // The pairs, appended after everything above so the output before them is unchanged
     // (D-BIND-7). Their import may stand here: ES imports are hoisted, wherever they are written.
-    if (!pubsub.empty()) {
+    // It is aliased, so no message this file declares can clash with it (BIND-T review T5), and
+    // written only when a pair uses it (review M7: a method can get `// No pair:` instead).
+    std::string pairs;
+    bool any_pair = false;
+    for (const auto* method : pubsub) {
+        std::string pair = GeneratePair(method);
+        any_pair = any_pair || pair.rfind("// No pair:", 0) != 0;
+        pairs += pair;
+    }
+    if (any_pair) {
         o << "// Publisher and subscriber per pub/sub method (D-BIND-181).\n"
           << "import type {\n"
-          << "  BatchCallback,\n"
-          << "  BatchOptions,\n"
-          << "  FletcherClient,\n"
+          << "  BatchCallback as __FletcherBatchCallback,\n"
+          << "  BatchOptions as __FletcherBatchOptions,\n"
+          << "  FletcherClient as __FletcherClient,\n"
           << "} from '@eiva/fletcher-gateway-client';\n\n";
-        for (const auto* method : pubsub) o << GeneratePair(method);
     }
+    o << pairs;
 
     return o.str();
 }
@@ -361,6 +370,18 @@ std::string TsVisitor::GeneratePair(const google::protobuf::MethodDescriptor* me
     const std::string row = InterfaceName(input);
 
     std::ostringstream o;
+    // The statics are annotated, as every other declaration in the file is, so the file also
+    // compiles under `isolatedDeclarations` (BIND-T review M6).
+    const std::string statics =
+        "  /** The topic's key. */\n"
+        "  static readonly topic: typeof " +
+        topic + " = " + topic +
+        ";\n"
+        "  /** The schema rows travel under. */\n"
+        "  static readonly schema: TypedSchema<" +
+        row + "> = " + schema +
+        ";\n\n"
+        "  private readonly client: __FletcherClient;\n\n";
     o << "/**\n"
       << " * Publishes `" << row << "` rows on " << where << " through a gateway.\n"
       << " *\n"
@@ -369,17 +390,12 @@ std::string TsVisitor::GeneratePair(const google::protobuf::MethodDescriptor* me
       << " * `" << schema << "`.\n"
       << " */\n"
       << "export class " << name << "Publisher {\n"
-      << "  /** The topic's key. */\n"
-      << "  static readonly topic = " << topic << ";\n"
-      << "  /** The schema rows travel under. */\n"
-      << "  static readonly schema = " << schema << ";\n\n"
-      << "  private readonly client: FletcherClient;\n\n"
-      << "  private constructor(client: FletcherClient) {\n"
+      << statics << "  private constructor(client: __FletcherClient) {\n"
       << "    this.client = client;\n"
       << "  }\n\n"
       << "  /** Declares the topic on the gateway with the row schema, and returns a publisher "
          "for it. */\n"
-      << "  static async create(client: FletcherClient): Promise<" << name << "Publisher> {\n"
+      << "  static async create(client: __FletcherClient): Promise<" << name << "Publisher> {\n"
       << "    await client.createTopic(" << topic << ", " << schema << ");\n"
       << "    return new " << name << "Publisher(client);\n"
       << "  }\n\n"
@@ -392,17 +408,14 @@ std::string TsVisitor::GeneratePair(const google::protobuf::MethodDescriptor* me
     o << "/**\n"
       << " * Receives `" << row << "` rows published on " << where << ", through a gateway.\n"
       << " *\n"
-      << " * Borrows a connected `FletcherClient`, which must outlive it. A callback that throws, "
+      << " * Borrows a connected `FletcherClient`, which must outlive it. A callback that throws "
          "or\n"
-      << " * a row that does not decode, is reported through the client's `onError`.\n"
+      << " * whose promise rejects, or a row that does not decode, is reported through the "
+         "client's\n"
+      << " * `onError`, or `console.error` without one.\n"
       << " */\n"
       << "export class " << name << "Subscriber {\n"
-      << "  /** The topic's key. */\n"
-      << "  static readonly topic = " << topic << ";\n"
-      << "  /** The schema rows travel under. */\n"
-      << "  static readonly schema = " << schema << ";\n\n"
-      << "  private readonly client: FletcherClient;\n\n"
-      << "  constructor(client: FletcherClient) {\n"
+      << statics << "  constructor(client: __FletcherClient) {\n"
       << "    this.client = client;\n"
       << "  }\n\n"
       << "  /** Delivers each row to `handler`; resolves to the subscription's id. */\n"
@@ -412,12 +425,14 @@ std::string TsVisitor::GeneratePair(const google::protobuf::MethodDescriptor* me
       << "    return this.client.subscribe(" << topic << ", " << schema << ", handler);\n"
       << "  }\n\n"
       << "  /** Delivers rows in windows (D-BIND-183); resolves to the subscription's id. */\n"
-      << "  subscribeBatched(handler: BatchCallback<" << row
-      << ">, options?: BatchOptions): Promise<bigint> {\n"
+      << "  subscribeBatched(\n"
+      << "    handler: __FletcherBatchCallback<" << row << ">,\n"
+      << "    options?: __FletcherBatchOptions,\n"
+      << "  ): Promise<bigint> {\n"
       << "    return this.client.subscribeBatched(" << topic << ", " << schema
       << ", handler, options);\n"
       << "  }\n\n"
-      << "  /** Ends a subscription; a batched one delivers its pending window first. */\n"
+      << "  /** Ends a subscription at once; a batched one delivers its pending window first. */\n"
       << "  unsubscribe(subscriptionId: bigint): Promise<void> {\n"
       << "    return this.client.unsubscribe(subscriptionId);\n"
       << "  }\n"

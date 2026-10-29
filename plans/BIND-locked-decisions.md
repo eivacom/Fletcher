@@ -4225,6 +4225,10 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   **Amended 2026-10-29 (T-2, as built):** the longest finite `timeoutMs` is 2^31-1 ms (about 24.8
   days, `MAX_BATCH_TIMEOUT_MS`), the most `setTimeout` waits (a longer delay fires at once), not
   native's 49.7 days; `maxRows` counts rows delivered, since a row is decoded as it arrives.
+  **Corrected 2026-10-29 (BIND-T review B2):** "`Timeout` counted from the window's first row"
+  above says it loosely, and the shipped text repeated it. As in D-BIND-133 and as built, the
+  window's first row or undecodable row ARMS the deadline, which falls `timeoutMs` after the
+  PREVIOUS flush.
 
 - **D-BIND-184 - the TypeScript pair's live coverage runs in the existing gateway lanes.** *LOCKED
   BY THE MAINTAINER 2026-10-28 (BIND-T Q4).* `gateway-end-to-end`'s protoc-gen test drives the pair

@@ -15,9 +15,10 @@ export interface FletcherClientOptions {
   /** Reconnect delay in ms (0 to disable). Default: 0. */
   reconnectDelay?: number;
   /**
-   * Called when a subscription's callback throws, or a row sent to it does not decode
-   * (D-BIND-183, as C#'s `HandlerFaulted`); the subscription goes on either way. What it
-   * throws is ignored. Without it, the fault goes to `console.error`.
+   * Called when a subscription's callback throws or its promise rejects (an async callback,
+   * D-BIND-185), or a row sent to it does not decode (D-BIND-183, as C#'s `HandlerFaulted`);
+   * the subscription goes on either way. What it throws is ignored. Without it, the fault goes
+   * to `console.error`.
    */
   onError?: (fault: FletcherClientFault) => void;
 }

@@ -18,6 +18,10 @@
 #include <google/protobuf/io/zero_copy_stream_impl_lite.h>
 #include <gtest/gtest.h>
 
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <map>
 #include <string>
 #include <tuple>
@@ -443,13 +447,22 @@ TEST(TsPair, ThePairBindsTheTopicAndTheSchema) {
     const std::string ts = Generated(file, "ts", "feed.fletcher.ts");
 
     ExpectContains(ts, "export const Feed_SendTopic = 'feed/v1/Feed/Send';\n");
+    // Review T5: aliased, so a message named FletcherClient (or BatchOptions) cannot clash.
     ExpectContains(ts,
-                   "  static readonly topic = Feed_SendTopic;\n"
+                   "import type {\n"
+                   "  BatchCallback as __FletcherBatchCallback,\n"
+                   "  BatchOptions as __FletcherBatchOptions,\n"
+                   "  FletcherClient as __FletcherClient,\n"
+                   "} from '@eiva/fletcher-gateway-client';\n");
+    // Review M6: annotated, as every other declaration in the file.
+    ExpectContains(ts,
+                   "  static readonly topic: typeof Feed_SendTopic = Feed_SendTopic;\n"
                    "  /** The schema rows travel under. */\n"
-                   "  static readonly schema = Reading;\n");
-    ExpectContains(ts, "  private constructor(client: FletcherClient) {\n");
+                   "  static readonly schema: TypedSchema<IReading> = Reading;\n");
+    ExpectContains(ts, "  private constructor(client: __FletcherClient) {\n");
     ExpectContains(ts,
-                   "  static async create(client: FletcherClient): Promise<Feed_SendPublisher> {\n"
+                   "  static async create(client: __FletcherClient): "
+                   "Promise<Feed_SendPublisher> {\n"
                    "    await client.createTopic(Feed_SendTopic, Reading);\n"
                    "    return new Feed_SendPublisher(client);\n"
                    "  }\n");
@@ -457,14 +470,16 @@ TEST(TsPair, ThePairBindsTheTopicAndTheSchema) {
                    "  publish(row: IReading, attachments?: Map<string, Uint8Array>): "
                    "Promise<void> {\n"
                    "    return this.client.publish(Feed_SendTopic, Reading, row, attachments);\n");
-    ExpectContains(ts, "  constructor(client: FletcherClient) {\n");
+    ExpectContains(ts, "  constructor(client: __FletcherClient) {\n");
     ExpectContains(ts,
                    "    handler: (row: IReading, attachments: Map<string, Uint8Array>) => void,\n"
                    "  ): Promise<bigint> {\n"
                    "    return this.client.subscribe(Feed_SendTopic, Reading, handler);\n");
     ExpectContains(ts,
-                   "  subscribeBatched(handler: BatchCallback<IReading>, options?: BatchOptions): "
-                   "Promise<bigint> {\n"
+                   "  subscribeBatched(\n"
+                   "    handler: __FletcherBatchCallback<IReading>,\n"
+                   "    options?: __FletcherBatchOptions,\n"
+                   "  ): Promise<bigint> {\n"
                    "    return this.client.subscribeBatched(Feed_SendTopic, Reading, handler, "
                    "options);\n");
     ExpectContains(ts,
@@ -485,7 +500,7 @@ TEST(TsPair, ThePairsAreAppendedAfterTheTopicConstants) {
     ASSERT_NE(pairs, std::string::npos) << ts;
     EXPECT_GT(pairs, ts.rfind("Topic = '")) << ts;
     EXPECT_GT(pairs, ts.rfind("// Skipped: ")) << ts;
-    EXPECT_GT(pairs, ts.rfind(": TypedSchema<")) << ts;
+    EXPECT_GT(pairs, ts.rfind("export const ")) << ts;
 }
 
 // D-BIND-182: a method whose input C++ generates no class for gets C++'s own line in TypeScript,
@@ -507,6 +522,9 @@ TEST(TsPair, AWrapperOrRecursiveInputGetsCppsLineAndNoTopic) {
         EXPECT_EQ(ts.find(std::string("Feed_") + method + "Publisher"), std::string::npos) << ts;
     }
     ExpectContains(ts, "// Skipped: Feed.Ping \xE2\x80\x94 request is not streaming");
+    // Review T11: the wrapper keeps its own interface and TypedSchema (D-BIND-182).
+    ExpectContains(ts, "export interface IBatch {\n");
+    ExpectContains(ts, "export const Batch: TypedSchema<IBatch> = {\n");
 }
 
 // A message with no field TypeScript can carry has no TypedSchema to bind, so its method keeps
@@ -531,4 +549,52 @@ TEST(TsPair, AFileWithoutAPubSubMethodHasNoPairImport) {
     ASSERT_NE(file, nullptr);
     const std::string ts = fletcher::ts_backend::TsVisitor(file).GenerateFile();
     EXPECT_EQ(ts.find("FletcherClient"), std::string::npos) << ts;
+}
+
+// Review M7: a file whose only pub/sub method gets `// No pair:` imports nothing for a pair.
+TEST(TsPair, NoPairMeansNoPairImport) {
+    DescriptorPool pool;
+    FileDescriptorProto empty;
+    Empty::descriptor()->file()->CopyTo(&empty);
+    ASSERT_NE(pool.BuildFile(empty), nullptr);
+    FileDescriptorProto fdp;
+    fdp.set_name("beat.proto");
+    fdp.set_package("beat");
+    fdp.set_syntax("proto3");
+    fdp.add_dependency("google/protobuf/empty.proto");
+    fdp.add_message_type()->set_name("Tick");
+    auto* m = fdp.add_service();
+    m->set_name("Clock");
+    auto* method = m->add_method();
+    method->set_name("Beat");
+    method->set_input_type(".beat.Tick");
+    method->set_output_type(".google.protobuf.Empty");
+    method->set_client_streaming(true);
+    const FileDescriptor* file = pool.BuildFile(fdp);
+    ASSERT_NE(file, nullptr);
+    const std::string ts = Generated(file, "ts", "beat.fletcher.ts");
+
+    ExpectContains(ts, "// No pair: Clock.Beat");
+    EXPECT_EQ(ts.find("__FletcherClient"), std::string::npos) << ts;
+}
+
+// Review T3: the whole file for the Feed fixture, byte for byte, so a change to any byte before
+// the pairs (D-BIND-7) fails here, as the protoc-coverage golden holds a file without pub/sub
+// methods. FLETCHER_CAPTURE_GOLDENS=1 rewrites it for review as source.
+TEST(TsPair, TheFeedFileIsItsGolden) {
+    DescriptorPool pool;
+    const FileDescriptor* file = BuildFeedFixture(pool);
+    ASSERT_NE(file, nullptr);
+    const std::string ts = Generated(file, "ts", "feed.fletcher.ts");
+    const auto path = std::filesystem::path(SCHEMA_GOLDEN_DIR) / "ts_pair" / "feed.fletcher.ts";
+    if (const char* capture = std::getenv("FLETCHER_CAPTURE_GOLDENS");
+        capture != nullptr && std::string(capture) == "1") {
+        std::filesystem::create_directories(path.parent_path());
+        std::ofstream(path, std::ios::binary) << ts;
+        return;
+    }
+    std::ifstream in(path, std::ios::binary);
+    const std::string golden((std::istreambuf_iterator<char>(in)),
+                             std::istreambuf_iterator<char>());
+    EXPECT_EQ(golden, ts) << path << " differs from the plugin's output";
 }

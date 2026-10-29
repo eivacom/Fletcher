@@ -383,3 +383,118 @@ describe('subscribe (per row) — faults', () => {
     client.close();
   });
 });
+
+// BIND-T review: D-BIND-185, D-BIND-186, M9 and T12.
+describe('review fixes', () => {
+  async function subscribe(client: FletcherClient, onRow: (r: Row) => unknown): Promise<void> {
+    const pending = client.subscribe('topic', schema, (r) => {
+      onRow(r);
+    });
+    reply({ type: 'subscribed', subId: SUB.toString(), topic: 'topic' });
+    await pending;
+  }
+  const settle = async () => {
+    for (let i = 0; i < 5; ++i) await Promise.resolve();
+  };
+
+  it('reports an async per-row callback that rejects through onError (D-BIND-185)', async () => {
+    const faults: FletcherClientFault[] = [];
+    const client = await connect((f) => faults.push(f));
+    const pending = client.subscribe('topic', schema, async () => {
+      throw new Error('async failed');
+    });
+    reply({ type: 'subscribed', subId: SUB.toString(), topic: 'topic' });
+    await pending;
+
+    row(1);
+    await settle();
+
+    expect(faults.map((f) => [f.reason, (f.error as Error).message])).toEqual([
+      ['HandlerThrew', 'async failed'],
+    ]);
+    client.close();
+  });
+
+  it('reports an async batch callback that rejects through onError (D-BIND-185)', async () => {
+    const faults: FletcherClientFault[] = [];
+    const client = await connect((f) => faults.push(f));
+    const pending = client.subscribeBatched(
+      'topic',
+      schema,
+      async () => {
+        throw new Error('async batch failed');
+      },
+      { maxRows: 1 },
+    );
+    reply({ type: 'subscribed', subId: SUB.toString(), topic: 'topic' });
+    await pending;
+
+    row(1);
+    await settle();
+
+    expect(faults.map((f) => [f.reason, (f.error as Error).message])).toEqual([
+      ['HandlerThrew', 'async batch failed'],
+    ]);
+    client.close();
+  });
+
+  it('unsubscribe stops delivery before the gateway replies (D-BIND-186)', async () => {
+    const client = await connect();
+    const ids: number[] = [];
+    await subscribe(client, (r) => ids.push(r.id));
+
+    const ending = client.unsubscribe(SUB);
+    row(1); // in flight: sent before the gateway saw the unsubscribe
+    reply({ type: 'unsubscribed' });
+    await ending;
+
+    expect(ids).toEqual([]);
+    client.close();
+  });
+
+  it('a refused unsubscribe rejects, and the subscription is still over (D-BIND-186)', async () => {
+    const client = await connect();
+    const ids: number[] = [];
+    await subscribe(client, (r) => ids.push(r.id));
+
+    const ending = client.unsubscribe(SUB);
+    reply({ type: 'error', message: 'no such subscription' });
+    await expect(ending).rejects.toThrow('no such subscription');
+
+    row(1);
+    expect(ids).toEqual([]);
+    client.close();
+  });
+
+  it("an old socket closing late does not end the new connection's subscriptions (M9)", async () => {
+    const client = await connect();
+    const old = MockWebSocket.last;
+    old.close = function (this: MockWebSocket) {
+      this.readyState = MockWebSocket.CLOSED; // its close event comes later
+    };
+    client.close();
+
+    const reconnecting = client.connect();
+    vi.advanceTimersByTime(1);
+    await reconnecting;
+    const windows = await subscribeBatched(client, { maxRows: 100, timeoutMs: Infinity });
+    row(1);
+
+    old.onclose!(); // the old socket's close event, at last
+    expect(windows).toEqual([]);
+
+    client.close();
+    expect(windows.map((w) => [w.ids, w.status.reason])).toEqual([[[1], 'Closing']]);
+  });
+
+  it('publish sends nothing when the encoder refuses the row (T12)', async () => {
+    const client = await connect();
+    const sentBefore = MockWebSocket.last.sent.length;
+
+    await expect(client.publish('topic', schema, { id: null } as unknown as Row)).rejects.toThrow(
+      "field 'id' is not nullable",
+    );
+    expect(MockWebSocket.last.sent).toHaveLength(sentBefore);
+    client.close();
+  });
+});

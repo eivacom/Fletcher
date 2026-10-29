@@ -557,10 +557,10 @@ tests between two implementations.
 | Bucket | Files (cases) | Total | Treatment (ruled 2026-09-11, Q10) |
 |---|---|---|---|
 | 1 codec / envelope / buffer / status | `test_positional_io` 19, `test_envelope` 11, `test_write_buffer` 11, `test_status_taxonomy` 3, `test_codec` 70, `test_codec_edge` 30, `test_codec_property_fuzz` 2, `test_batch_decoder` 22 | **168** | **Not a case-by-case port target since D-BIND-39**: BIND-3's obligation is that every type the PROTO MAPPING produces round-trips through the binding, because `test_codec*` is `arrow-bridge`'s Arrow-native suite. #128 doubled `test_codec` and added `test_batch_decoder` (`arrow-bridge`'s own batch decoder); both stay out of scope for that reason. `test_status_taxonomy` ports as "the C# enum matches `core/README.md`'s published table". `test_codec_edge` grew by 7 in BIND-9b-2 (D-BIND-156's null refusal), out of scope for the same reason. |
-| 2 gateway client | `test_schema_codec` 23, `test_publish_frame` 9, TS 38 | **70** | Port (BIND-8), true parity: managed code both sides. **Re-mapped at the BIND-8 review (D-BIND-128):** `test_schema_codec` tests the GATEWAY's own C++ (its JSON schema parser, the declared-schema measurement, base64, `FieldToJson`), all 23 recorded as gateway-internal; what the client owes it since D-BIND-112 is that its `schemaIpc` reads back as the same declaration, held by `ControlMessagesTests.BuildCreateTopicAnnouncesTheSchemaAsSchemaIpcAndNotAsJson` over every C++ `.ipc` golden and live by `gateway-dotnet-crosslang`. `test_publish_frame` and the TypeScript cases (two added by D-BIND-130) port one for one. |
+| 2 gateway client | `test_schema_codec` 23, `test_publish_frame` 9, TS 38 | **70** | Port (BIND-8), true parity: managed code both sides. **Re-mapped at the BIND-8 review (D-BIND-128):** `test_schema_codec` tests the GATEWAY's own C++ (its JSON schema parser, the declared-schema measurement, base64, `FieldToJson`), all 23 recorded as gateway-internal; what the client owes it since D-BIND-112 is that its `schemaIpc` reads back as the same declaration, held by `ControlMessagesTests.BuildCreateTopicAnnouncesTheSchemaAsSchemaIpcAndNotAsJson` over every C++ `.ipc` golden and live by `gateway-dotnet-crosslang`. `test_publish_frame` and the TypeScript cases (two added by D-BIND-130) port one for one. **TS 38 is the suite BIND-8 ported; BIND-T (2026-10-29) added 36 TypeScript cases that mirror C#'s, not port targets (74 in `gateway-client-ts` now, review T6).** |
 | 3 pub/sub semantics | `test_publisher_subscriber` 44, `test_segments` 5, `test_pubsub_arrow` 33 | **82** | Port over `inprocess`. **Split confirmed 2026-09-24: the `pubsub` cases are BIND-4's; `test_pubsub_arrow`'s are BIND-5's, whose acceptance row claims them and whose `SubscriberArrow` did not exist before it.** **#128 added 26 `pubsub` cases and 18 `pubsub-arrow` ones (D-BIND-57)**; of the 49 `pubsub` cases, **44 are mapped** - 12 of #128's over `inprocess`, 11 over real Fast DDS in the transport lane, because only a provider that knows options or has a schema channel can answer them - **and 5 are EXCLUDED**, 2 by D-BIND-47 and 3 by D-BIND-57. D-BIND-47's two: `UnsubscribeLastSubscriberUnsubscribesFromProvider` and `UnsubscribeWithRemainingSubscribersKeepsProviderSubscription` assert `mock->unsubscribe_count`, the fan-out's provider-level bookkeeping, which lives in the C++ `Subscriber` the binding WRAPS and does not reimplement - porting them would run that C++ a second time and call it a test of the binding, and the managed surface has no view of provider-level subscriptions by design (D-BIND-24). Reasoning and the full case-by-case mapping: `dotnet/tests/Fletcher.Tests/BucketThreeConformanceTests.cs`. |
 | 4 native providers | Fast DDS: `test_fast_dds_pubsub_provider` 71, `test_profile_document` 33; XRCE: `test_xrce_provider` 7, `test_xrce_document` 11 — **port as driver-selection tests (122)**; `test_fletcher_sample_pub_sub_type` 29 — **excluded**, provider-internal (the Fast DDS `TypeSupport`, a C++ type no managed code touches) | **151** | 122 by driver selection - ONE body over every transport (`integration-tests/pubsub-transport-conformance`), not a port per case; 28 excluded, documented. #128 added 45 of these. |
-| 5 generator | `test_type_mapper` 36, `test_option_metadata` 33, `test_schema_builder` 9, `test_schema_visitor` 9, `test_ir` 8, `test_schema_codec_lockstep` 2, `test_topic_path` 3, `test_ts_visitor` 12, `test_csharp_type_table` 26, `test_csharp_visitor` 63 | **201** | **Stay in C++** — they test a C++ generator; **extended** with `test_csharp_visitor`, `test_csharp_type_table` and the TS pub/sub emitter cases. |
+| 5 generator | `test_type_mapper` 36, `test_option_metadata` 33, `test_schema_builder` 9, `test_schema_visitor` 9, `test_ir` 8, `test_schema_codec_lockstep` 2, `test_topic_path` 3, `test_ts_visitor` 14, `test_csharp_type_table` 26, `test_csharp_visitor` 63 | **203** | **Stay in C++** — they test a C++ generator; **extended** with `test_csharp_visitor`, `test_csharp_type_table` and the TS pub/sub emitter cases. |
 | 6 no managed analogue | `test_owned_schema` 1 | **1** | Excluded, documented (an `ArrowSchemaDeepCopy` ENOMEM path). |
 | Conformance (inherited, not a port target) | `integration-tests/pubsub-conformance` 95 cases; `CallerTier` 22 of them | — | The **oracle** seam §9 hands BIND. BIND writes a C# arm of `CallerTier` and adds cases to the C++ suite (§12.1 expects it); each C# case names the C++ case it mirrors and a script checks the mapping is total. |
 
@@ -2161,6 +2161,34 @@ needs no ruling: D-BIND-156 already gives TypeScript the same refusal and messag
   **Carried as known:** M10 (the well-known-types CMake block copied three times; rows after a
   batcher closes not counted), T9 (the live unsubscribe check cannot see the gateway side), the rest
   of T10.
+- **T-5, the review's fixes, 2026-10-29.** **Blockers:** B1, the client README's hand-built example
+  names its row type (`subscribe<Position>(…)`, as the repository's own tests do) and
+  `client.ts`'s overload comment says the row is `unknown` otherwise; B2, the deadline is described
+  as built (armed by the window's first row, due `timeoutMs` after the previous window) in the
+  JSDoc and the README, and D-BIND-183 gains a correction note. **Rulings:** D-BIND-185,
+  `runCallback` reports a returned promise's rejection as `HandlerThrew`; D-BIND-186, `unsubscribe`
+  removes the subscription (closing a batched one) before it sends; D-BIND-187, recorded in
+  `protoc/README.md`; D-BIND-188, runbook step 7's `protoc` and new `gateway-client` notes, and both
+  npm READMEs (the pair, the same MAJOR.MINOR); D-BIND-189, `encodePositional` refuses a null map
+  key with C#'s wording. **Debts and nits:** T3, `TsPair.TheFeedFileIsItsGolden` holds the Feed
+  fixture's whole TypeScript output byte for byte (`protoc/tests/golden/ts_pair/feed.fletcher.ts`,
+  captured with `FLETCHER_CAPTURE_GOLDENS=1`; `protoc/tests/golden/` added to `.prettierignore`,
+  as the licence check already skips it); T4/M5, `gateway-end-to-end` gets T-3's two fixes and
+  `npm run typecheck` on both legs; T5/M8, the pair's import is aliased (`FletcherClient as
+  __FletcherClient` and the two batch types), so no message name clashes; M6, the statics are
+  annotated (`typeof <Topic>`, `TypedSchema<IRow>`); M7, the import is written only when a pair
+  is (`TsPair.NoPairMeansNoPairImport`); M9, an old socket's late `onclose` returns at once when
+  the client has a newer socket; T6, bucket 2 says what its `TS 38` counts; L6, the README states
+  the three differences from C#; L7, L8; L9, a "Member" table; L10, every refused option; L11, the
+  example shows `positions.proto`; L12, repeated and map fields must be `[]` and `new Map()`, and
+  the long line is wrapped; L13, the generated subscriber comment names `console.error` and a
+  rejecting promise; T11, the wrapper's interface and schema asserted; T12, `publish` sends nothing
+  when the encoder refuses. **Tests added:** `gateway-client-ts` 8 (an async per-row and batch
+  callback rejecting, an in-flight row after `unsubscribe`, a refused `unsubscribe`, the late
+  `onclose`, `publish` refusing, a null string and an undefined int map key), 74 in all; plugin 2,
+  204 in all. Four mutants caught (the promise not followed, the subscription removed only after
+  the reply, the null key written, the socket guard gone). The test matrix counts `test_ts_visitor`
+  14, generator total 203.
 
 ### BIND-8 — `Eiva.Fletcher.GatewayClient`
 
@@ -3155,8 +3183,18 @@ runs, since BIND-T and BIND-10 land in between.
    Release notes say that a generated topic is now one segment per package part (D-BIND-180):
    C++ applications generated from a dotted package with 0.5.x must be rebuilt with 0.6.0-alpha
    together, or they do not see each other. The `protoc` notes also say that TypeScript no longer
-   emits a topic constant for a method whose input is a flatten wrapper (D-BIND-182): an app
-   importing one stops compiling, as no C++ or C# code ever used that topic.
+   emits a topic constant for a method whose input is a flatten wrapper or a recursive message
+   (D-BIND-182): an app importing one stops compiling, as no C++ or C# code ever used that topic;
+   and that a generated `.fletcher.ts` with a pub/sub method now holds a publisher and a
+   subscriber that need `@eiva/fletcher-gateway-client` 0.6, so plugin and client move together
+   (D-BIND-188). The `gateway-client` notes (D-BIND-188) say: `publish` and `encodePositional`
+   now refuse a null or absent non-nullable field (every non-`optional` field of a generated
+   proto3 schema; a repeated field must be `[]`, a map `new Map()`) and a null map key
+   (D-BIND-156, D-BIND-189), where they used to send the row; a callback that throws or whose
+   promise rejects, and a row that does not decode, now go to the new `onError` option, or
+   `console.error`, instead of escaping as an uncaught exception (D-BIND-183, D-BIND-185);
+   `unsubscribe` stops delivery at once, so a row in flight is no longer delivered (D-BIND-186);
+   and the new `subscribeBatched`, `undecodableRows`, `MAX_BATCH_TIMEOUT_MS` and their types.
 
 **Acceptance**
 

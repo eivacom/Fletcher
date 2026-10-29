@@ -342,9 +342,13 @@ function writeMap(
   const count = entries.length;
   w.writeU32(count);
 
-  // Keys (no null bitfield).
+  // Keys (no null bitfield): a null key has no place on the wire, so it is refused, as the C++
+  // codecs and the C# client refuse it (D-BIND-189, D-BIND-131).
   const keyPath = childPath(path, 'key');
   for (const [key] of entries) {
+    if (key == null) {
+      throw new Error(`encodePositional: map key must not be null (field '${path}')`);
+    }
     writeValue(w, keyDesc, key, keyPath);
   }
 
@@ -369,7 +373,7 @@ function writeMap(
  * Encode a plain TypeScript object into the positional wire format.
  *
  * Throws when a field the schema marks not nullable is null or absent where its parent is
- * present (D-BIND-156), naming the field by its path.
+ * present (D-BIND-156), naming the field by its path, and when a map key is null (D-BIND-189).
  */
 export function encodePositional(
   schema: SchemaDescriptor,

@@ -119,7 +119,8 @@ export class FletcherClient {
     schema: TypedSchema<T>,
     callback: (row: T, attachments: Map<string, Uint8Array>) => void,
   ): Promise<bigint>;
-  // Overload 2 — untyped schema, callback gets Record<string, unknown>.
+  // Overload 2 — untyped schema; the callback's row is `unknown` unless the caller names the
+  // row type (`subscribe<Row>(topic, schema, callback)`, which overload 1 then takes).
   subscribe(topic: string, schema: SchemaDescriptor, callback: MessageCallback): Promise<bigint>;
   // Overload 3 — schema from gateway, caller asserts row type via generic.
   subscribe<T = Record<string, unknown>>(
@@ -174,12 +175,14 @@ export class FletcherClient {
    * Subscribe to a topic, delivering rows in windows (D-BIND-183, as the C# client's
    * `SubscribeBatchedAsync` and the native `SubscriberArrow`). Returns the subscription ID.
    *
-   * A window is delivered when it holds `maxRows` rows (`RowLimit`), when `timeoutMs` has
-   * passed since the previous window (`Timeout`; counted from the window's first row, so a
-   * row after a long quiet spell comes at once), or when the subscription ends through
-   * `unsubscribe`, `close` or the connection closing (`Closing`). Row `i`'s attachments are
-   * at index `i`. A row that does not decode is reported through `onError`, counted in the
-   * window's `rowsDropped`, and left out; a window of only such rows is delivered empty.
+   * A window is delivered when it holds `maxRows` rows (`RowLimit`), when its deadline passes
+   * (`Timeout`), or when the subscription ends through `unsubscribe`, `close` or the connection
+   * closing (`Closing`). The deadline is armed by the window's first row (or undecodable row)
+   * and falls `timeoutMs` after the previous window, so a steady stream gets a window every
+   * `timeoutMs` and a row after a longer quiet spell is delivered at once. Row `i`'s
+   * attachments are at index `i`. A row that does not decode is reported through `onError`,
+   * counted in the window's `rowsDropped`, and left out; a window of only such rows is
+   * delivered empty.
    *
    * In a browser tab that is hidden, timers are throttled, so a `Timeout` window can come
    * late there; it is never lost.
@@ -228,14 +231,18 @@ export class FletcherClient {
     return this.undecodable;
   }
 
-  /** Unsubscribe from a subscription. A batched one delivers its pending window first. */
+  /**
+   * Unsubscribe from a subscription. Its callback is not called again from the moment this is
+   * called, whatever the gateway replies (D-BIND-186, as the C# client); a batched one delivers
+   * its pending window first. Rejects when the gateway refuses or the connection is gone.
+   */
   async unsubscribe(subId: bigint): Promise<void> {
     this.subscriptions.get(subId)?.batcher?.close();
+    this.subscriptions.delete(subId);
     const resp = await this.sendAndWait(buildUnsubscribe(subId), 'unsubscribed');
     if (resp.type === 'error') {
       throw new Error((resp as ErrorResponse).message);
     }
-    this.subscriptions.delete(subId);
   }
 
   /**
@@ -317,6 +324,9 @@ export class FletcherClient {
       };
 
       ws.onclose = () => {
+        // A socket this client has already replaced (close, then connect again before this
+        // event arrived) closes nothing of the new connection's.
+        if (this.ws !== null && this.ws !== ws) return;
         this.ws = null;
         this.closeBatchers();
         for (const p of this.pendingQueue) {
@@ -387,11 +397,20 @@ export class FletcherClient {
     }
   }
 
+  // Runs a subscription's callback. A throw, or the rejection of the promise an async callback
+  // returns (D-BIND-185), is reported as HandlerThrew and never reaches the receive loop.
   private runCallback(subId: bigint, call: () => void): void {
+    let result: unknown;
     try {
-      call();
+      result = call();
     } catch (e) {
       this.report(subId, 'HandlerThrew', e);
+      return;
+    }
+    if (typeof (result as PromiseLike<unknown> | undefined)?.then === 'function') {
+      (result as PromiseLike<unknown>).then(undefined, (e: unknown) =>
+        this.report(subId, 'HandlerThrew', e),
+      );
     }
   }
 
