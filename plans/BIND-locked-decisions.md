@@ -4298,3 +4298,38 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   for both clients. Found with it and fixed in the same README table: `backend: 'arrow'` is not
   implemented, and the constructor refuses it. **Declined:** removing the option (an app that sets
   it stops compiling); implementing reconnect now (a feature with rulings of its own, unlike C#).
+
+- **D-BIND-191 - BIND-10 also brings the architecture docs up to date.** *LOCKED BY THE MAINTAINER
+  2026-10-29 (BIND-10 Q1).* `docs/architecture-overview.md`, `docs/component-diagram.md`,
+  `docs/data-flow-diagrams.md` and the `docs/README.md` index gain the .NET binding (the C ABI shim,
+  the four packages, the C# gateway client), the generated C# and TypeScript publisher and
+  subscriber, and the code-generator package; every mermaid diagram is validated by parse and
+  render. **Why:** none of them mentions .NET, the C ABI or the TypeScript pair, so a reader of
+  the architecture docs would not learn the round exists. **Declined:** keeping BIND-10 to its
+  2026-09 acceptance list.
+
+- **D-BIND-192 - the language support table and the cross-language matrix go in a "Languages"
+  section of the root README.** *LOCKED BY THE MAINTAINER 2026-10-29 (BIND-10 Q2; the 2026-10-14
+  request).* A support table of C++, C#, TypeScript and Rust by capability (codec, generated rows,
+  pub/sub native, pub/sub through the gateway, Arrow view and accessor, packages), and beside it
+  the publisher-to-subscriber matrix, each cell naming the CI lane that proves it. **Why:** the
+  repository has no language support table for the matrix to sit beside, and the README is where a
+  user looks first. **Declined:** a separate docs page.
+
+- **D-BIND-193 - every codec names a nested field by Arrow's child names.** *LOCKED BY THE
+  MAINTAINER 2026-10-29 (BIND-10 Q3; the BIND-9b review's T2).* A list element is `item` and a map
+  value `value`, as the Arrow schema names them: `readings.item.x`, `tags.value.x`. The C# gateway
+  client and the TypeScript encoder already write this; the two C++ codecs
+  (`c-abi/src/nanoarrow_codec.cpp`, `arrow-bridge/src/codec.cpp`) change from `readings[].x` and
+  `tags{}.value.x`, with their tests, and the wire-format spec states the rule. Error text only; no
+  wire change. **Declined:** C++'s spelling everywhere (a notation no schema uses); documenting
+  both.
+
+- **D-BIND-194 - the round is archived in two steps, as GIR's was.** *LOCKED BY THE MAINTAINER
+  2026-10-29 (BIND-10 Q4).* At BIND-10's close the item-level documents move to
+  `docs/archive/BIND/`: the development plan, the architecture diagrams, the inherited
+  constraints, the public surface, the native-transport plan and every `plans/reviews/BIND-*`. The
+  tracker with its merge runbook, the locked decisions and the progress log stay in `plans/` while
+  the runbook runs, and move as its last step, after the tags. Links are updated each time.
+  **Why:** the runbook still writes its records into the tracker after BIND-10 closes.
+  **Declined:** everything at the merge; everything after the release.

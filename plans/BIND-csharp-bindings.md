@@ -880,7 +880,7 @@ Kind: 🟪 spec · 🟦 impl · 🔬 proof · ⚙ pipelines · 📓 docs
 | BIND-8 | `Eiva.Fletcher.GatewayClient` (managed port; the codec exception) | C | 🟦 | — | Bucket 2 green (the Part 4 file set, not a count); `Package.GatewayClientHasNoRuntimesFolder` | 🟢 (closed on CI at `750d79d`, `ci.pr` 39375700668, 56/56, every side workflow green, after a fresh-context review whose 5 BLOCKERs were fixed and 12 questions ruled, D-BIND-121 to 132; rulings during the round D-BIND-108 to 120, and D-BIND-133 (slice 8f, batched delivery); one finding after the review fixed (A1); performance carried as known debt, listed in BIND-8's section) |
 | BIND-9a | A preview for testers (split from BIND-9 2026-10-20): one bundle per push to this branch, a 30-day CI artifact with the four NuGet packages (shim for both RIDs), the gateway binaries and the plugin binaries; nothing released before the merge (D-BIND-134 to 152) | D | ⚙ | BIND-3, BIND-8 | A consumer test using only the bundle publishes natively, generates code with the bundled plugin and reaches the bundled gateway, on Linux and Windows; `Interop` carries exactly the two shims; licence files in every package | 🟢 (closed on CI at `133631a`, `ci.pr` 39592797595, 60/60 on its third attempt after two one-off Windows timing failures in unchanged tests, every side workflow green, after a fresh-context review whose 6 BLOCKERs were fixed and 10 questions ruled, D-BIND-145 to 152; rulings during the item D-BIND-134 to 144; the review's deferred items listed in BIND-9b) |
 | BIND-9b | The rest of BIND-9: publish to nuget.org by Trusted Publishing (D-BIND-176; was `nuget.eiva.com` from a self-hosted job, D-BIND-28), size budget, glibc floor, `Eiva.Fletcher.Protoc`, NativeAOT on Windows and `fastdds`, C#-native cross-language rows | D | ⚙ | BIND-9a, all for release | `cd.dotnet.yml` dry run; packed-size check; asset-isolation + licence check | 🟢 (closed on CI at `9c9e2bc`, `ci.pr` 40702620300, 61/61 on the first attempt, every side workflow green, after a fresh-context review whose 4 BLOCKERs were fixed and 5 questions ruled, D-BIND-175 to 179; rulings during the item D-BIND-153 to 174; D-BIND-180 from a reported issue; the dry runs, the bump, the retirement and the tags are the merge runbook's, after BIND-T and BIND-10 (D-BIND-174); the review's DEBT and NITs listed in BIND-9b's section) |
-| BIND-10 | Docs, TD-009, archive to `docs/archive/BIND/` | D | 📓 | all | docs review | ⚪ |
+| BIND-10 | Docs, TD-009, archive to `docs/archive/BIND/` | D | 📓 | all | docs review | 🔴 (rulings D-BIND-191 to 194, 2026-10-29; slices 10-1 to 10-6) |
 
 ---
 
@@ -3351,7 +3351,31 @@ runs, since BIND-T and BIND-10 land in between.
 - **The cross-language pub/sub matrix (ruled 2026-10-14):** every publisher → subscriber pair of
   languages with a pub/sub surface, the lane that proves each, documented beside the language
   support table.
-- Round archived to `docs/archive/BIND/`.
+- Round archived to `docs/archive/BIND/`. *As ruled 2026-10-29 (D-BIND-194): split, as GIR.*
+
+**BIND-10 rulings, 2026-10-29** (D-BIND-191 to 194, asked one at a time after mapping every
+bullet against the tree: the root README does not mention .NET at all, the specs have no C#
+section, and there is no language support table): the architecture docs join the scope (191); the
+language support table and the cross-language matrix go in a new "Languages" section of the root
+README (192); every codec names a nested field by Arrow's child names, so the two C++ codecs change
+`readings[].x` and `tags{}.value.x` to `readings.item.x` and `tags.value.x`, as C# and TypeScript
+already write (193, the BIND-9b review's T2); and the archive is split, as GIR's was (194).
+
+**Slices** (proposed with the rulings):
+
+- **10-1 the field paths** (D-BIND-193): `c-abi/src/nanoarrow_codec.cpp` and
+  `arrow-bridge/src/codec.cpp`, their tests, and the rule in the wire-format spec.
+- **10-2 the root README and CONTRIBUTING:** the "Languages" section (D-BIND-192), the layout,
+  generated-file and releasing tables, the dependency graph, "Consume in .NET"; CONTRIBUTING's
+  layout and NuGet naming rows and the licence-header guidance for `.cs`, `.csproj`, `.slnx`.
+- **10-3 the component READMEs:** `dotnet/README.md` (its "Status" section rewritten as what is,
+  not the history), `c-abi/README.md`, the pubsub-conformance caveat.
+- **10-4 the specs:** "Proto to C# Type Mapping" in the wire-format spec, C# in the accessor spec,
+  TD-009.
+- **10-5 the architecture docs** (D-BIND-191): the overview, the component and data-flow
+  diagrams (mermaid, validated by parse and render) and the docs index.
+- **10-6 review, archive and close:** a fresh-context review, the item-level documents moved to
+  `docs/archive/BIND/` (D-BIND-194), the close.
 
 ---
 
