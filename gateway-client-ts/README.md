@@ -173,9 +173,13 @@ nullable.
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `url` | `string` | — | WebSocket URL, e.g. `ws://localhost:9090` |
-| `backend` | `'object' \| 'arrow'` | `'object'` | Decode backend |
-| `reconnectDelay` | `number` | `0` | Reconnect delay in ms (0 to disable) |
+| `backend` | `'object' \| 'arrow'` | `'object'` | Decode backend; `'arrow'` is not implemented yet, and the constructor refuses it |
 | `onError` | `(fault) => void` | `console.error` | Called when a subscription's callback throws or its promise rejects, or a row does not decode |
+
+The client does not reconnect, as the C# gateway client does not: when the connection closes,
+pending requests reject, batched subscriptions deliver their pending windows as `'Closing'`, and
+every subscription ends. Connect again and subscribe again to resume. The `reconnectDelay` option
+of earlier versions is still accepted and ignored.
 
 ## License
 

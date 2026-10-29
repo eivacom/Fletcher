@@ -4285,3 +4285,16 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   wording with this encoder's prefix, before anything is sent, for a `null` or `undefined` key of
   any type. Before, a string key was written as the text `"null"` and an int key as 0.
   **Declined:** carrying it as debt.
+
+- **D-BIND-190 - the TypeScript client's `reconnectDelay` is accepted and ignored, and said so:
+  the client does not reconnect, as the C# client does not.** *LOCKED BY THE MAINTAINER
+  2026-10-29 (found after the BIND-T review, on the maintainer's question about TypeScript
+  support).* `FletcherClientOptions.reconnectDelay` was documented ("Reconnect delay in ms") but
+  never read: nothing reconnects. It stays in the type, marked `@deprecated` with the reason, so
+  0.5.x code compiles; the README's options table drops it and says that a closed connection ends
+  every subscription (pending requests reject, batched windows are delivered as `Closing`) and
+  that an application connects and subscribes again to resume, as D-BIND-121 has it for C#. The
+  gateway-client Release notes name it (D-BIND-188). Reconnecting stays a possible later feature
+  for both clients. Found with it and fixed in the same README table: `backend: 'arrow'` is not
+  implemented, and the constructor refuses it. **Declined:** removing the option (an app that sets
+  it stops compiling); implementing reconnect now (a feature with rulings of its own, unlike C#).

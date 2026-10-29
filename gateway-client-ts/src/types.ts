@@ -12,7 +12,11 @@ export interface FletcherClientOptions {
   url: string;
   /** Which decode/encode backend to use. Default: 'object'. */
   backend?: BackendType;
-  /** Reconnect delay in ms (0 to disable). Default: 0. */
+  /**
+   * @deprecated Accepted and ignored: the client does not reconnect, as the C# gateway client
+   * does not (D-BIND-121, D-BIND-190). When the connection closes, every subscription ends;
+   * connect again and subscribe again to resume.
+   */
   reconnectDelay?: number;
   /**
    * Called when a subscription's callback throws or its promise rejects (an async callback,

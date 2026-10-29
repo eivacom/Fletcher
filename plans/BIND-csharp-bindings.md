@@ -2189,6 +2189,15 @@ needs no ruling: D-BIND-156 already gives TypeScript the same refusal and messag
   204 in all. Four mutants caught (the promise not followed, the subscription removed only after
   the reply, the null key written, the socket guard gone). The test matrix counts `test_ts_visitor`
   14, generator total 203.
+- **T-5 fixes done on CI 2026-10-29** (`fef2532` with `2af79fb`, `ci.pr` 40886951005, 61/61 on
+  the first attempt, every side workflow green): `gateway-end-to-end`'s new typecheck green on
+  both legs, the Feed golden and the new client cases green.
+- **Found after the review, 2026-10-29 (D-BIND-190):** asked whether TypeScript now supports
+  pub/sub, the session checked the client's options and found `reconnectDelay` documented but never
+  read. Ruled: accepted and ignored, `@deprecated` with the reason, dropped from the README's
+  options table, which now says the client does not reconnect (as C#, D-BIND-121); the unused copy
+  in the client's options removed; a gateway-client Release-note line. The same table now says
+  `backend: 'arrow'` is not implemented.
 
 ### BIND-8 — `Eiva.Fletcher.GatewayClient`
 
@@ -3194,7 +3203,9 @@ runs, since BIND-T and BIND-10 land in between.
    promise rejects, and a row that does not decode, now go to the new `onError` option, or
    `console.error`, instead of escaping as an uncaught exception (D-BIND-183, D-BIND-185);
    `unsubscribe` stops delivery at once, so a row in flight is no longer delivered (D-BIND-186);
-   and the new `subscribeBatched`, `undecodableRows`, `MAX_BATCH_TIMEOUT_MS` and their types.
+   and the new `subscribeBatched`, `undecodableRows`, `MAX_BATCH_TIMEOUT_MS` and their types;
+   and `reconnectDelay`, documented in 0.5.x, is accepted and ignored: the client never
+   reconnected, and a closed connection ends every subscription (D-BIND-190).
 
 **Acceptance**
 

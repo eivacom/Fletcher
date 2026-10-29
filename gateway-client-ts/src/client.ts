@@ -58,7 +58,6 @@ export class FletcherClient {
   private opts: {
     url: string;
     backend: BackendType;
-    reconnectDelay: number;
     wasmFactory?: () => Promise<unknown>;
     onError?: (fault: FletcherClientFault) => void;
   };
@@ -70,7 +69,6 @@ export class FletcherClient {
     this.opts = {
       url: options.url,
       backend: options.backend ?? 'object',
-      reconnectDelay: options.reconnectDelay ?? 0,
       onError: options.onError,
     };
 
