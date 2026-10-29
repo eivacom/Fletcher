@@ -2022,9 +2022,9 @@ needs no ruling: D-BIND-156 already gives TypeScript the same refusal and messag
 **Slices** (proposed with the rulings):
 
 - **T-1 the null refusal** (D-BIND-156): `encodePositional` refuses a null in a non-nullable field
-  whose parent is present, with C#'s message (`field '<path>' is not nullable, but row <n> has a
-  null there; …`); `gateway-client-ts` tests for a top-level, nested, list-element and map-value
-  null, and a null below an absent parent still encoding.
+  whose parent is present, with the C++ codecs' message (`field '<path>' is not nullable, but the
+  row has a null there; …`); `gateway-client-ts` tests for a top-level, nested, list-element and
+  map-value null, and a null below an absent parent still encoding. *As built, see below.*
 - **T-2 `onError` and batched delivery** (D-BIND-183): `FletcherClientOptions.onError`,
   `undecodableRows`, the per-row path moved onto them; `subscribeBatched` with its flush rules,
   tested with fake timers.
@@ -2038,6 +2038,26 @@ needs no ruling: D-BIND-156 already gives TypeScript the same refusal and messag
   replaced by `onError`.
 - **T-5 docs, review and close:** `gateway-client-ts/README.md` and `protoc/README.md`, then a
   fresh-context review as for every item.
+
+- **T-1, 2026-10-29 (D-BIND-156): the TypeScript client refuses a null where the schema promises a
+  value.** `encodePositional`, so every `publish`, throws before anything is sent when a field
+  marked not nullable is `null` or absent (`undefined`) while its parent is present:
+  `encodePositional: field '<path>' is not nullable, but the row has a null there; a decoder of
+  this schema has nowhere to put it (D-BIND-156)`, the single-row wording of `arrow-bridge`'s
+  codec (one call encodes one row, so there is no row index to name), the path in the C# gateway
+  client's form (`s.x`, `l.item.x`, `m.value.x`). The row and every struct share one walk
+  (`writeFields`), so the check is the encoder's own and costs nothing on a valid row. **Found
+  while building it:** only a NAMED field's `nullable` is read. The generated element and
+  map-value descriptors write `nullable: false` as a placeholder (`TsVisitor::ElementDescriptor`,
+  output D-BIND-6 keeps byte-identical), while the native schema, and so C++ and C#, marks every
+  list item and map value nullable; reading the placeholder would refuse rows C++ and C# accept.
+  So a null element or map value encodes as before, and a null in a field of a present element
+  or map value is refused by its path. Tests (`wire-encode.test.ts`, 7 new, 45 in all): top-level,
+  absent, struct field, list-element field and map-value field refused; a null below a null
+  struct and a null element and map value accepted. Two mutants caught (no refusal: 5 fail; the
+  element path without `item`: 1 fails). `gateway-client-ts/README.md` states the refusal. Every
+  TypeScript publisher in the integration tests (end-to-end, fastdds-ts, the crosslang peer, the
+  byte-compat vectors) sends complete rows, read before the change; CI runs them.
 
 ### BIND-8 — `Eiva.Fletcher.GatewayClient`
 

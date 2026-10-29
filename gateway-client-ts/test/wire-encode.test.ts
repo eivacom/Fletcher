@@ -143,3 +143,87 @@ describe('Positional encoder + decoder roundtrip', () => {
     expect(encoded.byteLength).toBe(9);
   });
 });
+
+// D-BIND-156: the refusal the C++ codecs and the C# gateway client make, with their message and
+// C#'s field paths.
+describe('Positional encoder: a null where the schema promises a value', () => {
+  const leaf = [{ name: 'x', fieldNumber: 1, wireType: WireTypeId.INT32, nullable: false }];
+  const schema: SchemaDescriptor = {
+    fields: [
+      { name: 'id', fieldNumber: 1, wireType: WireTypeId.INT32, nullable: false },
+      { name: 's', fieldNumber: 2, wireType: WireTypeId.STRUCT, nullable: true, fields: leaf },
+      {
+        name: 'l',
+        fieldNumber: 3,
+        wireType: WireTypeId.LIST,
+        nullable: false,
+        element: {
+          name: '',
+          fieldNumber: 0,
+          wireType: WireTypeId.STRUCT,
+          nullable: false,
+          fields: leaf,
+        },
+      },
+      {
+        name: 'm',
+        fieldNumber: 4,
+        wireType: WireTypeId.MAP,
+        nullable: false,
+        mapKey: { name: '', fieldNumber: 0, wireType: WireTypeId.STRING, nullable: false },
+        mapValue: {
+          name: '',
+          fieldNumber: 0,
+          wireType: WireTypeId.STRUCT,
+          nullable: false,
+          fields: leaf,
+        },
+      },
+    ],
+  };
+  const row = (over: Record<string, unknown>) => ({ id: 1, s: null, l: [], m: new Map(), ...over });
+  const refusal = (path: string) =>
+    `encodePositional: field '${path}' is not nullable, but the row has a null there; ` +
+    'a decoder of this schema has nowhere to put it (D-BIND-156)';
+
+  it('refuses a null in a non-nullable top-level field', () => {
+    expect(() => encodePositional(schema, row({ id: null }))).toThrow(refusal('id'));
+  });
+
+  it('refuses an absent non-nullable field as a null', () => {
+    const { id: _id, ...rest } = row({});
+    expect(() => encodePositional(schema, rest)).toThrow(refusal('id'));
+  });
+
+  it('refuses a null in a non-nullable field of a present struct, by its path', () => {
+    expect(() => encodePositional(schema, row({ s: { x: null } }))).toThrow(refusal('s.x'));
+  });
+
+  it('refuses a null in a field of a list element, by its path', () => {
+    expect(() => encodePositional(schema, row({ l: [{ x: 1 }, { x: null }] }))).toThrow(
+      refusal('l.item.x'),
+    );
+  });
+
+  it('refuses a null in a field of a map value, by its path', () => {
+    expect(() => encodePositional(schema, row({ m: new Map([['k', { x: null }]]) }))).toThrow(
+      refusal('m.value.x'),
+    );
+  });
+
+  it('accepts a null below a null struct: no value at all', () => {
+    const decoded = new ObjectBackend().decode(schema, encodePositional(schema, row({ s: null })));
+    expect(decoded.s).toBeNull();
+  });
+
+  // The native schema marks every list item and map value nullable; the generated element
+  // descriptors write `nullable: false` there as a placeholder, which the encoder does not read.
+  it('accepts a null list element and a null map value, as the native schema does', () => {
+    const decoded = new ObjectBackend().decode(
+      schema,
+      encodePositional(schema, row({ l: [null], m: new Map([['k', null]]) })),
+    ) as { l: unknown[]; m: Map<string, unknown> };
+    expect(decoded.l).toEqual([null]);
+    expect(decoded.m.get('k')).toBeNull();
+  });
+});

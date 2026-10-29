@@ -76,6 +76,13 @@ client.close();
 | `listTopics()` | List all topics on the gateway |
 | `close()` | Close the connection |
 
+`publish` throws, and sends nothing, when a field the schema marks not nullable is `null` or
+absent while its parent is present. In the generated schemas that is every field except an
+`optional` one (proto3 or proto2) and a wrapper type such as `google.protobuf.Int32Value`. The message names the field by its path, such as `s.x`,
+`readings.item.x` or `tags.value.x`. The C++ codecs and the C# gateway client refuse the same
+row, because a C++ row class has nowhere to put the null. A null list element or map value is
+accepted, as the native schema marks those nullable.
+
 ### `FletcherClientOptions`
 
 | Option | Type | Default | Description |
