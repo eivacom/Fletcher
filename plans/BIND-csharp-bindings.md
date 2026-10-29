@@ -2119,6 +2119,29 @@ needs no ruling: D-BIND-156 already gives TypeScript the same refusal and messag
   mutant that types the pair's rows as `any` fails it on all three lines. The test matrix counts
   `test_ts_visitor` 12, generator total 201. `protoc/README.md` describes the pair and the skip.
   The live lanes are T-4's.
+- **T-3 done on CI 2026-10-29** (`49b3b50`, `ci.pr` 40860437527, 61/61 on the first attempt,
+  every side workflow green): the new `npm run typecheck` step green on both legs of
+  `protoc-gateway-client-ts`, and `gateway-dotnet-crosslang`'s `tsc --noEmit` green over its
+  generated file, which now holds the pairs.
+- **T-4, 2026-10-29 (D-BIND-184): the generated pair through a live gateway.**
+  **`gateway-end-to-end`:** `telemetry.proto` gains `service TelemetryFeed` with three methods
+  (`Report`, `Windows`, `Deadline`), one per case so each has its own topic, and the lane's CMake
+  the well-known-types include `gateway-fastdds-ts` uses; `protoc-gen.test.ts` gains three cases,
+  run over both providers: a typed row with attachments through `create`, `publish` and
+  `subscribe`, then nothing after `unsubscribe` (a second client's subscriber is the sentinel that
+  tells the case the later row was delivered); `subscribeBatched` with `maxRows` 2 delivering two
+  `RowLimit` windows in order; and with a 200 ms deadline, every row in a `Timeout` window, in
+  order, however the rows fall. **`gateway-dotnet-crosslang`:** the TypeScript peer publishes
+  through `CrossLang_TsToCsPublisher` and `CrossLang_TsToNativePublisher` (whose `create` declares
+  the topics, as `createTopic` did) and subscribes through `CrossLang_CsToTsSubscriber` and
+  `CrossLang_NativeToTsSubscriber`, so the TypeScript rows to and from C# and C++ go through the
+  pair. Rehearsed in the devcontainer: `gateway-end-to-end` 37 tests green (13 in
+  `protoc-gen.test.ts`, the six new over the in-process and Fast DDS providers);
+  `gateway-dotnet-crosslang` `tsc --noEmit` clean over the peer and all 11 rows green, the four
+  with a TypeScript end among them. **Found:** that
+  lane's `typecheck` script (not run on CI) fails only on the two faults T-3 fixed in
+  `protoc-gateway-client-ts` (`rootDir`, `find-binary.ts`'s `Dirent`), none in the new cases;
+  left as found.
 
 ### BIND-8 — `Eiva.Fletcher.GatewayClient`
 

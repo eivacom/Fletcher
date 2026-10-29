@@ -20,11 +20,11 @@
 import { createInterface } from 'node:readline';
 import { FletcherClient } from '@eiva/fletcher-gateway-client';
 import {
-  CrossRow,
-  CrossLang_CsToTsTopic,
-  CrossLang_NativeToTsTopic,
-  CrossLang_TsToCsTopic,
-  CrossLang_TsToNativeTopic,
+  CrossLang_CsToTsSubscriber,
+  CrossLang_NativeToTsSubscriber,
+  CrossLang_TsToCsPublisher,
+  CrossLang_TsToNativePublisher,
+  type ICrossRow,
 } from '../generated-ts/crosslang.fletcher.js';
 import { ROW_COUNT, fixtureRow } from './fixture.js';
 import { reportRow } from './compare.js';
@@ -52,21 +52,19 @@ const client = new FletcherClient({
 });
 await client.connect();
 
-// D-BIND-130: the generated CrossRow carries its schema as Arrow IPC, so the topics are declared
-// with full fidelity, exactly as a native publisher of CrossRow declares them.
-const publishTopics = new Map([
-  ['TsToCs', CrossLang_TsToCsTopic],
-  ['TsToNative', CrossLang_TsToNativeTopic],
+// The generated pairs (D-BIND-181, D-BIND-184). A publisher's create declares its topic with the
+// Arrow IPC schema the generated CrossRow carries (D-BIND-130), with full fidelity, exactly as a
+// native publisher of CrossRow declares it.
+const publishers = new Map<string, { publish(row: ICrossRow): Promise<void> }>([
+  ['TsToCs', await CrossLang_TsToCsPublisher.create(client)],
+  ['TsToNative', await CrossLang_TsToNativePublisher.create(client)],
 ]);
-for (const topic of publishTopics.values()) {
-  await client.createTopic(topic, CrossRow);
-}
 
-for (const [name, topic] of [
-  ['CsToTs', CrossLang_CsToTsTopic],
-  ['NativeToTs', CrossLang_NativeToTsTopic],
+for (const [name, subscriber] of [
+  ['CsToTs', new CrossLang_CsToTsSubscriber(client)],
+  ['NativeToTs', new CrossLang_NativeToTsSubscriber(client)],
 ] as const) {
-  await client.subscribe(topic, CrossRow, (row) => {
+  await subscriber.subscribe((row) => {
     try {
       print(`${name} ${reportRow(row.seq, row.row)}`);
     } catch (e) {
@@ -82,15 +80,15 @@ for await (const line of lines) {
   if (line === 'stop') break;
   const [command, name = ''] = line.split(' ', 2);
   if (command !== 'probe' && command !== 'publish') continue;
-  const topic = publishTopics.get(name);
-  if (topic === undefined) {
+  const publisher = publishers.get(name);
+  if (publisher === undefined) {
     print(`ERROR no publisher for topic '${name}'`);
     continue;
   }
   if (command === 'probe') {
     // D-BIND-129: a row no receiver compares (seq -1), sent until one arrives.
     try {
-      await client.publish(topic, CrossRow, { seq: -1, row: fixtureRow(3) });
+      await publisher.publish({ seq: -1, row: fixtureRow(3) });
       print('PROBED');
     } catch (e) {
       print(`ERROR probing: ${(e as Error).message}`);
@@ -98,7 +96,7 @@ for await (const line of lines) {
   } else {
     try {
       for (let seq = 0; seq < ROW_COUNT; ++seq) {
-        await client.publish(topic, CrossRow, { seq, row: fixtureRow(seq) });
+        await publisher.publish({ seq, row: fixtureRow(seq) });
       }
       print(`PUBLISHED ${ROW_COUNT}`);
     } catch (e) {
