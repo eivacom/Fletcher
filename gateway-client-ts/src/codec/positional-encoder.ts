@@ -220,8 +220,9 @@ function writeScalar(w: WriteBuf, wt: WireTypeId, value: unknown): void {
 // Composite writers
 // ---------------------------------------------------------------------------
 
-// A field's path in a refusal, as the C# gateway client names it: struct fields joined with
-// '.', a list element as `item`, a map value as `value` (`readings.item.x`, `tags.value`).
+// A field's path in a refusal, as the C++ codecs and the C# gateway client name it (D-BIND-195):
+// struct fields joined with '.', a list element as `[]`, a map key or value as `{}.key` or
+// `{}.value` (`readings[].x`, `tags{}.value.x`).
 function childPath(path: string, name: string): string {
   return path.length === 0 ? name : `${path}.${name}`;
 }
@@ -301,7 +302,7 @@ function writeList(w: WriteBuf, fd: FieldDescriptor, arr: unknown[], path: strin
   const count = arr.length;
   w.writeU32(count);
 
-  const elemPath = childPath(path, 'item');
+  const elemPath = `${path}[]`;
   const bfStart = w.reserve(bitfieldBytes(count));
   for (let i = 0; i < count; i++) {
     if (arr[i] == null) {
@@ -317,7 +318,7 @@ function writeFixedSizeList(w: WriteBuf, fd: FieldDescriptor, arr: unknown[], pa
   if (!elemDesc) throw new Error('FixedSizeList field missing element descriptor');
   const count = fd.fixedSize ?? arr.length;
 
-  const elemPath = childPath(path, 'item');
+  const elemPath = `${path}[]`;
   const bfStart = w.reserve(bitfieldBytes(count));
   for (let i = 0; i < count; i++) {
     if (arr[i] == null) {
@@ -344,7 +345,7 @@ function writeMap(
 
   // Keys (no null bitfield): a null key has no place on the wire, so it is refused, as the C++
   // codecs and the C# client refuse it (D-BIND-189, D-BIND-131).
-  const keyPath = childPath(path, 'key');
+  const keyPath = `${path}{}.key`;
   for (const [key] of entries) {
     if (key == null) {
       throw new Error(`encodePositional: map key must not be null (field '${path}')`);
@@ -353,7 +354,7 @@ function writeMap(
   }
 
   // Values (with null bitfield).
-  const valuePath = childPath(path, 'value');
+  const valuePath = `${path}{}.value`;
   const bfStart = w.reserve(bitfieldBytes(count));
   for (let i = 0; i < count; i++) {
     const val = entries[i][1];

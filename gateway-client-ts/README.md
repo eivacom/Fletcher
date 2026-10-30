@@ -162,11 +162,12 @@ is 24.8 days (C#: 49.7).
 field the schema marks not nullable is `null` or absent while its parent is present. In the
 generated schemas that is every field except an `optional` one (proto3 or proto2) and a wrapper
 type such as `google.protobuf.Int32Value`, so a repeated field must be `[]` and a map field
-`new Map()`, never left out. The message names the field by its path, such as `s.x`,
-`readings.item.x` or `tags.value.x`. It also refuses a `null` or `undefined` map key. The C++
-codecs and the C# gateway client refuse the same rows, because a C++ row class has nowhere to
-put the null. A null list element or map value is accepted, as the native schema marks those
-nullable.
+`new Map()`, never left out. The message names the field by its path, as the C++ codecs and
+the C# gateway client do: `s.x` for a struct's field, `readings[].x` for a field of a list
+element, `tags{}.value.x` for one of a map value. It also refuses a `null` or `undefined` map
+key. The C++ codecs and the C# gateway client refuse the same rows, because a C++ row class has
+nowhere to put the null. A null list element or map value is accepted, as the native schema
+marks those nullable.
 
 ### `FletcherClientOptions`
 

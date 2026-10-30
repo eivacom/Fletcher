@@ -201,13 +201,13 @@ describe('Positional encoder: a null where the schema promises a value', () => {
 
   it('refuses a null in a field of a list element, by its path', () => {
     expect(() => encodePositional(schema, row({ l: [{ x: 1 }, { x: null }] }))).toThrow(
-      refusal('l.item.x'),
+      refusal('l[].x'),
     );
   });
 
   it('refuses a null in a field of a map value, by its path', () => {
     expect(() => encodePositional(schema, row({ m: new Map([['k', { x: null }]]) }))).toThrow(
-      refusal('m.value.x'),
+      refusal('m{}.value.x'),
     );
   });
 

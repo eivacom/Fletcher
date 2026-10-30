@@ -113,9 +113,19 @@ public sealed class ManagedCodecAgreesWithNativeTests
         var managed = new GatewayRowCodec(batch.Schema);
         Exception managedRefusal = Assert.ThrowsAny<ArgumentException>(() => managed.Bind(batch));
 
+        // D-BIND-195: both name the field alike, a list element as `[]` and a map value as
+        // `{}.value`, as the C++ codecs do.
+        string path = name switch
+        {
+            "a top-level column" => "id",
+            "a field of a present struct" => "s.x",
+            "a list element" => "readings[]",
+            "a map value" => "tags{}.value",
+            _ => throw new ArgumentOutOfRangeException(nameof(name)),
+        };
         foreach (Exception refusal in new[] { nativeRefusal, managedRefusal })
         {
-            Assert.Contains("is not nullable, but row 0 has a null there", refusal.Message, StringComparison.Ordinal);
+            Assert.Contains("field '" + path + "' is not nullable, but row 0 has a null there", refusal.Message, StringComparison.Ordinal);
             Assert.Contains("D-BIND-156", refusal.Message, StringComparison.Ordinal);
         }
     }

@@ -119,9 +119,11 @@ internal sealed class GatewayRowCodec
 
     private static ArgumentException Refuse(string what) => new("GatewayRowCodec: " + what, "schema");
 
-    private static Node Plan(Field field, string path)
+    // `at` names a list element or a map key or value as the C++ codecs do (`readings[].x`,
+    // `tags{}.value.x`, D-BIND-195); a struct field is `parent.name`.
+    private static Node Plan(Field field, string path, string? at = null)
     {
-        string here = Describe(path, field.Name);
+        string here = at ?? Describe(path, field.Name);
         IArrowType type = field.DataType;
 
         if (type is DictionaryType dictionary)
@@ -129,7 +131,7 @@ internal sealed class GatewayRowCodec
             // A dictionary is a scalar MODIFIER: the wire carries the value, one per row
             // (spec "Dictionary Types"), so its plan IS its value type's plan.
             var valueField = new Field(field.Name, dictionary.ValueType, field.IsNullable, field.Metadata);
-            Node value = Plan(valueField, path);
+            Node value = Plan(valueField, path, here);
             if (!value.IsScalar)
             {
                 throw Refuse("field '" + here + "' is a dictionary whose value type is not a scalar. The wire " +
@@ -181,7 +183,7 @@ internal sealed class GatewayRowCodec
                 {
                     bool large = type.TypeId == ArrowTypeId.LargeList;
                     Field valueField = large ? ((LargeListType)type).ValueField : ((ListType)type).ValueField;
-                    Node element = Plan(valueField, here);
+                    Node element = Plan(valueField, here, here + "[]");
                     Field decoded = field;
                     if (element.ContainsDictionary)
                     {
@@ -203,7 +205,7 @@ internal sealed class GatewayRowCodec
             case ArrowTypeId.FixedSizeList:
                 {
                     var fsl = (FixedSizeListType)type;
-                    Node element = Plan(fsl.ValueField, here);
+                    Node element = Plan(fsl.ValueField, here, here + "[]");
                     Field decoded = element.ContainsDictionary
                         ? new Field(field.Name, new FixedSizeListType(element.DecodedField, fsl.ListSize), field.IsNullable, field.Metadata)
                         : field;
@@ -222,8 +224,8 @@ internal sealed class GatewayRowCodec
             case ArrowTypeId.Map:
                 {
                     var map = (MapType)type;
-                    Node key = Plan(map.KeyField, here);
-                    Node value = Plan(map.ValueField, here);
+                    Node key = Plan(map.KeyField, here, here + "{}.key");
+                    Node value = Plan(map.ValueField, here, here + "{}.value");
 
                     // A composite key is writable but not decodable in one pass: a map's
                     // keys all arrive before its values. Proto keys are integral, bool or

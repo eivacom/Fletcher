@@ -3382,6 +3382,18 @@ bindings should not follow C++, every codec takes C++'s spelling (`readings[].x`
 - **10-6 review, archive and close:** a fresh-context review, the item-level documents moved to
   `docs/archive/BIND/` (D-BIND-194), the close.
 
+- **10-1, 2026-10-30 (D-BIND-195): one field path in every codec.** The C# gateway client's
+  planner (`GatewayRowCodec.Plan`) takes an exact path for a list element (`<parent>[]`) and for
+  a map's key and value (`<parent>{}.key`, `<parent>{}.value`), so every message that names a
+  field, the null refusal among them, writes `readings[].x` and `tags{}.value.x` as the C++
+  codecs do; the TypeScript encoder the same. Tests: `ManagedCodecAgreesWithNativeTests`'s
+  null-refusal theory now requires the native and the managed message to name the same path in
+  all four cases (`id`, `s.x`, `readings[]`, `tags{}.value`), where it compared only the message's
+  tail (the BIND-9b review's T2); `RowCodecTests` gains a field of a list element
+  (`readings[].x`); `wire-encode.test.ts`'s two nested cases take the new spelling. The client
+  README and the wire-format spec's "Nullability Rules" state the rule (and that a list element
+  and a map value are nullable in the schema).
+
 ---
 
 ## Part 8 — Risks, and what is still open

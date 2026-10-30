@@ -531,6 +531,23 @@ public sealed class RowCodecTests
         Assert.Contains("field 's.x' is not nullable, but row 0", e.Message, StringComparison.Ordinal);
     }
 
+    // D-BIND-195: a field below a list element is named as the C++ codecs name it.
+    [Fact]
+    public void ANullInAFieldOfAListElementIsNamedAsCppNamesIt()
+    {
+        var leaf = new StructType(new[] { new Field("x", Int32Type.Default, nullable: false) });
+        IArrowArray xs = new Int32Array.Builder().Append(1).AppendNull().Build();
+        var elements = new StructArray(leaf, 2, new[] { xs }, ArrowBuffer.Empty, nullCount: 0);
+        var type = new ListType(new Field("item", leaf, nullable: true));
+        ArrowBuffer offsets = new ArrowBuffer.Builder<int>().Append(0).Append(2).Build();
+        var list = (ListArray)ArrowArrayFactory.BuildArray(new ArrayData(type, 1, 0, 0, new[] { ArrowBuffer.Empty, offsets }, new[] { elements.Data }));
+        var batch = new RecordBatch(new Schema(new[] { new Field("readings", type, nullable: true) }, null), new IArrowArray[] { list }, 1);
+        var codec = new GatewayRowCodec(batch.Schema);
+
+        ArgumentException e = Assert.Throws<ArgumentException>(() => codec.Bind(batch));
+        Assert.Contains("field 'readings[].x' is not nullable, but row 0", e.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void ANullBelowANullStructIsAccepted()
     {

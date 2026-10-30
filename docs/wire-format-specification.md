@@ -100,6 +100,16 @@ Google's well-known wrapper types are **flattened** to scalar Arrow fields rathe
 | `*Value` wrapper types | Always **nullable** |
 | `repeated` and `map` fields | **Non-nullable** (but may be empty) |
 
+A list element and a map value are nullable in the Arrow schema (the child fields `item` and
+`value`); a map key never is.
+
+**A null where the schema promises a value is refused** before anything is encoded, by every
+encoder: the C++ codecs (`c-abi`, `arrow-bridge`), the C# gateway client and the TypeScript
+client (D-BIND-156, D-BIND-189). A field below a null parent is no value and is accepted. The
+refusal names the field by one path in every language (D-BIND-195): a struct's fields are joined
+with `.`, a list element is `[]`, and a map key or value is `{}.key` or `{}.value`, so `id`,
+`s.x`, `readings[].x` and `tags{}.value.x`.
+
 ---
 
 ## Proto to TypeScript Type Mapping
