@@ -5,8 +5,8 @@
 leaves it. No round has opened; there is no tracker here, no Definition of Done
 and no gate.
 
-Seam spec (oracle): [docs/pubsub-interface-spec.md](../docs/pubsub-interface-spec.md).
-Sibling round: [PDA-ABI-protocol-driver-abi.md](PDA-ABI-protocol-driver-abi.md).
+Seam spec (oracle): [docs/pubsub-interface-spec.md](../../pubsub-interface-spec.md).
+Sibling round: [PDA-ABI-protocol-driver-abi.md](../../../plans/PDA-ABI-protocol-driver-abi.md).
 
 ## Provenance, and why that matters for how much this is worth
 
@@ -15,7 +15,7 @@ seam. Eleven were seam defects and are **closed** — nine as items
 `PDA-DEC-A1..A8` plus `A9` (rulings of 2026-09-03), and two more by ruling 59
 (2026-09-07). One was declined as false. The dispositions live in
 `plans/PDA-DEC-rulings.md` and
-[reviews/PDA-DEC-PR126-bind-pass2-verification.md](reviews/PDA-DEC-PR126-bind-pass2-verification.md);
+[reviews/PDA-DEC-PR126-bind-pass2-verification.md](../../../plans/reviews/PDA-DEC-PR126-bind-pass2-verification.md);
 the original packets are in PR #126's conversation, dated 2026-09-03 and
 2026-09-07. **None of that is re-litigated here** — this file is only what is
 left for the binding to do.
@@ -54,7 +54,7 @@ language binding, an in-process test host.
 
 **What forks when it forks, none of it loudly:**
 
-- §6 clause 6's re-entrancy refusal ([spec:838](../docs/pubsub-interface-spec.md:838))
+- §6 clause 6's re-entrancy refusal ([spec:838](../../pubsub-interface-spec.md:838))
   stops firing, because a door in one binary cannot see a delivery frame pushed
   in the other. On Fast DDS that restores the listener-mutex hang the clause
   exists to prevent.
@@ -90,10 +90,22 @@ must stay pinned.
 path a disposal is on. It must set a thread-local the disposal path reads, and
 the two paths must free different amounts.
 
+**Learned at BIND-4 — read this before binding it again (D-BIND-50, D-BIND-51,
+2026-09-25).** "No invocation begins afterwards" means no delivery *passes the
+gate* afterwards. A binding's own in-flight count increments later, after the
+shim's thunk, so on the carve-out a SIBLING delivery on another thread can sit
+between the gate and that increment: freeing its handle then is a use-after-free,
+and the self-cancel case is safe only because that thread has already counted
+itself. C# defers the free to a second cancel from outside any delivery, which the
+seam makes wait for the drain. And one "am I inside my own thunk" flag is not
+enough: deliveries nest, and §3's refusal is per PROVIDER. C# keeps a per-thread
+stack of delivery frames, each naming its Subscriber and provider — §3 asks the
+provider question of it, this section's carve-out the Subscriber one.
+
 ## 3 — Refuse `Dispose` of a Subscriber from inside a handler, in managed code
 
 **Derives from:** §6 clause 5 as widened
-([spec:822](../docs/pubsub-interface-spec.md:822)), owner ruling 2026-09-05, and
+([spec:822](../../pubsub-interface-spec.md:822)), owner ruling 2026-09-05, and
 `subscriber.hpp`'s destructor contract.
 
 Destroying a `Subscriber` from inside a delivery on its own provider **ends the
@@ -125,7 +137,7 @@ surface is deterministic rather than a function of subscription history.
 
 ## 5 — Give C# an async path for acting on the seam from a handler
 
-**Derives from:** §6 clause 6 ([spec:838](../docs/pubsub-interface-spec.md:838)) —
+**Derives from:** §6 clause 6 ([spec:838](../../pubsub-interface-spec.md:838)) —
 all four `PubSubProvider` methods refuse a re-entrant call, uniformly, with no
 per-protocol exception and no method carved out.
 
@@ -141,7 +153,7 @@ another thread is sufficient and is the sanctioned route.
 ## 6 — `AppendInPlace` reaches generated encoders only, never application code
 
 **Derives from:** §3.1 clause 6's last bullet
-([spec:189](../docs/pubsub-interface-spec.md:189)) — *"A producer must report what
+([spec:189](../../pubsub-interface-spec.md:189)) — *"A producer must report what
 it wrote."*
 
 `used` is trusted against `room`, not against what was actually touched, so bytes
@@ -160,14 +172,14 @@ delta** — never a separately computed length.
 
 ## 7 — Choose the in-place writer's failure convention, and write it down
 
-**Derives from:** §3.1 clause 6 ([spec:158](../docs/pubsub-interface-spec.md:158)).
+**Derives from:** §3.1 clause 6 ([spec:158](../../pubsub-interface-spec.md:158)).
 This is the residual of a finding that was declined as false; the decline was
 correct and this is what survived it.
 
 Two mechanisms already exist, and the stronger one is normative:
 
 - **Raise inside the writer's frame.** The C form
-  ([spec:166](../docs/pubsub-interface-spec.md:166)) is
+  ([spec:166](../../pubsub-interface-spec.md:166)) is
   `size_t (*writer)(void* ctx, uint8_t* dst, size_t room)` — three arguments —
   while `AppendInPlace` invokes its writer with **two**. A C function pointer
   therefore cannot *be* the `Writer`; a C++ adapter closing over `ctx` is
@@ -177,7 +189,7 @@ Two mechanisms already exist, and the stronger one is normative:
   adapter throws; nothing commits; the publish fails. **No managed exception
   ever crosses into native code.** This is the one to use.
 - **Return more than `room`.** A spec-normative refusal
-  ([spec:179](../docs/pubsub-interface-spec.md:179)) that also commits nothing, so
+  ([spec:179](../../pubsub-interface-spec.md:179)) that also commits nothing, so
   returning `SIZE_MAX` aborts the publish from inside the C form. Available, but
   the diagnostic message is misleading for this use.
 
@@ -186,7 +198,7 @@ encoders use. Unstated *for the boundary* is exactly why this is BIND's.
 
 ## 8 — Do not let the absorbed-failure count read zero
 
-**Derives from:** §5.3 ([spec:791](../docs/pubsub-interface-spec.md:791)) and
+**Derives from:** §5.3 ([spec:791](../../pubsub-interface-spec.md:791)) and
 `Subscriber::AbsorbedCallbackFailures()`.
 
 A callback must not throw; if one does, the seam absorbs it at a `noexcept`
@@ -209,7 +221,7 @@ with no observable.
 
 **`Timeout.Infinite` is `-1`, and the seam refuses it.**
 `timeout_ms < 0` is refused with `kInvalidArgument`
-([spec:339](../docs/pubsub-interface-spec.md:339)), deliberately, so that
+([spec:339](../../pubsub-interface-spec.md:339)), deliberately, so that
 "negative means forever" cannot be invented by one boundary and not another.
 Every .NET wait API spells forever that way. `TimeSpan.MaxValue` maps correctly —
 it lands above the ~139-year threshold that means unbounded — but `-1` does not,

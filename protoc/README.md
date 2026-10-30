@@ -12,6 +12,8 @@ Generated `<Msg>Subscriber` classes do exactly that behind `SubscribeInPlace(cb)
 
 The generated `<Msg>Publisher` constructor and the `<Msg>Subscriber` `Subscribe` / `SubscribeInPlace` methods each take an optional `fletcher::TopicOptions` after the callback/provider argument — `<Msg>Publisher pub(provider, {.profile = "latest"});`, `sub.Subscribe(cb, {.profile = "latest_reader"})` — omitting it means the provider's defaults, and `profile` / `max_payload_bytes` carry the provider's own semantics (see the FastDDS provider README's [Per-topic options](../fastdds-pubsub-provider/README.md#per-topic-options)).
 
+The topic of a generated publisher and subscriber is a `/` path: one segment per part of the proto package, then the service, then the method, so `package nexus.topics.v1;` with `rpc Snapshot(stream Point) returns (google.protobuf.Empty)` in `service LivePoints` is `nexus/topics/v1/LivePoints/Snapshot` (`TopicSegments()` holds the list, `TopicKey()` the joined string). The TypeScript and C# outputs name the same topic, so every language meets on it ([D-BIND-180](../docs/pubsub-interface-spec.md#35--topic-segments) in the seam spec).
+
 ## Building locally
 
 Requires [Conan 2](https://docs.conan.io/2/) and CMake 3.15+.
@@ -84,7 +86,7 @@ protoc \
 
 ### Options
 
-- `--fletcher_opt=ts` — generate TypeScript schema descriptors (`.fletcher.ts`) instead of C++ headers.
+- `--fletcher_opt=ts` — generate TypeScript schema descriptors (`.fletcher.ts`) instead of C++ headers. For each pub/sub method the file also gets a `<Service>_<Method>Topic` constant and, at its end, a `<Service>_<Method>Publisher` and `<Service>_<Method>Subscriber` over `@eiva/fletcher-gateway-client`'s `FletcherClient`, named as the C++ pair: `await Feed_SendPublisher.create(client)` declares the topic with the message's schema, then `publish(row, attachments?)`; `new Feed_SendSubscriber(client)` has `subscribe(handler)`, `subscribeBatched(handler, options?)` and `unsubscribe(id)`. The row is typed as the message's interface. A method whose input is a flatten wrapper or a recursive message gets neither constant nor pair, only the line C++ writes (`// Skipped: …`). A method whose input message has no field TypeScript can carry (an empty message) keeps its constant and gets `// No pair: …` instead of a pair (D-BIND-187). The pair calls `@eiva/fletcher-gateway-client` of the same MAJOR.MINOR as the plugin.
 - `--fletcher_opt=ipc` — additionally write one serialized Arrow IPC schema file per message, named `<stem>.<Message>.ipc`, next to the generated headers. Each file is a schema-only [Arrow IPC stream](https://arrow.apache.org/docs/format/Columnar.html#ipc-streaming-format), byte-identical to the schema bytes Fletcher providers announce at runtime, and readable by any Arrow implementation (e.g. `pyarrow.ipc.open_stream`).
 - `--fletcher_opt=accessor` — additionally generate the read-only C++ **RecordBatch accessor** header `<stem>.fletcher.accessor.pb.h` (one `<Class>Accessor` per message). See [RecordBatch accessors](#recordbatch-accessors) below.
 - `--fletcher_opt=rust` — additionally generate the read-only **Rust** RecordBatch accessor module `<stem>.fletcher.rs` (the Rust counterpart of `accessor`, targeting the official [`arrow`](https://crates.io/crates/arrow) crate). See [RecordBatch accessors](#recordbatch-accessors) below.
@@ -215,6 +217,15 @@ void Read(const std::shared_ptr<arrow::RecordBatch>& batch) {
 
 > The exact getter names mirror your proto field names; replace `id` / `opt_count` with your own. This snippet is mirrored by a compile-checked integration test (`integration-tests/protoc-arrow-bridge/tests/test_accessor_readme_example.cpp`), and the cross-language C++/Rust parity is proven by the capstone in [`integration-tests/accessor-capstone/`](../integration-tests/accessor-capstone/).
 
+## Platform requirements of the prebuilt plugin
+
+The prebuilt plugin binaries, the `protoc-gen-fletcher-*` assets of each [`protoc-v*`](https://github.com/eivacom/Fletcher/releases?q=protoc) GitHub Release that the npm package downloads and the NuGet package carries, are built with the two Conan profiles in [`.conan-profiles/`](../.conan-profiles/). Protobuf and zlib are linked in; the C++ runtime is not, so the machine that runs code generation needs the runtime of the profile's compiler:
+
+- **linux-x64:** glibc 2.34 and the GCC 13 C++ runtime (libstdc++ with `GLIBCXX_3.4.32`) or newer, as `Linux-gcc13-x86_64-Release` produces it; for example Ubuntu 24.04, Debian 13 or RHEL 10. On Ubuntu 22.04, Debian 12 or RHEL 9 the plugin does not start, and the system reports `GLIBCXX_3.4.32' not found`.
+- **win-x64:** the Visual C++ 2015-2022 redistributable (x64), 14.40 or newer, as `Windows-msvc194-x86_64-Release` (`compiler.runtime=dynamic`) requires; without it the plugin does not start, because `MSVCP140.dll` and `VCRUNTIME140.dll` are missing.
+
+A plugin you build from source with your own Conan profile needs only your toolchain's runtime.
+
 ## npm package (TypeScript / JS consumers)
 
 For TypeScript / JavaScript projects that consume Fletcher topics via `@eiva/fletcher-gateway-client`, the plugin ships as the [**`@eiva/protoc-gen-fletcher`**](https://www.npmjs.com/package/@eiva/protoc-gen-fletcher) npm package — a Node shim that downloads the platform-matching native binary from this repo's GitHub Releases on first invocation and exposes it as `protoc-gen-fletcher` in `node_modules/.bin/`.
@@ -226,6 +237,10 @@ npm install --save-dev @eiva/protoc-gen-fletcher
 The full install + `proto:gen` + `prebuild` recipe, plus the `tsconfig` paths alias and platform-support matrix, lives in the [npm package's README](npm/README.md) (which is also what npm.js shows on the registry page). The integration test at [`integration-tests/protoc-gen-fletcher-npm/`](../integration-tests/protoc-gen-fletcher-npm/) exercises the consumer flow end-to-end on every PR.
 
 > **Not** [`@grpc/proto-loader`](https://www.npmjs.com/package/@grpc/proto-loader): that package loads `.proto` files at **runtime** into JavaScript objects via `protobufjs` reflection — a different problem from code generation. It does not produce the typed `TypedSchema<T>` objects that `FletcherClient.publish`/`subscribe` expect.
+
+## NuGet package (C# consumers)
+
+For C# projects the plugin ships as the **`Eiva.Fletcher.Protoc`** NuGet package (BIND-9b-5, D-BIND-71): both static binaries inside, and the MSBuild properties `$(FletcherProtocPlugin)` (this machine's plugin) and `$(FletcherProtoInclude)` (the folder of `fletcher/options.proto`). The project writes its own protoc call, with protoc from its side (`Google.Protobuf.Tools`). In a project that compiles `.proto` files with `Grpc.Tools`, the package also puts `fletcher/options.proto` on the import path and compiles it, so the options can be read from C# (D-BIND-158). The package's project and README are in [`nuget/`](nuget/); [`integration-tests/preview-bundle-consumer/`](../integration-tests/preview-bundle-consumer/) builds both kinds of project from the packed package on every PR that can change it.
 
 ## Proto to Arrow type mapping
 

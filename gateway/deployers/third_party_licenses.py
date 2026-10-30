@@ -37,7 +37,9 @@ If any third-party package contributes no licence text, this raises and the
 release fails rather than shipping a notice that silently omits a library.
 """
 
+import json
 import os
+from types import SimpleNamespace
 
 from conan.api.output import ConanOutput
 from conan.errors import ConanException
@@ -53,6 +55,17 @@ FIRST_PARTY_PREFIX = "fletcher-"
 # the package; it is a review requirement there, so in practice every dependency
 # has one. A package that does not is reported rather than passed over.
 LICENSES_SUBFOLDER = "licenses"
+
+# Code a Fletcher package compiles in from source rather than taking from the Conan
+# graph -- nanoarrow vendored in fletcher-pubsub, Micro-CDR and the Micro XRCE-DDS
+# Client fetched by fletcher-xrcedds-pubsub-provider -- is a third party all the
+# same. Such a package puts each one's licence text under
+# <package>/licenses/vendored/<name>/, beside a vendored.json naming it
+# ({"name", "version", "license", "homepage"}), and this deployer gives it a section
+# like any graph dependency (BIND-9a-0, D-BIND-140). Without it the notice of every
+# binary linking those packages omitted four Apache-2.0 libraries.
+VENDORED_SUBFOLDER = "vendored"
+VENDORED_METADATA = "vendored.json"
 
 RULE = "=" * 78
 THIN_RULE = "-" * 78
@@ -76,7 +89,11 @@ def _license_files(package_folder):
     """(relative name, absolute path) for every file under <package>/licenses."""
     if not package_folder:
         return []
-    root = os.path.join(package_folder, LICENSES_SUBFOLDER)
+    return _license_files_in(os.path.join(package_folder, LICENSES_SUBFOLDER))
+
+
+def _license_files_in(root):
+    """(relative name, absolute path) for every file under root."""
     if not os.path.isdir(root):
         return []
     found = []
@@ -113,12 +130,55 @@ def _third_party_dependencies(conanfile):
     return [by_ref[key] for key in sorted(by_ref)]
 
 
+def _vendored_entries(conanfile):
+    """(entry, files) for the code each Fletcher package compiles in from source.
+
+    An entry looks like a dependency to the rest of this file (ref.name,
+    ref.version, license, homepage) and also names the package it came in with.
+    The same library vendored by two packages at one version is listed once.
+    """
+    found = {}
+    for dep in conanfile.dependencies.filter({"build": False, "test": False}).values():
+        if not dep.ref.name.startswith(FIRST_PARTY_PREFIX) or not dep.package_folder:
+            continue
+        root = os.path.join(dep.package_folder, LICENSES_SUBFOLDER, VENDORED_SUBFOLDER)
+        if not os.path.isdir(root):
+            continue
+        for name in sorted(os.listdir(root)):
+            folder = os.path.join(root, name)
+            metadata = os.path.join(folder, VENDORED_METADATA)
+            if not os.path.isfile(metadata):
+                raise ConanException(f"{dep.ref}: {folder} has no {VENDORED_METADATA}")
+            with open(metadata, encoding="utf-8") as handle:
+                meta = json.load(handle)
+            files = [
+                (relative, path)
+                for relative, path in _license_files_in(folder)
+                if relative != VENDORED_METADATA
+            ]
+            if not files:
+                raise ConanException(f"{dep.ref}: vendored {meta['name']} carries no licence text")
+            entry = SimpleNamespace(
+                ref=SimpleNamespace(name=meta["name"], version=meta["version"]),
+                license=meta.get("license"),
+                homepage=meta.get("homepage"),
+                # `via` (BIND-9b-7, D-BIND-166): code a THIRD-party package compiles in from its
+                # own vendored folder, whose texts a Fletcher package carries for it.
+                vendored_in=(f"{meta['via']} (texts packaged by {dep.ref})"
+                             if meta.get("via") else str(dep.ref)),
+            )
+            found.setdefault((meta["name"], meta["version"]), (entry, files))
+    return [found[key] for key in sorted(found)]
+
+
 def _section_header(dep):
     lines = [RULE, f"{dep.ref.name} {dep.ref.version}"]
     if dep.license:
         lines.append(f"License: {dep.license}")
     if dep.homepage:
         lines.append(f"Homepage: {dep.homepage}")
+    if getattr(dep, "vendored_in", None):
+        lines.append(f"Compiled in from source by: {dep.vendored_in}")
     lines.append(THIN_RULE)
     return "\n".join(lines)
 
@@ -145,7 +205,9 @@ under is the one on its `License:` line.
 
 This file is generated at release time from the resolved Conan dependency graph
 by gateway/deployers/third_party_licenses.py. It is not maintained by hand: it
-lists exactly the packages that went into the binary shipped beside it.
+lists exactly the packages that went into the binary shipped beside it, and the
+libraries the fletcher-* packages compile in from source (each such section
+names the package that compiled it in).
 
 That binary itself, and the fletcher-* libraries it is built from, are licensed
 under LGPL-3.0-or-later -- see the LICENSE file distributed with it, also at
@@ -215,6 +277,13 @@ def deploy(graph, output_folder, **kwargs):
             f"Cannot generate {OUTPUT_FILENAME}: the host dependency graph "
             f"contains no third-party packages. That is a wrong invocation, not a "
             f"dependency-free binary.")
+
+    # Code Fletcher's own packages compile in from source, listed like the rest.
+    entries.extend(
+        (entry, [(relative, _read_bytes(path)) for relative, path in files])
+        for entry, files in _vendored_entries(graph.root.conanfile)
+    )
+    entries.sort(key=lambda item: (item[0].ref.name, str(item[0].ref.version)))
 
     target = os.path.join(output_folder, OUTPUT_FILENAME)
     with open(target, "wb") as handle:

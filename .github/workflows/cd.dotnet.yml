@@ -1,0 +1,177 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+# Release orchestration for the four Eiva.Fletcher NuGet packages (BIND-9b-6; D-BIND-159,
+# D-BIND-162, D-BIND-164, D-BIND-176), the Conan CD shape with a gate before anything leaves the
+# run:
+#
+#   setup-devcontainer
+#       │
+#       ├── dotnet  (ci.dotnet.yml)       the four packages, packed once from both shims
+#       ├── gateway (ci.gateway.yml)      the gateway archives  ┐ built from the same tree, only
+#       └── protoc  (ci.protoc.yml)       Eiva.Fletcher.Protoc  ┘ for the gate (D-BIND-162)
+#               │
+#               ▼
+#         gate (ci.package-consumer.yml)  the consumer test on exactly the packed files
+#               │
+#               ▼
+#         release                         tag == Directory.Build.props version; the .nupkg and
+#               │                         .snupkg attached to the GitHub Release, with the
+#               │                         shim's two Conan lockfiles (D-BIND-173)
+#               ▼
+#         nuget-org                       the same packages to nuget.org, by Trusted Publishing
+#                                         in the environment nuget-org (D-BIND-176)
+#
+# Triggers:
+#   * push: tags 'dotnet-v*'   a real release, from main (D-BIND-138's merge-time release among
+#                              them, 9b-8).
+#   * workflow_dispatch        a DRY RUN (D-BIND-164): everything up to and including the gate,
+#                              never the Release or nuget.org. GitHub dispatches only workflows on
+#                              the default branch, so the first dry run is on main, before the
+#                              first tag.
+#
+# The gateway and the code generator are released by their own workflows (cd.gateway.yml,
+# cd.protoc.yml); here they are built only so the gate can generate code and reach a gateway.
+
+name: cd.dotnet
+
+on:
+  push:
+    tags:
+      - 'dotnet-v[0-9]*.[0-9]*.[0-9]*'
+  workflow_dispatch:
+
+jobs:
+  setup-devcontainer:
+    uses: ./.github/workflows/ci.setup-devcontainer-image.yml
+    secrets: inherit
+
+  dotnet:
+    needs: setup-devcontainer
+    uses: ./.github/workflows/ci.dotnet.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
+  gateway:
+    needs: setup-devcontainer
+    uses: ./.github/workflows/ci.gateway.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+      release-artifacts: true
+    secrets: inherit
+
+  protoc:
+    needs: setup-devcontainer
+    uses: ./.github/workflows/ci.protoc.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+      release-artifacts: true
+    secrets: inherit
+
+  # D-BIND-159: nothing is attached or pushed until the packed files pass the consumer test.
+  gate:
+    needs: [dotnet, gateway, protoc]
+    uses: ./.github/workflows/ci.package-consumer.yml
+
+  release:
+    needs: gate
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            dotnet/Directory.Build.props
+            .github
+
+      - name: Verify tag version matches dotnet/Directory.Build.props
+        uses: ./.github/actions/verify-tag-version-dotnet
+        with:
+          props-file: dotnet/Directory.Build.props
+          tag-prefix: dotnet-v
+
+      - name: Download the packages
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: dotnet-packages
+          path: packages
+
+      - name: Verify all release assets are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=${GITHUB_REF_NAME#dotnet-v}
+          for id in Eiva.Fletcher Eiva.Fletcher.Interop Eiva.Fletcher.Model Eiva.Fletcher.GatewayClient; do
+            for ext in nupkg snupkg; do
+              [ -s "packages/$id.$VERSION.$ext" ] || { echo "::error::missing release asset $id.$VERSION.$ext"; ls -l packages; exit 1; }
+            done
+          done
+          # BIND-9b-7 (review L14, D-BIND-173): the shim's lockfiles, for the relinking route.
+          for rid in linux-x64 win-x64; do
+            [ -s "packages/fletcher-shim-$rid.conan.lock" ] || { echo "::error::missing release asset fletcher-shim-$rid.conan.lock"; ls -l packages; exit 1; }
+          done
+          ls -l packages
+
+      # The Release carries the packages and the lockfiles before nuget.org gets them (D-BIND-176),
+      # so a failed push leaves a complete Release and only the nuget-org job to re-run.
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --title "${{ github.ref_name }}" \
+            --generate-notes \
+            packages/*.nupkg packages/*.snupkg packages/*.conan.lock
+
+  # D-BIND-176: the packages the gate tested, to nuget.org, by Trusted Publishing. The job asks
+  # GitHub for an OIDC token and NuGet/login exchanges it for an API key that lives one hour; a
+  # policy of EIVA's nuget.org organization names this file and the environment, which admits
+  # release tags only. nuget.org never deletes a version, so the first push of one is final;
+  # --skip-duplicate makes a re-run after a partial push safe.
+  nuget-org:
+    needs: release
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: nuget-org
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download the packages
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: dotnet-packages
+          path: packages
+
+      - name: Check that the nuget.org user is set
+        env:
+          NUGET_USER: ${{ vars.NUGET_USER }}
+        run: |
+          if [ -z "$NUGET_USER" ]; then
+            echo "::error::the nuget-org environment has no NUGET_USER variable: set it to the nuget.org profile name of the member who created the Trusted Publishing policy (D-BIND-176)"
+            exit 1
+          fi
+
+      - name: NuGet login (OIDC token for a one-hour API key)
+        id: login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ vars.NUGET_USER }}
+
+      # Eiva.Fletcher.Interop before Eiva.Fletcher, which depends on it. dotnet nuget push sends
+      # each .snupkg beside its .nupkg to nuget.org's symbol server.
+      - name: Push the packages
+        shell: bash
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+        run: |
+          set -euo pipefail
+          VERSION=${GITHUB_REF_NAME#dotnet-v}
+          for id in Eiva.Fletcher.Interop Eiva.Fletcher Eiva.Fletcher.Model Eiva.Fletcher.GatewayClient; do
+            dotnet nuget push "packages/$id.$VERSION.nupkg" --source https://api.nuget.org/v3/index.json \
+              --api-key "$NUGET_API_KEY" --skip-duplicate
+          done

@@ -220,77 +220,121 @@ function writeScalar(w: WriteBuf, wt: WireTypeId, value: unknown): void {
 // Composite writers
 // ---------------------------------------------------------------------------
 
-function writeValue(w: WriteBuf, fd: FieldDescriptor, value: unknown): void {
+// A field's path in a refusal, as the C++ codecs and the C# gateway client name it (D-BIND-195):
+// struct fields joined with '.', a list element as `[]`, a map key or value as `{}.key` or
+// `{}.value` (`readings[].x`, `tags{}.value.x`).
+function childPath(path: string, name: string): string {
+  return path.length === 0 ? name : `${path}.${name}`;
+}
+
+// D-BIND-156: a field the schema marks NOT nullable must hold a value wherever its parent does,
+// because its decoders have nowhere to put a null (a C++ row class holds `std::string`,
+// `std::vector`); the C++ codecs and the C# gateway client refuse it alike, before anything is
+// sent. `undefined` (an absent property) is a null. A null below a null parent is no value, and
+// the walk never reaches it. Only a named field's `nullable` is read: an element's and a map
+// value's are not, because the native schema marks every list item and map value nullable and
+// the generated element descriptors write `false` there as a placeholder.
+function refuseNull(path: string): never {
+  throw new Error(
+    `encodePositional: field '${path}' is not nullable, but the row has a null there; ` +
+      'a decoder of this schema has nowhere to put it (D-BIND-156)',
+  );
+}
+
+function writeValue(w: WriteBuf, fd: FieldDescriptor, value: unknown, path: string): void {
   const wt = fd.wireType;
 
   if (wt === WireTypeId.STRUCT) {
-    writeStruct(w, fd, value as Record<string, unknown>);
+    writeStruct(w, fd, value as Record<string, unknown>, path);
     return;
   }
   if (wt === WireTypeId.LIST || wt === WireTypeId.LARGE_LIST) {
-    writeList(w, fd, value as unknown[]);
+    writeList(w, fd, value as unknown[], path);
     return;
   }
   if (wt === WireTypeId.FIXED_SIZE_LIST) {
-    writeFixedSizeList(w, fd, value as unknown[]);
+    writeFixedSizeList(w, fd, value as unknown[], path);
     return;
   }
   if (wt === WireTypeId.MAP) {
-    writeMap(w, fd, value as Map<unknown, unknown>);
+    writeMap(w, fd, value as Map<unknown, unknown>, path);
     return;
   }
 
   writeScalar(w, wt, value);
 }
 
-function writeStruct(w: WriteBuf, fd: FieldDescriptor, obj: Record<string, unknown>): void {
-  const fields = fd.fields ?? [];
+// Writes `fields` of `obj` as a null bitfield and the present values: the row itself, or a struct.
+function writeFields(
+  w: WriteBuf,
+  fields: FieldDescriptor[],
+  obj: Record<string, unknown>,
+  path: string,
+): void {
   const n = fields.length;
 
   const bfStart = w.reserve(bitfieldBytes(n));
   for (let i = 0; i < n; i++) {
+    const here = childPath(path, fields[i].name);
     const v = obj[fields[i].name];
     if (v == null) {
+      if (!fields[i].nullable) refuseNull(here);
       w.setBit(bfStart, i);
     } else {
-      writeValue(w, fields[i], v);
+      writeValue(w, fields[i], v, here);
     }
   }
 }
 
-function writeList(w: WriteBuf, fd: FieldDescriptor, arr: unknown[]): void {
+function writeStruct(
+  w: WriteBuf,
+  fd: FieldDescriptor,
+  obj: Record<string, unknown>,
+  path: string,
+): void {
+  writeFields(w, fd.fields ?? [], obj, path);
+}
+
+function writeList(w: WriteBuf, fd: FieldDescriptor, arr: unknown[], path: string): void {
   const elemDesc = fd.element;
   if (!elemDesc) throw new Error('List field missing element descriptor');
 
   const count = arr.length;
   w.writeU32(count);
 
+  const elemPath = `${path}[]`;
   const bfStart = w.reserve(bitfieldBytes(count));
   for (let i = 0; i < count; i++) {
     if (arr[i] == null) {
       w.setBit(bfStart, i);
     } else {
-      writeValue(w, elemDesc, arr[i]);
+      writeValue(w, elemDesc, arr[i], elemPath);
     }
   }
 }
 
-function writeFixedSizeList(w: WriteBuf, fd: FieldDescriptor, arr: unknown[]): void {
+function writeFixedSizeList(w: WriteBuf, fd: FieldDescriptor, arr: unknown[], path: string): void {
   const elemDesc = fd.element;
   if (!elemDesc) throw new Error('FixedSizeList field missing element descriptor');
   const count = fd.fixedSize ?? arr.length;
 
+  const elemPath = `${path}[]`;
   const bfStart = w.reserve(bitfieldBytes(count));
   for (let i = 0; i < count; i++) {
     if (arr[i] == null) {
       w.setBit(bfStart, i);
     } else {
-      writeValue(w, elemDesc, arr[i]);
+      writeValue(w, elemDesc, arr[i], elemPath);
     }
   }
 }
 
-function writeMap(w: WriteBuf, fd: FieldDescriptor, map: Map<unknown, unknown>): void {
+function writeMap(
+  w: WriteBuf,
+  fd: FieldDescriptor,
+  map: Map<unknown, unknown>,
+  path: string,
+): void {
   const keyDesc = fd.mapKey;
   const valDesc = fd.mapValue;
   if (!keyDesc || !valDesc) throw new Error('Map field missing key/value descriptors');
@@ -299,19 +343,25 @@ function writeMap(w: WriteBuf, fd: FieldDescriptor, map: Map<unknown, unknown>):
   const count = entries.length;
   w.writeU32(count);
 
-  // Keys (no null bitfield).
+  // Keys (no null bitfield): a null key has no place on the wire, so it is refused, as the C++
+  // codecs and the C# client refuse it (D-BIND-189, D-BIND-131).
+  const keyPath = `${path}{}.key`;
   for (const [key] of entries) {
-    writeValue(w, keyDesc, key);
+    if (key == null) {
+      throw new Error(`encodePositional: map key must not be null (field '${path}')`);
+    }
+    writeValue(w, keyDesc, key, keyPath);
   }
 
   // Values (with null bitfield).
+  const valuePath = `${path}{}.value`;
   const bfStart = w.reserve(bitfieldBytes(count));
   for (let i = 0; i < count; i++) {
     const val = entries[i][1];
     if (val == null) {
       w.setBit(bfStart, i);
     } else {
-      writeValue(w, valDesc, val);
+      writeValue(w, valDesc, val, valuePath);
     }
   }
 }
@@ -322,24 +372,15 @@ function writeMap(w: WriteBuf, fd: FieldDescriptor, map: Map<unknown, unknown>):
 
 /**
  * Encode a plain TypeScript object into the positional wire format.
+ *
+ * Throws when a field the schema marks not nullable is null or absent where its parent is
+ * present (D-BIND-156), naming the field by its path, and when a map key is null (D-BIND-189).
  */
 export function encodePositional(
   schema: SchemaDescriptor,
   values: Record<string, unknown>,
 ): Uint8Array {
   const w = new WriteBuf();
-  const fields = schema.fields;
-  const n = fields.length;
-
-  const bfStart = w.reserve(bitfieldBytes(n));
-  for (let i = 0; i < n; i++) {
-    const v = values[fields[i].name];
-    if (v == null) {
-      w.setBit(bfStart, i);
-    } else {
-      writeValue(w, fields[i], v);
-    }
-  }
-
+  writeFields(w, schema.fields, values, '');
   return w.finish();
 }

@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+name: "Verify tag version matches the .NET packages' version"
+description: "Fails if the release tag version differs from VersionPrefix(-VersionSuffix) in Directory.Build.props (BIND-9b-6, D-BIND-28)."
+
+inputs:
+  props-file:
+    description: "The Directory.Build.props holding VersionPrefix and VersionSuffix, e.g. dotnet/Directory.Build.props"
+    required: true
+  tag-prefix:
+    description: "Tag prefix including the trailing v, e.g. dotnet-v"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - shell: bash
+      env:
+        PROPS_FILE: ${{ inputs.props-file }}
+        TAG_PREFIX: ${{ inputs.tag-prefix }}
+      run: bash "$GITHUB_ACTION_PATH/verify.sh" "$PROPS_FILE" "$TAG_PREFIX" "$GITHUB_REF"

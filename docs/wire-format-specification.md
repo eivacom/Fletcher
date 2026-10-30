@@ -100,6 +100,17 @@ Google's well-known wrapper types are **flattened** to scalar Arrow fields rathe
 | `*Value` wrapper types | Always **nullable** |
 | `repeated` and `map` fields | **Non-nullable** (but may be empty) |
 
+A list element and a map value are nullable in the Arrow schema (the child fields `item` and
+`value`); a map key never is.
+
+**A null where the schema promises a value is refused** before anything is encoded, by every
+encoder: the C++ codecs (`c-abi`, `arrow-bridge`), the C# gateway client and the TypeScript
+client (D-BIND-156, D-BIND-189). A field below a null parent is no value and is accepted. Every
+message that names a nested field, this refusal and a schema refused when a codec opens it, names
+it by one path in every language (D-BIND-195, D-BIND-196): a struct's fields are joined with `.`,
+a list element is `[]`, and a map key or value is `{}.key` or `{}.value`, so `id`, `s.x`,
+`readings[].x` and `tags{}.value.x`. A null map key has its own refusal (D-BIND-131).
+
 ---
 
 ## Proto to TypeScript Type Mapping
@@ -117,6 +128,56 @@ When `--fletcher_opt=ts` is passed, the plugin generates `.fletcher.ts` files:
 | `map<K, V>` | `Map<K, V>` |
 | Nested message | Nested `I{Message}` interface |
 | `optional` fields | `T | null` |
+
+---
+
+## Proto to C# Type Mapping
+
+When `--fletcher_opt=csharp` is passed, the plugin generates `.fletcher.cs` files: one class per
+message in namespace `Fletcher.Gen.<Package>` (one PascalCase part per proto package part), with
+its Arrow `Schema`, `ToArrow` and `FromArrow`. Names follow protoc's own C# rules (a nested
+message `Sample.Note` is `Sample_Note`; a property named like a member of the class is suffixed
+`_`). The properties' types:
+
+| Proto Type | C# Type | Proto3 `optional`, `*Value` wrapper |
+|---|---|---|
+| `bool` | `bool` | `bool?` |
+| `int32`, `sint32`, `sfixed32` | `int` | `int?` |
+| `int64`, `sint64`, `sfixed64` | `long` | `long?` |
+| `uint32`, `fixed32` | `uint` | `uint?` |
+| `uint64`, `fixed64` | `ulong` | `ulong?` |
+| `float` | `float` | `float?` |
+| `double` | `double` | `double?` |
+| `string` | `string`, default `""` | `string?` |
+| `bytes` | `byte[]`, default empty | `byte[]?` |
+| `enum` | the generated C# `enum`, carried as `int32` | `Enum?` |
+| `google.protobuf.Timestamp` | `Eiva.Fletcher.Model.Timestamp` | `Timestamp?` |
+| `google.protobuf.Duration` | `Eiva.Fletcher.Model.Duration` | `Duration?` |
+| Nested message | the message's class, default `new()`, never null | `T?` |
+| `repeated T` | `List<T>`, default empty | — |
+| `map<K, V>` | `List<KeyValuePair<K, V>>`, default empty, in wire order | — |
+
+A plain message field is always present, as in C++: its column has no validity bitmap, and a
+`null` forced past the annotation is refused by `ToArrow`, naming the message, field and row
+(D-BIND-83). A `repeated` or `map` property that is `null` is refused the same way. Arrow list
+elements and map values are nullable although no proto producer writes a null element;
+`FromArrow` reads one as its proto default, as C++ does.
+
+**Temporal values are lossless.** `DateTime`, `DateTimeOffset` and `TimeSpan` count 100 ns
+ticks, so mapping onto them would drop the last two digits of a nanosecond value on every round
+trip, and a C# publisher's bytes would differ from a C++ one's (D-BIND-26). `Timestamp` and
+`Duration` are therefore `long`-backed values that keep the Arrow count, its unit and (for a
+timestamp) the schema's timezone. Equality is structural: one second and 1000 milliseconds are
+the same instant and not equal, because equal values must be the same Arrow value. Converting
+into a column's unit (`WithUnit`, which `ToArrow` calls) is exact to a finer unit, refuses a
+coarser one when the value has a remainder rather than rounding it, and refuses a count that
+overflows 64 bits. `ToDateTimeOffset()` and `ToTimeSpan()` are the lossy step, explicit and
+documented: a nanosecond value is floored to a 100 ns tick.
+
+The generated Arrow view and accessor (`csharp_accessor`, see the
+[accessor specification](recordbatch-accessor-spec.md)) give the same field types, except that
+a collection is a borrowed window over the column (`ListView<T>`, `MapView<TKey, TValue>`) rather
+than a copied `List`, and a string or bytes field also has a zero-copy UTF-8 or byte span getter.
 
 ---
 
@@ -160,7 +221,7 @@ For each attachment, in ASCENDING UNSIGNED-BYTE ORDER OF THE KEY:
 **A decoder must still match attachments by key, never by position**, and that is what makes the rule safe to state without breaking anything. Two consequences worth having in writing rather than implied:
 
 - A decoder that predates this rule is unaffected by it, because it never depended on the order.
-- The rule binds Fletcher's C++ encoders — `SerializeEnvelope` and the Fast DDS `EncodeEnvelopeBody`, both of which enumerate a `fletcher::Attachments`, which has no other order to offer. The TypeScript gateway client (`gateway-client-ts/src/envelope.ts`) is a **second, independent encoder** and emits in JavaScript `Map` insertion order; a message it produces with two or more attachments is therefore accepted and correct but not canonical. Any Fletcher C++ decoder normalises it on ingest, because the entries land in a `fletcher::Attachments`.
+- The rule binds Fletcher's C++ encoders — `SerializeEnvelope` and the Fast DDS `EncodeEnvelopeBody`, both of which enumerate a `fletcher::Attachments`, which has no other order to offer — and the C# gateway client, whose envelope (`dotnet/src/Fletcher.GatewayClient/Envelope.cs`) holds its attachments sorted by key bytes as `fletcher::Attachments` does. The TypeScript gateway client (`gateway-client-ts/src/envelope.ts`) is an **independent encoder** and emits in JavaScript `Map` insertion order; a message it produces with two or more attachments is therefore accepted and correct but not canonical. Any Fletcher C++ decoder normalises it on ingest, because the entries land in a `fletcher::Attachments`.
 
 **A key containing a zero byte is malformed**, and — exactly as for the order above — the rule binds Fletcher's **C++** encoders and decoders. No Fletcher C++ encoder can produce such a key, because `fletcher::Attachments` is the only way a key reaches either encoder and both doors into it — `Set` and the decoders' bulk builder — refuse it; every Fletcher C++ decoder drops a message carrying one as malformed rather than accepting a key that would truncate at a language boundary. The TypeScript gateway client (`gateway-client-ts/src/envelope.ts`) is again the exception: `TextEncoder` encodes `U+0000` as the byte `0x00`, measured, so it can emit such a key and its own `deserializeEnvelope` round-trips it. What that buys the rule is still an unambiguous outcome rather than an ambiguous key — a Fletcher C++ peer drops the sample, and the gateway refuses the publish frame — so no key that would become two things abroad is ever delivered. See [pubsub-interface-spec.md §3.2](pubsub-interface-spec.md) clauses A2 and A3, which are normative for both.
 
@@ -184,16 +245,30 @@ The `gateway` component uses a split text/binary WebSocket protocol:
 
 | Direction | Action / Type | Payload |
 |---|---|---|
-| Client to Server | `create_topic` | `{"action":"create_topic","topic":"pkg/svc/method"}` |
+| Client to Server | `create_topic` | `{"action":"create_topic","topic":"pkg/svc/method","schemaIpc":"base64..."}` (`schemaIpc` or `schema` optional) |
 | Client to Server | `subscribe` | `{"action":"subscribe","topic":"pkg/svc/method"}` |
 | Client to Server | `unsubscribe` | `{"action":"unsubscribe","subId":"123"}` |
 | Client to Server | `list_topics` | `{"action":"list_topics"}` |
 | Server to Client | `topic_created` | `{"type":"topic_created"}` |
 | Server to Client | `subscribed` | `{"type":"subscribed","subId":"123","topic":"...","schema":{...},"schemaIpc":"base64..."}` |
+| Server to Client | `unsubscribed` | `{"type":"unsubscribed"}` |
+| Server to Client | `published` | `{"type":"published"}`, one per PUBLISH frame the server accepted |
 | Server to Client | `topics_list` | `{"type":"topics_list","topics":["..."]}` |
-| Server to Client | `error` | `{"type":"error","message":"..."}` |
+| Server to Client | `error` | `{"type":"error","message":"..."}`; carries no request id: a client with one request in flight can attribute it to that request (the C# client keeps one, D-BIND-110) |
 
-The `subscribed` response includes the schema in two forms:
+A publisher may announce the topic's schema on `create_topic`, in either of two forms:
+- `schemaIpc` — base64-encoded Arrow IPC bytes of the schema, as `subscribed` carries it. **Use
+  this.** It is full fidelity, so the topic is declared exactly as a native publisher of the same
+  generated schema declares it, and re-declaring the topic is idempotent rather than a schema
+  conflict.
+- `schema` — the JSON descriptor below, kept for existing clients. The server reads top-level
+  SCALAR fields only (no struct, list, map, Timestamp or Duration) and drops nullability and field
+  numbers, so a topic declared this way conflicts with the same topic declared natively.
+
+When both are present `schemaIpc` is used; when neither is, the topic routes bytes with no schema.
+
+The `subscribed` response includes the schema in two forms, when the server has one at the moment of
+subscribing (a late-joining subscriber over a distributed transport may not yet):
 - `schema` — a JSON object with field names, wire types, nullability, and composite structure (for easy JS consumption)
 - `schemaIpc` — base64-encoded Arrow IPC bytes (for full fidelity)
 

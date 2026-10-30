@@ -3,8 +3,30 @@
 #
 from conan import ConanFile
 from conan.tools.cmake import CMake, CMakeToolchain, CMakeDeps, cmake_layout
-from conan.tools.files import copy
+from conan.errors import ConanException
+from conan.tools.files import copy, save
+import json
 import os
+
+# The Fast DDS this provider links. BIND-9b-7 (D-BIND-166): the code Fast DDS compiles in from its own
+# thirdparty/ folder is not in the Conan graph, so its licence texts are carried in
+# third_party/fast-dds-<version>/ and packaged for the notice deployer; a different version has no
+# such folder and fails package(), so an upgrade re-checks what the new Fast DDS vendors.
+FAST_DDS_VERSION = "3.4.3"
+
+# Name, version, licence and homepage of each library in that folder, read off Fast DDS 3.4.3's
+# thirdparty/ (versions from the vendored headers). Only what src/cpp compiles in: optionparser
+# serves its tools and android-ifaddrs Android, neither in this library.
+FAST_DDS_VENDORED = {
+    "nlohmann-json": ("3.11.3", "MIT", "https://github.com/nlohmann/json"),
+    "filewatch": ("as vendored by fast-dds " + FAST_DDS_VERSION, "MIT",
+                  "https://github.com/ThomasMonkman/filewatch"),
+    # 178 of the 181 files point to PEGTL 2.8.3's LICENSE (MIT); pegtl.hpp and the two mmap
+    # headers say BSL-1.0, as Fast DDS updated them: both texts are carried.
+    "taocpp-pegtl": ("2.8.3", "MIT AND BSL-1.0", "https://github.com/taocpp/PEGTL"),
+    # Header-only Boost.Interprocess and Boost.Thread time, for the shared-memory transport.
+    "boost": ("1.73.0", "BSL-1.0", "https://www.boost.org"),
+}
 
 
 class FletcherPubsubConan(ConanFile):
@@ -15,9 +37,21 @@ class FletcherPubsubConan(ConanFile):
     package_type = "static-library"
     settings = "os", "compiler", "build_type", "arch"
 
-    options = {"run_tests": [True, False]}
+    # fPIC, and why a static library in this tree needs it stated.
+    #
+    # Round BIND adds `c-abi/`, the first component packaged as a SHARED library:
+    # it links this archive into `libfletcher-c-abi.so`. Without the option Conan
+    # never sets CMAKE_POSITION_INDEPENDENT_CODE, and the link fails with
+    # "relocation R_X86_64_TPOFF32 against `__tls_guard' can not be used when
+    # making a shared object" — found by the first Linux lane run of PR #129, on a
+    # tree where every local Windows build was green.
+    #
+    # Deleted on Windows in config_options(): the flag has no meaning for MSVC, and
+    # keeping the option there would change package IDs for no reason.
+    options = {"run_tests": [True, False], "fPIC": [True, False]}
     default_options = {
         "run_tests": False,
+        "fPIC": True,
         # Link the Fast DDS chain statically by default. This recipe owns the
         # fast-dds requirement, so the static default lives here rather than in
         # a blanket *:shared profile option — consumers (notably the gateway)
@@ -40,6 +74,7 @@ class FletcherPubsubConan(ConanFile):
         "include/*",
         "cmake/*",
         "tests/*",
+        "third_party/*",
     )
 
     def requirements(self):
@@ -50,12 +85,16 @@ class FletcherPubsubConan(ConanFile):
         # without ever seeing a Fast DDS header. Dropping it is what makes test_package a real
         # check of that claim rather than a claim. transitive_libs STAYS -- the library is
         # STATIC, so consumers still link the Fast DDS chain.
-        self.requires("fast-dds/3.4.0", transitive_libs=True)
+        self.requires(f"fast-dds/{FAST_DDS_VERSION}", transitive_libs=True)
         if self.options.run_tests:
             self.requires("gtest/1.17.0")
 
     def package_id(self):
         del self.info.options.run_tests
+
+    def config_options(self):
+        if self.settings.os == "Windows":
+            del self.options.fPIC
 
     def layout(self):
         cmake_layout(self)
@@ -95,6 +134,22 @@ class FletcherPubsubConan(ConanFile):
              src=os.path.join(self.source_folder, "cmake"),
              dst=os.path.join(self.package_folder, "cmake"),
              keep_path=False)
+        # The code Fast DDS compiles in from its own thirdparty/ folder (D-BIND-166), as
+        # fletcher-pubsub packages its vendored nanoarrow: the texts travel here for the notice
+        # deployer (gateway/deployers/third_party_licenses.py), which names Fast DDS as the
+        # package that compiles them in.
+        texts = os.path.join(self.source_folder, "third_party", f"fast-dds-{FAST_DDS_VERSION}")
+        if not os.path.isdir(texts):
+            raise ConanException(
+                f"no {texts}: re-check which third-party code fast-dds {FAST_DDS_VERSION} compiles in "
+                "from its thirdparty/ folder, and carry those licence texts there")
+        for name, (version, licence, homepage) in FAST_DDS_VENDORED.items():
+            vendored = os.path.join(self.package_folder, "licenses", "vendored", name)
+            if not copy(self, "*", src=os.path.join(texts, name), dst=vendored):
+                raise ConanException(f"{texts}/{name} carries no licence text")
+            save(self, os.path.join(vendored, "vendored.json"), json.dumps({
+                "name": name, "version": version, "license": licence, "homepage": homepage,
+                "via": f"fast-dds {FAST_DDS_VERSION}"}, indent=2))
 
     def package_info(self):
         self.cpp_info.libs = ["fletcher-fastdds-pubsub-provider"]

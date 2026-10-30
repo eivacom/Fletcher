@@ -36,6 +36,7 @@ jobs:
             fastdds-pubsub-provider
             xrcedds-pubsub-provider
             integration-tests/fastdds-xrce-interop
+            integration-tests/cmake
             .conan-profiles
             .github
 
@@ -79,6 +80,7 @@ jobs:
             fastdds-pubsub-provider
             xrcedds-pubsub-provider
             integration-tests/fastdds-xrce-interop
+            integration-tests/cmake
             .conan-profiles
             .github
 
@@ -104,8 +106,10 @@ jobs:
       # CMakeLists builds eProsima's Agent (and its own fast-dds/asio/...)
       # from source as an ExternalProject (~10-15 min). It lives outside
       # the Conan home (C:\fl-uxa-install), so it needs its own cache.
-      # Keyed on the CMakeLists (which pins the agent's GIT_TAG) + profile
-      # so a tag bump invalidates it. No prefix fallback: a stale restore
+      # Keyed on the shared recipe integration-tests/cmake/MicroXrceAgent.cmake
+      # (which pins the agent's GIT_TAG) + profile so a tag bump invalidates it -
+      # the SAME key the pubsub-transport-conformance lane uses, so the two lanes
+      # share one cached Agent (D-BIND-56). No prefix fallback: a stale restore
       # would make the CMake guard skip rebuilding the wrong version.
       #
       # Restore/save are split (not a plain actions/cache) so the install
@@ -118,7 +122,7 @@ jobs:
         uses: actions/cache/restore@v5.0.5
         with:
           path: C:\fl-uxa-install
-          key: microxrce-agent-win-${{ hashFiles('integration-tests/fastdds-xrce-interop/CMakeLists.txt', '.conan-profiles/Windows-msvc194-x86_64-Release') }}
+          key: microxrce-agent-win-${{ hashFiles('integration-tests/cmake/MicroXrceAgent.cmake', '.conan-profiles/Windows-msvc194-x86_64-Release') }}
 
       - name: Build components into local Conan cache
         shell: bash
@@ -145,7 +149,7 @@ jobs:
         uses: actions/cache/save@v5.0.5
         with:
           path: C:\fl-uxa-install
-          key: microxrce-agent-win-${{ hashFiles('integration-tests/fastdds-xrce-interop/CMakeLists.txt', '.conan-profiles/Windows-msvc194-x86_64-Release') }}
+          key: microxrce-agent-win-${{ hashFiles('integration-tests/cmake/MicroXrceAgent.cmake', '.conan-profiles/Windows-msvc194-x86_64-Release') }}
 
       # Strip Conan sources + build folders (keeps the package binaries)
       # before the actions/cache post-step so the saved home stays small.

@@ -1,0 +1,81 @@
+<!-- SPDX-License-Identifier: LGPL-3.0-or-later
+     Copyright (C) 2026 The Fletcher Authors
+-->
+<Project>
+  <!-- The AOT toolchain packages, PINNED (D-BIND-81).
+
+       IsAotCompatible (the libraries) and PublishAot (tests/Fletcher.AotSmoke) add
+       implicit package references whose versions the SDK decides: Microsoft.NET.ILLink.Tasks,
+       which since .NET 8 also carries the trim and AOT analysers, and the ILCompiler
+       packages. Each SDK patch bundles its own, so the lock files a locked-mode restore
+       checks would differ between two SDKs of one feature band: measured 2026-10-08, CI's
+       Linux image runs SDK 10.0.400 (packs 10.0.11 / 8.0.30) while its Windows runner
+       rolls forward to 10.0.401 (10.0.12), and a lock file written on one fails NU1004 on
+       the other.
+
+       So the versions are fixed here, at what SDK 10.0.400 (dotnet/global.json) bundles,
+       for every SDK that builds this tree. Raise them deliberately, with the global.json
+       pin, then re-write the lock files. A newer SDK builds with these older packs without
+       complaint; they are build-time tools, not shipped.
+
+       A NativeAOT PUBLISH is the exception, so the runtime pack is pinned with them
+       (BIND-9b-3). The SDK picks a self-contained app's runtime pack at its own latest
+       patch, and ILC refuses a System.Private.CoreLib newer than its own ("Overriding
+       System.Private.CoreLib.dll with a newer version is not supported"): measured
+       2026-10-22, SDK 10.0.402 brings runtime packs 10.0.13 / 8.0.32 against these
+       10.0.11 / 8.0.30. CI's Linux image runs exactly 10.0.400, so only a newer SDK, as
+       on the Windows runner, meets it. -->
+  <PropertyGroup>
+    <FletcherAotPackNet10>10.0.11</FletcherAotPackNet10>
+    <FletcherAotPackNet8>8.0.30</FletcherAotPackNet8>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(PublishAot)' == 'true'">
+    <RuntimeFrameworkVersion Condition="'$(TargetFramework)' == 'net10.0'">$(FletcherAotPackNet10)</RuntimeFrameworkVersion>
+    <RuntimeFrameworkVersion Condition="'$(TargetFramework)' == 'net8.0'">$(FletcherAotPackNet8)</RuntimeFrameworkVersion>
+  </PropertyGroup>
+
+  <Target Name="FletcherPinAotPacks" BeforeTargets="ProcessFrameworkReferences">
+    <ItemGroup>
+      <KnownILLinkPack Condition="'%(KnownILLinkPack.TargetFramework)' == 'net10.0'">
+        <ILLinkPackVersion>$(FletcherAotPackNet10)</ILLinkPackVersion>
+      </KnownILLinkPack>
+      <KnownILLinkPack Condition="'%(KnownILLinkPack.TargetFramework)' == 'net8.0'">
+        <ILLinkPackVersion>$(FletcherAotPackNet8)</ILLinkPackVersion>
+      </KnownILLinkPack>
+      <KnownILCompilerPack Condition="'%(KnownILCompilerPack.TargetFramework)' == 'net10.0'">
+        <ILCompilerPackVersion>$(FletcherAotPackNet10)</ILCompilerPackVersion>
+      </KnownILCompilerPack>
+      <KnownILCompilerPack Condition="'%(KnownILCompilerPack.TargetFramework)' == 'net8.0'">
+        <ILCompilerPackVersion>$(FletcherAotPackNet8)</ILCompilerPackVersion>
+      </KnownILCompilerPack>
+    </ItemGroup>
+  </Target>
+
+  <!-- BIND-9a-2 (D-BIND-140, D-BIND-141): every package carries README.package.md as its
+       README.md, the same text in all four, with the version and the commit filled in so the
+       relinking route names its source. CI passes the commit:
+         dotnet pack -p:FletcherSourceCommit=<sha>
+       A local pack without it says so in place of the commit. Here and not in the props,
+       because PackageVersion is final only once the project has set Version. -->
+  <PropertyGroup Condition="'$(IsPackable)' != 'false'">
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <Target Name="FletcherPackageReadme" BeforeTargets="_GetPackageFiles" Condition="'$(IsPackable)' != 'false'">
+    <PropertyGroup>
+      <_FletcherReadmeCommit>$(FletcherSourceCommit)</_FletcherReadmeCommit>
+      <_FletcherReadmeCommit Condition="'$(_FletcherReadmeCommit)' == ''">unrecorded-local-pack</_FletcherReadmeCommit>
+      <_FletcherReadmeFile>$(IntermediateOutputPath)README.md</_FletcherReadmeFile>
+      <_FletcherReadmeText>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)README.package.md').Replace('@VERSION@', '$(PackageVersion)').Replace('@COMMIT@', '$(_FletcherReadmeCommit)').TrimEnd())</_FletcherReadmeText>
+    </PropertyGroup>
+    <!-- Escaped, so the text stays one line item: a bare ';' in it would split it. On Linux,
+         MSBuild still turns every '\' in it into '/' (it fixes item specs as if they were
+         paths), so README.package.md has no backslash, line continuations included; the
+         packed-README check fails if one comes back (BIND-9b-7, D-BIND-173). -->
+    <WriteLinesToFile File="$(_FletcherReadmeFile)" Lines="$([MSBuild]::Escape($(_FletcherReadmeText)))" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <ItemGroup>
+      <None Include="$(_FletcherReadmeFile)" Pack="true" PackagePath="README.md" Visible="false" />
+    </ItemGroup>
+  </Target>
+</Project>

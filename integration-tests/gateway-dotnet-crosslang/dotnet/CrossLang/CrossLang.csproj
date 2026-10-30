@@ -1,0 +1,70 @@
+<!-- SPDX-License-Identifier: LGPL-3.0-or-later
+     Copyright (C) 2026 The Fletcher Authors
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The C# gateway client's cross-language rows (BIND-8d, D-BIND-116). This test process is the
+       C# gateway client; it references Eiva.Fletcher.GatewayClient and Eiva.Fletcher.Model and
+       nothing native, the managed path a gateway or WASM consumer takes. The C# native peer is
+       another project (../NativePeer), built first through a ProjectReference that does not
+       reference its assembly. Not in Fletcher.slnx, as no integration project is. -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <RootNamespace>Eiva.Fletcher.CrossLang</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <RollForward>LatestMajor</RollForward>
+    <TargetFramework>net10.0</TargetFramework>
+
+    <FletcherProtocPlugin Condition="'$(FletcherProtocPlugin)' == ''">$(FLETCHER_PROTOC_PLUGIN)</FletcherProtocPlugin>
+    <FletcherProtoc Condition="'$(FletcherProtoc)' == ''">$(PROTOC)</FletcherProtoc>
+    <FletcherProtoDir>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/../../proto'))</FletcherProtoDir>
+    <FletcherCoverageProtoDir>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/../../../protoc-coverage/proto'))</FletcherCoverageProtoDir>
+    <FletcherOptionsDir>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/../../../../protoc/include'))</FletcherOptionsDir>
+    <FletcherGenDir>$(MSBuildProjectDirectory)/$(BaseIntermediateOutputPath)fletcher-gen</FletcherGenDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Apache.Arrow" Version="[23.0.0]" />
+    <ProjectReference Include="../../../../dotnet/src/Fletcher.GatewayClient/Fletcher.GatewayClient.csproj" />
+    <ProjectReference Include="../../../../dotnet/src/Fletcher.Model/Fletcher.Model.csproj" />
+    <ProjectReference Include="../NativePeer/NativePeer.csproj" ReferenceOutputAssembly="false" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="[18.10.0]" />
+    <PackageReference Include="xunit" Version="[2.9.3]" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="[3.1.5]" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="../../../../dotnet/tests/Shared/CoverageFixture.cs" Link="Shared/%(Filename)%(Extension)" />
+    <Compile Include="../Shared/RowCompare.cs" Link="Shared/%(Filename)%(Extension)" />
+    <!-- Where the lane finds the C# native peer the ProjectReference above builds. -->
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>NativePeerDll</_Parameter1>
+      <_Parameter2>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/../NativePeer/bin/$(Configuration)/$(TargetFramework)/NativePeer.dll'))</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <!-- The model and the GATEWAY pair for crosslang.proto and the coverage.proto it imports,
+       csharp_model_only as a gateway consumer writes it: nothing native. -->
+  <Target Name="FletcherGen" BeforeTargets="BeforeCompile;CoreCompile">
+    <Error Condition="'$(FletcherProtocPlugin)' == '' Or !Exists('$(FletcherProtocPlugin)')"
+           Text="FLETCHER_PROTOC_PLUGIN must name the built fletcher-protoc plugin (got '$(FletcherProtocPlugin)'). Build it with: conan create protoc" />
+    <Error Condition="'$(FletcherProtoc)' == '' Or !Exists('$(FletcherProtoc)')"
+           Text="PROTOC must name a protoc executable (got '$(FletcherProtoc)'). The Conan protobuf package ships one." />
+    <PropertyGroup>
+      <_FletcherWkt>$([System.IO.Path]::GetFullPath('$([System.IO.Path]::GetDirectoryName($(FletcherProtoc)))/../include'))</_FletcherWkt>
+    </PropertyGroup>
+    <RemoveDir Directories="$(FletcherGenDir)" />
+    <MakeDir Directories="$(FletcherGenDir)" />
+    <Exec Command="&quot;$(FletcherProtoc)&quot; --plugin=protoc-gen-fletcher=&quot;$(FletcherProtocPlugin)&quot; --fletcher_opt=csharp,csharp_model_only,csharp_gateway --fletcher_out=&quot;$(FletcherGenDir)&quot; -I &quot;$(FletcherProtoDir)&quot; -I &quot;$(FletcherCoverageProtoDir)&quot; -I &quot;$(FletcherOptionsDir)&quot; -I &quot;$(_FletcherWkt)&quot; &quot;$(FletcherProtoDir)/crosslang.proto&quot; &quot;$(FletcherCoverageProtoDir)/coverage.proto&quot;" />
+    <ItemGroup>
+      <Compile Include="$(FletcherGenDir)/*.fletcher.cs;$(FletcherGenDir)/*.fletcher.gateway.cs" />
+    </ItemGroup>
+    <Error Condition="!Exists('$(FletcherGenDir)/crosslang.fletcher.gateway.cs')"
+           Text="protoc ran but wrote no crosslang.fletcher.gateway.cs into $(FletcherGenDir)" />
+  </Target>
+
+</Project>

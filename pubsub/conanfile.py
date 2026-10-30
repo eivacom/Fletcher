@@ -3,8 +3,11 @@
 #
 from conan import ConanFile
 from conan.tools.cmake import CMake, CMakeToolchain, CMakeDeps, cmake_layout
-from conan.tools.files import copy
+from conan.errors import ConanException
+from conan.tools.files import copy, save
+import json
 import os
+import re
 
 
 class FletcherPubsubConan(ConanFile):
@@ -15,8 +18,19 @@ class FletcherPubsubConan(ConanFile):
     package_type = "static-library"
     settings = "os", "compiler", "build_type", "arch"
 
-    options = {"run_tests": [True, False]}
-    default_options = {"run_tests": False}
+    # fPIC, and why a static library in this tree needs it stated.
+    #
+    # Round BIND adds `c-abi/`, the first component packaged as a SHARED library:
+    # it links this archive into `libfletcher-c-abi.so`. Without the option Conan
+    # never sets CMAKE_POSITION_INDEPENDENT_CODE, and the link fails with
+    # "relocation R_X86_64_TPOFF32 against `__tls_guard' can not be used when
+    # making a shared object" — found by the first Linux lane run of PR #129, on a
+    # tree where every local Windows build was green.
+    #
+    # Deleted on Windows in config_options(): the flag has no meaning for MSVC, and
+    # keeping the option there would change package IDs for no reason.
+    options = {"run_tests": [True, False], "fPIC": [True, False]}
+    default_options = {"run_tests": False, "fPIC": True}
 
     exports_sources = (
         "CMakeLists.txt",
@@ -34,6 +48,10 @@ class FletcherPubsubConan(ConanFile):
 
     def package_id(self):
         del self.info.options.run_tests
+
+    def config_options(self):
+        if self.settings.os == "Windows":
+            del self.options.fPIC
 
     def layout(self):
         cmake_layout(self)
@@ -84,6 +102,37 @@ class FletcherPubsubConan(ConanFile):
              src=os.path.join(self.source_folder, "cmake"),
              dst=os.path.join(self.package_folder, "cmake"),
              keep_path=False)
+        # The vendored nanoarrow (with the flatcc it bundles, both Apache-2.0) is
+        # compiled into this package and into everything that links it, but is not in
+        # the Conan graph, so its licence text travels here for the third-party notice
+        # deployer (gateway/deployers/third_party_licenses.py, BIND-9a-0, D-BIND-140).
+        vendored = os.path.join(self.package_folder, "licenses", "vendored", "nanoarrow")
+        copy(self, "LICENSE.txt",
+             src=os.path.join(self.source_folder, "third_party", "nanoarrow"),
+             dst=vendored, keep_path=False)
+        # BIND-9b-7 (D-BIND-152, D-BIND-166): the Apache-2.0 NOTICE files travel with the code,
+        # nanoarrow's own and the one of the flatcc it bundles (nanoarrow's flatcc copy dropped
+        # it; taken from flatcc upstream, identical at v0.6.1 and master).
+        copy(self, "NOTICE.txt",
+             src=os.path.join(self.source_folder, "third_party", "nanoarrow"),
+             dst=vendored, keep_path=False)
+        copy(self, "NOTICE",
+             src=os.path.join(self.source_folder, "third_party", "nanoarrow", "flatcc"),
+             dst=os.path.join(vendored, "flatcc"), keep_path=False)
+        # The portable headers flatcc bundles: their folder licence and the four files that carry
+        # their own (BSD-3-Clause and MIT), all compiled in through the flatcc runtime.
+        copy(self, "LICENSE*",
+             src=os.path.join(self.source_folder, "third_party", "nanoarrow", "flatcc", "portable"),
+             dst=os.path.join(vendored, "flatcc", "portable"), keep_path=False)
+        # The version is read from the vendored header, so a re-vendoring updates it.
+        header = os.path.join(self.source_folder, "third_party", "nanoarrow", "nanoarrow", "nanoarrow.h")
+        with open(header, encoding="utf-8") as handle:
+            match = re.search(r'#define NANOARROW_VERSION "([^"]+)"', handle.read())
+        if not match:
+            raise ConanException(f"no NANOARROW_VERSION in {header}")
+        save(self, os.path.join(vendored, "vendored.json"), json.dumps({
+            "name": "nanoarrow", "version": match.group(1), "license": "Apache-2.0",
+            "homepage": "https://github.com/apache/arrow-nanoarrow"}, indent=2))
 
     def package_info(self):
         # Link order: pubsub first, then nanoarrow (pubsub depends on nanoarrow).
