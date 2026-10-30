@@ -16,7 +16,7 @@ exported one function; `dotnet/` packing three empty packages on `net8.0;net10.0
 `ci.c-abi.yml` and `ci.dotnet.yml` green on Windows **and** Linux; Part 4's test matrix
 re-derived and committed; `Apache.Arrow` pinned exactly at `[23.0.0]`; the per-RID shim size
 measured. Commits `57f565c`, `2caf38a`, `791baba`.
-**Reviews:** conformance, `plans/reviews/BIND-0-conformance.md` — **CONFORMS**, 9 live bullets,
+**Reviews:** conformance, `docs/archive/BIND/reviews/BIND-0-conformance.md` — **CONFORMS**, 9 live bullets,
 9 met, 0 blocking findings. Each bullet was checked against the tree rather than against the
 state table: the decision digest enumerated, both SDK pins read, the package list taken from
 disk, all four CI jobs read from the run, the Arrow pin grepped from both `.csproj`, and **the
@@ -58,7 +58,7 @@ window and writer, provider/publisher/subscriber, the delivery callback, the thr
 surface, and the single-copy marker. Pure C99, self-contained, no Fletcher C++ header reachable
 from it. Committed at `696a42f`; the spec review and its fixes at `5ebb2d5`, `f73cfb4` and this
 commit.
-**Reviews:** design/spec review, **two cycles**, `plans/reviews/BIND-1-design-review.md` —
+**Reviews:** design/spec review, **two cycles**, `docs/archive/BIND/reviews/BIND-1-design-review.md` —
 3 BLOCKERs opened, 3 closed; 3 findings reviewed and KEPT with reasoning; 4 DEBT + 2 NITs
 carried forward. **None of the BLOCKERs was a design error and none needed a signature change**,
 so the append-only rule never bound and no version bump was required. All three were the same
@@ -121,8 +121,8 @@ the header's 40 entry points, the other 20 being exactly BIND-4's (D-BIND-31). *
 `b6b89b3`, `f9d3ece`, `5762239`) the copy oracle's binding producer, the single-copy check and
 the per-platform size ceilings.
 
-**Reviews:** code review (`plans/reviews/BIND-2-codereview.md`) and conformance review
-(`plans/reviews/BIND-2-conformance.md`). **CONFORMS on 9 of 10 acceptance bullets; 1 BLOCKER,
+**Reviews:** code review (`docs/archive/BIND/reviews/BIND-2-codereview.md`) and conformance review
+(`docs/archive/BIND/reviews/BIND-2-conformance.md`). **CONFORMS on 9 of 10 acceptance bullets; 1 BLOCKER,
 5 DEBT, 4 NITs; zero defects in the wire format, the containment taxonomy or the handle
 lifetimes** — the three places a defect would have been expensive.
 
@@ -226,8 +226,8 @@ conformance corpus: the codec's own five Arrow fixtures, lifted into `codec_corp
 INCLUDED by the emitter so one definition serves both consumers. **D-BIND-41** moved the glibc
 floor to BIND-9 and made it a MEASUREMENT.
 
-**Reviews:** code review (`plans/reviews/BIND-3-codereview.md`) and conformance review
-(`plans/reviews/BIND-3-conformance.md`). **CONFORMS on 9 of 9 live bullets; 0 BLOCKERs, 4 DEBT,
+**Reviews:** code review (`docs/archive/BIND/reviews/BIND-3-codereview.md`) and conformance review
+(`docs/archive/BIND/reviews/BIND-3-conformance.md`). **CONFORMS on 9 of 9 live bullets; 0 BLOCKERs, 4 DEBT,
 3 NITs**; no defect in the handle lifetimes, the containment discipline, the wire-format path or
 the error taxonomy. **Both documents state their own limit first:** same author, same session,
 hours after the code — not a fresh-eyes pass, and the mechanical claim table is the part that
@@ -293,7 +293,7 @@ D-BIND-18, 52 implements the schema-watch pair (ABI 0.5), 53 amends bullet 8, an
 the format exception to a codec-origin `InvalidArgument`, so the overflow bullet 8 proves arrives
 as exactly `FletcherException` rather than as the malformed-input subclass.
 
-**The review is the part of this item worth reading first** (`plans/reviews/BIND-4-codereview.md`,
+**The review is the part of this item worth reading first** (`docs/archive/BIND/reviews/BIND-4-codereview.md`,
 `BIND-4-conformance.md`). **Method:** three reviewers with FRESH context — native shim, managed
 tier, tests and CI — each finding then re-verified end to end, several by reproduction or
 measurement. **Outcome on first reading: 6 BLOCKERs, conformance 6 of 12, and BIND-4 did not
@@ -493,7 +493,7 @@ maintainer, and read-only until a finding was ruled on.
   - C++'s staging copy is not written down on the public-surface note.
 
 **The BIND-5 review, and its rulings.** Three fresh-context reviewers found 9 BLOCKERs, 5 questions,
-23 DEBT and 17 NITs (`plans/reviews/BIND-5-codereview.md`); the conformance pass graded 5 of 11
+23 DEBT and 17 NITs (`docs/archive/BIND/reviews/BIND-5-codereview.md`); the conformance pass graded 5 of 11
 bullets as conforming, so BIND-5 does not close. The copy oracle held: no reviewer found a way to
 make it report a false zero-copy. The maintainer ruled the five questions as D-BIND-64 to D-BIND-67
 plus the diagrams.
@@ -520,7 +520,7 @@ three behaviours the C++ original has, because they changed the parameters of th
 inputs can no longer fail for the reason its name gives. Port the parameters too, or say in the
 header why not.
 
-**Parked for BIND-9 and BIND-10**, all in `plans/reviews/BIND-5-codereview.md`:
+**Parked for BIND-9 and BIND-10**, all in `docs/archive/BIND/reviews/BIND-5-codereview.md`:
 - T-D6 to T-D10;
 - N-D1, N-D2, N-D5, N-D6;
 - M-D3 to M-D5;
@@ -885,7 +885,7 @@ runs a .NET 10.0.400 SDK from a mounted volume, so generated C# and every .NET s
 
 **The review (2026-10-08).** Three fresh-context reviewers (the plugin's C++, the generated C# and its
 runtime, the tests and acceptance) at `c8ae231`, with every BLOCKER verified before it was reported:
-five BLOCKERs, ten questions, seventeen debts and the nits (`plans/reviews/BIND-6-codereview.md`).
+five BLOCKERs, ten questions, seventeen debts and the nits (`docs/archive/BIND/reviews/BIND-6-codereview.md`).
 Four of the blockers were found by running something: generated C# that did not compile for ordinary
 `.proto` files (B2, B3, B4), and a non-optional message field that C# wrote as a null C++ could not
 decode (B1). The fifth was a test the acceptance asked for and nobody had written (B5).
@@ -1028,7 +1028,7 @@ the C++ nor the Rust arm.
 
 **7e, the review (2026-10-15).** Three fresh-context reviewers (the plugin emitter; the generated
 C# and `Eiva.Fletcher.Model`; tests, CI and acceptance) found 2 BLOCKERs, both reproduced by running
-them, and 5 questions (`plans/reviews/BIND-7-codereview.md`, `BIND-7-conformance.md`).
+them, and 5 questions (`docs/archive/BIND/reviews/BIND-7-codereview.md`, `BIND-7-conformance.md`).
 
 - **B1:** the model's `FromArrow` read a null list's offsets, so `ToRow` and the view disagreed on
   valid input. The root was BIND-6's, so the generated subscriber had it too; fixed at every level.

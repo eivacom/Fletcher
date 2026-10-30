@@ -494,7 +494,7 @@ subscription whose owner is not this subscriber, in both tiers.
     - transport: 25 of 33, unchanged; the 8 `xrce` cases need an Agent this machine does not have.
   - **Mutations:** serving undeclared topics, always matching plans, and a cache that ignores which
     topic it verified are each caught.
-- **Q5 — the diagrams, done as ruled.** `plans/BIND-architecture-diagrams.md`:
+- **Q5 — the diagrams, done as ruled.** `docs/archive/BIND/BIND-architecture-diagrams.md`:
   - **Section 2:** marks `SubscriberArrow` `<<built>>`, draws the ABI at 0.7 with the framed decode
     and the publish check, and gains one floating note for the probe shim and copy-probe as
     test-only artifacts.

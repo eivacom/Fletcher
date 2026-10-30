@@ -1,8 +1,8 @@
 # BIND-C# — Development Plan (proposal for review, 2026-09-08)
 
 **Status: RECORD of the 2026-09-08 re-plan.** All nineteen questions were ruled on
-2026-09-11 and folded into [BIND-csharp-bindings.md](BIND-csharp-bindings.md) (the
-tracker, again the single source) and [BIND-locked-decisions.md](BIND-locked-decisions.md)
+2026-09-11 and folded into [BIND-csharp-bindings.md](../../../plans/BIND-csharp-bindings.md) (the
+tracker, again the single source) and [BIND-locked-decisions.md](../../../plans/BIND-locked-decisions.md)
 (D-BIND-1 … D-BIND-27). This file is kept for §1 (the re-verification against `main`),
 §3.2 (the codec surface), §3.5 (error handling), §6 (the full risk register) and the
 files-to-touch note under BIND-2, all of which the tracker cites rather than repeats.
@@ -21,13 +21,13 @@ decision deltas), §4 (the work breakdown), §6 (potential issues), §7 (what ne
 your yes/no before kickoff).
 
 Oracles that win on any conflict, unchanged:
-[docs/pubsub-interface-spec.md](../docs/pubsub-interface-spec.md) (the seam,
-**frozen**), [GIR-locked-decisions.md](GIR-locked-decisions.md),
-[docs/wire-format-specification.md](../docs/wire-format-specification.md),
-[docs/recordbatch-accessor-spec.md](../docs/recordbatch-accessor-spec.md).
+[docs/pubsub-interface-spec.md](../../pubsub-interface-spec.md) (the seam,
+**frozen**), [GIR-locked-decisions.md](../../../plans/GIR-locked-decisions.md),
+[docs/wire-format-specification.md](../../wire-format-specification.md),
+[docs/recordbatch-accessor-spec.md](../../recordbatch-accessor-spec.md).
 Existing round documents this proposal amends:
-[BIND-csharp-bindings.md](BIND-csharp-bindings.md),
-[BIND-locked-decisions.md](BIND-locked-decisions.md),
+[BIND-csharp-bindings.md](../../../plans/BIND-csharp-bindings.md),
+[BIND-locked-decisions.md](../../../plans/BIND-locked-decisions.md),
 [BIND-native-transport.md](BIND-native-transport.md),
 [BIND-architecture-diagrams.md](BIND-architecture-diagrams.md).
 

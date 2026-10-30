@@ -3,7 +3,7 @@
 Round **BIND** (C# bindings + generated TypeScript pub/sub). The small digest the
 architect / architect-reviewer / compliance steps must honour. Full rationale:
 [BIND-csharp-bindings.md](BIND-csharp-bindings.md); native transport:
-[BIND-native-transport.md](BIND-native-transport.md).
+[BIND-native-transport.md](../docs/archive/BIND/BIND-native-transport.md).
 
 **Upstream oracles that win on any conflict:**
 [GIR-locked-decisions.md](GIR-locked-decisions.md) (the generator IR — merged) and
@@ -20,8 +20,8 @@ weeks. A ruling is recorded the same turn it is made in:
 1. **this digest** — the entry itself;
 2. **[BIND-csharp-bindings.md](BIND-csharp-bindings.md)** — the decision table and
    the affected item's rows;
-3. **[BIND-csharp-development-plan.md](BIND-csharp-development-plan.md)** — §2 and §7;
-4. **[BIND-architecture-diagrams.md](BIND-architecture-diagrams.md)** — **if the
+3. **[BIND-csharp-development-plan.md](../docs/archive/BIND/BIND-csharp-development-plan.md)** — §2 and §7;
+4. **[BIND-architecture-diagrams.md](../docs/archive/BIND/BIND-architecture-diagrams.md)** — **if the
    ruling changes a shape, a name, a count or a direction.**
 
 The fourth is the one that rots, and it rots invisibly: prose contradicts itself in
@@ -375,7 +375,7 @@ commit.
 
 ---
 
-## Rulings of 2026-09-11 (folded from [BIND-csharp-development-plan.md](BIND-csharp-development-plan.md) §2 and §7)
+## Rulings of 2026-09-11 (folded from [BIND-csharp-development-plan.md](../docs/archive/BIND/BIND-csharp-development-plan.md) §2 and §7)
 
 D-BIND-17 to D-BIND-22 are proposals in the development plan and are inserted here,
 in order, as their questions are ruled. D-BIND-23 was ruled with Q1 and lands first.
@@ -409,7 +409,7 @@ is a copy-paste from the RBA feature; the ADO text is corrected to say what is m
 - **D-BIND-18 — The delivery thunk owns the lifetime bookkeeping; re-entrant `Subscribe` is
   refused in managed code and the sanctioned route is an explicit async helper.** *LOCKED BY
   THE MAINTAINER 2026-09-11 (Q4).* From constraints 2, 3, 4, 5 and 8 of
-  [BIND-csharp-inherited-constraints.md](BIND-csharp-inherited-constraints.md). Each managed
+  [BIND-csharp-inherited-constraints.md](../docs/archive/BIND/BIND-csharp-inherited-constraints.md). Each managed
   subscription carries an atomic in-flight counter the thunk maintains (increment on entry,
   decrement on exit) and a `retired` flag set by `Unsubscribe`; because the seam guarantees no
   invocation *begins* after `Unsubscribe` returns, **whoever brings the counter to zero after
@@ -554,7 +554,7 @@ is a copy-paste from the RBA feature; the ADO text is corrected to say what is m
   and needs no ruling; shipping a RID the CI does not run is a STOP-AND-ASK.
 
 **Interface rulings (Q15–Q18, 2026-09-11), recorded in
-[BIND-csharp-public-surface.md](BIND-csharp-public-surface.md) §2 and binding on BIND-4/6/7/8:**
+[BIND-csharp-public-surface.md](../docs/archive/BIND/BIND-csharp-public-surface.md) §2 and binding on BIND-4/6/7/8:**
 `Envelope` and its (de)serialisation live in `Eiva.Fletcher.GatewayClient` only; nothing on
 the native path exposes them (Q15). The generated C# subscriber has **no** `SubscribeInPlace`;
 its purpose in C++ is avoiding a per-sample allocation and the C# answer is batch delivery
@@ -1499,7 +1499,7 @@ and keeps `Metadata(key)` as a shortcut.)*
 - **D-BIND-50 — a subscription cancelled from INSIDE a delivery on its own Subscriber is freed
   OFF-THREAD, after a second cancel from outside any delivery has waited for the drain. Amends
   D-BIND-18.** *LOCKED BY THE MAINTAINER 2026-09-25,* answering BLOCKER B1 of
-  `plans/reviews/BIND-4-codereview.md`.
+  `docs/archive/BIND/reviews/BIND-4-codereview.md`.
 
   **WHAT D-BIND-18 GOT WRONG, precisely.** Its rule — "because the seam guarantees no invocation
   *begins* after `Unsubscribe` returns, whoever brings the counter to zero after retirement frees
@@ -1538,7 +1538,7 @@ and keeps `Metadata(key)` as a shortcut.)*
 
 - **D-BIND-51 — the managed refusal layer is keyed on the PROVIDER, over every delivery frame on
   the thread. Amends D-BIND-18.** *LOCKED BY THE MAINTAINER 2026-09-25,* answering BLOCKER B2 of
-  `plans/reviews/BIND-4-codereview.md`.
+  `docs/archive/BIND/reviews/BIND-4-codereview.md`.
 
   **WHAT D-BIND-18 GOT WRONG.** Its thread-static marker names "the Subscriber whose thunk this
   thread is inside", and `Dispose`/`Subscribe` refuse when that is `this`. **The seam's rule is per
@@ -1565,7 +1565,7 @@ and keeps `Metadata(key)` as a shortcut.)*
 
 - **D-BIND-52 — the shim IMPLEMENTS the schema-watch pair now; the C# surface does not expose it
   yet.** *LOCKED BY THE MAINTAINER 2026-09-25,* answering Q1 of
-  `plans/reviews/BIND-4-codereview.md`.
+  `docs/archive/BIND/reviews/BIND-4-codereview.md`.
 
   **WHY NOW.** D-BIND-29 declared `fl_subscriber_subscribe_schema` / `_unsubscribe_schema` and
   had them answer `FL_NOT_SUPPORTED` "until the seam provides them". The seam now does —
@@ -1595,7 +1595,7 @@ and keeps `Metadata(key)` as a shortcut.)*
 
 - **D-BIND-53 — BIND-4's bullet 8 is amended to what the binding owns; Fast DDS's silent drop of
   an oversized row is recorded as a PROVIDER limitation and left to its owner.** *LOCKED BY THE
-  MAINTAINER 2026-09-25,* answering Q2 of `plans/reviews/BIND-4-codereview.md`.
+  MAINTAINER 2026-09-25,* answering Q2 of `docs/archive/BIND/reviews/BIND-4-codereview.md`.
 
   **WHAT WAS FOUND.** Writing bullet 8's missing test ("bounded-payload overflow surfaces as
   `FletcherException(PayloadTooLarge)`") showed it cannot hold over any transport a managed
@@ -2723,7 +2723,7 @@ The next one was ruled on 2026-10-07 at the start of slice 6e, cross-file refere
   *(Extended by D-BIND-91: a protoc TYPE whose full name is `Fletcher` or `Fletcher.Gen` is refused
   too.)*
 
-The next ones were ruled on 2026-10-08, from the BIND-6 review (`plans/reviews/BIND-6-codereview.md`,
+The next ones were ruled on 2026-10-08, from the BIND-6 review (`docs/archive/BIND/reviews/BIND-6-codereview.md`,
 questions Q1 to Q10), and are numbered as their fixes land.
 
 - **D-BIND-83 - a plain message field is never null: the property defaults to `new()` and is always
@@ -3068,7 +3068,7 @@ accessor), after a read-only map of the C++ and Rust accessors and the capstone 
   a span getter for strings only.
 
 The next ones were ruled on 2026-10-15, on the questions of BIND-7's review
-(`plans/reviews/BIND-7-codereview.md`, Q1 to Q5).
+(`docs/archive/BIND/reviews/BIND-7-codereview.md`, Q1 to Q5).
 
 - **D-BIND-103 - an accessor BORROWS its source: it, its views, its windows and its span getters are
   valid only while the source batch or array is not disposed, and say so.** *LOCKED BY THE
@@ -3274,7 +3274,7 @@ of one topic agree; no fix was needed.
   **Declined:** a reference for a one-`PackageReference` gateway consumer (then `Eiva.Fletcher`
   would take the same, a BIND-9 packaging question).
 
-The next ones were ruled at BIND-8e, the review of BIND-8 (`plans/reviews/BIND-8-codereview.md`),
+The next ones were ruled at BIND-8e, the review of BIND-8 (`docs/archive/BIND/reviews/BIND-8-codereview.md`),
 from 2026-10-19.
 
 - **D-BIND-121 - `FletcherClient.Completion` is a public `Task` that completes when the connection
@@ -3573,7 +3573,7 @@ Three more, ruled 2026-10-21 while slices 9a-2 and 9a-4 were built:
   **Declined:** snippets copied by hand, accepting drift until BIND-10.
 
 Eight more, ruled 2026-10-21 on the fresh-context review of BIND-9a
-(`plans/reviews/BIND-9a-codereview.md`, questions Q1 to Q10; Q7 amends D-BIND-139 above, Q10 is
+(`docs/archive/BIND/reviews/BIND-9a-codereview.md`, questions Q1 to Q10; Q7 amends D-BIND-139 above, Q10 is
 wording):
 
 - **D-BIND-145 - every artifact of a bundle names one commit, the PR head.** *LOCKED BY THE

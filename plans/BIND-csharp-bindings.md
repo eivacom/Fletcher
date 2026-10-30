@@ -7,13 +7,13 @@ existing test suites, and the CI/CD pipelines to build, test and publish it all.
 
 **Revision 2026-09-11.** First written 2026-08-31 against the unmerged
 `feature/protocol-driver-abi` branch; re-planned 2026-09-08 in
-[BIND-csharp-development-plan.md](BIND-csharp-development-plan.md) after PDA-DEC
+[BIND-csharp-development-plan.md](../docs/archive/BIND/BIND-csharp-development-plan.md) after PDA-DEC
 merged as #126; **nineteen questions ruled by the maintainer on 2026-09-11** and
 folded into this file and into
 [BIND-locked-decisions.md](BIND-locked-decisions.md) (D-BIND-1 … D-BIND-27). This
 file is again the single source. The development plan stays as the record of the
 re-plan (its §1 re-verification, §3.2 codec design, §3.5 error handling, §6 risk
-register), and [BIND-csharp-public-surface.md](BIND-csharp-public-surface.md) is the
+register), and [BIND-csharp-public-surface.md](../docs/archive/BIND/BIND-csharp-public-surface.md) is the
 C++ → C# interface reference with the class diagrams.
 
 **Oracles** (they win on any contradiction):
@@ -27,8 +27,8 @@ is a **sibling** round below the seam, not an oracle: neither round depends on t
 other (seam §1).
 Locked decisions for this round: [BIND-locked-decisions.md](BIND-locked-decisions.md).
 What the seam obliges a binding to do:
-[BIND-csharp-inherited-constraints.md](BIND-csharp-inherited-constraints.md).
-[BIND-native-transport.md](BIND-native-transport.md) is superseded and kept as history.
+[BIND-csharp-inherited-constraints.md](../docs/archive/BIND/BIND-csharp-inherited-constraints.md).
+[BIND-native-transport.md](../docs/archive/BIND/BIND-native-transport.md) is superseded and kept as history.
 This file is both the `plan_path` (the tracker) and the `user_stories_path`.
 
 ## Goal
@@ -200,7 +200,7 @@ BIND, by section:
   `Publisher`/`Subscriber` plus §4 selection; inherit the four oracle suites plus
   `CallerTier`; add cases; change nothing.
 - The eight obligations the seam leaves specifically to a binding are listed in
-  [BIND-csharp-inherited-constraints.md](BIND-csharp-inherited-constraints.md) and
+  [BIND-csharp-inherited-constraints.md](../docs/archive/BIND/BIND-csharp-inherited-constraints.md) and
   each has a mechanism in D-BIND-17 … D-BIND-20.
 
 ---
@@ -931,7 +931,7 @@ first automated run happens before any real code exists.
 | ~~Self-hosted publish runner + `NUGET_EIVA_API_KEY` (D-BIND-28)~~ | ⛔ **STRUCK 2026-09-17 (D-BIND-33): a duplicate of BIND-9's own bullet**, which carries it more completely (registered, labelled, documented, used by no other job). It was annotated "due before BIND-9" from the start — acceptance for an item cannot hold something whose deadline is a later item. Nothing moves and nothing relaxes |
 
 **Conformance review 2026-09-17 — CONFORMS**, 9 live bullets, 9 met
-(`plans/reviews/BIND-0-conformance.md`). Three findings carried forward, none
+(`docs/archive/BIND/reviews/BIND-0-conformance.md`). Three findings carried forward, none
 blocking: **F1** the Part 4 matrix is stale by two cases (`test_xrce_document` is 11,
 the matrix says 9, so bucket 4 is 80 not 78) because #130 rebased underneath the
 kickoff — and BIND-3/BIND-4 state their acceptance in terms of those totals, so the
@@ -986,7 +986,7 @@ Windows export table (Part 8, Open items).
 | Every type derived from the seam spec, never shared with PDA-ABI's header (D-BIND-2′) | 🟢 |
 | Nothing crossing is a `std::shared_future` (D-BIND-22) | 🟢 |
 | No generated output's bytes change; no emitter behaviour changes | 🟢 the header touches no emitter |
-| **Reviewed as a specification** | 🟢 **done, two cycles, `plans/reviews/BIND-1-design-review.md`.** 3 BLOCKERs opened and all 3 closed (B1 → D-BIND-32; B2 stale status paragraph; B3 export-table claim), none needing a signature change. The three expensive wordings the plan named — `fl_schema`'s never-call-Arrow's-release warning, the write window's disclosed residue, attachments' never-sort rule — were all reviewed and KEPT, with the reasoning recorded so they are not reopened. 4 DEBT + 2 NITs carried forward; by this repo's convention DEBT does not loop the design |
+| **Reviewed as a specification** | 🟢 **done, two cycles, `docs/archive/BIND/reviews/BIND-1-design-review.md`.** 3 BLOCKERs opened and all 3 closed (B1 → D-BIND-32; B2 stale status paragraph; B3 export-table claim), none needing a signature change. The three expensive wordings the plan named — `fl_schema`'s never-call-Arrow's-release warning, the write window's disclosed residue, attachments' never-sort rule — were all reviewed and KEPT, with the reasoning recorded so they are not reopened. 4 DEBT + 2 NITs carried forward; by this repo's convention DEBT does not loop the design |
 | *(raised by BIND-2c, 2026-09-17)* **Who frees a message a CALLBACK put in an `fl_error`** | 🟢 **RULED 2026-09-17 (D-BIND-32): the callback BORROWS it** — keeps the bytes alive until it returns, the shim copies and frees nothing; stated on `fl_error` so the next such callback inherits it. `binding.h` updated. The question as it stood: `fl_error` says the message *"is heap-allocated by the shim"* and is released with `fl_error_dispose` — but `fl_grow_fn` hands an `fl_error*` to a CALLER's callback, inverting it: allocated by the binding, freed by the shim's `delete[]`. Those are one heap only while both sides share a CRT, and BIND-3 intends the shim to link the MSVC CRT **statically**, which is exactly when they are not. 2c takes the survivable side — copy the message, never free it: that leaks at worst under the shim-allocates reading, where disposing would corrupt a heap under the caller-allocates one. **Recommendation:** say that a `grow` callback which sets `message` keeps those bytes alive until it returns and the shim copies them, matching the borrow discipline `fl_str` already uses everywhere else in the ABI. The alternatives — a caller-supplied disposer, or shim-exported `fl_alloc`/`fl_free` — both widen the surface |
 
 ### BIND-2 — The nanoarrow codec, the publish fusion, and the oracle's producer
@@ -1052,8 +1052,8 @@ property becomes provable, not where the code happens to divide:
 | **2c** | `fl_error` + the one `Translate` containment site; the codec surface; the write-window and writer adapters; and the publisher chain — provider/publisher create + destroy, `create_topic`, `list_topics`, `publish_raw`, `publish_row(s)`, `fl_string_list_*` (**scope ruled 2026-09-17, D-BIND-31**) | `3b13cb5` (+ `0811091`, the ELF export table) | 🟢 green, 🔍 reviewed 2026-09-18 |
 | **2d** | The copy-oracle producer, the single-copy check, the packed-size budget | `b95affc` (+ `b6b89b3`, `f9d3ece`, `5762239`) | 🟢 green, 🔍 reviewed 2026-09-18 |
 
-**State — 2026-09-18.** Reviewed at `5762239`: `plans/reviews/BIND-2-codereview.md` and
-`plans/reviews/BIND-2-conformance.md`. **CONFORMS on 9 of 10 bullets** (bullet 4 amended by
+**State — 2026-09-18.** Reviewed at `5762239`: `docs/archive/BIND/reviews/BIND-2-codereview.md` and
+`docs/archive/BIND/reviews/BIND-2-conformance.md`. **CONFORMS on 9 of 10 bullets** (bullet 4 amended by
 D-BIND-35), and **one BLOCKER is open** — B1, a cross-module `new[]`/`delete[]` in
 `test_containment.cpp` that is invisible today. *(It was expected to fire when BIND-3
 linked the MSVC CRT statically; D-BIND-38 keeps the CRT dynamic, so the hazard is
@@ -1644,7 +1644,7 @@ codec step.
   package) is `Fletcher.Gen` or below, before any output (D-BIND-82). Plugin 158/158 in the generator
   bucket (159 in the suite); two mutants of the guard each caught by its own case. **Still owed by
   6e:** the item review.
-- **The item review, 2026-10-08:** `plans/reviews/BIND-6-codereview.md` and
+- **The item review, 2026-10-08:** `docs/archive/BIND/reviews/BIND-6-codereview.md` and
   `BIND-6-conformance.md`. Three fresh-context reviewers; 5 BLOCKERs, all verified; ten questions,
   each ruled (D-BIND-83 to 93 as their fixes land). BIND-6 does not close until B1 to B5 are fixed.
 - **Review fix B1, 2026-10-09 (D-BIND-83): a plain message field is never null.** The property is
@@ -1876,7 +1876,7 @@ codec step.
   - **T-D6** the Arrow-only model is proven on net10.0 only (protoc-dotnet's TFM). BIND-9's matrix.
   - **T-D8** the generated subscriber's schema handling (S-9) has never run over a transport without
     a schema channel. BIND-9's cross-language lane.
-  - **The NITs** of `plans/reviews/BIND-6-codereview.md` (P-N1 to P-N5, four runtime, T-N1 to T-N4),
+  - **The NITs** of `docs/archive/BIND/reviews/BIND-6-codereview.md` (P-N1 to P-N5, four runtime, T-N1 to T-N4),
     except "a null element in `Publish(IEnumerable<T>)` throws an NRE", which D-BIND-92 resolved: the
     pair publishes through `ToArrow`, which now refuses a null row with an `ArgumentException`.
   - **Found 2026-10-14, at BIND-7's start (D-BIND-97's measurement):** the generated
@@ -1941,7 +1941,7 @@ fifth, member-name collisions, at 7a's start (D-BIND-98). Slices:
   gain `integration-tests/accessor-capstone/**`), and the README's third arm. **Also found by the
   map:** the C++ (`integration-protoc-arrow`) and Rust lanes' filters do not list that directory
   either, so a change to the capstone files alone runs neither; 7d adds it to all three.
-- **7e:** fresh-context review and close (`plans/reviews/BIND-7-codereview.md`, `BIND-7-conformance.md`):
+- **7e:** fresh-context review and close (`docs/archive/BIND/reviews/BIND-7-codereview.md`, `BIND-7-conformance.md`):
   2 blockers fixed, rulings D-BIND-103 to 107. **For a consumer (D-BIND-105):** a struct, list or
   map element from another file, `repeated google.protobuf.Timestamp` included, is read through that
   file's accessor, so every file a file imports is generated with `csharp_accessor` too, as BIND-6e
@@ -1949,7 +1949,7 @@ fifth, member-name collisions, at 7a's start (D-BIND-98). Slices:
   (D-BIND-103).
 
 **Closed 2026-10-15 on CI at `268dceb` (`ci.pr` 38746753749, 52/52).** Known debt carried out, by
-the maintainer's choice, from `plans/reviews/BIND-7-codereview.md`:
+the maintainer's choice, from `docs/archive/BIND/reviews/BIND-7-codereview.md`:
 
 - **T-D2** the capstone's C# arm takes its input types from C#'s own `Schema`; compare
   `CapstoneBatch.Schema` with the C++ `.ipc` (add `ipc` to the capstone's Exec). BIND-9's lane work.
@@ -2145,7 +2145,7 @@ needs no ruling: D-BIND-156 already gives TypeScript the same refusal and messag
 - **T-4 done on CI 2026-10-29** (`e577332`, `ci.pr` 40872463656, 61/61 on the first attempt, every
   side workflow green): the pair cases green over both providers on Linux and Windows, and the
   crosslang rows through the pairs on both legs.
-- **T-5, review 2026-10-29** (`plans/reviews/BIND-T-codereview.md`, `BIND-T-conformance.md`, at
+- **T-5, review 2026-10-29** (`docs/archive/BIND/reviews/BIND-T-codereview.md`, `BIND-T-conformance.md`, at
   `e577332` with T-5's README edits; three fresh-context reviewers): no defect in the emitter's
   message set or the batcher's rules, 2 BLOCKERs in shipped text (B1 the client README's
   hand-built `subscribe` example does not compile, checked: TS18046; B2 the batched deadline
@@ -2207,7 +2207,7 @@ needs no ruling: D-BIND-156 already gives TypeScript the same refusal and messag
   `unsubscribe`. Proven against a live gateway over both providers and against C++ and C# in the
   cross-language lane, on Linux and Windows. TypeScript reaches pub/sub through the gateway only;
   the client has no Arrow backend, publishes one row per call and does not reconnect (D-BIND-190).
-  **Carried as known, by ID** (`plans/reviews/BIND-T-codereview.md`): M10 (the well-known-types
+  **Carried as known, by ID** (`docs/archive/BIND/reviews/BIND-T-codereview.md`): M10 (the well-known-types
   CMake block copied three times; rows after a batcher closes not counted), T9 (the live
   unsubscribe check cannot see the gateway side), and the rest of T10 (a batch handler calling
   `unsubscribe`/`close`, safe by reading; a row whose envelope parses but whose row does not;
@@ -2373,7 +2373,7 @@ token and names; one request in flight; `PublishAsync` awaits the ack). Slices:
   `.nupkg` (no `runtimes/` entry, no dependency on `Eiva.Fletcher` or `Eiva.Fletcher.Interop`; both
   mutants caught). **8d is done on CI** (`89f9a34`, `ci.pr` 39248253992, 56/56).
 - **8e:** fresh-context review and close.
-  **Review 2026-10-19** (`plans/reviews/BIND-8-codereview.md`, `BIND-8-conformance.md`, at `89f9a34`):
+  **Review 2026-10-19** (`docs/archive/BIND/reviews/BIND-8-codereview.md`, `BIND-8-conformance.md`, at `89f9a34`):
   5 BLOCKERs, all checked by the author (TypeScript cross-file imports relative to the include root;
   a cancelled `SubscribeAsync` installing its handler under an id the caller never gets; the
   cross-language retry pooling two partial attempts, which happened on the green run; the
@@ -2433,7 +2433,7 @@ token and names; one request in flight; `PublishAsync` awaits the ack). Slices:
   cases, a mutant per lock caught; on CI at `750d79d` (`ci.pr` 39375700668, 56/56).
 
 **BIND-8 CLOSED 2026-10-20** on CI at `750d79d` (`ci.pr` 39375700668, 56/56, every side workflow
-green). **Known debt carried**, by the review's IDs (`plans/reviews/BIND-8-codereview.md`, audited
+green). **Known debt carried**, by the review's IDs (`docs/archive/BIND/reviews/BIND-8-codereview.md`, audited
 2026-10-20; every other DEBT and NIT item is fixed):
 
 - **C-D7** performance, which the maintainer chose not to fix in 8e: per-row allocation in the
@@ -2604,7 +2604,7 @@ before the round merges.
   the checker passes (7 snippets) and fails on four mutants (a README line edited, a snippet not
   shown, an unknown name, the code edited); the packed README is byte-identical to the source with
   version and commit filled in; the README pack checks pass; `dotnet format` and actionlint clean.
-- **Review 2026-10-21** (`plans/reviews/BIND-9a-codereview.md`, `BIND-9a-conformance.md`; three
+- **Review 2026-10-21** (`docs/archive/BIND/reviews/BIND-9a-codereview.md`, `BIND-9a-conformance.md`; three
   fresh-context reviewers): 6 BLOCKERs, all reproduced and fixed, and 10 questions, all ruled
   (D-BIND-145 to 152, the D-BIND-139 amendment, the VC++ wording). The blockers: the shim
   dependency check passed on an empty list (B1, now it must name `libc.so.6` / `KERNEL32.dll`); a
@@ -3049,7 +3049,7 @@ preparation, a fresh-context review and the close.
   maintainer's ruling (option A) 9b-8 is the review of BIND-9b and the runbook below; the
   `0.6.0-alpha` bump and the preview retirement are the last two commits before the merge, after
   BIND-T and BIND-10, and the first dry runs move to the runbook's first post-merge step.
-  **Review** (`plans/reviews/BIND-9b-codereview.md`, `BIND-9b-conformance.md`, at `b23f472`; three
+  **Review** (`docs/archive/BIND/reviews/BIND-9b-codereview.md`, `BIND-9b-conformance.md`, at `b23f472`; three
   fresh-context reviewers): every ruling 153 to 173 met in the tree (154 as amended by 169), no
   defect in the machinery or the tests, 4 BLOCKERs in shipped text (B1 the Protoc README's snippet
   fails as written, B2 "Windows NativeAOT is not yet exercised" in every package, B3 the relinking
@@ -3096,7 +3096,7 @@ preparation, a fresh-context review and the close.
   merge, by D-BIND-174, and is the runbook below: `LICENSE-EXCEPTION`'s wiring after EIVA legal
   (D-BIND-175), the `0.6.0-alpha` bump and the preview retirement as the last two commits after
   BIND-T and BIND-10, then the dry runs on `main`, the nuget.org and npm setup, and the tags.
-  **The review's DEBT and NITs, by ID** (`plans/reviews/BIND-9b-codereview.md`): in the runbook,
+  **The review's DEBT and NITs, by ID** (`docs/archive/BIND/reviews/BIND-9b-codereview.md`): in the runbook,
   M3 and M4 (already) and L7 and M9 with the retirement commit, which removes what they name;
   fixed in the close, T7 (D-BIND-154 marked amended by 169, here and in the decisions); BIND-10's,
   T2 (the docs name a nested field one way, or the two codecs are aligned); carried as known, M5,
@@ -3514,7 +3514,7 @@ bindings should not follow C++, every codec takes C++'s spelling (`readings[].x`
 - **10-5 committed 2026-10-30** (`8efa3a8`).
 - **10-6, 2026-10-30: the review, its rulings and its fixes.** A fresh-context review by three
   reviewers (code and machinery, shipped text, tests and acceptance), at `8efa3a8`:
-  `plans/reviews/BIND-10-codereview.md` and `BIND-10-conformance.md`. 7 BLOCKERs, all shipped text
+  `docs/archive/BIND/reviews/BIND-10-codereview.md` and `BIND-10-conformance.md`. 7 BLOCKERs, all shipped text
   and each checked against the tree before it was recorded: the generator package said to run the
   generator (it brings the plugin; the project runs protoc), the C++ → C++ matrix cell named a C#
   lane, `csharp_gateway` and `csharp_accessor` given without `csharp`, TD-009's 1.95× for the
@@ -3529,6 +3529,16 @@ bindings should not follow C++, every codec takes C++'s spelling (`readings[].x`
   among them); the .NET suites on .NET 8 and 10 (`Fletcher.Tests` 434, `Fletcher.GatewayClient.Tests`
   223, `Fletcher.Model.Tests` 71, `Fletcher.CopyOracle.Tests` 5), AotSmoke and pack; `dotnet format
   whitespace` on the changed C#; `check_test_matrix.py` (1 table) and its fixture test.
+- **10-6 review and fixes committed 2026-10-30** (`39c57e6`).
+- **10-6, 2026-10-30 (D-BIND-194, first step; D-BIND-198): the archive.** The development plan,
+  the architecture diagrams, the inherited constraints, the public surface and the native-transport
+  plan move to `docs/archive/BIND/`, and all 24 `plans/reviews/BIND-*` (BIND-0 to BIND-10 and
+  BIND-T) to `docs/archive/BIND/reviews/`, by `git mv`. Every markdown link into or out of a moved
+  file was recomputed from its old location, and every repo-relative mention of a moved path
+  (`plans/reviews/BIND-…`) now names its new one, except two sentences that describe the plan at
+  its old path (D-BIND-198 and the review's Q3). Checked: no broken relative link in the moved
+  files or this tracker, the decisions and the progress log, before or after (0 and 0). This
+  tracker, `BIND-locked-decisions.md` and `BIND-progress-log.md` stay until runbook step 8.
 
 ---
 

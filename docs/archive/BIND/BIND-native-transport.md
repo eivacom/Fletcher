@@ -1,6 +1,6 @@
 # BIND — Native transport protocols: superseded by PDA
 
-Addendum to [BIND-csharp-bindings.md](BIND-csharp-bindings.md).
+Addendum to [BIND-csharp-bindings.md](../../../plans/BIND-csharp-bindings.md).
 
 **Status (2026-08-31): largely SUPERSEDED.** An earlier revision of this file
 designed a per-transport C ABI shim for Fast DDS and XRCE-DDS, with a per-RID

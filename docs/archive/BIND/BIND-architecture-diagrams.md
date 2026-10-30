@@ -1,6 +1,6 @@
 # Fletcher — Architecture & Data-Flow Diagrams (BIND round input)
 
-Companion to [BIND-csharp-bindings.md](BIND-csharp-bindings.md). Diagrams are
+Companion to [BIND-csharp-bindings.md](../../../plans/BIND-csharp-bindings.md). Diagrams are
 Mermaid, so this file renders directly on GitHub, in VS Code, and in any Mermaid-
 aware Markdown viewer.
 
@@ -12,7 +12,7 @@ aware Markdown viewer.
 > that rots.** It says in pictures what the decisions digest, the tracker and the
 > development plan say in prose — so a ruling that changes a shape, a name, a count
 > or a direction has to sweep this file too. That is now written down as the fourth
-> place in [BIND-locked-decisions.md](BIND-locked-decisions.md#where-a-ruling-has-to-land--four-places-not-three).
+> place in [BIND-locked-decisions.md](../../../plans/BIND-locked-decisions.md#where-a-ruling-has-to-land--four-places-not-three).
 > On 2026-09-18 a sweep found **eight** claims here that a later ruling had
 > invalidated, including a sequence drawing a design D-BIND-1 had explicitly
 > refused. Prose that contradicts itself gets noticed; a diagram just draws the old
@@ -993,7 +993,7 @@ from a gap nobody re-checked.*
    2026-09-17.** BIND-1 landed `c-abi/include/fletcher/abi/binding.h` — 912 lines then (46 entry points at
    ABI 0.6 after BIND-4's follow-ups, D-BIND-57, and 47 at ABI 0.7 since D-BIND-68),
    pure C99, reviewed as a *specification* over two cycles
-   (`plans/reviews/BIND-1-design-review.md`), with every declaration derived from
+   (`docs/archive/BIND/reviews/BIND-1-design-review.md`), with every declaration derived from
    the seam spec and its § named. The value-transfer hop that was provisional here
    is ruled: Arrow C Data Interface, three layers (D-BIND-1a, D-BIND-23), built and
    reviewed at BIND-2. Diagrams 2, 6 and 7 now show a shape that exists.
