@@ -880,7 +880,7 @@ Kind: 🟪 spec · 🟦 impl · 🔬 proof · ⚙ pipelines · 📓 docs
 | BIND-8 | `Eiva.Fletcher.GatewayClient` (managed port; the codec exception) | C | 🟦 | — | Bucket 2 green (the Part 4 file set, not a count); `Package.GatewayClientHasNoRuntimesFolder` | 🟢 (closed on CI at `750d79d`, `ci.pr` 39375700668, 56/56, every side workflow green, after a fresh-context review whose 5 BLOCKERs were fixed and 12 questions ruled, D-BIND-121 to 132; rulings during the round D-BIND-108 to 120, and D-BIND-133 (slice 8f, batched delivery); one finding after the review fixed (A1); performance carried as known debt, listed in BIND-8's section) |
 | BIND-9a | A preview for testers (split from BIND-9 2026-10-20): one bundle per push to this branch, a 30-day CI artifact with the four NuGet packages (shim for both RIDs), the gateway binaries and the plugin binaries; nothing released before the merge (D-BIND-134 to 152) | D | ⚙ | BIND-3, BIND-8 | A consumer test using only the bundle publishes natively, generates code with the bundled plugin and reaches the bundled gateway, on Linux and Windows; `Interop` carries exactly the two shims; licence files in every package | 🟢 (closed on CI at `133631a`, `ci.pr` 39592797595, 60/60 on its third attempt after two one-off Windows timing failures in unchanged tests, every side workflow green, after a fresh-context review whose 6 BLOCKERs were fixed and 10 questions ruled, D-BIND-145 to 152; rulings during the item D-BIND-134 to 144; the review's deferred items listed in BIND-9b) |
 | BIND-9b | The rest of BIND-9: publish to nuget.org by Trusted Publishing (D-BIND-176; was `nuget.eiva.com` from a self-hosted job, D-BIND-28), size budget, glibc floor, `Eiva.Fletcher.Protoc`, NativeAOT on Windows and `fastdds`, C#-native cross-language rows | D | ⚙ | BIND-9a, all for release | `cd.dotnet.yml` dry run; packed-size check; asset-isolation + licence check | 🟢 (closed on CI at `9c9e2bc`, `ci.pr` 40702620300, 61/61 on the first attempt, every side workflow green, after a fresh-context review whose 4 BLOCKERs were fixed and 5 questions ruled, D-BIND-175 to 179; rulings during the item D-BIND-153 to 174; D-BIND-180 from a reported issue; the dry runs, the bump, the retirement and the tags are the merge runbook's, after BIND-T and BIND-10 (D-BIND-174); the review's DEBT and NITs listed in BIND-9b's section) |
-| BIND-10 | Docs, TD-009, archive to `docs/archive/BIND/` | D | 📓 | all | docs review | 🔴 (rulings D-BIND-191 to 194, 2026-10-29; slices 10-1 to 10-6) |
+| BIND-10 | Docs, TD-009, archive to `docs/archive/BIND/` | D | 📓 | all | docs review | 🟢 (closed on CI at `5a2a107`, `ci.pr` 41062852098, 61/61 on the first attempt, every side workflow green, after a fresh-context review whose 7 BLOCKERs were fixed and 3 questions ruled, D-BIND-196 to 198; rulings D-BIND-191 to 195, 2026-10-29; slices 10-1 to 10-6; the rest of the archive is runbook step 8) |
 
 ---
 
@@ -3539,6 +3539,21 @@ bindings should not follow C++, every codec takes C++'s spelling (`readings[].x`
   its old path (D-BIND-198 and the review's Q3). Checked: no broken relative link in the moved
   files or this tracker, the decisions and the progress log, before or after (0 and 0). This
   tracker, `BIND-locked-decisions.md` and `BIND-progress-log.md` stay until runbook step 8.
+- **10-6 archive committed 2026-10-30** (`5a2a107`).
+- **BIND-10 CLOSED 2026-10-30, on CI at `5a2a107`** (`ci.pr` 41062852098, 61/61 on the first
+  attempt; `ci.format-check-cpp`, `-cs`, `-ts`, `ci.license-headers`, `ci.action-lint`,
+  `ci.check-caller-tier-mapping` and `ci.check-test-matrix` green). The repository now documents
+  the .NET binding where a reader looks: the root README's Languages section with the support table
+  and the cross-language matrix (every cell a lane that proves it), "Consume in .NET", the
+  component READMEs of `c-abi/` and `dotnet/`, C# in the wire-format and accessor specifications,
+  TD-009, and the architecture docs with their diagrams; the docs no longer read as written for one
+  domain. Every codec names a nested field one way, C++'s, at open and at bind (D-BIND-195, 196).
+  The item-level documents are in `docs/archive/BIND/`; the tracker, the decisions and the progress
+  log follow at runbook step 8. **Carried as known, by ID**
+  (`docs/archive/BIND/reviews/BIND-10-codereview.md`): T-D2 (per-shape null-refusal path tests,
+  narrowed) and T-N2 (the TypeScript → TypeScript cell is one client looping through a gateway).
+  **Not done here, by the runbook:** `LICENSE-EXCEPTION`'s wiring (with EIVA legal since
+  2026-10-30, D-BIND-175), the bump, the preview retirement, the merge and the tags.
 
 ---
 

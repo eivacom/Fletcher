@@ -1499,3 +1499,34 @@ client does not reconnect either (D-BIND-190).
 generated, typed classes, proven against C++ and C# on Linux and Windows. **Lesson.** A reviewer
 grades what a document says against the code; an option the code never reads is invisible to that
 unless someone asks what the feature does for a user.
+
+## BIND-10 — docs and archive (2026-10-29 to 2026-10-30, CLOSED)
+
+**The rulings.** Four on the first day (D-BIND-191 to 194): the architecture docs join the item, a
+Languages section goes in the root README with the cross-language matrix, nested field names get
+one spelling, and the archive moves in two steps. On the maintainer's question whether the bindings
+should not follow C++, the spelling was re-ruled the same day as C++'s (`readings[].x`), not
+Arrow's (D-BIND-195).
+
+**10-1 to 10-5, the docs.** The C# and TypeScript gateway clients name a nested field as C++ does.
+The root README gained the Languages section, the .NET quick-start and the .NET rows of every table;
+the `c-abi/` and `dotnet/` READMEs now describe what exists rather than the history; the specs
+gained C# and TD-009; the architecture docs and their diagrams show the binding, every diagram
+checked by rendering it. On the maintainer's note that Fletcher is public middleware, the docs
+stopped speaking of survey missions, vessels and Parquet sinks. Stale facts found on the way were
+fixed: an old Fast DDS version, the npm package name, the workflow names.
+
+**10-6, the review.** Three reviewers with fresh context found seven errors, all in text we ship:
+a package said to run the generator when the project does, a matrix cell naming a lane that does
+not prove it, generator options that the plugin refuses on their own, a cost figure ten times too
+low, a CMake floor, a test command that fails without the probe library, and two places the
+neutral-wording rule had missed. Three questions were ruled: the C ABI codec now names nested
+fields C++'s way when it opens a schema as well as when it refuses a null (D-BIND-196, with tests
+in C++ and C#); the nuget.org wording stays (D-BIND-197); and the test-matrix check reads the
+tracker only, so the development plan could be archived (D-BIND-198). Then the item-level documents
+moved to `docs/archive/BIND/`.
+
+**BIND-10 closed.** The .NET binding is documented where a reader looks for it, green on CI at
+`5a2a107` on the first attempt. **Lesson.** A spelling ruled for one message has to be checked in
+every message that names a field: 10-1 made the two C# transports agree on null refusals and
+disagree on schema refusals, and only a reviewer who traced both paths saw it.

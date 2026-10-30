@@ -9,6 +9,11 @@
 **Outcome: 7 BLOCKERs (all shipped text), 3 questions for a ruling, DEBT, NITs.** BIND-10 does not
 close until the blockers are fixed and the questions ruled.
 
+> **CLOSED 2026-10-30, on CI at `5a2a107`** (`ci.pr` 41062852098, 61/61 on the first attempt,
+> every side workflow green). All three questions ruled (D-BIND-196 to 198); all seven blockers
+> fixed, with L-D1 to L-D3 and three nits (`39c57e6`); the archive moved (`5a2a107`). Carried as
+> known: T-D2 (narrowed) and T-N2.
+
 ## How this review was done, and its limit
 
 The method of BIND-4 to BIND-T. Three reviewers with **fresh context** each took one area: (M) the
