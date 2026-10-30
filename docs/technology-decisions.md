@@ -56,7 +56,7 @@ This document records significant technology decisions, the rationale behind the
 
 **Status:** Accepted
 
-**Context:** Sensor data must be transported reliably across vessel networks, from edge devices to workstations, with configurable QoS. The transport must handle both desktop/server environments and resource-constrained embedded devices.
+**Context:** Telemetry must be transported reliably across local networks, from edge devices to workstations, with configurable QoS. The transport must handle both desktop/server environments and resource-constrained embedded devices.
 
 **Decision:** Two DDS implementations are used: [eProsima Fast DDS](https://fast-dds.docs.eprosima.com/) (`fastdds-pubsub-provider`) for desktop and server environments, and [eProsima Micro XRCE-DDS](https://github.com/eProsima/Micro-XRCE-DDS-Client) (`xrcedds-pubsub-provider`) for MCU and embedded targets. Both implement the `PubSub` interface and interoperate through the DDS domain (XRCE-DDS via an Agent bridge).
 
@@ -104,7 +104,7 @@ This document records significant technology decisions, the rationale behind the
 
 **Status:** Accepted
 
-**Context:** The system must deploy across a wide range of targets: MCUs and embedded Linux gateways with <75 KB Flash, vessel workstations with full operating systems, and server infrastructure. A single dependency profile cannot serve all targets.
+**Context:** The system must deploy across a wide range of targets: MCUs and embedded Linux gateways with <75 KB Flash, workstations with full operating systems, and server infrastructure. A single dependency profile cannot serve all targets.
 
 **Decision:** The architecture is split into two tiers sharing the same wire format and `PubSub` interface. The edge tier depends only on nanoarrow (~100 KB) and includes generated message classes, positional I/O, transport providers, and the `gateway`. The server tier adds Apache Arrow C++ and includes the `Codec` (in `arrow-bridge`), `pubsub-arrow` adapter, and view classes.
 

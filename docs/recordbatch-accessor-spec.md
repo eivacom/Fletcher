@@ -360,7 +360,7 @@ accessor lives in that file's generated output. Both languages must resolve it:
   conventional:
   - A message's accessor lives at `crate::fletcher_gen::<pkg-path>::<Class>Accessor`,
     where `<pkg-path>` is the proto `package` split on `.` into nested modules
-    (`navisuite.sensors` → `navisuite::sensors`). This matches the C++
+    (`myapp.telemetry` → `myapp::telemetry`). This matches the C++
     `fletcher_gen::<pkg>` namespacing 1:1. A message with **no** package sits
     directly under `crate::fletcher_gen`.
   - The package — not the file — is the namespace, so two imported files that share

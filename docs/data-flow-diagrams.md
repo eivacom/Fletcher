@@ -1,10 +1,10 @@
 # Data Flow Diagrams
 
-## Sensor-to-Subscriber Pipeline
+## Producer-to-Subscriber Pipeline
 
 ```mermaid
 sequenceDiagram
-    participant S as Sensor Driver
+    participant S as Producing Application
     participant AR as ArrowRow (generated)
     participant PW as PositionalWriter
     participant PP as PubSub
@@ -27,6 +27,36 @@ sequenceDiagram
     PC->>PC: Read null bitfield + payloads
     PC->>PS: ArrowRow (vector<Scalar>)
     PS->>APP: Typed callback with ArrowRow + Attachments
+```
+
+## .NET Publish and Subscribe (C ABI)
+
+A C# application reaches the same transports through the C ABI shim (`fletcher-c-abi`). The generated pair turns rows into an Arrow batch; the shim's one native codec writes each row straight into the provider's window, so the wire bytes are the C++ publisher's.
+
+```mermaid
+sequenceDiagram
+    participant APP as C# Application
+    participant GEN as Generated pair<br/>(Telemetry_ReportPublisher /<br/>Telemetry_ReportSubscriber)
+    participant NET as Eiva.Fletcher<br/>(Publisher, Subscriber,<br/>FletcherCodec)
+    participant SHIM as fletcher-c-abi<br/>(NanoarrowCodec, registry)
+    participant PP as PubSub provider<br/>(fastdds, xrce, inprocess)
+
+    APP->>GEN: Publish(row)
+    GEN->>GEN: Reading.ToArrow(rows) → RecordBatch
+    GEN->>NET: FletcherCodec.Bind(batch) → BoundRows
+    NET->>SHIM: fl_rows_bind (Arrow C Data Interface, borrowed)
+    GEN->>NET: Publisher.Publish(topic, bound, row)
+    NET->>SHIM: fl_publisher_publish_row
+    SHIM->>PP: Publish: the codec encodes the row<br/>into the provider's window
+    Note over SHIM,PP: Zero encode copies (scored by<br/>Fletcher.CopyOracle.Tests)
+
+    PP->>SHIM: Delivery (bytes, schema, attachments),<br/>on the transport's thread
+    SHIM->>NET: Delivery callback (all borrowed)
+    NET->>GEN: Handler(bytes, schema, attachments)
+    GEN->>NET: FletcherCodec.Decode(bytes)
+    NET->>SHIM: fl_decode_rows → RecordBatch
+    GEN->>GEN: Reading.FromArrow(batch, 0)
+    GEN->>APP: handler(row, attachments)
 ```
 
 ## Schema Transport Flow
@@ -102,6 +132,8 @@ sequenceDiagram
     WG->>DRV: Publish on topic
 ```
 
+`Eiva.Fletcher.GatewayClient`, the C# client, speaks the same protocol with the same frames, and so does the generated pair over either client (`<Service>_<Method>Publisher` / `Subscriber` in `.fletcher.ts`, `<Service>_<Method>GatewayPublisher` / `GatewaySubscriber` in `.fletcher.gateway.cs`), whose publisher declares its topic and schema when it is created. The C# client encodes and decodes rows with its own managed codec and loads no native code.
+
 ## Code Generation Flow
 
 ```mermaid
@@ -124,12 +156,16 @@ sequenceDiagram
         PLUGIN->>CMAKE: .fletcher.pb.h (nanoarrow only)
         PLUGIN->>CMAKE: .fletcher.arrow.pb.h (Arrow C++)
     and TypeScript (if --fletcher_opt=ts)
-        PLUGIN->>CMAKE: .fletcher.ts (interfaces + schema)
+        PLUGIN->>CMAKE: .fletcher.ts (interfaces + schema<br/>+ publisher/subscriber)
+    and C# (if --fletcher_opt=csharp, csharp_gateway, csharp_accessor)
+        PLUGIN->>CMAKE: .fletcher.cs + .fletcher.native.cs<br/>.fletcher.gateway.cs<br/>.fletcher.arrow.cs + .fletcher.accessor.cs
     end
 
     PLUGIN->>PROTOC: CodeGeneratorResponse (stdout)
     CMAKE->>CMAKE: Compile generated headers with targets
 ```
+
+In a .NET project the build that invokes protoc is MSBuild: the `Eiva.Fletcher.Protoc` NuGet package brings the plugin and runs it on every build, and the generated `.cs` files are compiled into the project. In a TypeScript project the `@eiva/protoc-gen-fletcher` npm package brings the plugin.
 
 ## Attachment (Sidecar Blob) Flow
 
@@ -170,9 +206,10 @@ graph TB
         AGENT["MicroXRCEAgent<br/><i>Bridges to full DDS</i>"]
     end
 
-    subgraph vessel ["Vessel Workstation"]
+    subgraph workstation ["Workstation / Server"]
         DDS_SUB["fastdds-pubsub-provider Subscriber<br/><i>nanoarrow</i>"]
         ARROW_PS["pubsub-arrow<br/><i>Arrow C++ adapter</i>"]
+        NET_SUB[".NET application<br/><i>Eiva.Fletcher over the C ABI shim,<br/>provider fastdds</i>"]
     end
 
     subgraph browser ["Browser"]
@@ -180,13 +217,20 @@ graph TB
         WC["gateway-client-ts<br/><i>Positional codec</i>"]
     end
 
+    subgraph remote [".NET application without native code"]
+        NET_GWC["Eiva.Fletcher.GatewayClient<br/><i>managed positional codec</i>"]
+    end
+
     XRCE_PUB -->|"XRCE-DDS<br/>(UDP/Serial)"| AGENT
     AGENT -->|"Full DDS<br/>(RTPS)"| DDS_SUB
+    AGENT -->|"Full DDS<br/>(RTPS)"| NET_SUB
     DDS_SUB --> ARROW_PS
     DDS_SUB --> WG
     WG -->|WebSocket| WC
+    WG -->|WebSocket| NET_GWC
 
     style edge fill:#fff3e0,stroke:#e65100
-    style vessel fill:#e8f5e9,stroke:#2e7d32
+    style workstation fill:#e8f5e9,stroke:#2e7d32
     style browser fill:#e3f2fd,stroke:#1565c0
+    style remote fill:#e0f2f1,stroke:#00695c
 ```

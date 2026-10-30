@@ -1,6 +1,6 @@
 # Fletcher
 
-**Arrow-native row serialization and pub/sub — from edge sensors to the browser.**
+**Arrow-native row serialization and pub/sub — from the edge to the browser.**
 
 [![License: LGPL v3](https://img.shields.io/badge/License-LGPL_v3-blue.svg)](LICENSE)
 [![npm](https://img.shields.io/npm/v/@eiva/fletcher-gateway-client?label=gateway-client)](https://www.npmjs.com/package/@eiva/fletcher-gateway-client)
@@ -235,7 +235,7 @@ An application without a native transport uses `Eiva.Fletcher.GatewayClient` ins
 
 ## Use cases
 
-- **Sensor telemetry capture.** During a survey or inspection mission, sensors stream measurements that must be serialized and transported reliably over a vessel network. Fletcher gives you low per-row overhead, reliable DDS delivery, and guaranteed publisher/subscriber schema agreement.
+- **Telemetry capture.** Sensors, devices and services stream measurements that must be serialized and transported reliably over a local network. Fletcher gives you low per-row overhead, reliable DDS delivery, and guaranteed publisher/subscriber schema agreement.
 - **Edge and embedded devices.** MCUs and embedded gateways publish Arrow-typed data without linking Apache Arrow C++ — the nanoarrow tier plus XRCE-DDS fits in a tiny footprint, and an XRCE-DDS Agent bridges the data into the full DDS network where desktop/server subscribers consume it.
 - **Browser visualization.** Live data reaches browser clients over WebSocket. The pure-TypeScript codec decodes the positional wire format into typed objects with no WASM requirement, and schemas are delivered automatically on subscription.
 - **.NET applications.** Desktop and server applications in C# publish and subscribe on the same DDS network as the C++ nodes, through the C ABI, or reach it through the gateway with no native code; generated C# classes and Arrow accessors read the rows, one at a time or as `RecordBatch`es.

@@ -3465,6 +3465,44 @@ bindings should not follow C++, every codec takes C++'s spelling (`readings[].x`
   exception; the alternatives and risks, B-2's measured cost among them). `README.md`'s and
   `docs/README.md`'s range now reads TD-001 to TD-009 (both said TD-007, stale since TD-008), and
   their accessor-spec rows name C# and `csharp_accessor`.
+- **10-4 committed 2026-10-30** (`f902318`).
+- **10-5, 2026-10-30 (D-BIND-191): the architecture docs.** `docs/component-diagram.md`: the
+  system context gains .NET applications, the C ABI shim, the .NET binding and the C# gateway
+  client; the component detail the C# outputs (`csharp`, `csharp_gateway`, `csharp_accessor`), the
+  C++ and TypeScript pairs in their files' labels, and a ".NET Binding (NuGet)" subgraph (the
+  shim, the four packages, `Apache.Arrow`); the dependency graph `c-abi`, the NuGet packages,
+  `Apache.Arrow` (.NET) and the generator's npm and NuGet packages, with a teal legend entry; the
+  project structure `c-abi/`, `dotnet/`, `protoc/npm` and `protoc/nuget`. `docs/data-flow-diagrams.md`:
+  a new ".NET Publish and Subscribe (C ABI)" sequence (generated pair, `Eiva.Fletcher`, the shim,
+  the provider; bind, fused publish, delivery, decode, `FromArrow`), the browser flow's note that
+  the C# client and both generated gateway pairs speak the same protocol, the code-generation flow's
+  C# outputs and MSBuild/npm note, and the multi-provider graph a native and a gateway .NET
+  application. `docs/architecture-overview.md`: the code-generation principle, a Scenario 4 (.NET
+  applications), the .NET binding beside the two tiers, layers 8 (`c-abi`) and 9 (`dotnet`), the
+  generator's C# and TypeScript outputs and packages, the data flow's C# steps, the C# accessor,
+  the .NET SDK prerequisite, an "8.4 .NET binding" build step, the dependency table, and the test
+  table's `c-abi`, `dotnet` and .NET lane rows. `docs/README.md`: the index entries and where the
+  .NET binding is documented. **Validated** by parse and render with mermaid 11.4.1 in the browser
+  pane: all 12 diagrams of the two files (context 14 nodes and 15 edges, detail 32 and 35,
+  dependency graph 21 and 29, the new sequence 14 messages, multi-provider 8 and 7), no syntax
+  error. **Found and fixed while there** (verified against the tree): Fast DDS `2.14.3` (it is
+  `3.4.3`) in the dependency graph and table, the npm name `fletcher-gateway-client` (it is
+  `@eiva/fletcher-gateway-client`) in three places, the workflow names `fletcher-<component>.yml`
+  (they are `ci.*` and `cd.*`), and "`gateway/` has no `conanfile.py`" (it has). **Neutral
+  wording (maintainer, 2026-10-30: Fletcher is public middleware, so its docs should not read as
+  if written for one domain):** the survey/vessel framing goes. Scenario 1 and the README's first
+  use case become "Telemetry capture" over a local network; the README tagline reads "from the
+  edge to the browser"; "ROTVs" becomes "remotely operated vehicles"; TD-004's and TD-007's
+  contexts drop "vessel". In the diagrams, the system context's "Sensors / Data Sources" becomes
+  "Producing Applications", and its "Data Sinks: Parquet, Data Lake, Query Engine" becomes "Arrow
+  Consumers: Storage, Analytics, Forwarding", since Fletcher writes no Parquet. The pipeline
+  becomes "Producer-to-Subscriber" with a "Producing Application", and the multi-provider "Vessel
+  Workstation" becomes "Workstation / Server". The accessor spec's package example is
+  `myapp.telemetry`, not `navisuite.sensors`. Kept: the README's origin paragraph (EIVA, NaviSuite
+  5), the `SensorReading` example, and Parquet as a reason in the type rules. The three changed
+  diagrams were re-validated the same way (15 edges, 10 messages, 7 edges). **Left:** the
+  overview's and the root README's "CMake 3.15+", where the XRCE provider needs 3.20 (the package
+  README says so since BIND-9b's B3), for the review.
 
 ---
 

@@ -6,9 +6,10 @@
 graph TB
     subgraph External
         PROTO[(".proto Files<br/>Message & Service<br/>Definitions")]
-        SENSORS["Sensors / Data Sources<br/>(Row-at-a-time)"]
+        PRODUCERS["Producing Applications<br/>(Row-at-a-time)"]
         BROWSERS["Browser Clients"]
-        SINKS["Data Sinks<br/>Parquet, Data Lake,<br/>Query Engine"]
+        DOTNET_APPS[".NET Applications"]
+        SINKS["Arrow Consumers<br/>Storage, Analytics,<br/>Forwarding"]
     end
 
     subgraph System ["Fletcher"]
@@ -18,17 +19,26 @@ graph TB
         BATCH["Batching Layer"]
         WEBGW["gateway"]
         WEBCL["gateway-client-ts"]
+        CABI["C ABI shim<br/>(fletcher-c-abi)"]
+        DOTNET[".NET binding<br/>(Eiva.Fletcher)"]
+        DOTNET_GW["Eiva.Fletcher.GatewayClient"]
     end
 
     PROTO -->|Build-time| CODEGEN
-    CODEGEN -->|Generated classes| SENSORS
-    SENSORS -->|EncodedRow via<br/>PubSub| PUBSUB
+    CODEGEN -->|Generated classes| PRODUCERS
+    CODEGEN -->|Generated C#| DOTNET_APPS
+    PRODUCERS -->|EncodedRow via<br/>PubSub| PUBSUB
     PUBSUB -->|Raw bytes| CODEC
     CODEC -->|ArrowRow| BATCH
     BATCH -->|arrow::Table| SINKS
     PUBSUB -->|WebSocket| WEBGW
     WEBGW -->|Binary frames| WEBCL
     WEBCL -->|Typed objects| BROWSERS
+    DOTNET_APPS -->|Arrow batches| DOTNET
+    DOTNET -->|P/Invoke| CABI
+    CABI -->|Encoded rows| PUBSUB
+    WEBGW -->|Binary frames| DOTNET_GW
+    DOTNET_GW -->|Arrow batches| DOTNET_APPS
 ```
 
 ## Component Detail
@@ -37,17 +47,23 @@ graph TB
 graph TB
     subgraph codegen_layer ["Code Generation (build-time)"]
         PROTOC["protoc + protoc-gen-fletcher<br/><i>Reads .proto files</i>"]
-        GEN_EDGE[".fletcher.pb.h<br/><i>Message class + schema<br/>(nanoarrow only)</i>"]
+        GEN_EDGE[".fletcher.pb.h<br/><i>Message class + schema +<br/>publisher/subscriber<br/>(nanoarrow only)</i>"]
         GEN_SERVER[".fletcher.arrow.pb.h<br/><i>View class + ToArrowRow<br/>(Arrow C++)</i>"]
-        GEN_TS[".fletcher.ts<br/><i>TypeScript interface +<br/>SchemaDescriptor</i>"]
+        GEN_TS[".fletcher.ts<br/><i>TypeScript interface +<br/>SchemaDescriptor +<br/>publisher/subscriber<br/>opt: ts</i>"]
         GEN_ACCESSOR[".fletcher.accessor.pb.h<br/><i>RecordBatch accessor (C++)<br/>opt: accessor (Arrow C++)</i>"]
         GEN_RUST[".fletcher.rs<br/><i>RecordBatch accessor (Rust)<br/>opt: rust (arrow crate)</i>"]
+        GEN_CS[".fletcher.cs + .fletcher.native.cs<br/><i>C# row class + schema +<br/>native publisher/subscriber<br/>opt: csharp</i>"]
+        GEN_CS_GW[".fletcher.gateway.cs<br/><i>C# gateway publisher/subscriber<br/>opt: csharp_gateway</i>"]
+        GEN_CS_ACC[".fletcher.arrow.cs + .fletcher.accessor.cs<br/><i>C# view + RecordBatch accessor<br/>opt: csharp_accessor</i>"]
 
         PROTOC --> GEN_EDGE
         PROTOC --> GEN_SERVER
         PROTOC --> GEN_TS
         PROTOC --> GEN_ACCESSOR
         PROTOC --> GEN_RUST
+        PROTOC --> GEN_CS
+        PROTOC --> GEN_CS_GW
+        PROTOC --> GEN_CS_ACC
     end
 
     subgraph edge_tier ["Edge Tier (nanoarrow only, ~100 KB)"]
@@ -100,11 +116,33 @@ graph TB
         TS_CODEC --> ARROW_BACKEND
     end
 
+    subgraph dotnet_tier [".NET Binding (NuGet)"]
+        CABI_SHIM["fletcher-c-abi<br/><i>C ABI shim, one shared library per RID:<br/>NanoarrowCodec, registry, pub/sub,<br/>built-in providers linked in</i>"]
+        NET_INTEROP["Eiva.Fletcher.Interop<br/><i>P/Invoke + the shim</i>"]
+        NET_CORE["Eiva.Fletcher<br/><i>Publisher, Subscriber,<br/>SubscriberArrow, FletcherCodec</i>"]
+        NET_MODEL["Eiva.Fletcher.Model<br/><i>Timestamp, Duration,<br/>ListView, MapView</i>"]
+        NET_GW["Eiva.Fletcher.GatewayClient<br/><i>FletcherClient + managed codec</i>"]
+        APACHE_ARROW_NET["Apache.Arrow (.NET)"]
+
+        NET_INTEROP -->|P/Invoke| CABI_SHIM
+        NET_CORE --> NET_INTEROP
+        NET_CORE --> APACHE_ARROW_NET
+        NET_MODEL --> APACHE_ARROW_NET
+        NET_GW --> APACHE_ARROW_NET
+    end
+
     GEN_EDGE -->|Uses| pubsub_core
     GEN_SERVER -->|Uses| POS_CODEC
     GEN_TS -->|Consumed by| WEBCLIENT
+    GEN_CS -->|Uses| NET_CORE
+    GEN_CS -->|Uses| NET_MODEL
+    GEN_CS_GW -->|Uses| NET_GW
+    GEN_CS_ACC -->|Uses| NET_MODEL
+    CABI_SHIM -->|Links| pubsub_core
+    CABI_SHIM -->|Links| providers
     PUBSUB_ARROW -->|Wraps| PROVIDER
     WEB_GATEWAY -->|WebSocket| WEBCLIENT
+    WEB_GATEWAY -->|WebSocket| NET_GW
 ```
 
 ## Dependency Graph
@@ -117,8 +155,9 @@ graph TB
     PROTOBUF["protobuf<br/><i>external, 3.21.12</i>"]
     ARROW_CPP["Apache Arrow C++<br/><i>external, 23.0.1</i>"]
     BEAST["Boost.Beast/Asio<br/><i>external, header-only</i>"]
-    FAST_DDS["Fast DDS<br/><i>external, 2.14.3</i>"]
+    FAST_DDS["Fast DDS<br/><i>external, 3.4.3</i>"]
     XRCE_DDS["Micro XRCE-DDS<br/><i>external</i>"]
+    ARROW_NET["Apache.Arrow (.NET)<br/><i>external, 23.0.0</i>"]
 
     CORE["core"]
     PUBSUB["pubsub"]
@@ -129,7 +168,11 @@ graph TB
     WEB_GW["gateway"]
     PROTOC["protoc<br/><i>protoc-gen-fletcher plugin</i>"]
     PROTO_INT["integration-tests/<br/>protoc-arrow-bridge"]
-    GW_CLIENT["gateway-client-ts<br/><i>npm: fletcher-gateway-client</i>"]
+    GW_CLIENT["gateway-client-ts<br/><i>npm: @eiva/fletcher-gateway-client</i>"]
+    C_ABI["c-abi<br/><i>fletcher-c-abi shared library</i>"]
+    NET_PKGS["dotnet/<br/><i>NuGet: Eiva.Fletcher, .Interop, .Model</i>"]
+    NET_GW_PKG["dotnet/<br/><i>NuGet: Eiva.Fletcher.GatewayClient</i>"]
+    PROTOC_PKGS["protoc packages<br/><i>npm: @eiva/protoc-gen-fletcher<br/>NuGet: Eiva.Fletcher.Protoc</i>"]
 
     CORE --> PUBSUB
     NANOARROW --> PUBSUB
@@ -159,7 +202,18 @@ graph TB
     PROTOC --> PROTO_INT
     PROTOBUF --> PROTO_INT
 
+    PUBSUB --> C_ABI
+    FASTDDS_PROV --> C_ABI
+    XRCE_PROV --> C_ABI
+
+    C_ABI --> NET_PKGS
+    ARROW_NET --> NET_PKGS
+    ARROW_NET --> NET_GW_PKG
+
+    PROTOC --> PROTOC_PKGS
+
     WEB_GW -.->|WebSocket runtime| GW_CLIENT
+    WEB_GW -.->|WebSocket runtime| NET_GW_PKG
 
     style CORE fill:#e8f5e9,stroke:#2e7d32
     style NANOARROW fill:#e8f5e9,stroke:#2e7d32
@@ -177,6 +231,11 @@ graph TB
     style PROTOBUF fill:#f3e5f5,stroke:#6a1b9a
     style PROTO_INT fill:#fff3e0,stroke:#e65100
     style GW_CLIENT fill:#fce4ec,stroke:#ad1457
+    style PROTOC_PKGS fill:#f3e5f5,stroke:#6a1b9a
+    style C_ABI fill:#e0f2f1,stroke:#00695c
+    style NET_PKGS fill:#e0f2f1,stroke:#00695c
+    style NET_GW_PKG fill:#e0f2f1,stroke:#00695c
+    style ARROW_NET fill:#e0f2f1,stroke:#00695c
 ```
 
 Legend:
@@ -185,6 +244,7 @@ Legend:
 - **Purple** — build-time code generator. Produces source files consumed at compile time, not linked at runtime.
 - **Orange** — test-only artifact.
 - **Pink** — TypeScript / npm. No Conan dependency on the C++ packages; the dotted arrow indicates a runtime WebSocket-protocol relationship to the `gateway`.
+- **Teal** — the .NET binding. `c-abi` statically links `pubsub` and both providers (with Fast DDS, Micro XRCE-DDS and nanoarrow) into one shared library per RID, which `Eiva.Fletcher.Interop` carries; `Eiva.Fletcher.GatewayClient` loads no native code and, like the TypeScript client, reaches the `gateway` over WebSocket. The code generator's packages (purple) bring the `protoc` plugin to a build: the NuGet package carries the binary for each RID and runs it from MSBuild, the npm package downloads it from the GitHub Release on first use.
 
 Note: a few C++ packages declare `core` as a *direct* requirement even though they would also pick it up transitively via `pubsub`. The direct edge is shown because it reflects the actual conanfile (set with `transitive_headers=True` for header visibility) and matters when copying a single package out of the monorepo.
 
@@ -216,7 +276,7 @@ graph LR
 
 ## Project Structure
 
-The monorepo is a polyrepo of mostly Conan-packaged C++ components — most top-level C++ component directories have their own `conanfile.py` and are built independently into the local Conan cache. Some top-level directories, such as `integration-tests/`, contain nested C++ components rather than a root-level `conanfile.py`. (`gateway/` is the current exception among component directories; its Conan packaging is a tracked follow-up.) TypeScript packages get a `-ts` suffix so the language is obvious from a directory listing, and they use npm rather than Conan.
+The monorepo is a polyrepo of mostly Conan-packaged C++ components — most top-level C++ component directories have their own `conanfile.py` and are built independently into the local Conan cache. Some top-level directories, such as `integration-tests/`, contain nested C++ components rather than a root-level `conanfile.py`. TypeScript packages get a `-ts` suffix so the language is obvious from a directory listing, and they use npm rather than Conan; `dotnet/` is one .NET solution of four NuGet packages, built with the .NET SDK over the `c-abi/` shim.
 
 ```mermaid
 graph TB
@@ -224,7 +284,7 @@ graph TB
         direction TB
         ROOT_README["README.md<br/><i>Top-level repo overview + TODO backlog</i>"]
         DOCS["docs/<br/><i>Architecture documentation</i>"]
-        WORKFLOWS[".github/workflows/<br/><i>fletcher-&lt;component&gt;.yml<br/>per-component CI</i>"]
+        WORKFLOWS[".github/workflows/<br/><i>ci.&lt;component&gt;.yml, cd.&lt;component&gt;.yml<br/>per-component CI and release</i>"]
 
         subgraph core_dir ["core/"]
             CORE_INC["include/core/<br/><i>Types, WriteBuffer,<br/>PositionalIO, Envelope</i>"]
@@ -251,11 +311,22 @@ graph TB
         subgraph plugin_dir ["protoc/"]
             PP_SRC["src/<br/><i>generator, type_mapper, main</i>"]
             PP_TEST["tests/"]
+            PP_PKG["npm/, nuget/<br/><i>the plugin's npm and NuGet packages</i>"]
         end
 
-        subgraph integ_dir ["integration-tests/protoc-arrow-bridge/"]
-            PI_PROTO["proto/<br/><i>Per-scenario .proto files</i>"]
-            PI_TEST["tests/<br/><i>Per-scenario test files</i>"]
+        subgraph cabi_dir ["c-abi/"]
+            CA_INC["include/fletcher/abi/<br/><i>binding.h, the C ABI</i>"]
+            CA_SRC["src/<br/><i>entry points, NanoarrowCodec</i>"]
+            CA_TEST["tests/"]
+        end
+
+        subgraph dotnet_dir ["dotnet/"]
+            DN_SRC["src/<br/><i>the four packages</i>"]
+            DN_TEST["tests/"]
+        end
+
+        subgraph integ_dir ["integration-tests/"]
+            PI_ALL["<i>One directory per lane:<br/>protoc-arrow-bridge, pubsub-conformance,<br/>gateway-dotnet-crosslang, …</i>"]
         end
 
         subgraph dds_dir ["fastdds-pubsub-provider/"]
@@ -271,7 +342,7 @@ graph TB
         end
 
         subgraph webcl_dir ["gateway-client-ts/"]
-            WC_ALL["<i>TypeScript client<br/>(npm: fletcher-gateway-client)</i>"]
+            WC_ALL["<i>TypeScript client<br/>(npm: @eiva/fletcher-gateway-client)</i>"]
         end
     end
 ```
