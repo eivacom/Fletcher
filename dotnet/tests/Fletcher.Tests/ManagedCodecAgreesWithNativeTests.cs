@@ -142,6 +142,39 @@ public sealed class ManagedCodecAgreesWithNativeTests
         AssertAgree(Batch(("s", s)));
     }
 
+    public static TheoryData<string> NestedUnions => new()
+    {
+        "readings[].u",
+        "tags{}.value[]",
+        "f[]",
+    };
+
+    // D-BIND-196: a schema both codecs refuse at OPEN is refused with the same path, a list
+    // element as `[]` and a map value as `{}.value`, never the Arrow child names (`item`,
+    // `entries`) the exported schema carries.
+    [Theory]
+    [MemberData(nameof(NestedUnions))]
+    public void BothCodecsRefuseANestedUnionAtOpenNamingItAlike(string path)
+    {
+        var union = new UnionType(new[] { new Field("n", Int32Type.Default, true) }, new[] { 0 }, UnionMode.Dense);
+        Field field = path switch
+        {
+            "readings[].u" => new Field("readings", new ListType(new StructType(new[] { new Field("u", union, true) })), true),
+            "tags{}.value[]" => new Field("tags", new MapType(new Field("key", StringType.Default, false), new Field("value", new ListType(union), true), false), true),
+            "f[]" => new Field("f", new FixedSizeListType(union, 2), true),
+            _ => throw new ArgumentOutOfRangeException(nameof(path)),
+        };
+        var schema = new Schema(new[] { field }, null);
+
+        Exception nativeRefusal = Assert.ThrowsAny<Exception>(() => new FletcherCodec(schema).Dispose());
+        Exception managedRefusal = Assert.ThrowsAny<ArgumentException>(() => new GatewayRowCodec(schema));
+
+        foreach (Exception refusal in new[] { nativeRefusal, managedRefusal })
+        {
+            Assert.Contains("field '" + path + "' is a union", refusal.Message, StringComparison.Ordinal);
+        }
+    }
+
     private static RecordBatch ForbiddenNull(string name)
     {
         IArrowArray ints = new Int32Array.Builder().AppendNull().Append(2).Build();

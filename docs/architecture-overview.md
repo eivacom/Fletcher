@@ -310,7 +310,7 @@ pub.CreateTopic({"nav", "imu"}, std::move(schema),
 
 ### 8.1 Prerequisites
 
-- **CMake** 3.15+
+- **CMake** 3.20+ (the Micro XRCE-DDS provider needs it)
 - **Conan 2** package manager
 - A C++20 compiler (MSVC 2022, GCC 12+, Clang 15+)
 - **.NET SDK** 10, for the .NET binding only (`dotnet/global.json` pins the band)
@@ -344,13 +344,14 @@ npm run typecheck   # tsc --noEmit (faster, no dist/ output)
 
 ### 8.4 .NET binding
 
-The packages call the C ABI shim, so `c-abi/` goes into the Conan cache after the C++ components above, and the .NET solution builds against it; the tests load the shim they are given:
+The packages call the C ABI shim, so `c-abi/` goes into the Conan cache after the C++ components above, and the .NET solution builds against it; the tests load the shim they are given, and the copy-oracle tests load the test-only probe shim built beside it (`with_probe_shim`):
 
 ```bash
-conan create c-abi/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
+conan create integration-tests/copy-probe --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
+conan create c-abi/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release -o "&:with_probe_shim=True"
 cd dotnet
 dotnet build Fletcher.slnx -c Release
-dotnet test Fletcher.slnx -c Release -p:FletcherNativeShim=<path to libfletcher-c-abi.so or fletcher-c-abi.dll>
+dotnet test Fletcher.slnx -c Release -p:FletcherNativeShim=<path to libfletcher-c-abi.so or fletcher-c-abi.dll> -p:FletcherProbeShim=<path to libfletcher-c-abi-probe.so or fletcher-c-abi-probe.dll>
 ```
 
 See [`dotnet/README.md`](../dotnet/README.md) for the probe shim, NativeAOT and locked restores.

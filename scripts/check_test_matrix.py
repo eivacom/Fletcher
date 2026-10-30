@@ -5,7 +5,7 @@
 # D-BIND-57. Fails if a BIND test-matrix table disagrees with the tree.
 #
 # ── Why this exists ─────────────────────────────────────────────────────────
-# Part 4 of plans/BIND-csharp-bindings.md (and §5 of the development plan) says
+# Part 4 of plans/BIND-csharp-bindings.md (until BIND-10, also §5 of the development plan) says
 # which C++ test files each bucket ports, with a case count per file, and BIND's
 # acceptance bullets name those FILE SETS. The counts rot whenever `main` adds a
 # case: #128 grew bucket 3's `test_publisher_subscriber` from 18 cases to 44 and
@@ -45,7 +45,10 @@ COVERED_DIRS = [
 ]
 CONFORMANCE_DIRS = ['integration-tests/pubsub-conformance/src', 'integration-tests/pubsub-conformance/subjects']
 CALLER_TIER = 'integration-tests/pubsub-conformance/src/caller_tier.cpp'
-DEFAULT_DOCS = ['plans/BIND-csharp-bindings.md', 'plans/BIND-csharp-development-plan.md']
+# Part 4 only. The development plan's §5 was a copy of it and is archived at BIND-10's close
+# (D-BIND-198): a dated record, checked against a tree that keeps moving, would fail on history.
+# This check retires with the tracker, at D-BIND-194's second step.
+DEFAULT_DOCS = ['plans/BIND-csharp-bindings.md']
 
 CASE = re.compile(r'^TEST(_F|_P)?\(', re.M)
 BUCKET_ROW = re.compile(r'^\| ([1-6]) [^|]*\|([^|]*)\| \*\*(\d+)\*\* \|', re.M)

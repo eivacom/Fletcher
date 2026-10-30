@@ -4347,3 +4347,36 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   rows the C++ codec encodes, already shows this spelling, so C#'s two transports then agree.
   **Declined:** Arrow's child names (D-BIND-193 as first ruled: the reference would follow its
   bindings, and the ambiguity stays); documenting both.
+
+- **D-BIND-196 - the C ABI codec names a nested field the same way when it opens a schema.**
+  *LOCKED BY THE MAINTAINER 2026-10-30 (the BIND-10 review's Q1).* `PlanNode` in
+  `c-abi/src/nanoarrow_codec.cpp` builds its path as it descends, as the bind-time null refusal
+  already does: `[]` for a list, large-list or fixed-size-list element, `{}.key` and `{}.value` for a
+  map's key and value, never the Arrow child names (`item`, `entries`, `key`, `value`). So every
+  message that names a nested field, at open or at bind, spells it as D-BIND-195 says, and a schema
+  the C# native binding and the C# gateway client both refuse is refused with the same path. Tests
+  pin a nested open-time path in the C ABI codec and in the gateway client. Error text only; no wire
+  change. **Why:** the review found D-BIND-195 held only for the null refusal: after 10-1 a
+  `list<union>` was refused natively as `readings.item` and by the gateway client as `readings[]`,
+  where before both said `readings.item`; C++ was inconsistent with itself. **Declined:** narrowing
+  D-BIND-195, the C ABI README and the wire-format spec to the null refusal.
+
+- **D-BIND-197 - the docs describe the .NET packages as on nuget.org before the first tag.**
+  *LOCKED BY THE MAINTAINER 2026-10-30 (the BIND-10 review's Q2).* `README.md`'s ".NET packages"
+  and `dotnet/README.md`'s "Getting the packages" stay as written: on nuget.org, every version so
+  far a prerelease. **Why:** these docs reach `main` only at the merge and the runbook cuts the
+  release tags right after it, so text written for the time before publication would be reworded
+  within days; the link answers 404 for that short window. **Declined:** "is published to nuget.org
+  when a `dotnet-v` tag is cut" until a version exists.
+
+- **D-BIND-198 - the test-matrix check reads the tracker only; it retires when the tracker is
+  archived.** *LOCKED BY THE MAINTAINER 2026-10-30 (the BIND-10 review's Q3).*
+  `scripts/check_test_matrix.py` (D-BIND-57) drops `plans/BIND-csharp-development-plan.md` from the
+  documents it checks, so the plan moves to `docs/archive/BIND/` at BIND-10's close as D-BIND-194
+  says; the tracker's Part 4 holds the same matrix and stays in `plans/` through the merge and the
+  tags. At D-BIND-194's second step, when the tracker moves, the check, its fixture test and
+  `ci.check-test-matrix` retire with it (a runbook step). **Why:** the plan's §5 table is a copy of
+  Part 4's, and an archived document is a dated record: checked against a tree that keeps moving,
+  it would fail on history. **Declined:** checking the archived copy (pointing the script and the
+  workflow's sparse checkout at `docs/archive/BIND/`); keeping the plan in `plans/` until the
+  second step.

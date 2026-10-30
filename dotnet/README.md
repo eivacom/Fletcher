@@ -101,7 +101,7 @@ The suites that need a real transport, a gateway or generated code live under
 
 | Suite | What it proves |
 |---|---|
-| [`protoc-dotnet`](../integration-tests/protoc-dotnet/README.md) | the generated model and accessor, run from a project's own build, compile against `Apache.Arrow` alone, match C++'s schemas and round-trip; the accessor capstone's C# arm |
+| [`protoc-dotnet`](../integration-tests/protoc-dotnet/README.md) | the generated model and accessor, run from a project's own build, compile against `Apache.Arrow` and `Eiva.Fletcher.Model` alone, match C++'s schemas and round-trip; the accessor capstone's C# arm |
 | [`pubsub-transport-conformance`](../integration-tests/pubsub-transport-conformance/README.md) | one body of C# publishes and subscribes over `inprocess`, `fastdds` and `xrce`, chosen by name, with no per-transport code |
 | [`binding-abi-conformance`](../integration-tests/binding-abi-conformance/README.md) | `Apache.Arrow` hands the codec what Arrow C++ hands it, so a C# publisher puts C++'s bytes on the wire |
 | [`gateway-dotnet-end-to-end`](../integration-tests/gateway-dotnet-end-to-end/README.md) | `FletcherClient` against the real gateway, over `inprocess` and `fastdds` |

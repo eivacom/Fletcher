@@ -4,10 +4,10 @@
 // One row shape and the Arrow plumbing around it, shared by bench_pub_sub_type.cpp and
 // example_arrow_roundtrip.cpp so both measure and narrate the same thing.
 //
-// The row is NaviSuite's TransformWithVelocity: three fields, two of them a nested struct holding
-// one fixed-size list of doubles. modules/datamodel's generated `.fletcher.pb.h` for it is not
-// reachable from this repo, so the shape is written out here — EncodeRow/DecodeRow are what that
-// generated code does, by hand.
+// The row is TransformWithVelocity, a pose with its velocity: three fields, two of them a nested
+// struct holding one fixed-size list of doubles. No generated `.fletcher.pb.h` for it is built
+// here, so the shape is written out by hand — EncodeRow/DecodeRow are what that generated code
+// does.
 #ifndef FLETCHER_FASTDDS_PUBSUB_PROVIDER_BENCHMARKS_TRANSFORM_BATCH_HPP_
 #define FLETCHER_FASTDDS_PUBSUB_PROVIDER_BENCHMARKS_TRANSFORM_BATCH_HPP_
 

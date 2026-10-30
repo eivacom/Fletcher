@@ -99,15 +99,19 @@ bool IsWireScalar(ArrowType type) {
 /// bug in one of the two, which is why those switches throw rather than assume.
 /// What the plan adds beyond the refusal is the type tree itself, which decode
 /// has no array to read it from.
-FieldPlan PlanNode(const ArrowSchema& schema, const std::string& path) {
+///
+/// `here` is this node's path, built by its parent as the null refusal builds it
+/// (D-BIND-196): a struct's field by name, a list's element as `[]`, a map's key
+/// and value as `{}.key` and `{}.value` - never the Arrow child names (`item`,
+/// `entries`), which an exported schema carries and a reader would take for
+/// fields. `map_entries` marks a map's entries struct, whose two children are
+/// named by position.
+FieldPlan PlanNode(const ArrowSchema& schema, const std::string& here, bool map_entries = false) {
     ArrowSchemaView view;
     ArrowError error;
     if (ArrowSchemaViewInit(&view, &schema, &error) != NANOARROW_OK) {
-        Refuse("field '" + Describe(path, schema.name) + "' has a format string nanoarrow " +
-               "cannot parse: " + error.message);
+        Refuse("field '" + here + "' has a format string nanoarrow cannot parse: " + error.message);
     }
-
-    const std::string here = Describe(path, schema.name);
 
     FieldPlan plan;
     plan.type = view.type;
@@ -126,7 +130,16 @@ FieldPlan PlanNode(const ArrowSchema& schema, const std::string& path) {
                 view.type == NANOARROW_TYPE_FIXED_SIZE_LIST ? view.fixed_size : int64_t{0};
             plan.children.reserve(static_cast<size_t>(schema.n_children));
             for (int64_t i = 0; i < schema.n_children; ++i) {
-                plan.children.push_back(PlanNode(*schema.children[i], here));
+                const ArrowSchema& child = *schema.children[i];
+                if (view.type == NANOARROW_TYPE_MAP) {
+                    plan.children.push_back(PlanNode(child, here + "{}", /*map_entries=*/true));
+                } else if (view.type != NANOARROW_TYPE_STRUCT) {
+                    plan.children.push_back(PlanNode(child, here + "[]"));
+                } else if (map_entries && i < 2) {
+                    plan.children.push_back(PlanNode(child, here + (i == 0 ? ".key" : ".value")));
+                } else {
+                    plan.children.push_back(PlanNode(child, Describe(here, child.name)));
+                }
             }
             break;
 
@@ -873,7 +886,9 @@ NanoarrowCodec::NanoarrowCodec(const ArrowSchema& schema)
     root_.type = NANOARROW_TYPE_STRUCT;
     root_.children.reserve(static_cast<size_t>(schema_.get()->n_children));
     for (int64_t i = 0; i < schema_.get()->n_children; ++i) {
-        root_.children.push_back(PlanNode(*schema_.get()->children[i], std::string()));
+        root_.children.push_back(
+            PlanNode(*schema_.get()->children[i],
+                     Describe(std::string(), schema_.get()->children[i]->name)));
     }
 
     // Built AFTER planning, so a schema the mapping refuses is refused by the

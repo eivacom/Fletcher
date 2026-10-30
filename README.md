@@ -100,14 +100,14 @@ Every language reads and writes the same positional rows, so a row published in 
 | Pub/sub through the WebSocket gateway | the gateway itself | yes (`Eiva.Fletcher.GatewayClient`, no native code) | yes | — |
 | Generated publisher and subscriber | yes | yes, native and gateway | yes, gateway | — |
 | Batched delivery (Arrow windows) | yes (`pubsub-arrow`) | yes, both transports | yes (decoded rows) | — |
-| Arrow view and `RecordBatch` accessor | yes (`accessor`) | yes (`csharp_accessor`) | — | yes (`rust`, reading only) |
+| Arrow view and `RecordBatch` accessor | yes (`accessor`) | yes (`csharp_accessor`) | — | the accessor only (`rust`) |
 | Packages | Conan | NuGet | npm | generated source |
 
 **Proven across languages.** Each publisher-to-subscriber pair below exchanges rows on CI and compares them on the receiving side, on Linux and Windows (`gateway-fastdds-ts` on Linux only); the cell names the lane that proves it.
 
 | Publisher ↓ \ Subscriber → | C++ | C# native | C# gateway | TypeScript |
 |---|---|---|---|---|
-| **C++** | [pubsub-transport-conformance](integration-tests/pubsub-transport-conformance/) | [crosslang](integration-tests/gateway-dotnet-crosslang/README.md) | [crosslang](integration-tests/gateway-dotnet-crosslang/README.md) | [gateway-fastdds-ts](integration-tests/gateway-fastdds-ts/README.md) |
+| **C++** | [pubsub-arrow-fastdds](integration-tests/pubsub-arrow-fastdds/README.md) | [crosslang](integration-tests/gateway-dotnet-crosslang/README.md) | [crosslang](integration-tests/gateway-dotnet-crosslang/README.md) | [gateway-fastdds-ts](integration-tests/gateway-fastdds-ts/README.md) |
 | **C# native** | [crosslang](integration-tests/gateway-dotnet-crosslang/README.md) | [crosslang](integration-tests/gateway-dotnet-crosslang/README.md) | [crosslang](integration-tests/gateway-dotnet-crosslang/README.md) | [crosslang](integration-tests/gateway-dotnet-crosslang/README.md) |
 | **C# gateway** | [crosslang](integration-tests/gateway-dotnet-crosslang/README.md) | [crosslang](integration-tests/gateway-dotnet-crosslang/README.md) | [gateway-dotnet-end-to-end](integration-tests/gateway-dotnet-end-to-end/README.md) | [crosslang](integration-tests/gateway-dotnet-crosslang/README.md) |
 | **TypeScript** | [gateway-fastdds-ts](integration-tests/gateway-fastdds-ts/README.md) | [crosslang](integration-tests/gateway-dotnet-crosslang/README.md) | [crosslang](integration-tests/gateway-dotnet-crosslang/README.md) | [gateway-end-to-end](integration-tests/gateway-end-to-end/README.md) |
@@ -149,8 +149,8 @@ service SensorFeed {
 | `telemetry.fletcher.accessor.pb.h` | Apache Arrow C++ | Column-oriented `RecordBatch` accessor (C++) — opt-gated by `--fletcher_opt=accessor` |
 | `telemetry.fletcher.rs` | `arrow` crate | Column-oriented `RecordBatch` accessor (Rust) — opt-gated by `--fletcher_opt=rust` |
 | `telemetry.fletcher.cs`, `telemetry.fletcher.native.cs` | `Eiva.Fletcher.Model`, `Eiva.Fletcher` | C# row class, schema and topic; native publisher/subscriber — `--fletcher_opt=csharp` (`csharp_model_only` leaves the pair out) |
-| `telemetry.fletcher.gateway.cs` | `Eiva.Fletcher.GatewayClient` | C# gateway publisher/subscriber — `--fletcher_opt=csharp_gateway` |
-| `telemetry.fletcher.arrow.cs`, `telemetry.fletcher.accessor.cs` | `Apache.Arrow` | C# Arrow view and `RecordBatch` accessor — `--fletcher_opt=csharp_accessor` |
+| `telemetry.fletcher.gateway.cs` | `Eiva.Fletcher.GatewayClient` | C# gateway publisher/subscriber — `csharp_gateway`, with `csharp` (`--fletcher_opt=csharp,csharp_model_only,csharp_gateway` for a gateway-only application) |
+| `telemetry.fletcher.arrow.cs`, `telemetry.fletcher.accessor.cs` | `Apache.Arrow`, `Eiva.Fletcher.Model` | C# Arrow view and `RecordBatch` accessor — `csharp_accessor`, with `csharp` (`--fletcher_opt=csharp,csharp_accessor`) |
 
 The accessor rows are emitted only when their `--fletcher_opt` token is passed; they are a read-side, column-oriented way to consume a whole `RecordBatch` (validate once, cast once, then typed zero-copy getters). See the [RecordBatch Accessor Specification](docs/recordbatch-accessor-spec.md) for the full contract and [`protoc/README.md`](protoc/README.md) for wiring the plugin into your build.
 
@@ -215,7 +215,7 @@ See [`gateway-client-ts/README.md`](gateway-client-ts/README.md) for the full cl
 
 ### 6. Consume in .NET
 
-Reference the NuGet packages from nuget.org — `Eiva.Fletcher` for native pub/sub (it brings `Eiva.Fletcher.Interop`, the C ABI shim for `linux-x64` and `win-x64`), `Eiva.Fletcher.Model`, and `Eiva.Fletcher.Protoc`, which runs the generator on every build ([`dotnet/README.package.md`](dotnet/README.package.md) has the project file). With `--fletcher_opt=csharp` the generated publisher and subscriber are the C++ pair's, in C#:
+Reference the NuGet packages from nuget.org — `Eiva.Fletcher` for native pub/sub (it brings `Eiva.Fletcher.Interop`, the C ABI shim for `linux-x64` and `win-x64`), `Eiva.Fletcher.Model`, and `Eiva.Fletcher.Protoc`, which brings the plugin; the project runs protoc itself, with `Google.Protobuf.Tools`, in a target that runs on every build ([`dotnet/README.package.md`](dotnet/README.package.md) has the project file). With `--fletcher_opt=csharp` the generated publisher and subscriber are the C++ pair's, in C#:
 
 ```csharp
 using Eiva.Fletcher;
@@ -231,7 +231,7 @@ using var publisher = new SensorFeed_StreamPublisher(provider);
 publisher.Publish(new[] { new SensorReading { SensorId = 42, Temperature = 23.5, Location = "Room 101" } });
 ```
 
-An application without a native transport uses `Eiva.Fletcher.GatewayClient` instead: the same rows through a gateway, with no native code (`--fletcher_opt=csharp_gateway`). See [`dotnet/README.md`](dotnet/README.md) for the packages, targets (`net8.0`, `net10.0`, NativeAOT) and platform floors.
+An application without a native transport uses `Eiva.Fletcher.GatewayClient` instead: the same rows through a gateway, with no native code (`--fletcher_opt=csharp,csharp_model_only,csharp_gateway`). See [`dotnet/README.md`](dotnet/README.md) for the packages, targets (`net8.0`, `net10.0`, NativeAOT) and platform floors.
 
 ## Use cases
 
@@ -279,7 +279,7 @@ The proto→Arrow type mapping and the `(fletcher.flatten)` schema-flattening op
 
 ### Prerequisites
 
-- **CMake** 3.15+
+- **CMake** 3.20+ (the Micro XRCE-DDS provider needs it)
 - **Conan** 2
 - A **C++20** compiler (GCC 12+, Clang 15+, or MSVC 2022)
 - **Node.js** 24+ (only for `gateway-client-ts`)
@@ -314,16 +314,17 @@ npm run build     # tsc compilation
 
 ### .NET binding
 
-The packages call the C ABI shim, so build `c-abi/` into the Conan cache first (after the C++ components above), then the .NET solution; the tests load the shim you name:
+The packages call the C ABI shim, so build `c-abi/` into the Conan cache first (after the C++ components above), then the .NET solution; the tests load the shim you name, and the copy-oracle tests load the test-only probe shim built beside it (`with_probe_shim`):
 
 ```bash
-conan create c-abi/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
+conan create integration-tests/copy-probe --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
+conan create c-abi/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release -o "&:with_probe_shim=True"
 cd dotnet
 dotnet build Fletcher.slnx -c Release
-dotnet test Fletcher.slnx -c Release -p:FletcherNativeShim=<path to libfletcher-c-abi.so or fletcher-c-abi.dll>
+dotnet test Fletcher.slnx -c Release -p:FletcherNativeShim=<path to libfletcher-c-abi.so or fletcher-c-abi.dll> -p:FletcherProbeShim=<path to libfletcher-c-abi-probe.so or fletcher-c-abi-probe.dll>
 ```
 
-[`dotnet/README.md`](dotnet/README.md) has the details (the probe shim for the copy-oracle tests, NativeAOT, locked restores).
+[`dotnet/README.md`](dotnet/README.md) has the details (the probe shim, NativeAOT, locked restores).
 
 ## Consuming a released package
 
@@ -394,7 +395,7 @@ dotnet add package Eiva.Fletcher.Model --prerelease
 dotnet add package Eiva.Fletcher.Protoc --prerelease
 ```
 
-The GitHub Release of each `dotnet-v` and `protoc-v` tag carries the same files.
+`Eiva.Fletcher.Protoc` brings the plugin, not protoc: the project adds `Google.Protobuf.Tools` and a target that runs protoc on every build, as [`dotnet/README.package.md`](dotnet/README.package.md) shows. The GitHub Release of each `dotnet-v` and `protoc-v` tag carries the same files.
 
 ## Roadmap
 

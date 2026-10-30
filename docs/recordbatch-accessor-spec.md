@@ -471,7 +471,8 @@ and Rust arms. What differs, and why:
   `ValueIsNull(j)`), an allocation-free `foreach` and `ToList()`. A null element reads as C++ reads
   it: a scalar as its proto default beside `IsNull(j)`, a struct element or message map value as a
   null `<Inner>View?`. A string or bytes field also has a getter returning its bytes as a
-  `ReadOnlySpan<byte>`, which copies nothing (`NameUtf8`; D-BIND-97, D-BIND-102).
+  `ReadOnlySpan<byte>`, which copies nothing (`NameUtf8` for a string, `NameSpan` for bytes;
+  D-BIND-97, D-BIND-102).
 - **The accessor borrows its source** (D-BIND-103): it keeps the source's arrays, whose buffers
   `RecordBatch.Dispose` frees, so the accessor, its views, windows and spans are valid only while
   the source is not disposed. C++'s accessor owns its buffers (§7); .NET has no equivalent short of

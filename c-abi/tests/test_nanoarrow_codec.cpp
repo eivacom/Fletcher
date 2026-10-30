@@ -244,6 +244,39 @@ TEST(NanoarrowCodec, RefusesAnUnsupportedTypeNamingTheField) {
     c_schema.release(&c_schema);
 }
 
+/// A refusal at open names a nested field as the null refusal at bind does (D-BIND-196): a list
+/// element is `[]`, a map's value `{}.value`, never the child names an exported schema carries
+/// (`item`, `entries`), which a reader would take for fields.
+TEST(NanoarrowCodec, AnOpenTimeRefusalNamesANestedFieldByItsPath) {
+    auto union_type = arrow::dense_union({arrow::field("n", arrow::int32())});
+    auto refusal = [](const std::shared_ptr<arrow::Field>& field) {
+        ArrowSchema c_schema = {};
+        EXPECT_TRUE(arrow::ExportSchema(*arrow::schema({field}), &c_schema).ok());
+        std::string message;
+        try {
+            NanoarrowCodec codec(c_schema);
+        } catch (const fletcher::PubSubError& e) {
+            message = e.what();
+        }
+        c_schema.release(&c_schema);
+        return message;
+    };
+
+    EXPECT_NE(refusal(arrow::field("readings",
+                                   arrow::list(arrow::struct_({arrow::field("u", union_type)}))))
+                  .find("field 'readings[].u' is a union"),
+              std::string::npos);
+    EXPECT_NE(refusal(arrow::field("tags", arrow::map(arrow::utf8(), arrow::list(union_type))))
+                  .find("field 'tags{}.value[]' is a union"),
+              std::string::npos);
+    EXPECT_NE(refusal(arrow::field("f", arrow::fixed_size_list(union_type, 2)))
+                  .find("field 'f[]' is a union"),
+              std::string::npos);
+    EXPECT_NE(refusal(arrow::field("l", arrow::large_list(arrow::list(union_type))))
+                  .find("field 'l[][]' is a union"),
+              std::string::npos);
+}
+
 // ---------------------------------------------------------------------------
 // BIND-2b — decode
 // ---------------------------------------------------------------------------

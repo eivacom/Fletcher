@@ -7,12 +7,12 @@ concurrency:
   group: ci.check-test-matrix-${{ github.ref }}
   cancel-in-progress: true
 
-# D-BIND-57. Fails if the BIND test matrix - Part 4 of plans/BIND-csharp-bindings.md
-# and §5 of the development plan - disagrees with the tree: a file's case count, a
-# bucket's total, a test file in no bucket, or the conformance row. BIND's acceptance
-# bullets name those FILE SETS, so a stale table is an acceptance bullet silently
-# claiming less than it says. #128 did exactly that: it grew bucket 3 by 26 cases,
-# reached the branch by a merge of `main`, and nothing noticed for two BIND-4 closes.
+# D-BIND-57. Fails if the BIND test matrix - Part 4 of plans/BIND-csharp-bindings.md -
+# disagrees with the tree: a file's case count, a bucket's total, a test file in no bucket,
+# or the conformance row. BIND's acceptance bullets name those FILE SETS, so a stale table
+# is an acceptance bullet silently claiming less than it says. #128 did exactly that: it grew
+# bucket 3 by 26 cases, reached the branch by a merge of `main`, and nothing noticed for two
+# BIND-4 closes.
 #
 # ── Why EVERY pull request, and no path filter ──────────────────────────────
 # Unlike ci.check-caller-tier-mapping, whose inputs are two files a PR edits on

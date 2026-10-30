@@ -244,7 +244,7 @@ Legend:
 - **Purple** — build-time code generator. Produces source files consumed at compile time, not linked at runtime.
 - **Orange** — test-only artifact.
 - **Pink** — TypeScript / npm. No Conan dependency on the C++ packages; the dotted arrow indicates a runtime WebSocket-protocol relationship to the `gateway`.
-- **Teal** — the .NET binding. `c-abi` statically links `pubsub` and both providers (with Fast DDS, Micro XRCE-DDS and nanoarrow) into one shared library per RID, which `Eiva.Fletcher.Interop` carries; `Eiva.Fletcher.GatewayClient` loads no native code and, like the TypeScript client, reaches the `gateway` over WebSocket. The code generator's packages (purple) bring the `protoc` plugin to a build: the NuGet package carries the binary for each RID and runs it from MSBuild, the npm package downloads it from the GitHub Release on first use.
+- **Teal** — the .NET binding. `c-abi` statically links `pubsub` and both providers (with Fast DDS, Micro XRCE-DDS and nanoarrow) into one shared library per RID, which `Eiva.Fletcher.Interop` carries; `Eiva.Fletcher.GatewayClient` loads no native code and, like the TypeScript client, reaches the `gateway` over WebSocket. The code generator's packages (purple) bring the `protoc` plugin to a build: the NuGet package carries the binary for each RID and gives MSBuild its path, for the project's own protoc call; the npm package downloads it from the GitHub Release on first use.
 
 Note: a few C++ packages declare `core` as a *direct* requirement even though they would also pick it up transitively via `pubsub`. The direct edge is shown because it reflects the actual conanfile (set with `transitive_headers=True` for header visibility) and matters when copying a single package out of the monorepo.
 

@@ -34,7 +34,7 @@ Each top-level directory is an independent component with its own version, CI wo
 | `pubsub-arrow/` | `fletcher-pubsub-arrow` (Conan, static lib) |
 | `fastdds-pubsub-provider/` | `fletcher-fastdds-pubsub-provider` (Conan, static lib) |
 | `xrcedds-pubsub-provider/` | `fletcher-xrcedds-pubsub-provider` (Conan, static lib) |
-| `protoc/` | `fletcher-protoc` (Conan, application) |
+| `protoc/` | `fletcher-protoc` (Conan, application), `@eiva/protoc-gen-fletcher` (npm), `Eiva.Fletcher.Protoc` (NuGet) |
 | `gateway/` | `gateway` (standalone executable) |
 | `gateway-client-ts/` | `@eiva/fletcher-gateway-client` (npm) |
 | `c-abi/` | `fletcher-c-abi` (shared library, shipped inside `Eiva.Fletcher.Interop`) |

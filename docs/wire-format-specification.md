@@ -105,10 +105,11 @@ A list element and a map value are nullable in the Arrow schema (the child field
 
 **A null where the schema promises a value is refused** before anything is encoded, by every
 encoder: the C++ codecs (`c-abi`, `arrow-bridge`), the C# gateway client and the TypeScript
-client (D-BIND-156, D-BIND-189). A field below a null parent is no value and is accepted. The
-refusal names the field by one path in every language (D-BIND-195): a struct's fields are joined
-with `.`, a list element is `[]`, and a map key or value is `{}.key` or `{}.value`, so `id`,
-`s.x`, `readings[].x` and `tags{}.value.x`.
+client (D-BIND-156, D-BIND-189). A field below a null parent is no value and is accepted. Every
+message that names a nested field, this refusal and a schema refused when a codec opens it, names
+it by one path in every language (D-BIND-195, D-BIND-196): a struct's fields are joined with `.`,
+a list element is `[]`, and a map key or value is `{}.key` or `{}.value`, so `id`, `s.x`,
+`readings[].x` and `tags{}.value.x`. A null map key has its own refusal (D-BIND-131).
 
 ---
 
@@ -220,7 +221,7 @@ For each attachment, in ASCENDING UNSIGNED-BYTE ORDER OF THE KEY:
 **A decoder must still match attachments by key, never by position**, and that is what makes the rule safe to state without breaking anything. Two consequences worth having in writing rather than implied:
 
 - A decoder that predates this rule is unaffected by it, because it never depended on the order.
-- The rule binds Fletcher's C++ encoders — `SerializeEnvelope` and the Fast DDS `EncodeEnvelopeBody`, both of which enumerate a `fletcher::Attachments`, which has no other order to offer. The TypeScript gateway client (`gateway-client-ts/src/envelope.ts`) is a **second, independent encoder** and emits in JavaScript `Map` insertion order; a message it produces with two or more attachments is therefore accepted and correct but not canonical. Any Fletcher C++ decoder normalises it on ingest, because the entries land in a `fletcher::Attachments`.
+- The rule binds Fletcher's C++ encoders — `SerializeEnvelope` and the Fast DDS `EncodeEnvelopeBody`, both of which enumerate a `fletcher::Attachments`, which has no other order to offer — and the C# gateway client, whose envelope (`dotnet/src/Fletcher.GatewayClient/Envelope.cs`) holds its attachments sorted by key bytes as `fletcher::Attachments` does. The TypeScript gateway client (`gateway-client-ts/src/envelope.ts`) is an **independent encoder** and emits in JavaScript `Map` insertion order; a message it produces with two or more attachments is therefore accepted and correct but not canonical. Any Fletcher C++ decoder normalises it on ingest, because the entries land in a `fletcher::Attachments`.
 
 **A key containing a zero byte is malformed**, and — exactly as for the order above — the rule binds Fletcher's **C++** encoders and decoders. No Fletcher C++ encoder can produce such a key, because `fletcher::Attachments` is the only way a key reaches either encoder and both doors into it — `Set` and the decoders' bulk builder — refuse it; every Fletcher C++ decoder drops a message carrying one as malformed rather than accepting a key that would truncate at a language boundary. The TypeScript gateway client (`gateway-client-ts/src/envelope.ts`) is again the exception: `TextEncoder` encodes `U+0000` as the byte `0x00`, measured, so it can emit such a key and its own `deserializeEnvelope` round-trips it. What that buys the rule is still an unambiguous outcome rather than an ambiguous key — a Fletcher C++ peer drops the sample, and the gateway refuses the publish frame — so no key that would become two things abroad is ever delivered. See [pubsub-interface-spec.md §3.2](pubsub-interface-spec.md) clauses A2 and A3, which are normative for both.
 

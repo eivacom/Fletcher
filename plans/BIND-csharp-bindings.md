@@ -3223,6 +3223,14 @@ runs, since BIND-T and BIND-10 land in between.
    and the new `subscribeBatched`, `undecodableRows`, `MAX_BATCH_TIMEOUT_MS` and their types;
    and `reconnectDelay`, documented in 0.5.x, is accepted and ignored: the client never
    reconnected, and a closed connection ends every subscription (D-BIND-190).
+8. **Archive the rest of the round** (D-BIND-194's second step, D-BIND-198), once every tag is
+   green and its record is written here: this tracker, `BIND-locked-decisions.md` and
+   `BIND-progress-log.md` move to `docs/archive/BIND/`, and the links into them are updated
+   (`c-abi/include/fletcher/abi/binding.h:86`, `c-abi/benchmarks/README.md:5`,
+   `integration-tests/gateway-dotnet-end-to-end/README.md:10`, and whatever cites them by then).
+   In the same commit the test-matrix check retires: `scripts/check_test_matrix.py`,
+   `scripts/test_check_test_matrix.py` and `ci.check-test-matrix.yml` go, and the check comes off
+   the branch protection rule if it was made required.
 
 **Acceptance**
 
@@ -3503,6 +3511,24 @@ bindings should not follow C++, every codec takes C++'s spelling (`readings[].x`
   diagrams were re-validated the same way (15 edges, 10 messages, 7 edges). **Left:** the
   overview's and the root README's "CMake 3.15+", where the XRCE provider needs 3.20 (the package
   README says so since BIND-9b's B3), for the review.
+- **10-5 committed 2026-10-30** (`8efa3a8`).
+- **10-6, 2026-10-30: the review, its rulings and its fixes.** A fresh-context review by three
+  reviewers (code and machinery, shipped text, tests and acceptance), at `8efa3a8`:
+  `plans/reviews/BIND-10-codereview.md` and `BIND-10-conformance.md`. 7 BLOCKERs, all shipped text
+  and each checked against the tree before it was recorded: the generator package said to run the
+  generator (it brings the plugin; the project runs protoc), the C++ → C++ matrix cell named a C#
+  lane, `csharp_gateway` and `csharp_accessor` given without `csharp`, TD-009's 1.95× for the
+  one-row path (19.6×), CMake 3.15, the build-from-source test command without the probe shim, and
+  the neutral-wording rule missed in the XRCE interop suite and the Fast DDS benchmark. Three
+  questions, ruled one at a time: D-BIND-196 (the C ABI codec's open-time paths follow D-BIND-195;
+  C++ code and tests in both languages), D-BIND-197 (the nuget.org wording stays), D-BIND-198 (the
+  test-matrix check reads the tracker only and retires with it, runbook step 8). All blockers
+  fixed, with three debts and three nits; the per-shape path tests (narrowed) and the TS loopback
+  cell carried. **Verified locally** in the devcontainer: clang-format clean; `conan create c-abi`
+  with its tests and the probe, 104 of 104 (the new `AnOpenTimeRefusalNamesANestedFieldByItsPath`
+  among them); the .NET suites on .NET 8 and 10 (`Fletcher.Tests` 434, `Fletcher.GatewayClient.Tests`
+  223, `Fletcher.Model.Tests` 71, `Fletcher.CopyOracle.Tests` 5), AotSmoke and pack; `dotnet format
+  whitespace` on the changed C#; `check_test_matrix.py` (1 table) and its fixture test.
 
 ---
 

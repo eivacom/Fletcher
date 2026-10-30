@@ -165,7 +165,7 @@ sequenceDiagram
     CMAKE->>CMAKE: Compile generated headers with targets
 ```
 
-In a .NET project the build that invokes protoc is MSBuild: the `Eiva.Fletcher.Protoc` NuGet package brings the plugin and runs it on every build, and the generated `.cs` files are compiled into the project. In a TypeScript project the `@eiva/protoc-gen-fletcher` npm package brings the plugin.
+In a .NET project the build that invokes protoc is MSBuild: the `Eiva.Fletcher.Protoc` NuGet package brings the plugin and sets the properties that locate it, the project runs protoc (from `Google.Protobuf.Tools`) in a target of its own on every build, and the generated `.cs` files are compiled into the project. In a TypeScript project the `@eiva/protoc-gen-fletcher` npm package brings the plugin.
 
 ## Attachment (Sidecar Blob) Flow
 
