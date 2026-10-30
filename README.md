@@ -5,7 +5,7 @@
 [![License: LGPL v3](https://img.shields.io/badge/License-LGPL_v3-blue.svg)](LICENSE)
 [![npm](https://img.shields.io/npm/v/@eiva/fletcher-gateway-client?label=gateway-client)](https://www.npmjs.com/package/@eiva/fletcher-gateway-client)
 
-Fletcher bridges two worlds: **Protocol Buffers** for message definition and **Apache Arrow** for in-memory analytics. You describe your data once in a `.proto` file; a `protoc` plugin generates typed C++ and TypeScript code that serializes each message into a compact, positional binary row backed by an Arrow schema. Those rows are built for data that *arrives* one row at a time — telemetry streams, event buses, sensor networks — but is *consumed* in columnar batches for analytics, storage, or forwarding.
+Fletcher bridges two worlds: **Protocol Buffers** for message definition and **Apache Arrow** for in-memory analytics. You describe your data once in a `.proto` file; a `protoc` plugin generates typed C++, C# and TypeScript code (and Rust readers) that serializes each message into a compact, positional binary row backed by an Arrow schema. Those rows are built for data that *arrives* one row at a time — telemetry streams, event buses, sensor networks — but is *consumed* in columnar batches for analytics, storage, or forwarding.
 
 The same encoded bytes flow unchanged from a microcontroller publishing over DDS, through a server decoding with Apache Arrow C++, to a browser rendering live data over WebSocket — with no format conversion at any hop.
 
@@ -17,6 +17,7 @@ Fletcher began as part of EIVA's upcoming NaviSuite 5 architecture for marine su
 
 - [Why Fletcher](#why-fletcher)
 - [How it works](#how-it-works)
+- [Languages](#languages)
 - [Quick start](#quick-start)
 - [Use cases](#use-cases)
 - [Repository layout](#repository-layout)
@@ -34,7 +35,7 @@ Fletcher began as part of EIVA's upcoming NaviSuite 5 architecture for marine su
 
 - **Arrow-native from the start.** Every row is defined by an Arrow schema. The generated code, the wire format, and the pub/sub layer all speak Arrow types — no intermediate representations, no impedance mismatch between edge and server.
 - **Edge-compatible by default.** The core publish/subscribe path depends only on [nanoarrow](https://arrow.apache.org/nanoarrow/) (~100 KB). Heavyweight Apache Arrow C++ is a separate, server-only tier. Edge binaries stay tiny (publish + subscribe in well under 75 KB of flash).
-- **Code generation over boilerplate.** Your `.proto` file is the single source of truth. `protoc-gen-fletcher` emits typed C++ message classes, Arrow view classes, and TypeScript interfaces — no hand-written serialization, no schema drift across languages.
+- **Code generation over boilerplate.** Your `.proto` file is the single source of truth. `protoc-gen-fletcher` emits typed C++ and C# message classes, Arrow view and accessor classes, TypeScript interfaces, and a publisher and subscriber per pub/sub method in all three — no hand-written serialization, no schema drift across languages.
 - **Transport-agnostic pub/sub.** One `PubSub` interface decouples encoding from transport. Implementations ship for Fast DDS (desktop/server), Micro XRCE-DDS (MCU/embedded), and WebSocket (browser). Adding MQTT, Zenoh, or a custom transport means implementing that one interface **and registering it under a name**; callers then select it at run time through `ProviderRegistry` — no codec or generated-code changes, and no caller naming a provider type. A driver loaded at run time will arrive through the same call (see [the pub/sub interface specification](docs/pubsub-interface-spec.md) §4).
 - **Zero-copy where it matters.** Publishers encode directly into the transport's buffer; subscribers decode in place. The `PositionalWriter`/`PositionalReader` pair runs without allocation on the hot path.
 - **Schema transport, not self-description.** The wire format omits field numbers, type tags, and schema hashes — fields are written in schema order with a compact null bitfield. Schemas are delivered to subscribers out-of-band, so there is near-zero per-row overhead (~14 bytes for a typical 10-field row).
@@ -59,6 +60,9 @@ graph TD
     protoc(["fletcher-protoc<br/>plugin exe"])
     gateway(["gateway<br/>standalone exe"])
     client[("@eiva/fletcher-gateway-client<br/>npm package")]
+    c_abi["fletcher-c-abi<br/>shared library (C ABI)"]
+    dotnet[("Eiva.Fletcher, .Interop, .Model<br/>NuGet packages")]
+    dotnet_client[("Eiva.Fletcher.GatewayClient<br/>NuGet package")]
 
     pubsub --> core
     arrow_bridge --> core
@@ -70,13 +74,45 @@ graph TD
     xrcedds --> core
     gateway --> pubsub
     gateway --> core
+    c_abi --> pubsub
+    c_abi --> fastdds
+    c_abi --> xrcedds
+    dotnet --> c_abi
 
     client -. WebSocket .-> gateway
+    dotnet_client -. WebSocket .-> gateway
     protoc -. generates code for .-> client
     protoc -. generates code for .-> core
+    protoc -. generates code for .-> dotnet
 ```
 
-Solid edges are build-time (Conan / npm) dependencies; dashed edges are runtime (WebSocket) or code-generation relationships. For the full picture see the [Architecture Overview](docs/architecture-overview.md).
+Solid edges are build-time (Conan / npm / NuGet) dependencies; dashed edges are runtime (WebSocket) or code-generation relationships. `Eiva.Fletcher.Interop` carries the C ABI shim for `linux-x64` and `win-x64`, so a .NET application links no C++ library of its own. For the full picture see the [Architecture Overview](docs/architecture-overview.md).
+
+## Languages
+
+Every language reads and writes the same positional rows, so a row published in one is read in any other. C++ is the reference; the others reach it through the C ABI (C#) or the WebSocket gateway (TypeScript, and C# when it has no native transport).
+
+| Capability | C++ | C# (.NET) | TypeScript | Rust |
+|---|---|---|---|---|
+| Generated row classes | yes | yes (`--fletcher_opt=csharp`) | interfaces and schema descriptors (`ts`) | — |
+| Encode and decode rows | yes (`core`, `arrow-bridge`) | yes (the C++ codec, through the C ABI) | yes (`@eiva/fletcher-gateway-client`) | — |
+| Pub/sub over Fast DDS, Micro XRCE-DDS, in-process | yes | yes (through the C ABI, `Eiva.Fletcher`) | — | — |
+| Pub/sub through the WebSocket gateway | the gateway itself | yes (`Eiva.Fletcher.GatewayClient`, no native code) | yes | — |
+| Generated publisher and subscriber | yes | yes, native and gateway | yes, gateway | — |
+| Batched delivery (Arrow windows) | yes (`pubsub-arrow`) | yes, both transports | yes (decoded rows) | — |
+| Arrow view and `RecordBatch` accessor | yes (`accessor`) | yes (`csharp_accessor`) | — | yes (`rust`, reading only) |
+| Packages | Conan | NuGet | npm | generated source |
+
+**Proven across languages.** Each publisher-to-subscriber pair below exchanges rows on CI and compares them on the receiving side, on Linux and Windows (`gateway-fastdds-ts` on Linux only); the cell names the lane that proves it.
+
+| Publisher ↓ \ Subscriber → | C++ | C# native | C# gateway | TypeScript |
+|---|---|---|---|---|
+| **C++** | [pubsub-transport-conformance](integration-tests/pubsub-transport-conformance/) | [crosslang](integration-tests/gateway-dotnet-crosslang/README.md) | [crosslang](integration-tests/gateway-dotnet-crosslang/README.md) | [gateway-fastdds-ts](integration-tests/gateway-fastdds-ts/README.md) |
+| **C# native** | [crosslang](integration-tests/gateway-dotnet-crosslang/README.md) | [crosslang](integration-tests/gateway-dotnet-crosslang/README.md) | [crosslang](integration-tests/gateway-dotnet-crosslang/README.md) | [crosslang](integration-tests/gateway-dotnet-crosslang/README.md) |
+| **C# gateway** | [crosslang](integration-tests/gateway-dotnet-crosslang/README.md) | [crosslang](integration-tests/gateway-dotnet-crosslang/README.md) | [gateway-dotnet-end-to-end](integration-tests/gateway-dotnet-end-to-end/README.md) | [crosslang](integration-tests/gateway-dotnet-crosslang/README.md) |
+| **TypeScript** | [gateway-fastdds-ts](integration-tests/gateway-fastdds-ts/README.md) | [crosslang](integration-tests/gateway-dotnet-crosslang/README.md) | [crosslang](integration-tests/gateway-dotnet-crosslang/README.md) | [gateway-end-to-end](integration-tests/gateway-end-to-end/README.md) |
+
+"crosslang" is `gateway-dotnet-crosslang`, which runs a gateway over Fast DDS and a C++, two C# native and a TypeScript peer around the C# gateway client, and compares every field of a row that reaches every mapped type. "C# native" is `Eiva.Fletcher` over the C ABI; "C# gateway" is `Eiva.Fletcher.GatewayClient`. Rust reads `RecordBatch`es only and has no pub/sub.
 
 ## Quick start
 
@@ -109,11 +145,14 @@ service SensorFeed {
 |---|---|---|
 | `telemetry.fletcher.pb.h` | nanoarrow only | Arrow schema function, typed row class, publisher/subscriber |
 | `telemetry.fletcher.arrow.pb.h` | Apache Arrow C++ | Immutable view class with typed getters, `ToArrowRow()` |
-| `telemetry.fletcher.ts` | — | TypeScript interface, schema descriptor, topic constant |
+| `telemetry.fletcher.ts` | `@eiva/fletcher-gateway-client` | TypeScript interface, schema descriptor, topic constant, publisher/subscriber — `--fletcher_opt=ts` |
 | `telemetry.fletcher.accessor.pb.h` | Apache Arrow C++ | Column-oriented `RecordBatch` accessor (C++) — opt-gated by `--fletcher_opt=accessor` |
 | `telemetry.fletcher.rs` | `arrow` crate | Column-oriented `RecordBatch` accessor (Rust) — opt-gated by `--fletcher_opt=rust` |
+| `telemetry.fletcher.cs`, `telemetry.fletcher.native.cs` | `Eiva.Fletcher.Model`, `Eiva.Fletcher` | C# row class, schema and topic; native publisher/subscriber — `--fletcher_opt=csharp` (`csharp_model_only` leaves the pair out) |
+| `telemetry.fletcher.gateway.cs` | `Eiva.Fletcher.GatewayClient` | C# gateway publisher/subscriber — `--fletcher_opt=csharp_gateway` |
+| `telemetry.fletcher.arrow.cs`, `telemetry.fletcher.accessor.cs` | `Apache.Arrow` | C# Arrow view and `RecordBatch` accessor — `--fletcher_opt=csharp_accessor` |
 
-The last two are emitted only when their `--fletcher_opt` token is passed; they are a read-side, column-oriented way to consume a whole `RecordBatch` (validate once, cast once, then typed zero-copy getters). See the [RecordBatch Accessor Specification](docs/recordbatch-accessor-spec.md) for the full contract and [`protoc/README.md`](protoc/README.md) for wiring the plugin into your build.
+The accessor rows are emitted only when their `--fletcher_opt` token is passed; they are a read-side, column-oriented way to consume a whole `RecordBatch` (validate once, cast once, then typed zero-copy getters). See the [RecordBatch Accessor Specification](docs/recordbatch-accessor-spec.md) for the full contract and [`protoc/README.md`](protoc/README.md) for wiring the plugin into your build.
 
 ### 3. Encode and decode (edge tier — no Arrow C++)
 
@@ -156,33 +195,54 @@ Swap `FastDDSPubSubProvider` for `XrceDDSPubSubProvider` to publish from an MCU/
 
 ### 5. Consume in the browser
 
-Run the [`gateway`](gateway/README.md) to expose the pub/sub layer over WebSocket, then use the generated TypeScript bindings with the client:
+Run the [`gateway`](gateway/README.md) to expose the pub/sub layer over WebSocket, then use the generated TypeScript subscriber (`--fletcher_opt=ts`) with the client:
 
 ```ts
 import { FletcherClient } from '@eiva/fletcher-gateway-client';
-import { SensorReading, SensorFeed_StreamTopic } from './telemetry.fletcher.js';
+import { SensorFeed_StreamSubscriber } from './telemetry.fletcher.js';
 
 const client = new FletcherClient({ url: 'ws://localhost:9090' });
 await client.connect();
 
-// `row` is typed as the generated SensorReading interface; the schema is
-// discovered automatically on subscribe.
-await client.subscribe(SensorFeed_StreamTopic, SensorReading, (row, attachments) => {
+// `row` is typed as the generated ISensorReading interface.
+const subscriber = new SensorFeed_StreamSubscriber(client);
+await subscriber.subscribe((row, attachments) => {
     console.log(row.temperature, row.location);
 });
 ```
 
-See [`gateway-client-ts/README.md`](gateway-client-ts/README.md) for the full client API.
+See [`gateway-client-ts/README.md`](gateway-client-ts/README.md) for the full client API, batched delivery and the generated publisher.
+
+### 6. Consume in .NET
+
+Reference the NuGet packages from nuget.org — `Eiva.Fletcher` for native pub/sub (it brings `Eiva.Fletcher.Interop`, the C ABI shim for `linux-x64` and `win-x64`), `Eiva.Fletcher.Model`, and `Eiva.Fletcher.Protoc`, which runs the generator on every build ([`dotnet/README.package.md`](dotnet/README.package.md) has the project file). With `--fletcher_opt=csharp` the generated publisher and subscriber are the C++ pair's, in C#:
+
+```csharp
+using Eiva.Fletcher;
+using Fletcher.Gen.Myapp;
+
+using PubSubProviderHandle provider = ProviderRegistry.Create(ProviderSelector.Parse("fastdds"), new ProviderConfig());
+
+using var subscriber = new SensorFeed_StreamSubscriber(provider);
+using Subscription subscription = subscriber.Subscribe((reading, attachments) =>
+    Console.WriteLine($"temperature = {reading.Temperature}"));
+
+using var publisher = new SensorFeed_StreamPublisher(provider);
+publisher.Publish(new[] { new SensorReading { SensorId = 42, Temperature = 23.5, Location = "Room 101" } });
+```
+
+An application without a native transport uses `Eiva.Fletcher.GatewayClient` instead: the same rows through a gateway, with no native code (`--fletcher_opt=csharp_gateway`). See [`dotnet/README.md`](dotnet/README.md) for the packages, targets (`net8.0`, `net10.0`, NativeAOT) and platform floors.
 
 ## Use cases
 
 - **Sensor telemetry capture.** During a survey or inspection mission, sensors stream measurements that must be serialized and transported reliably over a vessel network. Fletcher gives you low per-row overhead, reliable DDS delivery, and guaranteed publisher/subscriber schema agreement.
 - **Edge and embedded devices.** MCUs and embedded gateways publish Arrow-typed data without linking Apache Arrow C++ — the nanoarrow tier plus XRCE-DDS fits in a tiny footprint, and an XRCE-DDS Agent bridges the data into the full DDS network where desktop/server subscribers consume it.
 - **Browser visualization.** Live data reaches browser clients over WebSocket. The pure-TypeScript codec decodes the positional wire format into typed objects with no WASM requirement, and schemas are delivered automatically on subscription.
+- **.NET applications.** Desktop and server applications in C# publish and subscribe on the same DDS network as the C++ nodes, through the C ABI, or reach it through the gateway with no native code; generated C# classes and Arrow accessors read the rows, one at a time or as `RecordBatch`es.
 
 ## Repository layout
 
-Each top-level directory is an independent component with its own version, CI workflow, and release cycle. Most are Conan packages; a few are standalone executables or TypeScript libraries.
+Each top-level directory is an independent component with its own version, CI workflow, and release cycle. Most are Conan packages; a few are standalone executables, TypeScript libraries or NuGet packages.
 
 | Directory | Artifact | Type |
 |---|---|---|
@@ -192,11 +252,13 @@ Each top-level directory is an independent component with its own version, CI wo
 | [`pubsub-arrow/`](pubsub-arrow/README.md) | `fletcher-pubsub-arrow` (Conan) | static library — Arrow C++ convenience over the nanoarrow provider |
 | [`fastdds-pubsub-provider/`](fastdds-pubsub-provider/README.md) | `fletcher-fastdds-pubsub-provider` (Conan) | static library — Fast DDS transport |
 | [`xrcedds-pubsub-provider/`](xrcedds-pubsub-provider/README.md) | `fletcher-xrcedds-pubsub-provider` (Conan) | static library — Micro XRCE-DDS transport |
-| [`protoc/`](protoc/README.md) | `fletcher-protoc` (Conan) | application — the `protoc-gen-fletcher` plugin |
+| [`protoc/`](protoc/README.md) | `fletcher-protoc` (Conan), `@eiva/protoc-gen-fletcher` (npm), `Eiva.Fletcher.Protoc` (NuGet) | application — the `protoc-gen-fletcher` plugin |
 | [`gateway/`](gateway/README.md) | `gateway` exe | standalone WebSocket server (no Conan package) |
 | [`gateway-client-ts/`](gateway-client-ts/README.md) | `@eiva/fletcher-gateway-client` (npm) | TypeScript client library |
+| [`c-abi/`](c-abi/README.md) | `fletcher-c-abi` (shared library, shipped inside `Eiva.Fletcher.Interop`) | the binding ABI: one pure C surface over the codec and pub/sub, for .NET and later bindings |
+| [`dotnet/`](dotnet/README.md) | `Eiva.Fletcher`, `.Interop`, `.Model`, `.GatewayClient` (NuGet) | the .NET binding: native pub/sub through the C ABI, the generated-code model, the managed gateway client |
 
-Each component's `README.md` covers how to build, test, and consume it. `gateway/` ships only an exe — consumers integrate through its WebSocket protocol, not a linkable artifact.
+Each component's `README.md` covers how to build, test, and consume it. `gateway/` ships only an exe — consumers integrate through its WebSocket protocol, not a linkable artifact. `c-abi/` is not released on its own: its shim ships in `Eiva.Fletcher.Interop`.
 
 ## Documentation
 
@@ -221,6 +283,7 @@ The proto→Arrow type mapping and the `(fletcher.flatten)` schema-flattening op
 - **Conan** 2
 - A **C++20** compiler (GCC 12+, Clang 15+, or MSVC 2022)
 - **Node.js** 24+ (only for `gateway-client-ts`)
+- **.NET SDK** 10 (only for `dotnet/`; the libraries target `net8.0` and `net10.0`, and `dotnet/global.json` pins the SDK band)
 
 A ready-to-use devcontainer (CMake, Conan, GCC 13, Node, formatters) lives at [`.devcontainer/`](.devcontainer/) — see [CONTRIBUTING.md](CONTRIBUTING.md#development-environment) for "Reopen in Container" and manual-Docker instructions.
 
@@ -248,6 +311,19 @@ npm install
 npm test          # vitest suite
 npm run build     # tsc compilation
 ```
+
+### .NET binding
+
+The packages call the C ABI shim, so build `c-abi/` into the Conan cache first (after the C++ components above), then the .NET solution; the tests load the shim you name:
+
+```bash
+conan create c-abi/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
+cd dotnet
+dotnet build Fletcher.slnx -c Release
+dotnet test Fletcher.slnx -c Release -p:FletcherNativeShim=<path to libfletcher-c-abi.so or fletcher-c-abi.dll>
+```
+
+[`dotnet/README.md`](dotnet/README.md) has the details (the probe shim for the copy-oracle tests, NativeAOT, locked restores).
 
 ## Consuming a released package
 
@@ -306,13 +382,26 @@ self.requires("fletcher-core/0.5.0-alpha")
 
 `conan cache restore` registers the package under the exact profile it was built with. To target a different profile, build from source with `conan create <component>` against a Fletcher checkout.
 
-The `gateway-client-ts` package is published to npm as [`@eiva/fletcher-gateway-client`](https://www.npmjs.com/package/@eiva/fletcher-gateway-client) (`npm install @eiva/fletcher-gateway-client`).
+The `gateway-client-ts` package is published to npm as [`@eiva/fletcher-gateway-client`](https://www.npmjs.com/package/@eiva/fletcher-gateway-client) (`npm install @eiva/fletcher-gateway-client`), and the code generator as [`@eiva/protoc-gen-fletcher`](https://www.npmjs.com/package/@eiva/protoc-gen-fletcher); use the same `MAJOR.MINOR` of both.
+
+### .NET packages
+
+The .NET binding is on [nuget.org](https://www.nuget.org/packages/Eiva.Fletcher): `Eiva.Fletcher`, `Eiva.Fletcher.Interop`, `Eiva.Fletcher.Model` and `Eiva.Fletcher.GatewayClient` share one version, and the code generator `Eiva.Fletcher.Protoc` has their `MAJOR.MINOR`. Every version so far is a prerelease (`-alpha`): reference it exactly, or pass `--prerelease` to `dotnet add package`.
+
+```bash
+dotnet add package Eiva.Fletcher --prerelease
+dotnet add package Eiva.Fletcher.Model --prerelease
+dotnet add package Eiva.Fletcher.Protoc --prerelease
+```
+
+The GitHub Release of each `dotnet-v` and `protoc-v` tag carries the same files.
 
 ## Roadmap
 
 Fletcher is at an early (`0.5.x-alpha`) stage. Planned work, roughly in priority order:
 
 - **Dynamically loadable transport plugins.** Make transport providers (Fast DDS, XRCE-DDS, …) **loadable** at runtime as plugins, so an application can pick a transport without compile-time coupling to its library. Runtime *selection* among the providers a build links in already ships — by name, through `ProviderRegistry`, with the provider configured by an opaque per-protocol document. What is still ahead is the loading itself, and with it the freedom from linking the transport's library at all.
+- **Native pub/sub for Node.js.** A Node-API add-on over the C ABI (`c-abi/`, the surface the .NET binding uses), so Node services publish and subscribe over Fast DDS, Micro XRCE-DDS or in-process without a gateway, with the same generated TypeScript. Browsers cannot speak DDS (no raw UDP), so they keep reaching pub/sub through the gateway.
 - **A protocol bridge service.** A standalone service that loads two transport plugins and bridges traffic between them — e.g. relay XRCE-DDS telemetry from an embedded segment onto a Fast DDS backbone, or DDS onto WebSocket — without bespoke glue code.
 - **GeoArrow-compliant schemas.** Ship reference `.proto` definitions for geometry types that, via the `(fletcher.flatten)` option, generate [GeoArrow](https://geoarrow.org/)-compliant Arrow schemas out of the box.
 - **Conan Center distribution.** Build and publish the Fletcher Conan packages to [Conan Center](https://conan.io/center) so consumers can depend on them without restoring release archives manually.
@@ -323,15 +412,17 @@ Contributions are welcome under the project's LGPL-3.0-or-later license. See [CO
 
 ## Releasing
 
-Releases are cut by maintainers by pushing a **component-prefixed git tag** (`<component>-v<MAJOR>.<MINOR>.<PATCH>[-<pre-release>]`). The matching `cd.<component>.yml` workflow builds on Windows + Linux and, on success, creates a GitHub Release with the artifacts attached (or runs `npm publish` for the TypeScript client).
+Releases are cut by maintainers by pushing a **component-prefixed git tag** (`<component>-v<MAJOR>.<MINOR>.<PATCH>[-<pre-release>]`). The matching `cd.<component>.yml` workflow builds on Windows + Linux and, on success, creates a GitHub Release with the artifacts attached (and publishes to npm or nuget.org where the component has a package there, by Trusted Publishing from a protected environment).
 
 | Component | Tag prefix | Version source |
 |---|---|---|
-| `core/` … `xrcedds-pubsub-provider/` (7 Conan components) | `<component>-v` | `<component>/conanfile.py` |
+| `core/` … `xrcedds-pubsub-provider/` (the 6 Conan libraries) | `<component>-v` | `<component>/conanfile.py` |
+| `protoc/` (also `@eiva/protoc-gen-fletcher` on npm and `Eiva.Fletcher.Protoc` on nuget.org) | `protoc-v` | `protoc/conanfile.py` |
 | `gateway/` | `gateway-v` | `gateway/VERSION` |
 | `gateway-client-ts/` | `gateway-client-v` | `gateway-client-ts/package.json` |
+| `dotnet/` (the four NuGet packages, with the C ABI shim) | `dotnet-v` | `dotnet/Directory.Build.props` |
 
-For Conan and gateway components the tag version **must match** the version source (CI verifies and fails fast otherwise). Pre-release suffixes (`-alpha`, `-beta`, `-rc1`, …) are part of the version and, for the npm client, select the dist-tag.
+For the Conan, gateway and dotnet components the tag version **must match** the version source (CI verifies and fails fast otherwise). Pre-release suffixes (`-alpha`, `-beta`, `-rc1`, …) are part of the version and, for the npm client, select the dist-tag.
 
 ### Version scheme — `MAJOR.MINOR` signals compatibility
 
@@ -369,6 +460,6 @@ The guiding rule: **official releases always have matching `MAJOR.MINOR` across 
 
 Fletcher is licensed under the **GNU Lesser General Public License v3.0 or later** (LGPL-3.0-or-later). The full text is in [`LICENSE`](LICENSE), and every source file carries an `SPDX-License-Identifier: LGPL-3.0-or-later` header.
 
-LGPL-3.0 incorporates GPL-3.0 by reference; the GPL-3.0 text is available at <https://www.gnu.org/licenses/gpl-3.0.txt>. Copyright is held collectively by "The Fletcher Authors" listed in [`AUTHORS`](AUTHORS). The project was started by EIVA A/S in 2026 and is open to outside contributions under the same license.
+LGPL-3.0 incorporates GPL-3.0 by reference; the GPL-3.0 text is in [`COPYING`](COPYING). Copyright is held collectively by "The Fletcher Authors" listed in [`AUTHORS`](AUTHORS). The project was started by EIVA A/S in 2026 and is open to outside contributions under the same license.
 
 Third-party code vendored under `pubsub/third_party/nanoarrow/` (nanoarrow, including the bundled flatcc sources) is distributed under its own upstream licenses and is not re-licensed by Fletcher.

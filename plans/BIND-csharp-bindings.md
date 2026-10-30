@@ -3144,7 +3144,9 @@ runs, since BIND-T and BIND-10 land in between.
      `Fletcher.Tests`, `CopyOracle.Tests`, `AotSmoke`, `Benchmarks`), re-written by a
      `dotnet restore --force-evaluate`, never by hand;
    - the install snippets in `README.md` and the component READMEs (`core`, `pubsub`,
-     `arrow-bridge`, `pubsub-arrow`, `fastdds-pubsub-provider`, `xrcedds-pubsub-provider`).
+     `arrow-bridge`, `pubsub-arrow`, `fastdds-pubsub-provider`, `xrcedds-pubsub-provider`), and
+     `README.md`'s "`0.5.x-alpha`" in the Roadmap and the version scheme (found in 10-2; the check
+     below does not match an `x`).
      **Left as they are:** the benchmark READMEs' recorded runs (they name the revision measured),
      the vendored code, and the third-party `0.5.x` in the two `Cargo.lock` files;
    - check: `git grep -nE "0\.5\.[0-9]+-alpha"` outside `plans/` finds only what is left on
@@ -3393,6 +3395,36 @@ bindings should not follow C++, every codec takes C++'s spelling (`readings[].x`
   (`readings[].x`); `wire-encode.test.ts`'s two nested cases take the new spelling. The client
   README and the wire-format spec's "Nullability Rules" state the rule (and that a list element
   and a map value are nullable in the schema).
+- **10-1 done on CI 2026-10-30** (`0450081`, `ci.pr` 41030786172, 61/61 on the first attempt,
+  every side workflow green, `ci.format-check-cs` included).
+- **10-2, 2026-10-30 (D-BIND-192): the root README and CONTRIBUTING.** `README.md`: the intro
+  and "Why Fletcher" name C#; a **"Languages"** section after "How it works" holds the support
+  table (C++, C#, TypeScript, Rust by capability) and the cross-language matrix, each cell naming
+  the lane that proves the pair (`pubsub-transport-conformance`, `gateway-dotnet-crosslang`,
+  `gateway-dotnet-end-to-end`, `gateway-fastdds-ts`, `gateway-end-to-end`), the matrix of the
+  2026-10-14 request; the dependency graph gains `fletcher-c-abi` and the NuGet packages
+  (validated by parse and render with mermaid 11.4.1: 12 nodes, 19 edges); the generated-file
+  table the C# outputs and their options and the TypeScript pair; the browser quick-start uses
+  the generated subscriber; a new **"6. Consume in .NET"**; the layout table `c-abi/` and
+  `dotnet/` (and `protoc/`'s npm and NuGet packages); the prerequisites the .NET SDK; "Building
+  from source" a ".NET binding" step; "Consuming" a ".NET packages" section; the releasing table
+  `protoc-v` and `dotnet-v` rows; the licence paragraph points at `COPYING` (the BIND-9b review's
+  L-N). `CONTRIBUTING.md`: the layout rows, the npm, NuGet and generated-C#-namespace naming rows,
+  the licence-header rule for `.cs` and the XML form for `.csproj`, `.props`, `.targets`, `.slnx`.
+  **Found:** the matrix's first draft said every pair runs on Linux and Windows and compares every
+  field; `gateway-fastdds-ts` runs on Linux only and only the crosslang lane compares every field
+  of a full row, so the README says so. `dotnet/README.md` claims namespaces "keep the C++
+  component names (`Eiva.Fletcher.PubSub`, …)"; none exists (the namespace is the package's
+  name), fixed in CONTRIBUTING here and in `dotnet/README.md` in 10-3. The bump's version check
+  (runbook step 1) does not match `README.md`'s "`0.5.x-alpha`", now named in that step.
+  **On the maintainer's question whether TypeScript can do pub/sub without the gateway:** not
+  today; the client speaks only the gateway's protocol (a gateway with `--provider inprocess` is
+  a small relay, and is how `gateway-end-to-end` proves TypeScript to TypeScript). In a browser a
+  server is unavoidable, as a browser has no raw UDP for DDS; in Node a native add-on over the C
+  ABI, as C# does it, would give pub/sub without a gateway (a round of its own), while a
+  pure-TypeScript in-process provider would join no two applications and a TypeScript RTPS stack
+  is ruled out. On the maintainer's choice the README's Roadmap gains "Native pub/sub for
+  Node.js".
 
 ---
 
