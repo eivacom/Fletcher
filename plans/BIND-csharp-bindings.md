@@ -3425,6 +3425,26 @@ bindings should not follow C++, every codec takes C++'s spelling (`readings[].x`
   pure-TypeScript in-process provider would join no two applications and a TypeScript RTPS stack
   is ruled out. On the maintainer's choice the README's Roadmap gains "Native pub/sub for
   Node.js".
+- **10-3, 2026-10-30: the component READMEs.** `dotnet/README.md`: the "Status — round BIND"
+  history is gone; the package table says what each package is (its main types), its native
+  assets and dependencies; each namespace is the package's name (the claimed
+  `Eiva.Fletcher.PubSub`, … never existed); `Model` holds the view windows and element readers too,
+  not only `Timestamp` and `Duration`; the TFMs and the exact `Apache.Arrow` pin with the N-9
+  proof that justifies it (16 types and metadata; it said 17, the count of tests); the layout gains
+  `Fletcher.GatewayClient.Tests`, `tests/Shared` and the benchmark; a table of the C# integration
+  suites; new sections "One shim per process" (D-BIND-17) and "Licences" (`LICENSE`, `COPYING`,
+  `THIRD-PARTY-LICENSES.txt`, the relinking route). `c-abi/README.md`: its "Status" history
+  becomes "The surface" (ABI 0.7, 47 entry points, versioning), "Ownership" (the three words, the
+  release function of every handle, errors, shared blobs and schemas, borrowed Arrow input,
+  deliveries, quiescence, attachments), "The codec surface" (open, bind, publish or encode, decode
+  and framed decode) and "Consuming it from another binding" (five steps, C# as the worked
+  example, for Rust or a Node.js add-on); the Windows export note records D-BIND-157. **Found:**
+  the c-abi README said C# does not expose the schema watch; it does (`Subscriber.SubscribeSchema`).
+  `integration-tests/pubsub-conformance/README.md`: the client half's caveat is retired: the
+  copy-accounting bullet names its three producers, only the harness's own a stand-in, the C ABI
+  codec's and C#'s `Publisher.Publish` real (the latter scored by `Fletcher.CopyOracle.Tests`); the
+  "reconstructible" section says which parts of its two rules C#'s own tests hold, and that neither
+  entry as a whole has been run against C#.
 
 ---
 

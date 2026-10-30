@@ -1,9 +1,9 @@
 # fletcher-c-abi — the binding ABI shim
 
 One pure C surface over Fletcher, shipped as **one shared library per RID**. It
-is what `Eiva.Fletcher.Interop` carries in `runtimes/<rid>/native/`, and what
-the Rust binding will call next round. Nothing above this boundary links a
-Fletcher C++ library or sees a C++ type.
+is what `Eiva.Fletcher.Interop` carries in `runtimes/<rid>/native/`, and what a
+second binding (Rust, or a Node.js add-on, on the root README's Roadmap) would
+call. Nothing above this boundary links a Fletcher C++ library or sees a C++ type.
 
 ```
 c-abi/
@@ -51,7 +51,8 @@ DLL — 3531 exported names, with or without a module-definition file (MSVC merg
 the two). Nothing resolves incorrectly because of it (Windows binds imports
 per-module and P/Invoke finds `fl_binding_abi_version` by name), but the export
 table is bloat the packed-size budget pays for, and removing it means changing
-how the dependency is built. Revisited at BIND-9.
+how the dependency is built. Accepted (D-BIND-157): `Eiva.Fletcher.Interop` has a
+12 MB packed-size ceiling, and the export surface is revisited only if it is hit.
 
 ## Building
 
@@ -90,30 +91,124 @@ D-BIND-62). The shipped shim still registers exactly three providers
 (`TheShippedShimHasNoProbe`). The option stays in the package ID, so a package
 built with it cannot pass for the release one. Its suite is `c_abi_probe_tests`.
 
-## Status — round BIND
+## The surface
 
-**BIND-0** brought the component up: the two lanes run on both platforms, and
-the built-in providers are linked from the kickoff so the
-static-link-into-a-shared-library question and the per-RID size budget are
-answered by a real artifact rather than by a proxy.
+[`binding.h`](include/fletcher/abi/binding.h) is **ABI 0.7: 47 entry points**, every one
+implemented, in the header's sections: the version handshake; status and `fl_error`; strings,
+topics and the single-copy marker; blobs and schemas as shared owner handles; the schema arrival
+with its five outcomes; attachments (a builder, and a sealed set read by position); the write
+window a caller lends the encoder; the provider, publisher and subscriber, with the schema watch
+(`fl_subscriber_subscribe_schema`, which answers `FL_NOT_SUPPORTED` on a transport with no schema
+channel: of the built-ins, all but `fastdds`); and the codec. Every declaration says which part of the seam specification it comes from, and restates
+the rule rather than pointing at it, so a binding author never has to read the C++ tree. Status
+numbers are the seam's own and are never renumbered.
 
-**BIND-1 has now specified the whole header** — the status taxonomy (the seam's
-own numbers), the caller-owned `fl_error` with its `origin`, the provider
-registry, publisher and subscriber handles, the schema arrival and its five
-outcomes, blobs and schemas as owner handles, attachments in published order,
-the write window and its one-call writer, the delivery callback, the three-step
-codec surface, and the single-copy marker. It is reviewed **as a specification**:
-what is expensive to get wrong here is the ownership wording, not the syntax.
+**Versioning.** `fl_binding_abi_version()` answers for the shim actually loaded, packed as
+`(major << 16) | minor`. Within a major the header is append-only, and from 1.0 a declaration is
+deprecated for a whole major before it goes. **Before 1.0 there is no compatibility guarantee**:
+any declaration may change between 0.x minors, so a binding refuses a shim whose minor differs from
+the one it was built against (C# does), and every change bumps the version and is recorded,
+never silent.
 
-**Every declaration is now implemented: 47 entry points, ABI 0.7.** BIND-2 built
-the codec surface and the publisher chain, BIND-3 the interop tier above it, and
-BIND-4 the rest — the subscriber half, the arrival, attachments and blobs, and the
-three entry points the header turned out to be missing (`fl_blob_create`,
-`fl_schema_retain`, `fl_schema_copy`: D-BIND-42, 43, 46), each an ABI minor bump.
-The schema-watch pair (`fl_subscriber_subscribe_schema` / `_unsubscribe_schema`)
-answered `FL_NOT_SUPPORTED` per D-BIND-29 until the seam grew it (#128); since
-**D-BIND-52** it forwards to the seam (ABI 0.4 → 0.5), and `FL_NOT_SUPPORTED` now
-means only that the transport has no schema channel — of the built-ins, only
-`fastdds` has one. The C# surface does not expose it yet. (This paragraph said "only
-`fl_binding_abi_version()` is implemented" until the BIND-4 review found it stale
-since BIND-2c.)
+## Ownership
+
+The header states it once and uses three words precisely:
+
+- **BORROWED**: valid for the call only; the callee may read it and must not keep it. A pointer the
+  header does not qualify is borrowed.
+- **OWNED**: the caller received a reference and releases it through the function named for it
+  (`fl_provider_destroy`, `fl_publisher_destroy`, `fl_subscriber_destroy`, `fl_codec_close`,
+  `fl_rows_unbind`, `fl_blob_release`, `fl_schema_release`, `fl_schema_arrival_dispose`,
+  `fl_attachments_dispose`, `fl_string_list_dispose`, `fl_error_dispose`). Releasing twice, or
+  releasing what was never received, is undefined.
+- **OUT**: written only on success; on failure the callee leaves it untouched.
+
+The rules a binding has to build its types around:
+
+- **Errors.** Every fallible call takes an `fl_error*`, zero-initialised. On failure the caller owns
+  its `message` (bytes with a length, so a zero byte cannot truncate it) and releases it with
+  `fl_error_dispose`, which is why every binding's throw site is a `finally`. An error a binding's
+  callback fills is the other way round: the callback keeps its bytes alive until it returns and
+  the shim copies them.
+- **Blobs and schemas are shared.** A blob is bytes plus an opaque owner, retained and released
+  through `fl_blob_retain` / `fl_blob_release`; its bytes are immutable once they cross. A schema is
+  an Arrow C Data Interface structure the shim owns and **shares**: a binding never calls its Arrow
+  `release` callback, which would destroy it for the provider still delivering on it. A binding
+  that wants an Arrow schema of its own takes `fl_schema_copy` and releases that copy the Arrow
+  way. `fl_schema_release` for the handle, `out->release` for the copy, never the other way round.
+- **Arrow input is borrowed, never consumed.** A schema passed in is deep-copied; an array passed to
+  `fl_rows_bind` is read in place, its `release` never called, and kept alive by the caller until
+  `fl_rows_unbind`. That is what lets one export serve many publishes.
+- **Deliveries.** A delivery runs on the transport's own thread, and every pointer it is handed
+  (`data`, `schema`, `atts`) is borrowed for the call: a handler that keeps the bytes copies them,
+  one that keeps the schema or an attachment's blob retains it. A handler must not throw across the
+  boundary, and re-entering the seam on the same provider and thread is refused with
+  `FL_REENTRANT_CALL`.
+- **Lifetimes and quiescence.** A provider outlives every publisher and subscriber built on it.
+  `fl_subscriber_unsubscribe` outside a delivery blocks until that subscription's running delivery
+  has finished, after which the binding may free its context; from inside a delivery it is served
+  without waiting, and the context is freed only after a second cancel from outside (D-BIND-50).
+  Destroying a subscriber from inside one of its own deliveries terminates the process, so a
+  binding refuses that in its own code first (D-BIND-18).
+- **Attachments are read, never sorted.** A set is enumerated by position
+  (`fl_attachments_size`, `_key_at`, `_value_at`) in ascending unsigned-byte order of the key, which
+  is the wire order; a key with a zero byte is refused.
+
+## The codec surface
+
+Values cross as **Arrow arrays**, never as per-field C arguments, and **no encode entry point
+returns bytes**, so a row is never written anywhere but the transport's window (D-BIND-1a,
+D-BIND-23). Three steps, each with its own cost and lifetime:
+
+1. **Open**, once per schema: `fl_codec_open` validates the Arrow schema against the wire mapping,
+   refuses a type the mapping does not carry by naming the field, and precomputes the field plan.
+   An `fl_codec` is immutable, so any number of threads share one.
+2. **Bind**, once per batch: `fl_rows_bind` checks that the struct array matches the codec and
+   validates every buffer once, not per row.
+3. **Publish or encode** a row: `fl_publisher_publish_row` (or `_rows` for a range in one
+   crossing) runs the encoder inside the seam's publish, straight into the provider's window, after
+   checking that the topic was declared on this publisher and that the rows encode its wire layout;
+   `fl_encode_row` writes into a window the caller supplies (`fl_write_window`, with a grow
+   callback), for a write-ahead log, a relay or a test.
+
+Decoding is the mirror: `fl_decode_rows` turns `count` rows of bytes into a fresh struct array the
+caller imports and owns, and `fl_decode_rows_framed` (ABI 0.7) takes each row's end offset, so a
+row that does not decode, or does not end exactly at its boundary, is skipped and reported rather
+than misaligning its neighbours. Both touch no provider and are callable from inside a delivery.
+`fl_publisher_publish_raw` publishes bytes a binding's own writer puts into the window, unchecked.
+
+The codec is `src/nanoarrow_codec.*`. `NanoarrowCodec.ByteIdenticalToArrowBridge` holds it to
+`arrow-bridge`'s Arrow C++ codec, byte for byte, over the shared corpus in
+`tests/codec_corpus.hpp`, and its messages name a nested field as that codec does (`readings[].x`,
+`tags{}.value.x`).
+
+## Consuming it from another binding
+
+C# is the worked example, in [`dotnet/src/Fletcher.Interop`](../dotnet/src/Fletcher.Interop/) and
+[`dotnet/src/Fletcher`](../dotnet/src/Fletcher/); a Rust crate or a Node.js add-on does the same
+things in its own idiom:
+
+1. **Load one shim per process.** Resolve `fletcher-c-abi` (`libfletcher-c-abi.so`,
+   `fletcher-c-abi.dll`) from where the package puts it for the RID (C#: `NativeLoader`, a
+   `DllImportResolver`), and never ship a second copy beside another binding's: the shim refuses
+   to work when it finds another module exporting `fl_single_copy_marker`, naming both
+   (D-BIND-17).
+2. **Handshake before anything else.** Call `fl_binding_abi_version()` and refuse a shim whose major,
+   or before 1.0 whose minor, differs from the `FL_BINDING_ABI_VERSION` the binding was built
+   against, with a message saying which two.
+3. **Bring your own Arrow.** The header only forward-declares `ArrowSchema` and `ArrowArray`; the
+   binding uses its Arrow library's C Data Interface (C#: `Apache.Arrow.C`), exports a batch for
+   `fl_rows_bind` and imports what `fl_decode_rows` and `fl_schema_copy` produce.
+   [`binding-abi-conformance`](../integration-tests/binding-abi-conformance/README.md) is the lane
+   that proves an Arrow implementation hands the codec what Arrow C++ does.
+4. **Make the ownership rules types.** One owning wrapper per handle (C#: a `SafeHandle` each), an
+   error-to-exception site that disposes in a `finally`, a bound batch whose disposal unbinds and
+   then releases (`BoundRows`), and a delivery thunk that catches everything, counts in-flight
+   deliveries and refuses a destroy from inside one.
+5. **Select transports by name.** `fl_provider_create` takes a selector and a configuration
+   (`max_payload_bytes`, `domain_id` and a document in the transport's own syntax). The shim
+   registers `inprocess`, `fastdds` and `xrce` itself; a binding can neither register a provider
+   nor install a path resolver (D-BIND-24), and a path selector answers `FL_NOT_SUPPORTED`.
+
+[`test_package/`](test_package/) is the smallest consumer: a C program that links the package,
+calls `fl_binding_abi_version()` and compares it with the header's.

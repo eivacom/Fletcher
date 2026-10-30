@@ -2,30 +2,40 @@
 
 **Trying the bindings before they are released:** see [PREVIEW-TESTERS.md](PREVIEW-TESTERS.md).
 
-Four NuGet packages, one solution, one version — the managed half of round
-BIND. The C half is [`c-abi/`](../c-abi/README.md), the shim these packages call.
+Fletcher's C# binding: four NuGet packages, built from one solution at one version. The native
+half is [`c-abi/`](../c-abi/README.md), the shim these packages call; the C# for a user's own
+messages comes from the code generator, `protoc-gen-fletcher`, which the `Eiva.Fletcher.Protoc`
+package brings (built in [`protoc/`](../protoc/README.md), not here).
 
-| Package | Native assets? | Depends on |
-|---|---|---|
-| `Eiva.Fletcher.Interop` | **yes** — `runtimes/{rid}/native/` (`win-x64`, `linux-x64` at first release) | — |
-| `Eiva.Fletcher` | no | `Interop`, `Apache.Arrow` |
-| `Eiva.Fletcher.GatewayClient` | **no** | `Apache.Arrow` |
-| `Eiva.Fletcher.Model` | **no** | `Apache.Arrow` |
+| Package | What it is | Native assets | Depends on |
+|---|---|---|---|
+| `Eiva.Fletcher` | Publishers and subscribers over a provider chosen by name (`inprocess`, `fastdds`, `xrce`): `ProviderRegistry`, `Publisher`, `Subscriber`, `SubscriberArrow`, `SchemaArrival`; the codec (`FletcherCodec`, `BoundRows`); attachments; `FletcherException` | through `Interop` | `Interop`, `Apache.Arrow` |
+| `Eiva.Fletcher.Interop` | The P/Invoke surface over the shim, and the shim itself for `linux-x64` and `win-x64`; it has no public types and is used only by `Eiva.Fletcher` | **yes**, `runtimes/{rid}/native/` | — |
+| `Eiva.Fletcher.GatewayClient` | `FletcherClient`, a managed WebSocket client for the Fletcher gateway, with its own managed codec | none | `Apache.Arrow` |
+| `Eiva.Fletcher.Model` | What generated C# refers to: the lossless `Timestamp` and `Duration`, the `ListView` and `MapView` windows and the element readers of the generated Arrow view and accessor | none | `Apache.Arrow` |
 
-Four, not six (D-BIND-14′, amended by D-BIND-74): with `Apache.Arrow` a base dependency there is no
-dependency-free tier left for a `Core`/`Arrow`/`PubSub` split to protect.
-Namespaces inside `Eiva.Fletcher` keep the C++ component names
-(`Eiva.Fletcher.PubSub`, `Eiva.Fletcher.Arrow`, …), so a later split needs no
-renames. `Interop` is the only package carrying native assets, which is what
-isolates the RID matrix, the packed-size budget and the LGPL question to one
-artifact. `GatewayClient` has no native dependency at all — it is the managed
-port of `@eiva/fletcher-gateway-client` and the one documented exception to
-"there is exactly one codec". `Model` holds exactly the lossless `Timestamp` and
-`Duration` that generated C# refers to. It is a package of its own because
-generated code is compiled into the consumer's assembly, so a type emitted with
-it would be defined once per assembly and collide in an app that references two;
-and it takes `Apache.Arrow` only, so a gateway or WASM app can use the generated
-model without native assets (D-BIND-72). User-defined messages are not in it.
+Each package's namespace is its own name (`Eiva.Fletcher`, `Eiva.Fletcher.Interop`,
+`Eiva.Fletcher.GatewayClient`, `Eiva.Fletcher.Model`), and its assembly is that name without
+`Eiva.` (`Fletcher.dll`, …).
+
+Four, not six (D-BIND-14′, amended by D-BIND-74): with `Apache.Arrow` a base dependency there is
+no dependency-free tier left for a `Core`/`Arrow`/`PubSub` split to protect. `Interop` is the only
+package carrying native assets, which isolates the RID matrix, the packed-size ceiling (12 MB,
+D-BIND-157) and the LGPL relinking route to one artifact. `GatewayClient` loads no native code: it
+is the managed port of `@eiva/fletcher-gateway-client` and the one documented exception to "there
+is exactly one codec", held to the C++ goldens by both test projects (through
+`tests/Shared/CoverageFixture.cs`) and to the native codec, byte for byte, by
+`ManagedCodecAgreesWithNativeTests` for the shapes no golden covers. `Model` is a package of its
+own because generated code is compiled into the consumer's assembly, so a type emitted with it
+would be defined once per assembly and collide in an application that references two; and it
+takes `Apache.Arrow` only, so a gateway or WASM application can use the generated model without
+native assets (D-BIND-72). User-defined messages are not in it.
+
+All four target **`net8.0;net10.0`** and pin `Apache.Arrow` **exactly** (`[23.0.0]`): that is
+the version `tests/Fletcher.Tests/ArrowCDataInterfaceTests.cs` proved carries every Arrow type the
+wire-format mapping produces across the Arrow C Data Interface (16 types, `struct`,
+`list<struct>`, `map<utf8,int32>`, a timezone-carrying timestamp and a duration among them, and
+schema and field metadata; risk N-9), and a bump re-runs that proof.
 
 ## Getting the packages
 
@@ -51,10 +61,14 @@ dotnet/
   global.json                the SDK band, pinned to the devcontainer's
   .editorconfig              what `dotnet format --verify-no-changes` enforces
   src/…                      the four packages
-  tests/Fletcher.Tests/      unit tests
+  tests/Fletcher.Tests/      Eiva.Fletcher's and Interop's tests, against the real shim
   tests/Fletcher.Model.Tests/  Model's tests; references Model ALONE, which shows it is Arrow-only
+  tests/Fletcher.GatewayClient.Tests/  the gateway client's tests; no shim, no gateway
   tests/Fletcher.CopyOracle.Tests/  the copy oracle over C#'s real publish, against the PROBE shim (BIND-5b)
   tests/Fletcher.AotSmoke/   a NativeAOT consumer of the generated pair, published and run by CI (D-BIND-81)
+  tests/Shared/              the protoc-coverage rows in C#, shared by both codecs' tests
+  benchmarks/Fletcher.Benchmarks/  the per-row publish benchmark (risk B-2; not in the solution,
+                             not run by CI)
 ```
 
 ## Building
@@ -77,9 +91,25 @@ developer's host cannot silently diverge. Bump them together. CI restores with
 `--locked-mode`, so a dependency change must arrive with its updated
 `packages.lock.json`; those files are committed.
 
-Libraries target **`net8.0;net10.0`**. The test project targets both as well and
-rolls forward to the installed runtime, so the net8.0-compiled assemblies are
-executed, not merely compiled.
+The test projects target `net8.0;net10.0`, as the libraries do, and roll forward to the
+installed runtime, so the net8.0-compiled assemblies are executed, not merely compiled.
+`Fletcher.Model.Tests` and `Fletcher.GatewayClient.Tests` load no shim.
+
+The suites that need a real transport, a gateway or generated code live under
+[`integration-tests/`](../integration-tests/) and are deliberately not in `Fletcher.slnx`, so
+`dotnet test Fletcher.slnx` stays a unit run:
+
+| Suite | What it proves |
+|---|---|
+| [`protoc-dotnet`](../integration-tests/protoc-dotnet/README.md) | the generated model and accessor, run from a project's own build, compile against `Apache.Arrow` alone, match C++'s schemas and round-trip; the accessor capstone's C# arm |
+| [`pubsub-transport-conformance`](../integration-tests/pubsub-transport-conformance/README.md) | one body of C# publishes and subscribes over `inprocess`, `fastdds` and `xrce`, chosen by name, with no per-transport code |
+| [`binding-abi-conformance`](../integration-tests/binding-abi-conformance/README.md) | `Apache.Arrow` hands the codec what Arrow C++ hands it, so a C# publisher puts C++'s bytes on the wire |
+| [`gateway-dotnet-end-to-end`](../integration-tests/gateway-dotnet-end-to-end/README.md) | `FletcherClient` against the real gateway, over `inprocess` and `fastdds` |
+| [`gateway-dotnet-crosslang`](../integration-tests/gateway-dotnet-crosslang/README.md) | the cross-language matrix's C# rows, both directions, every field compared |
+| [`preview-bundle-consumer`](../integration-tests/preview-bundle-consumer/README.md) | an application built from the packed packages alone, the package README's code among it |
+
+The cross-language matrix as a whole, with every lane, is in the root README's
+[Languages](../README.md#languages) section.
 
 ## NativeAOT
 
@@ -114,36 +144,28 @@ same commit as the managed packages: its binding ABI version is checked at load 
 minor before 1.0), nothing finer. Proven by `tests/Fletcher.AotSmoke`, published and run in CI
 on Linux and on Windows (`linux-x64` and `win-x64`, .NET 8 and .NET 10).
 
-## Status — round BIND
+## One shim per process
 
-At **BIND-0** the three packages were **empty**, and that was the deliverable: the
-lanes (`ci.dotnet.yml`, `ci.c-abi.yml`) restored, built, tested and packed on both
-platforms before there was any real code to get wrong. Seam §12.4's lesson is the
-reason — PR #126's first lane run found seven defects that local green could not,
-three of them Linux-only.
+A process holds exactly one copy of the native shim (D-BIND-17). Fletcher's re-entrancy guard is
+per copy, so a second copy in one process would serve a re-entrant call that must be refused,
+silently. The shim therefore links every Fletcher component it uses, and when it loads it looks for
+another module exporting its marker (`fl_single_copy_marker`); if it finds one, every call that can
+fail is refused, with a message naming both modules. For an application this means no second
+`fletcher-c-abi` loaded beside the one `Eiva.Fletcher.Interop` brings, for example by a plugin that
+carries its own. The case it cannot detect, a C++ host that links Fletcher statically and also
+hosts .NET, is ruled out rather than checked: the consumers are .NET processes hosting this binding
+only.
 
-What was *not* empty was the one question BIND-0 had to answer before the design
-could stand: **risk N-9**, whether `Apache.Arrow` can carry every type in the
-mapping across the Arrow C Data Interface. `tests/Fletcher.Tests/
-ArrowCDataInterfaceTests.cs` round-trips one array per Arrow type the wire-format
-mapping produces — including `struct`, `list<int32>`, `list<struct>`,
-`map<utf8,int32>`, a timezone-carrying timestamp and a duration — plus schema and
-field metadata. All 17 types pass on `Apache.Arrow` **23.0.0**, which is why the
-version is pinned exactly rather than floated: bumping it re-runs that
-verification.
+A transport is chosen by its selector string, and C# never implements one (D-BIND-24): the shim
+registers the three built-in providers itself, and managed code can neither register a provider nor
+load one by path.
 
-**Since then (2026-09-25).** **BIND-3** built `Eiva.Fletcher.Interop` and the
-codec/Arrow tier (`FletcherCodec`, `BoundRows`), and **BIND-4** the pub/sub tier
-(`ProviderRegistry`, `Publisher`, `Subscriber`, `SchemaArrival`), all over the
-native shim in [`../c-abi`](../c-abi/README.md) at ABI 0.7. A transport is chosen
-by selector string and C# never implements one (D-BIND-24).
-The suites that need a real
-transport live under `integration-tests/` and are deliberately not in
-`Fletcher.slnx`, so `dotnet test Fletcher.slnx` stays a unit run.
+## Licences
 
-Since then: **BIND-5** `SubscriberArrow`, **BIND-6** generated C# rows, **BIND-7** the
-Arrow view and accessor, **BIND-8** the gateway client, and **BIND-9a** the packages
-with the shim inside and a per-push preview bundle for testers (see
-[PREVIEW-TESTERS.md](PREVIEW-TESTERS.md)). Next: BIND-9b, the release pipeline and the
-rest of packaging. Item by item:
-[`plans/BIND-progress-log.md`](../plans/BIND-progress-log.md).
+The packages are `LGPL-3.0-or-later`. Each one packs `LICENSE`, `COPYING` (the GPL-3.0 text the
+LGPL-3.0 incorporates, D-BIND-152) and `THIRD-PARTY-LICENSES.txt`, which lists the libraries linked
+into the shim with their licence texts and is derived from the shim's Conan graph; the pack takes
+them from `-p:FletcherLicenceDir=<dir>`, which CI's pack job passes (`Directory.Build.props`). The
+package README states the relinking route: how to rebuild the shim from the commit the package
+names, with the Conan lockfile attached to the release, and put it in place of the shipped one
+(D-BIND-140, D-BIND-173).

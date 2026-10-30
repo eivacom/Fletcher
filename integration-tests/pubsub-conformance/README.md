@@ -336,26 +336,26 @@ returned when `Take` returns and a buffered pre-schema backlog can outlive it.
 
 ### What green does NOT prove — read before trusting it
 
-- **`encode_copies == 0` claims what the interface PERMITS, and — since
-  BIND-2d — what one real binding ACHIEVES.** It says a client that uses
-  `AppendInPlace` (§3.1 clause 6) *can* send a row with no copy at all, and
-  `InPlaceEncodeWritesIntoTheDeliveredWindow` measures that with a stand-in
-  producer written in this harness (owner ruling 2026-09-04, "the guard claims
-  what the interface permits, measured with a stand-in").
-  **`BindingProducerWritesInPlace` narrows the caveat**: its producer is the
-  codec behind `fletcher-c-abi` — the artifact `Eiva.Fletcher.Interop` ships per
-  RID — driven through `fl_codec_open` → `fl_rows_bind` → `fl_encode_row` into a
-  span of the probe's own window. The producer is no longer a stand-in.
-  **What is still not claimed:** the managed tier above the ABI (it does not
-  exist until BIND-3), and the publisher wrapper `fl_publisher_publish_row`,
-  which this instrument cannot score at all — it samples from inside the
-  `RowEncoder` frame, and the fusion resolves its own provider rather than
-  being handed the probe (D-BIND-34). **Both are now scored elsewhere (BIND-5b):**
-  `dotnet/tests/Fletcher.CopyOracle.Tests` runs C#'s `Publisher.Publish`
-  through `fl_publisher_publish_row` into the probe, which c-abi's probe shim
-  registers as `probe`. The score comes from the source of the window's payload
-  bytes (D-BIND-61). The negative controls are a staged managed publish and a
-  copied export.
+- **`encode_copies == 0` claims what the interface PERMITS, and what the C ABI
+  and the C# binding ACHIEVE.** It says a client that uses `AppendInPlace`
+  (§3.1 clause 6) *can* send a row with no copy at all. Three producers are
+  scored, and only the first is a stand-in:
+  - `InPlaceEncodeWritesIntoTheDeliveredWindow`'s, written in this harness
+    (owner ruling 2026-09-04, "the guard claims what the interface permits,
+    measured with a stand-in");
+  - `BindingProducerWritesInPlace`'s, the codec behind `fletcher-c-abi` — the
+    artifact `Eiva.Fletcher.Interop` ships per RID — driven through
+    `fl_codec_open` → `fl_rows_bind` → `fl_encode_row` into a span of the
+    probe's own window, with `BindingProducerStagingIsCaught` as its control;
+  - C#'s own `Publisher.Publish`, through the fused `fl_publisher_publish_row`.
+    This instrument cannot score that path — it samples from inside the
+    `RowEncoder` frame, and the fusion resolves its own provider rather than
+    being handed the probe (D-BIND-34) — so
+    `dotnet/tests/Fletcher.CopyOracle.Tests` scores it, against c-abi's probe
+    shim, which registers the probe as `probe` (D-BIND-58), from the source of
+    the window's payload bytes (D-BIND-61). Its negative controls are a staged
+    managed publish and a copied export.
+
   It also remains a permission rather than a guarantee at the seam itself: a
   client that ignores the call composes its row elsewhere and `Append`s it, pays
   one whole-row copy, and the seam cannot stop it — `StagingProducerIsCaught` is
@@ -530,9 +530,16 @@ reproducible from what this tree publishes about them, by a consumer given
 nothing else. It proves **nothing about a real C#/Rust binding** and nothing
 about a driver built by another compiler. Both claims were scoped that way
 deliberately when no real client existed, so any wider claim would have rested on
-a stand-in standing for something unbuilt. The C# binding exists now, but
-neither entry has been run against it. `CopyAccounting`'s claim was widened
-because BIND-5b measured C#'s real publish path; these two have no such leg.
+a stand-in standing for something unbuilt. The C# binding exists now and holds
+to parts of both rules in its own tests: a set it builds is sealed in key-byte
+order whatever order it was filled in, even where UTF-16 order disagrees, and
+is read back by position (`AttachmentsBuilderTests`), and it carries a refusal's
+message verbatim (`ErrorTests.TheNativeMessageIsCarriedVerbatim`). Neither
+entry as a whole (a
+set rebuilt from its published form republishes it unchanged; two refusals stay
+distinguishable when a cause carries a zero byte) has been run against it.
+`CopyAccounting`'s claim was widened because the C# copy oracle measures C#'s
+real publish path; these two have no such leg.
 
 What the stand-in *does* buy is that the published form is **complete enough to
 be sufficient**. It is handed `size()`, `KeyAt()` and `ValueAt()` and nothing
