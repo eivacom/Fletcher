@@ -270,8 +270,8 @@ The [`docs/`](docs/README.md) directory holds the full architecture documentatio
 | [Component & Dependency Diagram](docs/component-diagram.md) | System context, component detail, dependency graph |
 | [Data Flow Diagrams](docs/data-flow-diagrams.md) | Encode/decode, publish/subscribe, schema transport, browser delivery |
 | [Wire Format Specification](docs/wire-format-specification.md) | Positional wire format, proto→Arrow type mapping, nullability, envelope |
-| [RecordBatch Accessor Specification](docs/recordbatch-accessor-spec.md) | Column-oriented C++/Rust accessors (`--fletcher_opt=accessor` / `rust`): validation, getters, parity |
-| [Technology Decision Log](docs/technology-decisions.md) | Rationale for the key technology choices (TD-001 … TD-007) |
+| [RecordBatch Accessor Specification](docs/recordbatch-accessor-spec.md) | Column-oriented C++/Rust/C# accessors (`--fletcher_opt=accessor` / `rust` / `csharp_accessor`): validation, getters, parity |
+| [Technology Decision Log](docs/technology-decisions.md) | Rationale for the key technology choices (TD-001 … TD-009) |
 
 The proto→Arrow type mapping and the `(fletcher.flatten)` schema-flattening option are documented in [`docs/fletcher-options.md`](docs/fletcher-options.md) and the wire-format spec.
 

@@ -3445,6 +3445,26 @@ bindings should not follow C++, every codec takes C++'s spelling (`readings[].x`
   codec's and C#'s `Publisher.Publish` real (the latter scored by `Fletcher.CopyOracle.Tests`); the
   "reconstructible" section says which parts of its two rules C#'s own tests hold, and that neither
   entry as a whole has been run against C#.
+- **10-3 committed 2026-10-30** (`67f044c`).
+- **10-4, 2026-10-30: the specs.** `docs/wire-format-specification.md` gains **"Proto to C# Type
+  Mapping"** after the TypeScript one: namespace and naming, the property type of every proto type
+  plain and `optional`/wrapped, a plain message field never null (D-BIND-83), a null `repeated` or
+  `map` refused, a null element read as its proto default, the **lossless temporal rule**
+  (D-BIND-26: `long`-backed `Timestamp` and `Duration` keeping unit and timezone, structural
+  equality, `WithUnit` exact or refusing, `ToDateTimeOffset`/`ToTimeSpan` the explicit lossy
+  step), and how the view's types differ. `docs/recordbatch-accessor-spec.md`: §0 and §2 name the
+  C# accessor (`csharp_accessor`, its two files), §7's windowing rule gains C# (C++'s case,
+  D-BIND-10), §10 excludes languages beyond C++, Rust and C#, and a new **§11** states what differs
+  and why: the `TryMake` factories (the deviation, one of shape only, D-BIND-94), the split
+  surfaces (98), the borrowed windows and span getters (101, 97, 102), the borrowed source (103),
+  the `StructArray` windowing finding with its 64-byte-per-read cost (10, 97, 102), the two
+  places C# is wider than C++ (104, 106), unsupported messages (96), cross-file types (105) and
+  the support types (107). `docs/technology-decisions.md` gains **TD-009, the .NET binding**
+  (Part 1's rationale: one native codec through a C ABI, values as the Arrow C Data Interface, a
+  managed Arrow tier, transports through the registry, four packages, the gateway client the one
+  exception; the alternatives and risks, B-2's measured cost among them). `README.md`'s and
+  `docs/README.md`'s range now reads TD-001 to TD-009 (both said TD-007, stale since TD-008), and
+  their accessor-spec rows name C# and `csharp_accessor`.
 
 ---
 

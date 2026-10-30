@@ -9,10 +9,10 @@ architecture-overview.md       # Main architecture document — start here
 component-diagram.md           # Component detail and dependency graph
 data-flow-diagrams.md          # Encode/decode, pub/sub, browser flows
 wire-format-specification.md   # Positional wire format, type mapping, envelope
-recordbatch-accessor-spec.md   # Column-oriented C++/Rust RecordBatch accessors (accessor/rust opts)
+recordbatch-accessor-spec.md   # Column-oriented C++/Rust/C# RecordBatch accessors (accessor/rust/csharp_accessor opts)
 pubsub-interface-spec.md       # The pub/sub provider seam: crossing types, registry, delivery contract (round PDA-decouple)
 protocol-driver-abi-spec.md    # Pure-C protocol driver ABI below that seam (round PDA-ABI)
-technology-decisions.md        # Technology decision log (TD-001 through TD-007)
+technology-decisions.md        # Technology decision log (TD-001 through TD-009)
 fletcher-options.md            # (fletcher.flatten) schema-flattening option
 ```
 

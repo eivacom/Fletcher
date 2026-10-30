@@ -130,6 +130,56 @@ When `--fletcher_opt=ts` is passed, the plugin generates `.fletcher.ts` files:
 
 ---
 
+## Proto to C# Type Mapping
+
+When `--fletcher_opt=csharp` is passed, the plugin generates `.fletcher.cs` files: one class per
+message in namespace `Fletcher.Gen.<Package>` (one PascalCase part per proto package part), with
+its Arrow `Schema`, `ToArrow` and `FromArrow`. Names follow protoc's own C# rules (a nested
+message `Sample.Note` is `Sample_Note`; a property named like a member of the class is suffixed
+`_`). The properties' types:
+
+| Proto Type | C# Type | Proto3 `optional`, `*Value` wrapper |
+|---|---|---|
+| `bool` | `bool` | `bool?` |
+| `int32`, `sint32`, `sfixed32` | `int` | `int?` |
+| `int64`, `sint64`, `sfixed64` | `long` | `long?` |
+| `uint32`, `fixed32` | `uint` | `uint?` |
+| `uint64`, `fixed64` | `ulong` | `ulong?` |
+| `float` | `float` | `float?` |
+| `double` | `double` | `double?` |
+| `string` | `string`, default `""` | `string?` |
+| `bytes` | `byte[]`, default empty | `byte[]?` |
+| `enum` | the generated C# `enum`, carried as `int32` | `Enum?` |
+| `google.protobuf.Timestamp` | `Eiva.Fletcher.Model.Timestamp` | `Timestamp?` |
+| `google.protobuf.Duration` | `Eiva.Fletcher.Model.Duration` | `Duration?` |
+| Nested message | the message's class, default `new()`, never null | `T?` |
+| `repeated T` | `List<T>`, default empty | — |
+| `map<K, V>` | `List<KeyValuePair<K, V>>`, default empty, in wire order | — |
+
+A plain message field is always present, as in C++: its column has no validity bitmap, and a
+`null` forced past the annotation is refused by `ToArrow`, naming the message, field and row
+(D-BIND-83). A `repeated` or `map` property that is `null` is refused the same way. Arrow list
+elements and map values are nullable although no proto producer writes a null element;
+`FromArrow` reads one as its proto default, as C++ does.
+
+**Temporal values are lossless.** `DateTime`, `DateTimeOffset` and `TimeSpan` count 100 ns
+ticks, so mapping onto them would drop the last two digits of a nanosecond value on every round
+trip, and a C# publisher's bytes would differ from a C++ one's (D-BIND-26). `Timestamp` and
+`Duration` are therefore `long`-backed values that keep the Arrow count, its unit and (for a
+timestamp) the schema's timezone. Equality is structural: one second and 1000 milliseconds are
+the same instant and not equal, because equal values must be the same Arrow value. Converting
+into a column's unit (`WithUnit`, which `ToArrow` calls) is exact to a finer unit, refuses a
+coarser one when the value has a remainder rather than rounding it, and refuses a count that
+overflows 64 bits. `ToDateTimeOffset()` and `ToTimeSpan()` are the lossy step, explicit and
+documented: a nanosecond value is floored to a 100 ns tick.
+
+The generated Arrow view and accessor (`csharp_accessor`, see the
+[accessor specification](recordbatch-accessor-spec.md)) give the same field types, except that
+a collection is a borrowed window over the column (`ListView<T>`, `MapView<TKey, TValue>`) rather
+than a copied `List`, and a string or bytes field also has a zero-copy UTF-8 or byte span getter.
+
+---
+
 ## Schema Metadata
 
 ### Schema-Level Metadata
