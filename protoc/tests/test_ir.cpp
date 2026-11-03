@@ -563,9 +563,9 @@ TEST(IrTest, EdgeDecodeVisitorEmitsPositionalReads) {
               "        { auto [p, n] = r.ReadBinary();\n"
               "          by_.emplace(reinterpret_cast<const char*>(p), n); }\n");
 
-    // (e) non-nullable struct: block, ReadStruct(<Class>Schema()->n_children), emplace.
+    // (e) non-nullable struct: block, ReadStruct(<Class>::kNumFields), emplace.
     EXPECT_EQ(DecodeOf(inner_ir, "inner_", 4, ctx),
-              "        { auto sr = r.ReadStruct(InnerSchema()->n_children);\n"
+              "        { auto sr = r.ReadStruct(Inner::kNumFields);\n"
               "          inner_.emplace(sr); }\n");
 
     // (f) nullable struct: IsNull gate, then ReadStruct, then optional::emplace; the null
@@ -574,7 +574,7 @@ TEST(IrTest, EdgeDecodeVisitorEmitsPositionalReads) {
     inner_null.facts.nullable = true;
     EXPECT_EQ(DecodeOf(inner_null, "oi_", 6, ctx),
               "        if (!r.IsNull(6)) {\n"
-              "            auto sr = r.ReadStruct(InnerSchema()->n_children);\n"
+              "            auto sr = r.ReadStruct(Inner::kNumFields);\n"
               "            oi_.emplace(sr);\n"
               "        } else {\n"
               "            oi_.reset();\n"
@@ -588,7 +588,7 @@ TEST(IrTest, EdgeDecodeVisitorEmitsPositionalReads) {
               "          rs_.clear();\n"
               "          rs_.reserve(lh.count);\n"
               "          for (uint32_t li_ = 0; li_ < lh.count; ++li_) {\n"
-              "            auto sr = r.ReadStruct(InnerSchema()->n_children);\n"
+              "            auto sr = r.ReadStruct(Inner::kNumFields);\n"
               "            rs_.emplace_back(sr);\n"
               "          } }\n");
     EXPECT_FALSE(Contains(rs, "IsNull"));

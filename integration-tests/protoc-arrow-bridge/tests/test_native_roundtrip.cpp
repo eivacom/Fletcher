@@ -161,3 +161,92 @@ TEST(NativeRoundtripTest, TemporalWkt) {
     EXPECT_DOUBLE_EQ(*decoded.score(), 9.5);
     EXPECT_FALSE(decoded.label().has_value());
 }
+
+// Nested messages are encoded and decoded with BeginStruct/ReadStruct sized by the nested class's
+// kNumFields constant, once per list element. Two list levels of structs, each element carrying
+// nullable fields: a count that drifted from the schema would shift every later field (or throw),
+// and a null in one element must not leak into the next.
+TEST(NativeRoundtripTest, ListOfStructsWithNestedListOfStructs) {
+    using fletcher_gen::integration::Beam;
+    using fletcher_gen::integration::Detection;
+    using fletcher_gen::integration::Swath;
+
+    Detection d0, d1, d2;
+    d0.set_range_m(12.5).set_intensity(0.75f).set_label("bottom");
+    d1.set_range_m(13.0);  // intensity and label left null
+    d2.set_range_m(40.25).set_intensity(0.125f);
+
+    Beam b0, b1, b2;
+    b0.set_beam_index(0).set_angle_rad(-1.0).set_detections({d0, d1});
+    b1.set_beam_index(1);  // angle null, no detections
+    b2.set_beam_index(2).set_angle_rad(1.0).set_detections({d2});
+
+    Swath swath;
+    swath.set_ping_number(UINT64_C(123456789)).set_beams({b0, b1, b2});
+
+    const Swath decoded(swath.Encode());
+    EXPECT_EQ(decoded.ping_number(), UINT64_C(123456789));
+    ASSERT_EQ(decoded.beams().size(), 3u);
+
+    const Beam& r0 = decoded.beams()[0];
+    EXPECT_EQ(r0.beam_index(), 0u);
+    ASSERT_TRUE(r0.angle_rad().has_value());
+    EXPECT_DOUBLE_EQ(*r0.angle_rad(), -1.0);
+    ASSERT_EQ(r0.detections().size(), 2u);
+    EXPECT_DOUBLE_EQ(r0.detections()[0].range_m(), 12.5);
+    ASSERT_TRUE(r0.detections()[0].intensity().has_value());
+    EXPECT_FLOAT_EQ(*r0.detections()[0].intensity(), 0.75f);
+    ASSERT_TRUE(r0.detections()[0].label().has_value());
+    EXPECT_EQ(*r0.detections()[0].label(), "bottom");
+    EXPECT_DOUBLE_EQ(r0.detections()[1].range_m(), 13.0);
+    EXPECT_FALSE(r0.detections()[1].intensity().has_value());
+    EXPECT_FALSE(r0.detections()[1].label().has_value());
+
+    const Beam& r1 = decoded.beams()[1];
+    EXPECT_EQ(r1.beam_index(), 1u);
+    EXPECT_FALSE(r1.angle_rad().has_value());
+    EXPECT_TRUE(r1.detections().empty());
+
+    const Beam& r2 = decoded.beams()[2];
+    EXPECT_EQ(r2.beam_index(), 2u);
+    ASSERT_TRUE(r2.angle_rad().has_value());
+    EXPECT_DOUBLE_EQ(*r2.angle_rad(), 1.0);
+    ASSERT_EQ(r2.detections().size(), 1u);
+    EXPECT_DOUBLE_EQ(r2.detections()[0].range_m(), 40.25);
+    ASSERT_TRUE(r2.detections()[0].intensity().has_value());
+    EXPECT_FLOAT_EQ(*r2.detections()[0].intensity(), 0.125f);
+    EXPECT_FALSE(r2.detections()[0].label().has_value());
+}
+
+namespace {
+
+// kNumFields is what positional readers/writers are sized with; <X>Schema() is what a
+// subscriber decodes against. They must agree for every generated message class.
+template <typename Message>
+void ExpectNumFieldsMatchesSchema(const fletcher::OwnedSchema& schema, const char* name) {
+    static_assert(Message::kNumFields > 0);
+    EXPECT_EQ(Message::kNumFields, schema->n_children) << name;
+}
+
+}  // namespace
+
+TEST(NativeRoundtripTest, NumFieldsMatchesSchemaChildCount) {
+    namespace gen = fletcher_gen::integration;
+#define FLETCHER_EXPECT_NUM_FIELDS(X) ExpectNumFieldsMatchesSchema<gen::X>(gen::X##Schema(), #X)
+    FLETCHER_EXPECT_NUM_FIELDS(SensorReading);
+    FLETCHER_EXPECT_NUM_FIELDS(GeoPoint);
+    FLETCHER_EXPECT_NUM_FIELDS(Address);
+    FLETCHER_EXPECT_NUM_FIELDS(Location);
+    FLETCHER_EXPECT_NUM_FIELDS(Player);
+    FLETCHER_EXPECT_NUM_FIELDS(Team);
+    FLETCHER_EXPECT_NUM_FIELDS(Card);
+    FLETCHER_EXPECT_NUM_FIELDS(Roster);
+    FLETCHER_EXPECT_NUM_FIELDS(Detection);
+    FLETCHER_EXPECT_NUM_FIELDS(Beam);
+    FLETCHER_EXPECT_NUM_FIELDS(Swath);
+    FLETCHER_EXPECT_NUM_FIELDS(Metrics);
+    FLETCHER_EXPECT_NUM_FIELDS(OrderItem);
+    FLETCHER_EXPECT_NUM_FIELDS(Order);
+    FLETCHER_EXPECT_NUM_FIELDS(TimedEvent);
+#undef FLETCHER_EXPECT_NUM_FIELDS
+}
