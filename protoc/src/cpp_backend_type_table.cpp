@@ -327,7 +327,7 @@ class EdgeEncodeVisitor {
     void EmitStruct(const ir::StructNode& st, const EncodeContext& ctx) {
         const std::string cls = CppClassName(st.identity.descriptor, ctx.context_file);
         ctx.out << ctx.indent << "{ auto sw = " << ctx.writer_expr << ".BeginStruct(" << cls
-                << "Schema()->n_children);\n";
+                << "::kNumFields);\n";
         switch (ctx.access_mode) {
             case ValueAccessMode::RAW_VALUE:
                 ctx.out << ctx.indent << "  " << ctx.value_expr << ".EncodeStructTo_(sw);\n";
