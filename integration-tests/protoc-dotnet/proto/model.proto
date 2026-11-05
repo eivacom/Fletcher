@@ -1,0 +1,94 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// BIND-6's C# consumer fixture. Generated with --fletcher_opt=csharp,ipc by the
+// ProtocDotnet project's own MSBuild target, then compiled against Apache.Arrow ONLY.
+//
+// What each part is for:
+//   * the package is dotted and has an underscore, and csharp_namespace is set: the
+//     namespace must be Fletcher.Gen.Integration.ProtocDotnet whatever the option says
+//     (D-BIND-69, D-BIND-73);
+//   * Reading holds every mapped scalar kind, so it gets ToArrow / FromArrow (BIND-6b);
+//   * Player holds a list, a nested struct, a map, a list of structs, an enum alias and
+//     a member starting with a digit, and fields named after the class, a C# keyword,
+//     one of protoc's reserved members and one of ours: its Schema is compared with the
+//     plugin's .ipc, and it round-trips through ToArrow / FromArrow (BIND-6c-2);
+//   * Timed holds the date-time and wrapper types: their Schema is compared, and since 6c
+//     their properties are the lossless Eiva.Fletcher.Model types (D-BIND-74), absent-able
+//     only for the `optional` one; they round-trip to the nanosecond (BIND-6c-2);
+//   * Route holds types from another file and package, shared.proto, whose classes are
+//     compiled into another assembly, and `repeated google.protobuf.Timestamp`, whose
+//     element is the class generated from timestamp.proto in that same assembly (BIND-6e,
+//     D-BIND-80): its Schema is compared and it round-trips like the others.
+syntax = "proto3";
+
+package integration.protoc_dotnet;
+option csharp_namespace = "Eiva.Integration.ShouldBeIgnored";
+
+import "shared.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+
+enum Color {
+  COLOR_UNSPECIFIED = 0;
+  COLOR_RED = 1;
+  COLOR_DARK_BLUE = 2;
+}
+
+message Reading {
+  bool flag = 1;
+  int32 small = 2;
+  int64 big = 3;
+  uint32 count = 4;
+  uint64 huge = 5;
+  float ratio = 6;
+  double value = 7;
+  string name = 8;
+  optional string note = 9;
+  bytes blob = 10;
+  optional bytes extra = 11;
+  Color color = 12;
+  optional Color tint = 13;
+  optional int32 maybe = 14;
+  optional double maybe_value = 15;
+  optional bool maybe_flag = 16;
+}
+
+message Player {
+  enum Mode {
+    option allow_alias = true;
+    MODE_UNSPECIFIED = 0;
+    MODE_2D = 1;
+    MODE_FLAT = 1;
+  }
+  message Stats { int32 goals = 1; }
+
+  int32 id = 1;
+  string player = 2;
+  int32 class = 3;
+  bool clone = 4;
+  string schema = 5;
+  Mode mode = 6;
+  repeated int32 scores = 7;
+  Stats stats = 8;
+  map<string, int32> tags = 9;
+  repeated Stats history = 10;
+}
+
+message Timed {
+  google.protobuf.Timestamp at = 1;
+  google.protobuf.Duration took = 2;
+  google.protobuf.Int32Value boxed = 3;
+  optional google.protobuf.Timestamp maybe_at = 4;
+}
+
+message Route {
+  integration.shared_types.Pos start = 1;
+  repeated integration.shared_types.Pos legs = 2;
+  map<string, integration.shared_types.Pos> stops = 3;
+  integration.shared_types.Quality quality = 4;
+  repeated integration.shared_types.Quality checks = 5;
+  integration.shared_types.Fix fix = 6;
+  repeated google.protobuf.Timestamp marks = 7;
+}

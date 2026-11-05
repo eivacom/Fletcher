@@ -25,8 +25,17 @@ import { createInterface } from 'node:readline';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FletcherClient, WireTypeId } from '@eiva/fletcher-gateway-client';
-import { Telemetry } from '../generated-ts/telemetry.fletcher.js';
+import {
+  Telemetry,
+  TelemetryFeed_DeadlinePublisher,
+  TelemetryFeed_DeadlineSubscriber,
+  TelemetryFeed_ReportPublisher,
+  TelemetryFeed_ReportSubscriber,
+  TelemetryFeed_WindowsPublisher,
+  TelemetryFeed_WindowsSubscriber,
+} from '../generated-ts/telemetry.fletcher.js';
 import type { ITelemetry } from '../generated-ts/telemetry.fletcher.js';
+import type { BatchStatus } from '@eiva/fletcher-gateway-client';
 import { findBinaryRecursive } from './find-binary.js';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
@@ -304,6 +313,106 @@ describe.each(PROVIDERS)('gateway over $name provider', (cfg) => {
       await sub.unsubscribe(subId);
       sub.close();
       pub.close();
+    });
+  });
+
+  // -------------------------------------------------------------------
+  // BIND-T-4 (D-BIND-181, D-BIND-183, D-BIND-184): the generated pair of
+  // TelemetryFeed, one method per case so each has a topic of its own.
+  // The publisher's create declares the topic with the schema IPC; the
+  // subscriber's three calls go to the client with the topic and schema
+  // bound in. A second, per-row client on the same topic is the sentinel
+  // that tells a case a row has been delivered.
+  // -------------------------------------------------------------------
+  describe('generated TelemetryFeed pair', () => {
+    async function waitFor(done: () => boolean): Promise<void> {
+      const deadline = Date.now() + roundtripMs;
+      while (!done() && Date.now() < deadline) {
+        await new Promise((res) => setTimeout(res, 20));
+      }
+    }
+
+    it('publishes and subscribes a typed row with its attachments, until unsubscribed', async () => {
+      const client = new FletcherClient({ url: gatewayUrl });
+      await client.connect();
+      const sentinelClient = new FletcherClient({ url: gatewayUrl });
+      await sentinelClient.connect();
+
+      const publisher = await TelemetryFeed_ReportPublisher.create(client);
+      const subscriber = new TelemetryFeed_ReportSubscriber(client);
+      const received: { row: ITelemetry; attachments: Map<string, Uint8Array> }[] = [];
+      const subId = await subscriber.subscribe((row, attachments) =>
+        received.push({ row, attachments }),
+      );
+      const sentinel: ITelemetry[] = [];
+      await new TelemetryFeed_ReportSubscriber(sentinelClient).subscribe((row) =>
+        sentinel.push(row),
+      );
+
+      const first: ITelemetry = { sensor_id: 7, temperature: 21.5, label: 'pair' };
+      await publisher.publish(first, new Map([['note', new Uint8Array([1, 2, 3])]]));
+      await waitFor(() => received.length === 1 && sentinel.length === 1);
+
+      expect(received).toHaveLength(1);
+      expect(received[0].row.sensor_id).toBe(first.sensor_id);
+      expect(received[0].row.temperature).toBeCloseTo(first.temperature);
+      expect(received[0].row.label).toBe(first.label);
+      expect(received[0].attachments.get('note')).toEqual(new Uint8Array([1, 2, 3]));
+
+      // After unsubscribe, a row the sentinel receives does not reach the subscriber.
+      await subscriber.unsubscribe(subId);
+      await publisher.publish({ sensor_id: 8, temperature: 0, label: 'after' });
+      await waitFor(() => sentinel.length === 2);
+      expect(sentinel).toHaveLength(2);
+      expect(received).toHaveLength(1);
+
+      sentinelClient.close();
+      client.close();
+    });
+
+    it('subscribeBatched delivers full windows in order, as RowLimit', async () => {
+      const client = new FletcherClient({ url: gatewayUrl });
+      await client.connect();
+
+      const publisher = await TelemetryFeed_WindowsPublisher.create(client);
+      const windows: { ids: number[]; status: BatchStatus }[] = [];
+      await new TelemetryFeed_WindowsSubscriber(client).subscribeBatched(
+        (rows, _attachments, status) => windows.push({ ids: rows.map((r) => r.sensor_id), status }),
+        { maxRows: 2, timeoutMs: Infinity },
+      );
+
+      for (let id = 1; id <= 4; ++id) {
+        await publisher.publish({ sensor_id: id, temperature: id, label: `w${id}` });
+      }
+      await waitFor(() => windows.length === 2);
+
+      expect(windows).toEqual([
+        { ids: [1, 2], status: { reason: 'RowLimit', rowsDropped: 0 } },
+        { ids: [3, 4], status: { reason: 'RowLimit', rowsDropped: 0 } },
+      ]);
+      client.close();
+    });
+
+    it('subscribeBatched delivers a window when its deadline passes, as Timeout', async () => {
+      const client = new FletcherClient({ url: gatewayUrl });
+      await client.connect();
+
+      const publisher = await TelemetryFeed_DeadlinePublisher.create(client);
+      const windows: { ids: number[]; status: BatchStatus }[] = [];
+      await new TelemetryFeed_DeadlineSubscriber(client).subscribeBatched(
+        (rows, _attachments, status) => windows.push({ ids: rows.map((r) => r.sensor_id), status }),
+        { maxRows: 100, timeoutMs: 200 },
+      );
+
+      await publisher.publish({ sensor_id: 1, temperature: 1, label: 'd1' });
+      await publisher.publish({ sensor_id: 2, temperature: 2, label: 'd2' });
+      await waitFor(() => windows.flatMap((w) => w.ids).length === 2);
+
+      // However the two rows fall into windows, every window is a Timeout one and they come
+      // in order.
+      expect(windows.flatMap((w) => w.ids)).toEqual([1, 2]);
+      expect(windows.every((w) => w.status.reason === 'Timeout')).toBe(true);
+      client.close();
     });
   });
 });

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-// Targets eProsima Fast DDS 3.4.x (fast-dds/3.4.0 from Conan Center). Comments across this
+// Targets eProsima Fast DDS 3.4.x (fast-dds/3.4.3 from Conan Center). Comments across this
 // provider cite upstream by file and symbol against that tree — no line numbers, which a point
 // release invalidates without anything noticing.
 //

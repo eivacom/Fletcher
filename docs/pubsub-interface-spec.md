@@ -451,6 +451,16 @@ bytes, and there is no normalisation step anywhere on this path for two provider
 disagree about. The checks live once, in `internal::RequireSegments`, which all three
 providers already route every topic through.
 
+**A generated topic** (D-BIND-180). The code generator derives a service method's
+segment list from the `.proto`: one segment per part of the package, split on `.`,
+then the service, then the method. `package nexus.topics.v1;` with
+`LivePoints.Snapshot` is `{"nexus", "topics", "v1", "LivePoints", "Snapshot"}`, joined
+`nexus/topics/v1/LivePoints/Snapshot`; a file with no package gives
+`{"LivePoints", "Snapshot"}`. Every backend emits that one list (C++'s
+`TopicSegments()`, C#'s `Segments` and `Key`, TypeScript's topic constant, which the
+gateway splits back on `/`), so a method names the same topic in every language. A `.`
+in a segment a caller writes by hand is an ordinary byte, as above.
+
 ---
 
 ## §4 — Uniform provider selection (requirements §0.1(1) and (2))

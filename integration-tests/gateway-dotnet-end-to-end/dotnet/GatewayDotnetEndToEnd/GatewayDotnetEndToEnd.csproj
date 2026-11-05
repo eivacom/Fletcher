@@ -1,0 +1,62 @@
+<!-- SPDX-License-Identifier: LGPL-3.0-or-later
+     Copyright (C) 2026 The Fletcher Authors
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The C# gateway client against a LIVE gateway (BIND-8b), as
+       integration-tests/gateway-end-to-end is for the TypeScript one. It references
+       Eiva.Fletcher.GatewayClient and Eiva.Fletcher.Model and nothing native: what it
+       proves is the managed path a gateway or WASM consumer takes. Not in Fletcher.slnx, as
+       no integration project is. -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <RootNamespace>Eiva.Fletcher.GatewayDotnetEndToEnd</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <RollForward>LatestMajor</RollForward>
+    <TargetFramework>net10.0</TargetFramework>
+
+    <!-- The plugin and protoc, as D-BIND-71's recipe takes them (see protoc-dotnet):
+         FLETCHER_PROTOC_PLUGIN and PROTOC from the environment. -->
+    <FletcherProtocPlugin Condition="'$(FletcherProtocPlugin)' == ''">$(FLETCHER_PROTOC_PLUGIN)</FletcherProtocPlugin>
+    <FletcherProtoc Condition="'$(FletcherProtoc)' == ''">$(PROTOC)</FletcherProtoc>
+    <FletcherProtoDir>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/../../proto'))</FletcherProtoDir>
+    <FletcherGenDir>$(MSBuildProjectDirectory)/$(BaseIntermediateOutputPath)fletcher-gen</FletcherGenDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Apache.Arrow" Version="[23.0.0]" />
+    <!-- ProjectReferences because the packages are not published until BIND-9; a consumer
+         writes PackageReferences. -->
+    <ProjectReference Include="../../../../dotnet/src/Fletcher.GatewayClient/Fletcher.GatewayClient.csproj" />
+    <ProjectReference Include="../../../../dotnet/src/Fletcher.Model/Fletcher.Model.csproj" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="[18.10.0]" />
+    <PackageReference Include="xunit" Version="[2.9.3]" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="[3.1.5]" />
+  </ItemGroup>
+
+  <!-- The model for proto/fix.proto, generated the way a gateway consumer would: protoc runs
+       before compile and the file joins @(Compile) inside the target. csharp_model_only:
+       this project, like any gateway consumer, must not need the native pair. -->
+  <Target Name="FletcherGen" BeforeTargets="BeforeCompile;CoreCompile">
+    <Error Condition="'$(FletcherProtocPlugin)' == '' Or !Exists('$(FletcherProtocPlugin)')"
+           Text="FLETCHER_PROTOC_PLUGIN must name the built fletcher-protoc plugin (got '$(FletcherProtocPlugin)'). Build it with: conan create protoc" />
+    <Error Condition="'$(FletcherProtoc)' == '' Or !Exists('$(FletcherProtoc)')"
+           Text="PROTOC must name a protoc executable (got '$(FletcherProtoc)'). The Conan protobuf package ships one." />
+    <PropertyGroup>
+      <_FletcherWkt>$([System.IO.Path]::GetFullPath('$([System.IO.Path]::GetDirectoryName($(FletcherProtoc)))/../include'))</_FletcherWkt>
+    </PropertyGroup>
+    <RemoveDir Directories="$(FletcherGenDir)" />
+    <MakeDir Directories="$(FletcherGenDir)" />
+    <Exec Command="&quot;$(FletcherProtoc)&quot; --plugin=protoc-gen-fletcher=&quot;$(FletcherProtocPlugin)&quot; --fletcher_opt=csharp,csharp_model_only,csharp_gateway --fletcher_out=&quot;$(FletcherGenDir)&quot; -I &quot;$(FletcherProtoDir)&quot; -I &quot;$(_FletcherWkt)&quot; &quot;$(FletcherProtoDir)/fix.proto&quot;" />
+    <ItemGroup>
+      <Compile Include="$(FletcherGenDir)/*.fletcher.cs;$(FletcherGenDir)/*.fletcher.gateway.cs" />
+    </ItemGroup>
+    <Error Condition="!Exists('$(FletcherGenDir)/fix.fletcher.cs')"
+           Text="protoc ran but wrote no fix.fletcher.cs into $(FletcherGenDir)" />
+  </Target>
+
+</Project>

@@ -1,0 +1,83 @@
+                      FLETCHER LINKING EXCEPTION
+                     Version 1.0 (DRAFT, not in force)
+
+  DRAFT: this text awaits review by EIVA A/S legal counsel and grants
+  nothing until that review is complete and this notice is removed.
+
+ Copyright (C) 2026 The Fletcher Authors
+
+  This is an additional permission under section 7 of the GNU General
+Public License, version 3 (the "GPL"), which the GNU Lesser General Public
+License, version 3 (the "LGPL") incorporates. It applies, in addition to
+the LGPL (the file LICENSE) and the GPL (the file COPYING), to the parts of
+Fletcher it names below. The rest of Fletcher is under the LGPL alone.
+
+  0. Definitions.
+
+  "Fletcher" is the software the Fletcher Authors publish at
+<https://github.com/eivacom/Fletcher>.
+
+  A "Managed Library" is any of the .NET assemblies Fletcher,
+Fletcher.Interop, Fletcher.Model and Fletcher.GatewayClient, built from
+the sources under dotnet/src/ in Fletcher and published in the NuGet
+packages Eiva.Fletcher, Eiva.Fletcher.Interop, Eiva.Fletcher.Model and
+Eiva.Fletcher.GatewayClient. A Managed Library does not include any
+native library those packages carry.
+
+  The "Options File" is the file protoc/include/fletcher/options.proto
+in Fletcher, which the package Eiva.Fletcher.Protoc also carries.
+
+  The "Generator" is protoc-gen-fletcher, the protoc plugin built from
+the sources under protoc/ in Fletcher.
+
+  A "Released Version" of a Managed Library or of the Options File is
+that file exactly as the Fletcher Authors released it, or as built
+without modification from the Corresponding Source of such a release.
+
+  An "Application" is any work that is not itself a Managed Library or
+a modified version of one.
+
+  A "Compilation Process" is any process that combines one or more
+Managed Libraries with an Application into one or more files, including
+ahead-of-time compilation (for example .NET Native AOT), single-file
+bundling, trimming of unused code, and the merging or linking of the
+resulting code.
+
+  1. Compiling a Managed Library into an Application.
+
+  You may convey a work that a Compilation Process produces from an
+Application and Released Versions of one or more Managed Libraries under
+terms of your choice, consistent with the licensing of the Application,
+without the obligations of sections 4(d) and 4(e) of the LGPL for those
+Managed Libraries, provided that you comply with sections 4(a), 4(b) and
+4(c) of the LGPL. The removal of unused code by a Compilation Process
+does not make a Managed Library a modified version.
+
+  This permission does not extend to a Managed Library you have modified,
+to which the LGPL applies in full, nor to the native libraries Fletcher
+publishes with the Managed Libraries, which remain under the LGPL alone.
+
+  2. Code generated from the Options File.
+
+  Source code that a Protocol Buffers compiler (protoc, any of its
+plugins, or a build tool that runs them) generates from a Released
+Version of the Options File, and object code compiled from that source
+code, may be used, modified and conveyed under terms of your choice.
+
+  3. Output of the Generator.
+
+  The files the Generator writes, including any part of them copied
+from the Generator's own source, may be used, modified and conveyed under
+terms of your choice. This permission does not extend to the libraries
+those files use when they run: for C#, the Managed Libraries, under
+section 1; for every other language, the libraries of Fletcher under the
+LGPL alone.
+
+  4. Removing this permission.
+
+  As section 7 of the GPL allows, when you convey a copy of Fletcher or
+of a part of it, you may remove this additional permission from that copy.
+
+  5. Nothing else changes.
+
+  Except as stated here, the LGPL and the GPL apply unchanged.

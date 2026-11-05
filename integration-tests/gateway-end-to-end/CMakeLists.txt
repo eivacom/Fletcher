@@ -29,6 +29,27 @@ if(NOT TARGET fletcher-protoc::plugin)
         "plugin executable is required for code generation.")
 endif()
 
+# BIND-T-4 (D-BIND-184): telemetry.proto's TelemetryFeed methods return google.protobuf.Empty,
+# so protoc needs the well-known types' include directory, found beside the protoc executable
+# as gateway-fastdds-ts finds it.
+foreach(_cfg RELEASE DEBUG MINSIZEREL RELWITHDEBINFO)
+    get_target_property(_protoc_loc protobuf::protoc IMPORTED_LOCATION_${_cfg})
+    if(_protoc_loc AND NOT _protoc_loc MATCHES "NOTFOUND")
+        get_filename_component(_protoc_dir "${_protoc_loc}" DIRECTORY)
+        get_filename_component(PROTOBUF_WKT_INCLUDE_DIR "${_protoc_dir}/../include" ABSOLUTE)
+        break()
+    endif()
+endforeach()
+if(NOT PROTOBUF_WKT_INCLUDE_DIR)
+    get_target_property(_protoc_loc protobuf::protoc IMPORTED_LOCATION)
+    if(_protoc_loc AND NOT _protoc_loc MATCHES "NOTFOUND")
+        get_filename_component(_protoc_dir "${_protoc_loc}" DIRECTORY)
+        get_filename_component(PROTOBUF_WKT_INCLUDE_DIR "${_protoc_dir}/../include" ABSOLUTE)
+    else()
+        message(FATAL_ERROR "Cannot determine protobuf WKT include dir")
+    endif()
+endif()
+
 set(PROTO_DIR        "${CMAKE_CURRENT_SOURCE_DIR}/proto")
 set(GENERATED_TS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/generated-ts")
 file(MAKE_DIRECTORY "${GENERATED_TS_DIR}")
@@ -45,6 +66,7 @@ foreach(_stem IN LISTS PROTO_STEMS)
                 "--plugin=protoc-gen-fletcher=$<TARGET_FILE:fletcher-protoc::plugin>"
                 "--fletcher_out=ts:${GENERATED_TS_DIR}"
                 "-I" "${PROTO_DIR}"
+                "-I" "${PROTOBUF_WKT_INCLUDE_DIR}"
                 "${_src}"
         DEPENDS "${_src}" fletcher-protoc::plugin
         COMMENT "protoc-gen-fletcher (TS): ${_stem}.proto"

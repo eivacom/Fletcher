@@ -436,6 +436,13 @@ IrNode BuildMapNode(const FD* field) {
         if (IsRecursive(val_msg))
             return MakeUnsupported(field, "map value message '" + val_msg->full_name() +
                                               "' is recursive and cannot be represented in Arrow");
+        // A flatten wrapper is always inlined where it is used, so no backend
+        // generates a class for it; a struct node here would name a type that
+        // does not exist (D-BIND-85).
+        if (IsFlattenedWrapper(val_msg))
+            return MakeUnsupported(field, "map value '" + val_msg->full_name() +
+                                              "' is a flatten wrapper, which has no Arrow "
+                                              "mapping as a map value");
         m.value = std::make_unique<IrNode>(MakeStructNode(val_msg));
         warning += "; map with message values has fragile Parquet round-trip";
     } else if (IsSupportedScalarType(val_fd->type())) {

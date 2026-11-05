@@ -325,6 +325,16 @@ TEST(FletcherSamplePubSubTypeTest, TheSchemaChannelPoolIsSizedForOneSample) {
     EXPECT_EQ(1, rqos.resource_limits().allocated_samples);
 }
 
+// D-BIND-165: the schema reader takes its one sample from the TRANSIENT_LOCAL backlog when it
+// matches after the write, which Fast DDS 3.4.0's data-sharing reader can drop; so data-sharing is
+// off there, and only there: the writer and the data endpoints keep Fast DDS's default.
+TEST(FletcherSamplePubSubTypeTest, TheSchemaChannelReaderDoesNotUseDataSharing) {
+    EXPECT_EQ(eprosima::fastdds::dds::OFF,
+              fletcher::internal::MakeSchemaChannelReaderQos().data_sharing().kind());
+    EXPECT_EQ(eprosima::fastdds::dds::AUTO,
+              fletcher::internal::MakeSchemaChannelWriterQos().data_sharing().kind());
+}
+
 // The guard at the top of serialize() accounts for the row's OWN 4-byte length prefix
 // (EncodeEnvelopeBody's ROW_LEN) as well as the sample's — even an EMPTY row needs it. A buffer one
 // byte too small for that must be refused quietly, before the encoder ever runs, rather than
@@ -338,6 +348,11 @@ TEST(FletcherSamplePubSubTypeTest, ABufferTooSmallForAnEmptyRowIsRefusedQuietly)
 
     EXPECT_FALSE(type.serialize(&publishing.data, payload, kXcdr1));
     EXPECT_EQ(payload.length, 0u);
+    // Quiet means quiet: not reported as an oversized ROW, because no row was ever written - the
+    // buffer could not hold an empty one. (Unreachable from Publish: its pool slots are sized to
+    // the bound plus framing.)
+    EXPECT_FALSE(publishing.data.serialize_overflow);
+    EXPECT_TRUE(publishing.data.serialize_error.empty());
 }
 
 TEST(FletcherSamplePubSubTypeTest, AnOversizedRowFailsAndEmptiesThePayload) {
@@ -348,6 +363,10 @@ TEST(FletcherSamplePubSubTypeTest, AnOversizedRowFailsAndEmptiesThePayload) {
 
     EXPECT_FALSE(type.serialize(&publishing.data, payload, kXcdr1));
     EXPECT_EQ(payload.length, 0u);
+    // RECORDED as an overflow, so Publish reports kPayloadTooLarge rather than dropping it
+    // silently.
+    EXPECT_TRUE(publishing.data.serialize_overflow);
+    EXPECT_FALSE(publishing.data.serialize_error.empty());
 }
 
 // The exact-fit edge ABufferTooSmallForAnEmptyRowIsRefusedQuietly's guard leaves untested.
@@ -365,6 +384,7 @@ TEST(FletcherSamplePubSubTypeTest, ARowOfExactlyTheAvailableCapacitySerializesAn
     SerializedPayload_t payload(type.max_serialized_type_size);
 
     ASSERT_TRUE(type.serialize(&publishing.data, payload, kXcdr1));
+    EXPECT_FALSE(publishing.data.serialize_overflow) << "an exact fit is not an overflow";
 
     ReceivedData received;
     ASSERT_TRUE(type.deserialize(payload, &received));
@@ -373,9 +393,10 @@ TEST(FletcherSamplePubSubTypeTest, ARowOfExactlyTheAvailableCapacitySerializesAn
 }
 
 // The other edge: one byte more than the exact fit above cannot fit `capacity` at all, so
-// EncodeEnvelopeBody's overflow throws inside serialize()'s try block and is turned into a quiet
-// `false` (the "capacity outcome of a bounded type" catch(std::overflow_error) arm), the same
-// refusal AnOversizedRowFailsAndEmptiesThePayload pins for a row far past the bound.
+// EncodeEnvelopeBody's overflow throws inside serialize()'s try block and is turned into a
+// `false` recorded as an overflow (the "capacity outcome of a bounded type"
+// catch(std::overflow_error) arm), the same refusal AnOversizedRowFailsAndEmptiesThePayload pins
+// for a row far past the bound.
 TEST(FletcherSamplePubSubTypeTest,
      ARowOneByteOverTheAvailableCapacityIsRefusedAndEmptiesThePayload) {
     FletcherSamplePubSubType type(kTestPayloadBytes);
@@ -385,6 +406,7 @@ TEST(FletcherSamplePubSubTypeTest,
 
     EXPECT_FALSE(type.serialize(&publishing.data, payload, kXcdr1));
     EXPECT_EQ(payload.length, 0u);
+    EXPECT_TRUE(publishing.data.serialize_overflow);
 }
 
 // The property both publish flows rest on: whichever wrote the sample, a reader cannot tell.

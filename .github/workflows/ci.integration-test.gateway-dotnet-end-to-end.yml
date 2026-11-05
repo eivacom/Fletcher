@@ -1,0 +1,137 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+# The C# gateway client (Eiva.Fletcher.GatewayClient) against a live gateway (BIND-8b), as
+# ci.integration-test.gateway-end-to-end.yml is for the TypeScript client. The gateway exe
+# is built from this branch; the C# test project generates its model with the fletcher-protoc
+# plugin (D-BIND-71's consumer recipe) and runs the suite once over `inprocess` and once over
+# `fastdds`.
+name: ci.integration-test.gateway-dotnet-end-to-end
+
+concurrency:
+  group: ci.integration-test.gateway-dotnet-end-to-end-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_call:
+    inputs:
+      devcontainer-image:
+        description: >-
+          Pre-built devcontainer image reference (e.g.
+          eivaorg/fletcher-devcontainer:<sha>), from ci.setup-devcontainer-image.yml via
+          ci.pr.yml. Only the Linux job needs it; the Windows job runs natively.
+        required: true
+        type: string
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            core
+            pubsub
+            protoc
+            fastdds-pubsub-provider
+            gateway
+            dotnet
+            integration-tests/gateway-dotnet-end-to-end
+            .conan-profiles
+            .github
+
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
+        with:
+          image: ${{ inputs.devcontainer-image }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build components and the gateway, then dotnet test
+        run: |
+          # The gateway links Fast DDS statically, so the spawned exe needs no Conan run
+          # environment. The plugin and protoc are found in the Conan cache, as the
+          # protoc-dotnet lane finds them.
+          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace \
+            fletcher-build \
+            bash -c "set -e && \
+                     PROFILE=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release && \
+                     for COMPONENT in core pubsub protoc fastdds-pubsub-provider; do \
+                       echo '::group::conan create '\$COMPONENT && \
+                       (cd \$COMPONENT && conan create . --build=missing -pr:a=\$PROFILE) && \
+                       echo '::endgroup::'; \
+                     done && \
+                     cd integration-tests/gateway-dotnet-end-to-end && \
+                     echo '::group::conan build (the gateway exe)' && \
+                       conan build . --build=missing -pr:a=\$PROFILE && \
+                     echo '::endgroup::' && \
+                     echo '::group::locate the plugin and protoc' && \
+                       BIN=\$(find ~/.conan2/p -path '*/p/bin/fletcher-protoc' -type f -print -quit) && \
+                       if [ -z \"\$BIN\" ]; then echo '::error::fletcher-protoc binary not found in Conan cache'; exit 1; fi && \
+                       PROTOC=\$(find ~/.conan2 \( -name protoc -o -name 'protoc-[0-9]*' \) \( -type f -o -type l \) -print -quit 2>/dev/null || true) && \
+                       if [ -z \"\$PROTOC\" ]; then echo '::error::protoc not found in the Conan cache'; exit 1; fi && \
+                       export FLETCHER_PROTOC_PLUGIN=\"\$BIN\" PROTOC && \
+                       echo \"plugin=\$FLETCHER_PROTOC_PLUGIN  protoc=\$PROTOC\" && \
+                     echo '::endgroup::' && \
+                     echo '::group::dotnet test' && \
+                       (cd dotnet/GatewayDotnetEndToEnd && dotnet test -c Release) && \
+                     echo '::endgroup::'"
+
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            core
+            pubsub
+            protoc
+            fastdds-pubsub-provider
+            gateway
+            dotnet
+            integration-tests/gateway-dotnet-end-to-end
+            .conan-profiles
+            .github
+
+      - name: Install Conan
+        uses: ./.github/actions/conan-install
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: dotnet/global.json
+
+      - name: Build components into the local Conan cache
+        shell: bash
+        run: |
+          set -e
+          PROFILE=.conan-profiles/Windows-msvc194-x86_64-Release
+          for COMPONENT in core pubsub protoc fastdds-pubsub-provider; do
+            echo "::group::conan create $COMPONENT"
+            (cd "$COMPONENT" && conan create . --build=missing -pr:a="../$PROFILE")
+            echo "::endgroup::"
+          done
+
+      - name: conan build (the gateway exe)
+        shell: bash
+        working-directory: integration-tests/gateway-dotnet-end-to-end
+        run: conan build . --build=missing -pr:a=../../.conan-profiles/Windows-msvc194-x86_64-Release
+
+      - name: Locate the plugin and protoc, then dotnet test
+        shell: bash
+        working-directory: integration-tests/gateway-dotnet-end-to-end/dotnet/GatewayDotnetEndToEnd
+        run: |
+          set -e
+          BIN=$(find ~/.conan2/p -path '*/p/bin/fletcher-protoc.exe' -type f -print -quit)
+          if [ -z "$BIN" ]; then
+            echo "::error::fletcher-protoc.exe not found in Conan cache"
+            exit 1
+          fi
+          PROTOC=$(find ~/.conan2 \( -name protoc.exe -o -name 'protoc-[0-9]*.exe' \) -type f -print -quit 2>/dev/null || true)
+          if [ -z "$PROTOC" ]; then
+            echo "::error::protoc.exe not found in the Conan cache"
+            exit 1
+          fi
+          FLETCHER_PROTOC_PLUGIN=$(cygpath -w "$BIN")
+          PROTOC=$(cygpath -w "$PROTOC")
+          export FLETCHER_PROTOC_PLUGIN PROTOC
+          echo "plugin=$FLETCHER_PROTOC_PLUGIN  protoc=$PROTOC"
+          dotnet test -c Release

@@ -68,6 +68,9 @@ jobs:
                      echo '::endgroup::' && \
                      echo '::group::npm test' && \
                      npm test && \
+                     echo '::endgroup::' && \
+                     echo '::group::npm run typecheck (the generated pair, BIND-T review T4)' && \
+                     npm run typecheck && \
                      echo '::endgroup::'"
 
   windows:
@@ -119,3 +122,8 @@ jobs:
         # the spawned gateway.exe is self-contained — no conanrun / DLL setup
         # needed; npm test spawns it as-is.
         run: npm test
+
+      - name: npm run typecheck (the generated pair's call sites, BIND-T review T4)
+        shell: bash
+        working-directory: integration-tests/gateway-end-to-end
+        run: npm run typecheck

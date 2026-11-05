@@ -10,8 +10,8 @@ Four programs over the same row. `exp_zero_copy` and `bench_e2e` create DDS enti
 | `bench_e2e` | End-to-end publish-to-callback latency and throughput, intraprocess, through two real providers, built-in profiles. |
 
 `transform_batch.hpp` holds the row the two that measure the type use, `bench_pub_sub_type` and
-`example_arrow_roundtrip` — NaviSuite's `TransformWithVelocity`, its Arrow schema, and the batch
-helpers — so the thing measured and the thing narrated are the same thing.
+`example_arrow_roundtrip` — the `TransformWithVelocity` row (a pose with its velocity), its Arrow
+schema, and the batch helpers — so the thing measured and the thing narrated are the same thing.
 
 The unit tests for the type itself are elsewhere and run in CI:
 `../tests/test_fletcher_sample_pub_sub_type.cpp`.

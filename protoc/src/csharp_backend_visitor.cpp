@@ -1,0 +1,1191 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+#include "csharp_backend_visitor.hpp"
+
+#include <map>
+#include <memory>
+#include <optional>
+#include <set>
+#include <sstream>
+#include <string>
+#include <variant>
+#include <vector>
+
+#include "cpp_backend_schema_visitor.hpp"
+#include "csharp_backend_columns.hpp"
+#include "csharp_backend_schema_sink.hpp"
+#include "csharp_backend_type_table.hpp"
+#include "generator_internal.hpp"
+#include "type_mapper.hpp"
+
+namespace fletcher::csharp_backend {
+
+namespace {
+
+using google::protobuf::Descriptor;
+using google::protobuf::EnumDescriptor;
+using google::protobuf::FileDescriptor;
+using ir::IrNode;
+using ir::NodeKind;
+
+// Every enum declared in `msg`, then in its nested messages, in declaration order.
+void CollectEnums(const Descriptor* msg, std::vector<const EnumDescriptor*>& out) {
+    for (int i = 0; i < msg->enum_type_count(); ++i) out.push_back(msg->enum_type(i));
+    for (int i = 0; i < msg->nested_type_count(); ++i) CollectEnums(msg->nested_type(i), out);
+}
+
+// ---------------------------------------------------------------------------
+// Emission. Generated C# writes no wire bytes (D-BIND-1): ToArrow builds Arrow
+// arrays, the C++ codec behind the C ABI encodes them. Every Arrow type a column
+// is built with is read back from the class's own Schema, so no column can be
+// built with a type its Schema disagrees with.
+// ---------------------------------------------------------------------------
+
+constexpr const char* kEmpty = "global::Apache.Arrow.ArrowBuffer.Empty";
+
+std::string ArrayClass(const CsScalarInfo& info) {
+    return "global::Apache.Arrow." + info.arrow_array;
+}
+
+// The expression a builder appends for `value` (a property or a pattern variable):
+// enums cross as int32, bytes as a span.
+std::string AppendArgument(const CsScalarInfo& info, const std::string& value) {
+    if (info.is_enum) return "(int)" + value;
+    if (info.type_text == "byte[]") return "(global::System.ReadOnlySpan<byte>)" + value;
+    return value;
+}
+
+// The element at `index` of the typed array `arr`, as its non-nullable C# value.
+std::string ReadElement(const CsScalarInfo& info, const std::string& arr, const std::string& j) {
+    if (info.type_text == "byte[]") return arr + ".GetBytes(" + j + ").ToArray()";
+    if (info.type_text == "string") return arr + ".GetString(" + j + ") ?? \"\"";
+    if (info.is_enum)
+        return "(" + info.type_text + ")" + arr + ".GetValue(" + j + ").GetValueOrDefault()";
+    return arr + ".GetValue(" + j + ").GetValueOrDefault()";
+}
+
+std::string FieldType(size_t n, const std::string& type_class) {
+    return "(global::Apache.Arrow.Types." + type_class + ")Schema.GetFieldByIndex(" +
+           std::to_string(n) + ").DataType";
+}
+
+std::string ListOf(const std::string& t) {
+    return "global::System.Collections.Generic.List<" + t + ">";
+}
+
+// The child arrays of a struct column of `cls`, built from `rows`. A class of this file lends
+// its internal ToArrowColumns. One from another file may be compiled into another assembly,
+// where internal is out of reach, so its public ToArrow builds them (D-BIND-80): the same
+// arrays, and one RecordBatch more per column.
+std::string ChildArrays(const std::string& cls, bool other_file, const std::string& rows) {
+    return other_file ? cls + ".ToArrow(" + rows + ").Arrays"
+                      : cls + ".ToArrowColumns(" + rows + ")";
+}
+
+std::string ElemTypeText(const Elem& e) {
+    if (e.is_list) return ListOf(ElemTypeText(*e.inner));
+    return e.is_struct ? e.cls : e.scalar.type_text;
+}
+
+// 6c-3: statements that build ONE Arrow array holding every element of `values` (a C#
+// IReadOnlyList of the element's type), typed `type` (a C# expression for its Arrow
+// type, read from the Schema). Returns the variable holding the array. A list element
+// recurses: its offsets come from the inner lists' lengths and its child is built from
+// their elements flattened, so a list<list<list<struct>>> is three calls deep. `id`
+// keeps every level's variables distinct.
+std::string BuildElemArray(std::ostringstream& o, const Elem& e, const std::string& values,
+                           const std::string& type, const std::string& id) {
+    const std::string in = "        ";
+    const std::string a = "a" + id;
+    if (e.is_list) {
+        const std::string t = "t" + id, off = "o" + id, flat = "f" + id, x = "x" + id;
+        o << in << "var " << t << " = (global::Apache.Arrow.Types.ListType)" << type << ";\n"
+          << in << "var " << off << " = new global::Apache.Arrow.ArrowBuffer.Builder<int>("
+          << values << ".Count + 1);\n"
+          << in << off << ".Append(0);\n"
+          << in << "var " << flat << " = new " << ListOf(ElemTypeText(*e.inner)) << "();\n"
+          << in << "foreach (var " << x << " in " << values << ")\n"
+          << in << "{\n"
+          << in << "    " << flat << ".AddRange(" << x << ");\n"
+          << in << "    " << off << ".Append(" << flat << ".Count);\n"
+          << in << "}\n";
+        const std::string child = BuildElemArray(o, *e.inner, flat, t + ".ValueDataType", id + "_");
+        o << in << "var " << a << " = new global::Apache.Arrow.ListArray(" << t << ", " << values
+          << ".Count, " << off << ".Build(), " << child << ", " << kEmpty << ", 0, 0);\n";
+        return a;
+    }
+    if (e.is_struct) {
+        o << in << "var " << a << " = new global::Apache.Arrow.StructArray("
+          << "(global::Apache.Arrow.Types.StructType)" << type << ", " << values << ".Count, "
+          << ChildArrays(e.cls, e.other_file, values) << ", " << kEmpty << ", 0, 0);\n";
+        return a;
+    }
+    const std::string b = "b" + id, x = "x" + id;
+    o << in << "var " << b << " = new " << ArrayClass(e.scalar) << ".Builder();\n"
+      << in << "foreach (var " << x << " in " << values << ") " << b << ".Append("
+      << AppendArgument(e.scalar, x) << ");\n"
+      << in << "var " << a << " = " << b << ".Build();\n";
+    return a;
+}
+
+// 6c-3: statements that read the elements `start` (inclusive) to `end` (exclusive) of
+// the list array `list` into a new C# list `out`, recursing for a list element.
+void EmitReadList(std::ostringstream& o, const Elem& e, const std::string& list,
+                  const std::string& start, const std::string& end, const std::string& out,
+                  const std::string& id, const std::string& in) {
+    const std::string values = "e" + id, j = "j" + id;
+    const std::string values_class = e.is_list     ? "global::Apache.Arrow.ListArray"
+                                     : e.is_struct ? "global::Apache.Arrow.StructArray"
+                                                   : ArrayClass(e.scalar);
+    o << in << "var " << out << " = new " << ListOf(ElemTypeText(e)) << "(" << end << " - " << start
+      << ");\n"
+      << in << "var " << values << " = (" << values_class << ")" << list << ".Values;\n"
+      << in << "for (var " << j << " = " << start << "; " << j << " < " << end << "; " << j
+      << "++)\n"
+      << in << "{\n";
+    if (e.is_list) {
+        const std::string inner = "x" + id;
+        // B1 of BIND-7's review: a null inner list reads as empty, whatever its offsets span.
+        EmitReadList(o, *e.inner, values, values + ".ValueOffsets[" + j + "]",
+                     "(" + values + ".IsNull(" + j + ") ? " + values + ".ValueOffsets[" + j +
+                         "] : " + values + ".ValueOffsets[" + j + " + 1])",
+                     inner, id + "_", in + "    ");
+        o << in << "    " << out << ".Add(" << inner << ");\n";
+    } else {
+        o << in << "    " << out << ".Add("
+          << (e.is_struct ? e.cls + ".FromArrow(" + values + ", " + j + ")"
+                          : ReadElement(e.scalar, values, j))
+          << ");\n";
+    }
+    o << in << "}\n";
+}
+
+// The statement that counts the nulls of column `n` (bitmap builder m<n>) into z<n>,
+// and the validity buffer that follows from it: no buffer at all when nothing is
+// null. Counted first, so the count never depends on argument evaluation order.
+std::string CountNulls(const std::string& n) {
+    return "        var z" + n + " = m" + n + ".UnsetBitCount;\n";
+}
+std::string Bitmap(const std::string& n) {
+    return "z" + n + " > 0 ? m" + n + ".Build() : " + kEmpty;
+}
+
+// Statements that build `c<n>`, the array for one column, from `rows`.
+void EmitColumn(std::ostringstream& o, const Column& c, const std::string& owner) {
+    const std::string n = std::to_string(c.index);
+    const std::string in = "        ";
+    switch (c.kind) {
+        case ColKind::SCALAR: {
+            o << in << "var b" << n << " = new " << ArrayClass(c.scalar) << ".Builder();\n"
+              << in << "foreach (var row in rows)\n"
+              << in << "{\n";
+            if (c.nullable)
+                o << in << "    if (row." << c.property << " is { } x" << n << ") b" << n
+                  << ".Append(" << AppendArgument(c.scalar, "x" + n) << "); else b" << n
+                  << ".AppendNull();\n";
+            else
+                o << in << "    b" << n << ".Append("
+                  << AppendArgument(c.scalar, "row." + c.property) << ");\n";
+            o << in << "}\n" << in << "var c" << n << " = b" << n << ".Build();\n";
+            return;
+        }
+        case ColKind::TEMPORAL: {
+            const std::string type = c.is_timestamp ? "TimestampType" : "DurationType";
+            const std::string array = c.is_timestamp ? "TimestampArray" : "DurationArray";
+            // The value is recounted in the column's unit EXACTLY (WithUnit refuses to
+            // drop a remainder), so writing never loses a digit (D-BIND-26).
+            o << in << "var t" << n << " = " << FieldType(c.index, type) << ";\n"
+              << in << "var v" << n
+              << " = new global::Apache.Arrow.ArrowBuffer.Builder<long>(rows.Count);\n"
+              << in << "var m" << n
+              << " = new global::Apache.Arrow.ArrowBuffer.BitmapBuilder(rows.Count);\n"
+              << in << "foreach (var row in rows)\n"
+              << in << "{\n";
+            if (c.nullable)
+                o << in << "    if (row." << c.property << " is { } x" << n << ") { v" << n
+                  << ".Append(x" << n << ".WithUnit(t" << n << ".Unit).Value); m" << n
+                  << ".Append(true); }\n"
+                  << in << "    else { v" << n << ".Append(0); m" << n << ".Append(false); }\n";
+            else
+                o << in << "    v" << n << ".Append(row." << c.property << ".WithUnit(t" << n
+                  << ".Unit).Value);\n"
+                  << in << "    m" << n << ".Append(true);\n";
+            o << in << "}\n"
+              << CountNulls(n) << in << "var c" << n << " = new global::Apache.Arrow." << array
+              << "(t" << n << ", v" << n << ".Build(), " << Bitmap(n) << ", rows.Count, z" << n
+              << ", 0);\n";
+            return;
+        }
+        case ColKind::STRUCT: {
+            if (!c.nullable) {
+                // D-BIND-83: a plain message field is always present, as C++ writes it
+                // (value_or a default instance), so its column has no validity bitmap and
+                // the codec never puts a null on the wire that C++'s decoder would read past.
+                // A null forced past the annotation is refused, never written.
+                o << in << "var t" << n << " = " << FieldType(c.index, "StructType") << ";\n"
+                  << in << "var r" << n << " = new " << ListOf(c.cls) << "(rows.Count);\n"
+                  << in << "for (var i = 0; i < rows.Count; i++)\n"
+                  << in << "    r" << n << ".Add(rows[i]." << c.property
+                  << " ?? throw new global::System.ArgumentException($\""
+                  << (owner.rfind('@', 0) == 0 ? owner.substr(1) : owner) << "." << c.property
+                  << " is null in row {i}, but the field is not optional: it is always "
+                     "present.\", nameof(rows)));\n"
+                  << in << "var c" << n << " = new global::Apache.Arrow.StructArray(t" << n
+                  << ", rows.Count, " << ChildArrays(c.cls, c.other_file, "r" + n) << ", " << kEmpty
+                  << ", 0, 0);\n";
+                return;
+            }
+            // An `optional` message that is null keeps its slot: its row holds a default
+            // instance, whose children are not read back because the validity bit says null.
+            o << in << "var t" << n << " = " << FieldType(c.index, "StructType") << ";\n"
+              << in << "var r" << n << " = new " << ListOf(c.cls) << "(rows.Count);\n"
+              << in << "var m" << n
+              << " = new global::Apache.Arrow.ArrowBuffer.BitmapBuilder(rows.Count);\n"
+              << in << "foreach (var row in rows)\n"
+              << in << "{\n"
+              << in << "    if (row." << c.property << " is { } x" << n << ") { r" << n << ".Add(x"
+              << n << "); m" << n << ".Append(true); }\n"
+              << in << "    else { r" << n << ".Add(new " << c.cls << "()); m" << n
+              << ".Append(false); }\n"
+              << in << "}\n"
+              << CountNulls(n) << in << "var c" << n << " = new global::Apache.Arrow.StructArray(t"
+              << n << ", rows.Count, " << ChildArrays(c.cls, c.other_file, "r" + n) << ", "
+              << Bitmap(n) << ", z" << n << ", 0);\n";
+            return;
+        }
+        case ColKind::LIST: {
+            if (c.elem.is_list) {
+                // 6c-3: a list of lists. The column is itself a list element of the
+                // rows, so the rows' values are gathered and built by the recursion.
+                Elem column;
+                column.is_list = true;
+                column.inner = std::make_shared<Elem>(c.elem);
+                o << in << "var v" << n << " = new " << ListOf(ElemTypeText(column))
+                  << "(rows.Count);\n"
+                  << in << "foreach (var row in rows) v" << n << ".Add(row." << c.property
+                  << ");\n";
+                const std::string built = BuildElemArray(
+                    o, column, "v" + n, "Schema.GetFieldByIndex(" + n + ").DataType", n);
+                o << in << "var c" << n << " = " << built << ";\n";
+                return;
+            }
+            o << in << "var t" << n << " = " << FieldType(c.index, "ListType") << ";\n"
+              << in << "var o" << n
+              << " = new global::Apache.Arrow.ArrowBuffer.Builder<int>(rows.Count + 1);\n"
+              << in << "o" << n << ".Append(0);\n";
+            if (c.elem.is_struct) {
+                o << in << "var f" << n << " = new " << ListOf(c.elem.cls) << "();\n"
+                  << in << "foreach (var row in rows)\n"
+                  << in << "{\n"
+                  << in << "    f" << n << ".AddRange(row." << c.property << ");\n"
+                  << in << "    o" << n << ".Append(f" << n << ".Count);\n"
+                  << in << "}\n"
+                  << in << "var e" << n << " = new global::Apache.Arrow.StructArray("
+                  << "(global::Apache.Arrow.Types.StructType)t" << n << ".ValueDataType, f" << n
+                  << ".Count, " << ChildArrays(c.elem.cls, c.elem.other_file, "f" + n) << ", "
+                  << kEmpty << ", 0, 0);\n";
+            } else {
+                o << in << "var b" << n << " = new " << ArrayClass(c.elem.scalar) << ".Builder();\n"
+                  << in << "foreach (var row in rows)\n"
+                  << in << "{\n"
+                  << in << "    foreach (var x" << n << " in row." << c.property << ") b" << n
+                  << ".Append(" << AppendArgument(c.elem.scalar, "x" + n) << ");\n"
+                  << in << "    o" << n << ".Append(b" << n << ".Length);\n"
+                  << in << "}\n"
+                  << in << "var e" << n << " = b" << n << ".Build();\n";
+            }
+            o << in << "var c" << n << " = new global::Apache.Arrow.ListArray(t" << n
+              << ", rows.Count, o" << n << ".Build(), e" << n << ", " << kEmpty << ", 0, 0);\n";
+            return;
+        }
+        case ColKind::MAP: {
+            o << in << "var t" << n << " = " << FieldType(c.index, "MapType") << ";\n"
+              << in << "var o" << n
+              << " = new global::Apache.Arrow.ArrowBuffer.Builder<int>(rows.Count + 1);\n"
+              << in << "o" << n << ".Append(0);\n"
+              << in << "var k" << n << " = new " << ArrayClass(c.key.scalar) << ".Builder();\n";
+            if (c.elem.is_struct)
+                o << in << "var f" << n << " = new " << ListOf(c.elem.cls) << "();\n";
+            else
+                o << in << "var b" << n << " = new " << ArrayClass(c.elem.scalar)
+                  << ".Builder();\n";
+            o << in << "foreach (var row in rows)\n"
+              << in << "{\n"
+              << in << "    foreach (var x" << n << " in row." << c.property << ")\n"
+              << in << "    {\n"
+              << in << "        k" << n << ".Append("
+              << AppendArgument(c.key.scalar, "x" + n + ".Key") << ");\n";
+            if (c.elem.is_struct)
+                o << in << "        f" << n << ".Add(x" << n << ".Value);\n";
+            else
+                o << in << "        b" << n << ".Append("
+                  << AppendArgument(c.elem.scalar, "x" + n + ".Value") << ");\n";
+            o << in << "    }\n"
+              << in << "    o" << n << ".Append(k" << n << ".Length);\n"
+              << in << "}\n";
+            const std::string values =
+                c.elem.is_struct
+                    ? "new "
+                      "global::Apache.Arrow.StructArray((global::Apache.Arrow.Types.StructType)t" +
+                          n + ".ValueField.DataType, f" + n + ".Count, " +
+                          ChildArrays(c.elem.cls, c.elem.other_file, "f" + n) + ", " + kEmpty +
+                          ", 0, 0)"
+                    : "b" + n + ".Build()";
+            o << in << "var kv" << n << " = new global::Apache.Arrow.StructArray(t" << n
+              << ".KeyValueType, k" << n << ".Length, new global::Apache.Arrow.IArrowArray[] { k"
+              << n << ".Build(), " << values << " }, " << kEmpty << ", 0, 0);\n"
+              << in << "var c" << n << " = new global::Apache.Arrow.MapArray(t" << n
+              << ", rows.Count, o" << n << ".Build(), kv" << n << ", " << kEmpty << ", 0, 0);\n";
+            return;
+        }
+    }
+}
+
+// D-BIND-92: a null the caller forced past a non-nullable annotation (`Name = null!`, a null
+// list element, map key or value, a null collection) is refused with an ArgumentException that
+// names the class, the property and the row, never written: C++'s row class cannot hold such a
+// null, so its decoder would read a value that is not there, and Arrow would otherwise get a null
+// in a column, key or element its Schema says cannot be one, or (for bytes) an empty value. A
+// plain message field is refused where its column is built (D-BIND-83). `row {i}` counts the rows
+// this class converts; for a nested message, its place in the column being built.
+std::string Refuse(const std::string& owner, const std::string& property, const std::string& what) {
+    return "throw new global::System.ArgumentException($\"" +
+           (owner.rfind('@', 0) == 0 ? owner.substr(1) : owner) + "." + property + " " + what +
+           "\", nameof(rows))";
+}
+
+bool NeedsNullCheck(const Elem& e) { return e.is_list || e.is_struct || e.scalar.is_reference; }
+
+// Statements that refuse a null in `x`, an element of `property`, and in every element below it.
+void EmitElemCheck(std::ostringstream& o, const Elem& e, const std::string& x,
+                   const std::string& owner, const std::string& property, const std::string& in,
+                   int depth) {
+    o << in << "if (" << x << " is null) "
+      << Refuse(owner, property, "holds a null element in row {i}; an element is never null.")
+      << ";\n";
+    if (e.is_list && NeedsNullCheck(*e.inner)) {
+        const std::string y = x + "_" + std::to_string(depth);
+        o << in << "foreach (var " << y << " in " << x << ")\n" << in << "{\n";
+        EmitElemCheck(o, *e.inner, y, owner, property, in + "    ", depth + 1);
+        o << in << "}\n";
+    }
+}
+
+// The check pass ToArrowColumns opens with, or nothing when no column can hold such a null.
+void EmitNullChecks(std::ostringstream& o, const std::vector<Column>& columns,
+                    const std::string& owner) {
+    std::ostringstream body;
+    const std::string in = "            ";
+    for (const auto& c : columns) {
+        const std::string n = std::to_string(c.index);
+        const std::string prop = "row." + c.property;
+        if (c.kind == ColKind::SCALAR && !c.nullable && c.scalar.is_reference) {
+            body << in << "if (" << prop << " is null) "
+                 << Refuse(owner, c.property, "is null in row {i}, but the field is not optional.")
+                 << ";\n";
+        } else if (c.kind == ColKind::LIST || c.kind == ColKind::MAP) {
+            body << in << "if (" << prop << " is null) "
+                 << Refuse(owner, c.property,
+                           "is null in row {i}; use an empty collection instead.")
+                 << ";\n";
+            const bool key = c.kind == ColKind::MAP && c.key.scalar.is_reference;
+            const bool value = NeedsNullCheck(c.elem);
+            if (!key && !value) continue;
+            const std::string x = "x" + n;
+            body << in << "foreach (var " << x << " in " << prop << ")\n" << in << "{\n";
+            if (c.kind == ColKind::LIST) {
+                EmitElemCheck(body, c.elem, x, owner, c.property, in + "    ", 1);
+            } else {
+                if (key)
+                    body << in << "    if (" << x << ".Key is null) "
+                         << Refuse(owner, c.property, "holds a null map key in row {i}.") << ";\n";
+                if (value)
+                    body << in << "    if (" << x << ".Value is null) "
+                         << Refuse(owner, c.property,
+                                   "holds a null map value in row {i}; a value is never null.")
+                         << ";\n";
+            }
+            body << in << "}\n";
+        }
+    }
+    if (body.str().empty()) return;
+    o << "        for (var i = 0; i < rows.Count; i++)\n        {\n"
+      << "            var row = rows[i];\n"
+      << body.str() << "        }\n";
+}
+
+// static RecordBatch ToArrow(IEnumerable<T>), and the columns it is built from,
+// which a message embedding this one as a struct reuses.
+std::string GenerateToArrow(const std::string& cls, const std::vector<Column>& columns) {
+    std::ostringstream o;
+    o << "    public static global::Apache.Arrow.RecordBatch ToArrow("
+      << "global::System.Collections.Generic.IEnumerable<" << cls << "> rows)\n    {\n"
+      << "        global::System.ArgumentNullException.ThrowIfNull(rows);\n"
+      << "        var all = rows as global::System.Collections.Generic.IReadOnlyList<" << cls
+      << "> ?? new " << ListOf(cls)
+      << "(rows);\n"
+      // D-BIND-92: a null row too; ToArrowColumns is only ever handed rows its caller checked.
+      << "        for (var i = 0; i < all.Count; i++)\n"
+      << "            if (all[i] is null) throw new global::System.ArgumentException($\""
+      << (cls.rfind('@', 0) == 0 ? cls.substr(1) : cls) << " row {i} is null.\", nameof(rows));\n"
+      << "        return new global::Apache.Arrow.RecordBatch(Schema, ToArrowColumns(all), "
+         "all.Count);\n"
+      << "    }\n\n"
+      << "    internal static global::Apache.Arrow.IArrowArray[] ToArrowColumns("
+      << "global::System.Collections.Generic.IReadOnlyList<" << cls << "> rows)\n    {\n";
+    EmitNullChecks(o, columns, cls);
+    for (const auto& c : columns) EmitColumn(o, c, cls);
+    o << "        return new global::Apache.Arrow.IArrowArray[] { ";
+    for (size_t i = 0; i < columns.size(); ++i) o << (i > 0 ? ", " : "") << "c" << columns[i].index;
+    o << (columns.empty() ? "};\n" : " };\n") << "    }\n";
+    return o.str();
+}
+
+// Statements that read row `index` of one column back into `row`.
+void EmitRead(std::ostringstream& o, const Column& c) {
+    const std::string n = std::to_string(c.index);
+    const std::string field = "fields[" + n + "]";
+    const std::string in = "        ";
+    switch (c.kind) {
+        case ColKind::SCALAR: {
+            const std::string column = "((" + ArrayClass(c.scalar) + ")" + field + ")";
+            const std::string& type = c.scalar.type_text;
+            o << in;
+            if (type == "byte[]") {
+                o << "{ var a = (" << ArrayClass(c.scalar) << ")" << field << "; row." << c.property
+                  << " = a.IsNull(index) ? "
+                  << (c.nullable ? "null" : "global::System.Array.Empty<byte>()")
+                  << " : a.GetBytes(index).ToArray(); }\n";
+            } else if (type == "string") {
+                o << "row." << c.property << " = " << column << ".GetString(index)"
+                  << (c.nullable ? "" : " ?? \"\"") << ";\n";
+            } else if (c.scalar.is_enum) {
+                if (c.nullable)
+                    o << "row." << c.property << " = " << column << ".GetValue(index) is int v" << n
+                      << " ? (" << type << ")v" << n << " : null;\n";
+                else
+                    o << "row." << c.property << " = (" << type << ")" << column
+                      << ".GetValue(index).GetValueOrDefault();\n";
+            } else {
+                o << "row." << c.property << " = " << column << ".GetValue(index)"
+                  << (c.nullable ? "" : ".GetValueOrDefault()") << ";\n";
+            }
+            return;
+        }
+        case ColKind::TEMPORAL: {
+            // Read back in the column's own unit and zone: a value written in another
+            // unit returns recounted, the same instant or span.
+            const std::string array = c.is_timestamp ? "TimestampArray" : "DurationArray";
+            const std::string type = c.is_timestamp ? "TimestampType" : "DurationType";
+            const std::string model = c.is_timestamp ? "global::Eiva.Fletcher.Model.Timestamp"
+                                                     : "global::Eiva.Fletcher.Model.Duration";
+            const std::string extra = c.is_timestamp ? ", t.Timezone" : "";
+            o << in << "{\n"
+              << in << "    var a = (global::Apache.Arrow." << array << ")" << field << ";\n"
+              << in << "    var t = (global::Apache.Arrow.Types." << type << ")a.Data.DataType;\n";
+            if (c.nullable)
+                o << in << "    row." << c.property << " = a.GetValue(index) is long v ? new "
+                  << model << "(v, t.Unit" << extra << ") : null;\n";
+            else
+                o << in << "    row." << c.property << " = new " << model
+                  << "(a.GetValue(index).GetValueOrDefault(), t.Unit" << extra << ");\n";
+            o << in << "}\n";
+            return;
+        }
+        case ColKind::STRUCT:
+            // D-BIND-83: a plain message field is read unconditionally, as C++'s decoder
+            // reads it; only an `optional` one consults the validity bit.
+            o << in << "{ var s = (global::Apache.Arrow.StructArray)" << field << "; row."
+              << c.property << " = " << (c.nullable ? "s.IsNull(index) ? null : " : "") << c.cls
+              << ".FromArrow(s, index); }\n";
+            return;
+        case ColKind::LIST: {
+            if (c.elem.is_list) {
+                // 6c-3: a list of lists, read level by level.
+                o << in << "{\n"
+                  << in << "    var l = (global::Apache.Arrow.ListArray)" << field << ";\n";
+                EmitReadList(
+                    o, c.elem, "l", "l.ValueOffsets[index]",
+                    "(l.IsNull(index) ? l.ValueOffsets[index] : l.ValueOffsets[index + 1])", "x",
+                    "0", in + "    ");
+                o << in << "    row." << c.property << " = x;\n" << in << "}\n";
+                return;
+            }
+            const std::string values =
+                c.elem.is_struct ? "global::Apache.Arrow.StructArray" : ArrayClass(c.elem.scalar);
+            o << in << "{\n"
+              << in << "    var l = (global::Apache.Arrow.ListArray)" << field << ";\n"
+              << in << "    var e = (" << values
+              << ")l.Values;\n"
+              // ValueOffsets is already sliced to the array's own offset; the older
+              // GetValueOffset is obsolete in Apache.Arrow 23 (CS0618 fails the build).
+              << in
+              << "    var start = l.ValueOffsets[index];\n"
+              // B1 of BIND-7's review: a null list reads as empty, whatever its offsets span.
+              << in << "    var end = l.IsNull(index) ? start : l.ValueOffsets[index + 1];\n"
+              << in << "    var x = new " << ListOf(ElemTypeText(c.elem)) << "(end - start);\n"
+              << in << "    for (var j = start; j < end; j++) x.Add("
+              << (c.elem.is_struct ? c.elem.cls + ".FromArrow(e, j)"
+                                   : ReadElement(c.elem.scalar, "e", "j"))
+              << ");\n"
+              << in << "    row." << c.property << " = x;\n"
+              << in << "}\n";
+            return;
+        }
+        case ColKind::MAP: {
+            const std::string values =
+                c.elem.is_struct ? "global::Apache.Arrow.StructArray" : ArrayClass(c.elem.scalar);
+            const std::string pair = "global::System.Collections.Generic.KeyValuePair<" +
+                                     c.key.scalar.type_text + ", " + ElemTypeText(c.elem) + ">";
+            o << in << "{\n"
+              << in << "    var m = (global::Apache.Arrow.MapArray)" << field << ";\n"
+              << in << "    var k = (" << ArrayClass(c.key.scalar) << ")m.Keys;\n"
+              << in << "    var e = (" << values << ")m.Values;\n"
+              << in << "    var start = m.ValueOffsets[index];\n"
+              << in << "    var end = m.IsNull(index) ? start : m.ValueOffsets[index + 1];\n"
+              << in << "    var x = new " << ListOf(pair) << "(end - start);\n"
+              << in << "    for (var j = start; j < end; j++) x.Add(new " << pair << "("
+              << ReadElement(c.key.scalar, "k", "j") << ", "
+              << (c.elem.is_struct ? c.elem.cls + ".FromArrow(e, j)"
+                                   : ReadElement(c.elem.scalar, "e", "j"))
+              << "));\n"
+              << in << "    row." << c.property << " = x;\n"
+              << in << "}\n";
+            return;
+        }
+    }
+}
+
+// static T FromArrow(StructArray, int): row `index` back into a new instance.
+std::string GenerateFromArrow(const std::string& cls, const std::vector<Column>& columns) {
+    std::ostringstream o;
+    o << "    public static " << cls
+      << " FromArrow(global::Apache.Arrow.StructArray array, int index)\n    {\n"
+      << "        global::System.ArgumentNullException.ThrowIfNull(array);\n"
+      << "        var row = new " << cls << "();\n";
+    // D-BIND-102: Fields is read once; Apache.Arrow 23 allocates 64 bytes on every read of it.
+    if (!columns.empty()) o << "        var fields = array.Fields;\n";
+    for (const auto& c : columns) EmitRead(o, c);
+    o << "        return row;\n    }\n";
+    return o.str();
+}
+
+// ---------------------------------------------------------------------------
+// Pub/sub methods (BIND-6d): the topic classes in the model file (D-BIND-77) and
+// the native pair in its own file (D-BIND-76).
+// ---------------------------------------------------------------------------
+
+// One service method, as C++ and TypeScript see it: eligible by the SAME rules
+// (fletcher::ValidateServiceMethod) or skipped with the same reason text.
+struct PubSubMethod {
+    std::string service;
+    std::string method;
+    const Descriptor* input = nullptr;
+    std::string skip_reason;  // empty when eligible
+    // The topic's segments, every backend's (D-BIND-180): the package's parts, the service
+    // and the method, so a C#, C++ and TypeScript publisher of one method share a topic.
+    std::vector<std::string> topic;
+    std::string Base() const { return service + "_" + method; }
+};
+
+std::vector<PubSubMethod> PubSubMethods(const FileDescriptor* file) {
+    // The set C++ generates classes for: no recursive message, and no flatten wrapper, which
+    // is inlined where it is used (D-BIND-90: a wrapper input is skipped as C++ skips it).
+    std::set<const Descriptor*> generated;
+    for (const auto* msg : fletcher::OrderedMessages(file))
+        if (!fletcher::IsRecursive(msg) && !fletcher::IsFlattenedWrapper(msg))
+            generated.insert(msg);
+    std::vector<PubSubMethod> out;
+    for (int si = 0; si < file->service_count(); ++si) {
+        const auto* svc = file->service(si);
+        for (int mi = 0; mi < svc->method_count(); ++mi) {
+            const auto* m = svc->method(mi);
+            PubSubMethod p{
+                svc->name(), m->name(), m->input_type(), {}, fletcher::MethodTopicSegments(m)};
+            fletcher::ValidateServiceMethod(m, generated, &p.skip_reason);
+            out.push_back(std::move(p));
+        }
+    }
+    return out;
+}
+
+// `public static class <Svc>_<Method>Topic` in the model layer (D-BIND-77).
+std::string GenerateTopicClass(const PubSubMethod& p) {
+    const auto& segments = p.topic;
+    std::ostringstream o;
+    o << "/// <summary>The topic of " << p.service << "." << p.method
+      << ": the segments a C++ publisher of the same method uses.</summary>\n"
+      << "public static class " << p.Base() << "Topic\n{\n"
+      << "    /// <summary>The topic's segments: one per part of the package, then the service "
+         "and the method.</summary>\n"
+      << "    public static global::System.Collections.Generic.IReadOnlyList<string> Segments "
+         "{ get; } = new[] { ";
+    for (size_t i = 0; i < segments.size(); ++i)
+        o << (i > 0 ? ", " : "") << CsStringLiteral(segments[i]);
+    o << " };\n\n"
+      << "    /// <summary>The segments joined with '/'.</summary>\n"
+      << "    public const string Key = " << CsStringLiteral(fletcher::TopicKey(segments)) << ";\n"
+      << "}\n";
+    return o.str();
+}
+
+constexpr const char* kNs = "global::Eiva.Fletcher.";
+
+// The members both halves of the pair share: the topic and the schema.
+std::string PairStatics(const PubSubMethod& p, const std::string& msg,
+                        const std::string& msg_expr) {
+    std::ostringstream o;
+    o << "    /// <summary>The topic, from <see cref=\"" << p.Base() << "Topic\"/>.</summary>\n"
+      << "    public static " << kNs << "TopicPath Topic { get; } = " << kNs << "TopicPath.Of([.. "
+      << p.Base() << "Topic.Segments]);\n\n"
+      << "    /// <summary>The topic's segments joined with '/'.</summary>\n"
+      << "    public const string TopicKey = " << p.Base() << "Topic.Key;\n\n"
+      << "    /// <summary>The schema rows travel under: <see cref=\"" << msg
+      << ".Schema\"/>.</summary>\n"
+      << "    public static global::Apache.Arrow.Schema Schema => " << msg_expr << ".Schema;\n\n";
+    return o.str();
+}
+
+std::string GeneratePublisherPair(const PubSubMethod& p, const std::string& msg,
+                                  const std::string& msg_expr) {
+    const std::string cls = p.Base() + "Publisher";
+    std::ostringstream o;
+    o << "/// <summary>Publishes <see cref=\"" << msg << "\"/> rows on " << p.service << "."
+      << p.method << ", over one provider.</summary>\n"
+      << "/// <remarks>\n"
+      << "/// Declares the topic with <see cref=\"" << msg
+      << ".Schema\"/> when constructed: the native\n"
+      << "/// publish path accepts rows only on a topic THIS publisher declared. Not thread-safe "
+         "to\n"
+      << "/// dispose while publishing.\n"
+      << "/// </remarks>\n"
+      << "public sealed class " << cls << " : global::System.IDisposable\n{\n"
+      << PairStatics(p, msg, msg_expr) << "    private readonly " << kNs
+      << "Publisher _publisher;\n"
+      << "    private readonly " << kNs << "FletcherCodec _codec;\n\n"
+      << "    /// <summary>Declares the topic on <paramref name=\"provider\"/> with the row "
+         "schema.</summary>\n"
+      << "    /// <param name=\"provider\">Borrowed; it must outlive this publisher.</param>\n"
+      << "    /// <param name=\"options\">The topic's options, or <see langword=\"null\"/> for "
+         "the provider's defaults.</param>\n"
+      << "    public " << cls << "(" << kNs << "PubSubProviderHandle provider, " << kNs
+      << "TopicOptions? options = null)\n    {\n"
+      << "        global::System.ArgumentNullException.ThrowIfNull(provider);\n"
+      << "        _codec = new " << kNs << "FletcherCodec(" << msg_expr << ".Schema);\n"
+      << "        try\n        {\n"
+      << "            _publisher = new " << kNs << "Publisher(provider);\n"
+      << "            try\n            {\n"
+      << "                _publisher.CreateTopic(Topic, " << msg_expr << ".Schema, options);\n"
+      << "            }\n            catch\n            {\n"
+      << "                _publisher.Dispose();\n                throw;\n            }\n"
+      << "        }\n        catch\n        {\n"
+      << "            _codec.Dispose();\n            throw;\n        }\n    }\n\n"
+      // D-BIND-78: per-row, synchronous, and the price stated where it is chosen.
+      << "    /// <summary>Publishes one row, before returning.</summary>\n"
+      << "    /// <remarks>\n"
+      << "    /// Builds a one-row Arrow batch, binds it and publishes it. That is the costly "
+         "shape: measured\n"
+      << "    /// at about 3.8 microseconds a row, 19.6 times the generated C++ publisher, "
+         "mostly in\n"
+      << "    /// Apache.Arrow building and exporting the batch (c-abi/benchmarks/README.md, "
+         "D-BIND-49).\n"
+      << "    /// To publish many rows, prefer <c>Publish(IEnumerable&lt;" << msg << "&gt;)</c>,\n"
+      << "    /// which builds and binds once (about 1.23 times C++ per row).\n"
+      << "    /// </remarks>\n"
+      << "    public void Publish(" << msg << " row) => Publish(row, null);\n\n"
+      << "    /// <summary>Publishes one row with its attachments, before returning.</summary>\n"
+      << "    /// <remarks>The cost is <see cref=\"Publish(" << msg << ")\"/>'s.</remarks>\n"
+      << "    public void Publish(" << msg << " row, " << kNs
+      << "AttachmentsBuilder? attachments)\n    {\n"
+      << "        global::System.ArgumentNullException.ThrowIfNull(row);\n"
+      << "        using var batch = " << msg_expr << ".ToArrow(new[] { row });\n"
+      << "        using var bound = _codec.Bind(batch);\n"
+      << "        _publisher.Publish(Topic, bound, 0, attachments);\n    }\n\n"
+      << "    /// <summary>Publishes every row, building and binding them once: the fast "
+         "path.</summary>\n"
+      << "    /// <remarks>A failure at row k leaves rows before it published: the runtime does "
+         "not unwind a partial publication.</remarks>\n"
+      << "    public void Publish(global::System.Collections.Generic.IEnumerable<" << msg
+      << "> rows)\n    {\n"
+      << "        global::System.ArgumentNullException.ThrowIfNull(rows);\n"
+      << "        using var batch = " << msg_expr << ".ToArrow(rows);\n"
+      << "        if (batch.Length == 0) return;\n"
+      << "        using var bound = _codec.Bind(batch);\n"
+      << "        _publisher.Publish(Topic, bound);\n    }\n\n"
+      << "    /// <summary>Releases the publisher and its codec.</summary>\n"
+      << "    public void Dispose()\n    {\n"
+      << "        _publisher.Dispose();\n        _codec.Dispose();\n    }\n"
+      << "}\n";
+    return o.str();
+}
+
+std::string GenerateSubscriberPair(const PubSubMethod& p, const std::string& msg,
+                                   const std::string& msg_expr) {
+    const std::string cls = p.Base() + "Subscriber";
+    std::ostringstream o;
+    o << "/// <summary>Receives <see cref=\"" << msg << "\"/> rows published on " << p.service
+      << "." << p.method << ", over one provider.</summary>\n"
+      << "/// <remarks>\n"
+      << "/// Each row is decoded with <see cref=\"" << msg
+      << ".Schema\"/>, as C++'s generated subscriber decodes\n"
+      << "/// with its own class. There is no <c>SubscribeInPlace</c> (Q16): for many rows, "
+         "receive\n"
+      << "/// batches with <c>Eiva.Fletcher.SubscriberArrow</c> and read them with <see "
+         "cref=\""
+      << msg << ".FromArrow\"/>.\n"
+      << "/// </remarks>\n"
+      << "public sealed class " << cls << " : global::System.IDisposable\n{\n"
+      << PairStatics(p, msg, msg_expr) << "    private readonly " << kNs
+      << "Subscriber _subscriber;\n"
+      << "    private readonly " << kNs << "FletcherCodec _codec;\n\n"
+      << "    /// <summary>Binds to <paramref name=\"provider\"/>; the topic is not declared "
+         "here.</summary>\n"
+      << "    /// <param name=\"provider\">Borrowed; it must outlive this subscriber.</param>\n"
+      << "    public " << cls << "(" << kNs << "PubSubProviderHandle provider)\n    {\n"
+      << "        global::System.ArgumentNullException.ThrowIfNull(provider);\n"
+      << "        _codec = new " << kNs << "FletcherCodec(" << msg_expr << ".Schema);\n"
+      << "        try\n        {\n"
+      << "            _subscriber = new " << kNs << "Subscriber(provider);\n"
+      << "        }\n        catch\n        {\n"
+      << "            _codec.Dispose();\n            throw;\n        }\n    }\n\n"
+      << "    /// <summary>Begins delivering rows to <paramref name=\"handler\"/>; never "
+         "blocks.</summary>\n"
+      << "    /// <remarks>\n"
+      << "    /// The handler runs on a transport thread with the row it owns and the "
+         "attachments\n"
+      << "    /// BORROWED for the call. An exception it throws is absorbed and raised as\n"
+      << "    /// <see cref=\"HandlerFaulted\"/>.\n"
+      << "    /// </remarks>\n"
+      << "    /// <param name=\"handler\">Called once per row.</param>\n"
+      << "    /// <param name=\"options\">The topic's options, or <see langword=\"null\"/> for "
+         "the provider's defaults.</param>\n"
+      << "    /// <returns>The subscription; dispose it or pass it to <see "
+         "cref=\"Unsubscribe\"/> to stop.</returns>\n"
+      << "    public " << kNs << "Subscription Subscribe(" << p.Base() << "Handler handler, " << kNs
+      << "TopicOptions? options = null)\n    {\n"
+      << "        global::System.ArgumentNullException.ThrowIfNull(handler);\n"
+      << "        var codec = _codec;\n"
+      << "        var result = _subscriber.Subscribe(Topic, (bytes, schema, attachments) =>\n"
+      << "        {\n"
+      << "            using var batch = codec.Decode(bytes);\n"
+      << "            var columns = new global::Apache.Arrow.StructArray(\n"
+      << "                new global::Apache.Arrow.Types.StructType(batch.Schema.FieldsList), "
+         "batch.Length, batch.Arrays,\n"
+      << "                global::Apache.Arrow.ArrowBuffer.Empty, 0);\n"
+      << "            handler(" << msg_expr << ".FromArrow(columns, 0), attachments);\n"
+      << "        }, options);\n"
+      << "        result.Schema.Dispose();\n"
+      << "        return result.Subscription;\n    }\n\n"
+      << "    /// <summary>Stops a subscription; no delivery begins after this "
+         "returns.</summary>\n"
+      << "    public void Unsubscribe(" << kNs
+      << "Subscription subscription) => _subscriber.Unsubscribe(subscription);\n\n"
+      << "    /// <summary>Raised when a handler throws; the exception does not reach the "
+         "transport.</summary>\n"
+      << "    public event global::System.EventHandler<" << kNs
+      << "HandlerFaultedEventArgs>? HandlerFaulted\n    {\n"
+      << "        add => _subscriber.HandlerFaulted += value;\n"
+      << "        remove => _subscriber.HandlerFaulted -= value;\n    }\n\n"
+      << "    /// <summary>How many handler exceptions have been absorbed.</summary>\n"
+      << "    public ulong AbsorbedCallbackFailures => _subscriber.AbsorbedCallbackFailures;\n\n"
+      << "    /// <summary>Releases the subscriber and its codec.</summary>\n"
+      << "    public void Dispose()\n    {\n"
+      << "        _subscriber.Dispose();\n        _codec.Dispose();\n    }\n"
+      << "}\n";
+    return o.str();
+}
+
+// ── The gateway pair (BIND-8c, D-BIND-109, D-BIND-115) ──
+// Over Eiva.Fletcher.GatewayClient alone: the pair BORROWS a FletcherClient, so one connection
+// serves every pair of an app, and converts rows with the model's ToArrow / FromArrow as the
+// native pair does (D-BIND-108).
+constexpr const char* kGw = "global::Eiva.Fletcher.GatewayClient.";
+
+// The members both halves of the gateway pair share: the topic key and the schema.
+std::string GatewayPairStatics(const PubSubMethod& p, const std::string& msg,
+                               const std::string& msg_expr) {
+    std::ostringstream o;
+    o << "    /// <summary>The topic's key, from <see cref=\"" << p.Base()
+      << "Topic\"/>.</summary>\n"
+      << "    public const string TopicKey = " << p.Base() << "Topic.Key;\n\n"
+      << "    /// <summary>The schema rows travel under: <see cref=\"" << msg
+      << ".Schema\"/>.</summary>\n"
+      << "    public static global::Apache.Arrow.Schema Schema => " << msg_expr << ".Schema;\n\n"
+      << "    private readonly " << kGw << "FletcherClient _client;\n\n";
+    return o.str();
+}
+
+std::string GenerateGatewayPublisher(const PubSubMethod& p, const std::string& msg,
+                                     const std::string& msg_expr) {
+    const std::string cls = p.Base() + "GatewayPublisher";
+    const std::string task = "global::System.Threading.Tasks.Task";
+    const std::string ct = "global::System.Threading.CancellationToken cancellationToken = default";
+    std::ostringstream o;
+    o << "/// <summary>Publishes <see cref=\"" << msg << "\"/> rows on " << p.service << "."
+      << p.method << ", through a gateway.</summary>\n"
+      << "/// <remarks>\n"
+      << "/// Borrows a connected <see cref=\"" << kGw
+      << "FletcherClient\"/>, which must outlive it (D-BIND-115):\n"
+      << "/// one client serves every pair of an application. Create it with <see "
+         "cref=\"CreateAsync\"/>,\n"
+      << "/// which declares the topic with <see cref=\"" << msg << ".Schema\"/>.\n"
+      << "/// </remarks>\n"
+      << "public sealed class " << cls << "\n{\n"
+      << GatewayPairStatics(p, msg, msg_expr) << "    private " << cls << "(" << kGw
+      << "FletcherClient client) => _client = client;\n\n"
+      << "    /// <summary>Declares the topic on the gateway with the row schema, and returns a "
+         "publisher for it.</summary>\n"
+      << "    /// <param name=\"client\">Connected; borrowed, and must outlive the "
+         "publisher.</param>\n"
+      << "    /// <param name=\"cancellationToken\">Stops the wait.</param>\n"
+      << "    public static async " << task << "<" << cls << "> CreateAsync(" << kGw
+      << "FletcherClient client, " << ct << ")\n    {\n"
+      << "        global::System.ArgumentNullException.ThrowIfNull(client);\n"
+      << "        await client.CreateTopicAsync(TopicKey, " << msg_expr
+      << ".Schema, cancellationToken).ConfigureAwait(false);\n"
+      << "        return new " << cls << "(client);\n    }\n\n"
+      << "    /// <summary>Publishes one row, and completes when the gateway has acknowledged "
+         "it.</summary>\n"
+      << "    public " << task << " PublishAsync(" << msg << " row, " << ct
+      << ") => PublishAsync(row, null, cancellationToken);\n\n"
+      << "    /// <summary>Publishes one row with its attachments, and completes when the gateway "
+         "has acknowledged it.</summary>\n"
+      << "    /// <param name=\"row\">The row.</param>\n"
+      << "    /// <param name=\"attachments\">The row's attachments, or <see langword=\"null\"/>; "
+         "keys are UTF-8 on the wire.</param>\n"
+      << "    /// <param name=\"cancellationToken\">Stops the wait.</param>\n"
+      << "    public async " << task << " PublishAsync(" << msg
+      << " row, global::System.Collections.Generic.IEnumerable<global::System.Collections."
+         "Generic.KeyValuePair<string, global::System.ReadOnlyMemory<byte>>>? attachments, "
+      << ct << ")\n    {\n"
+      << "        global::System.ArgumentNullException.ThrowIfNull(row);\n"
+      << "        using var batch = " << msg_expr << ".ToArrow(new[] { row });\n"
+      << "        await _client.PublishAsync(TopicKey, batch, 0, attachments, "
+         "cancellationToken).ConfigureAwait(false);\n    }\n\n"
+      << "    /// <summary>Publishes every row, one frame each, and completes when the gateway has "
+         "acknowledged the last.</summary>\n"
+      << "    /// <remarks>A failure at row k leaves the rows before it published "
+         "(D-BIND-111).</remarks>\n"
+      << "    public async " << task
+      << " PublishAsync(global::System.Collections.Generic."
+         "IEnumerable<"
+      << msg << "> rows, " << ct << ")\n    {\n"
+      << "        global::System.ArgumentNullException.ThrowIfNull(rows);\n"
+      << "        using var batch = " << msg_expr << ".ToArrow(rows);\n"
+      << "        if (batch.Length == 0) return;\n"
+      << "        await _client.PublishAsync(TopicKey, batch, "
+         "cancellationToken).ConfigureAwait(false);\n    }\n"
+      << "}\n";
+    return o.str();
+}
+
+std::string GenerateGatewaySubscriber(const PubSubMethod& p, const std::string& msg,
+                                      const std::string& msg_expr) {
+    const std::string cls = p.Base() + "GatewaySubscriber";
+    const std::string task = "global::System.Threading.Tasks.Task";
+    const std::string ct = "global::System.Threading.CancellationToken cancellationToken = default";
+    std::ostringstream o;
+    o << "/// <summary>Receives <see cref=\"" << msg << "\"/> rows published on " << p.service
+      << "." << p.method << ", through a gateway.</summary>\n"
+      << "/// <remarks>\n"
+      << "/// Borrows a connected <see cref=\"" << kGw
+      << "FletcherClient\"/>, which must outlive it (D-BIND-115).\n"
+      << "/// Each row is decoded with <see cref=\"" << msg
+      << ".Schema\"/> and read with <see cref=\"" << msg << ".FromArrow\"/>.\n"
+      << "/// </remarks>\n"
+      << "public sealed class " << cls << "\n{\n"
+      << GatewayPairStatics(p, msg, msg_expr)
+      << "    /// <summary>A subscriber over <paramref name=\"client\"/>.</summary>\n"
+      << "    /// <param name=\"client\">Connected; borrowed, and must outlive the "
+         "subscriber.</param>\n"
+      << "    public " << cls << "(" << kGw << "FletcherClient client)\n    {\n"
+      << "        global::System.ArgumentNullException.ThrowIfNull(client);\n"
+      << "        _client = client;\n    }\n\n"
+      << "    /// <summary>Begins delivering rows to <paramref name=\"handler\"/>.</summary>\n"
+      << "    /// <remarks>\n"
+      << "    /// The handler runs on the client's receive loop, one row at a time, with the row "
+         "it owns\n"
+      << "    /// and the envelope BORROWED for the call (D-BIND-113). An exception it throws is "
+         "counted and\n"
+      << "    /// raised on the client's <c>HandlerFaulted</c>.\n"
+      << "    /// </remarks>\n"
+      << "    /// <param name=\"handler\">Called once per row.</param>\n"
+      << "    /// <param name=\"cancellationToken\">Stops the wait.</param>\n"
+      << "    /// <returns>The subscription's id, for <see cref=\"UnsubscribeAsync\"/>.</returns>\n"
+      << "    public " << task << "<ulong> SubscribeAsync(" << p.Base()
+      << "GatewayHandler handler, " << ct << ")\n    {\n"
+      << "        global::System.ArgumentNullException.ThrowIfNull(handler);\n"
+      << "        return _client.SubscribeAsync(TopicKey, " << msg_expr
+      << ".Schema, (batch, envelope) =>\n"
+      << "        {\n"
+      << "            using (batch)\n            {\n"
+      << "                var columns = new global::Apache.Arrow.StructArray(\n"
+      << "                    new global::Apache.Arrow.Types.StructType(batch.Schema.FieldsList), "
+         "batch.Length, batch.Arrays,\n"
+      << "                    global::Apache.Arrow.ArrowBuffer.Empty, 0);\n"
+      << "                handler(" << msg_expr << ".FromArrow(columns, 0), envelope);\n"
+      << "            }\n"
+      << "        }, cancellationToken);\n    }\n\n"
+      << "    /// <summary>Ends a subscription; its handler is not called again.</summary>\n"
+      << "    public " << task << " UnsubscribeAsync(ulong subscriptionId, " << ct
+      << ") => _client.UnsubscribeAsync(subscriptionId, cancellationToken);\n"
+      << "}\n";
+    return o.str();
+}
+
+// The opening every generated C# file shares. The <auto-generated> block is what
+// Roslyn's analysers look for to skip a file, as protoc's own C# output does.
+std::string FileHeader(const FileDescriptor* file) {
+    std::ostringstream o;
+    o << "// <auto-generated>\n"
+      << "//     Generated by fletcher-protoc. DO NOT EDIT.\n"
+      << "//     Source: " << file->name() << "\n"
+      << "// </auto-generated>\n"
+      << "#nullable enable\n\n"
+      << "namespace " << CsNamespace(file) << ";\n";
+    return o.str();
+}
+
+}  // namespace
+
+CsVisitor::CsVisitor(const google::protobuf::FileDescriptor* file,
+                     const OptionMetadataResolver* resolver)
+    : file_(file), cross_file_(CollectCrossFileMessages(file)), resolver_(resolver) {}
+
+std::string CsVisitor::GenerateEnum(const EnumDescriptor* enm) {
+    std::ostringstream o;
+    o << "public enum " << CsTypeName(enm) << " : int\n{\n";
+    for (const auto& member : CsEnumMembers(enm))
+        o << "    " << member.name << " = " << member.number << ",\n";
+    o << "}\n";
+    return o.str();
+}
+
+std::string CsVisitor::GenerateMessage(const Descriptor* msg) {
+    std::ostringstream o;
+    const std::string cls = CsTypeName(msg);
+    o << "public sealed class " << cls << "\n{\n";
+    // The shared flatten walk, as TsVisitor uses it: field-level flatten inlining
+    // and the unsupported-field drops are identical to the schema's field set, so
+    // field i here is column i of the Schema below.
+    const auto records = cpp_backend::BuildFlattenedFieldList(msg);
+    std::vector<Column> columns;
+    std::string pending;  // the first field ToArrow / FromArrow cannot convert
+    std::set<const Descriptor*> visiting{msg};
+    std::set<std::string> taken;  // property names so far, in field order (D-BIND-89)
+    for (size_t i = 0; i < records.size(); ++i) {
+        const auto& rec = records[i];
+        const IrNode& node = *rec.node;
+        const auto field_type = CsFieldTypeOf(node, file_);
+        if (!field_type.has_value()) {
+            // A mapped field without a C# type says why, in the classifier's own words. Since
+            // BIND-6e no field the proto mapping produces lands here; this guards an IR kind
+            // the table does not map yet.
+            std::string why;
+            std::set<const Descriptor*> seen{msg};
+            ClassifyColumn(node, file_, cross_file_, seen, why);
+            o << "    // Not generated yet: field '" << rec.name << "' (" << PendingKind(node)
+              << ") has no C# type here: " << why << ".\n";
+            if (pending.empty()) pending = "field '" + rec.name + "' is " + why + ".";
+            continue;
+        }
+        const bool nullable = field_type->nullable;
+        const std::string property = CsUniquePropertyName(rec.name, msg, taken);
+        o << "    public " << field_type->type_text << (nullable ? "?" : "") << " " << property
+          << " { get; set; }";
+        // A collection starts empty, a plain message field as a default instance (D-BIND-83)
+        // and a non-nullable reference as the proto default, never null, so the property
+        // honours its own annotation. A non-nullable Timestamp or Duration starts at zero in its
+        // column's unit, so a fresh row compares equal to itself read back (D-BIND-93).
+        if (field_type->is_collection || (field_type->is_message && !nullable))
+            o << " = new();";
+        else if (field_type->is_reference && !nullable)
+            o << (field_type->type_text == "string" ? " = \"\";"
+                                                    : " = global::System.Array.Empty<byte>();");
+        else if (!field_type->temporal_default.empty())
+            o << " = " << field_type->temporal_default << ";";  // D-BIND-93
+        o << "\n";
+
+        // Conversion is generated only when every column converts, so no ToArrow can
+        // build a batch its own Schema disagrees with.
+        std::string why;
+        auto column = ClassifyColumn(node, file_, cross_file_, visiting, why);
+        if (!column) {
+            if (pending.empty()) pending = "field '" + rec.name + "' is " + why + ".";
+            continue;
+        }
+        column->index = i;
+        column->property = property;
+        columns.push_back(std::move(*column));
+    }
+
+    // The schema C++ generates for this message, from the same visitor (BIND-6b).
+    // A flatten wrapper has none, in C++ or in the .ipc set, because it is inlined
+    // into the messages that use it.
+    if (fletcher::IsFlattenedWrapper(msg)) {
+        o << "    // No Schema: a flatten wrapper is inlined into the messages that use it.\n";
+    } else {
+        o << "\n    public static global::Apache.Arrow.Schema Schema { get; } = "
+          << RenderMessageSchema(msg, resolver_, "    ") << ";\n";
+        if (!pending.empty())
+            o << "\n    // ToArrow and FromArrow are not generated: " << pending << "\n";
+        else
+            o << "\n" << GenerateToArrow(cls, columns) << "\n" << GenerateFromArrow(cls, columns);
+    }
+    o << "}\n";
+    return o.str();
+}
+
+std::string CsVisitor::GenerateFile() {
+    std::ostringstream o;
+    // Without the <auto-generated> block a consumer building with analysers as errors
+    // fails on our names by design (CA1707 on Outer_Inner and Player_, CA1819 on
+    // byte[], CA1069 on enum aliases).
+    o << FileHeader(file_);
+
+    std::vector<const EnumDescriptor*> enums;
+    for (int i = 0; i < file_->enum_type_count(); ++i) enums.push_back(file_->enum_type(i));
+    for (int i = 0; i < file_->message_type_count(); ++i)
+        CollectEnums(file_->message_type(i), enums);
+    for (const auto* enm : enums) o << "\n" << GenerateEnum(enm);
+
+    for (const auto* msg : fletcher::OrderedMessages(file_)) {
+        o << "\n";
+        if (fletcher::IsRecursive(msg)) {
+            o << "// Skipped: " << CsTypeName(msg) << " is recursive and cannot be represented.\n";
+            continue;
+        }
+        o << GenerateMessage(msg);
+    }
+
+    // One topic class per pub/sub method (D-BIND-77), in the model layer because the
+    // native pair and BIND-8's gateway pair both need it. A method that is not pub/sub
+    // is named with the reason C++ and TypeScript give.
+    for (const auto& p : PubSubMethods(file_)) {
+        o << "\n";
+        if (!p.skip_reason.empty())
+            o << "// Skipped: " << p.service << "." << p.method << " — " << p.skip_reason << "\n";
+        else
+            o << GenerateTopicClass(p);
+    }
+    return o.str();
+}
+
+std::string CsVisitor::GenerateNativeFile() {
+    std::ostringstream o;
+    o << FileHeader(file_);
+    for (const auto& p : PubSubMethods(file_)) {
+        o << "\n";
+        if (!p.skip_reason.empty()) {
+            o << "// Skipped: " << p.service << "." << p.method << " — " << p.skip_reason << "\n";
+            continue;
+        }
+        // The pair publishes through ToArrow and reads through FromArrow, so a message
+        // whose conversion waits gets no pair. A flatten wrapper never gets here: it is
+        // skipped above with C++'s reason (D-BIND-90).
+        std::set<const Descriptor*> visiting;
+        const std::string blocker = ConversionBlocker(p.input, file_, cross_file_, visiting);
+        const std::string msg = CsTypeName(p.input);
+        // B2: in a code expression the class is named in full, so a member of the pair that
+        // shares its name (a message called Topic or Schema) cannot capture it.
+        const std::string msg_expr = CsTypeExpr(p.input);
+        if (!blocker.empty()) {
+            o << "// Skipped: " << p.service << "." << p.method << " — " << msg
+              << " has no ToArrow / FromArrow: " << blocker << "\n";
+            continue;
+        }
+        o << "/// <summary>Receives one <see cref=\"" << msg << "\"/> published on " << p.service
+          << "." << p.method << ", with its attachments.</summary>\n"
+          << "/// <param name=\"row\">The decoded row; the handler owns it.</param>\n"
+          << "/// <param name=\"attachments\">BORROWED for this call only.</param>\n"
+          << "public delegate void " << p.Base() << "Handler(" << msg << " row, " << kNs
+          << "AttachmentsView attachments);\n\n"
+          << GeneratePublisherPair(p, msg, msg_expr) << "\n"
+          << GenerateSubscriberPair(p, msg, msg_expr);
+    }
+    return o.str();
+}
+
+std::optional<std::string> CsPairNameConflict(const FileDescriptor* file, bool native_pair,
+                                              bool gateway_pair) {
+    // Review of BIND-8 (DEBT), refused as D-BIND-100 refuses an accessor's: every type name the
+    // generated C# of this file declares, so `S.M`'s gateway pair and `S.MGateway`'s native one
+    // (both `S_MGatewayPublisher`), or a message named like a pair type, fail here and not as
+    // CS0101 in the consumer's build.
+    std::map<std::string, std::string> declared;  // name -> what declares it
+    auto bare = [](std::string name) { return name.rfind('@', 0) == 0 ? name.substr(1) : name; };
+    auto declare = [&](const std::string& name,
+                       const std::string& what) -> std::optional<std::string> {
+        auto [it, inserted] = declared.emplace(name, what);
+        if (inserted) return std::nullopt;
+        return "csharp: " + what + " and " + it->second + " would both be the C# type '" + name +
+               "' in namespace " + CsNamespace(file) + " (D-BIND-100). Rename one of the two.";
+    };
+    for (const auto* msg : fletcher::OrderedMessages(file)) {
+        if (fletcher::IsRecursive(msg)) continue;
+        if (auto c = declare(bare(CsTypeName(msg)), "message '" + msg->full_name() + "'")) return c;
+    }
+    std::vector<const EnumDescriptor*> enums;
+    for (int i = 0; i < file->enum_type_count(); ++i) enums.push_back(file->enum_type(i));
+    std::vector<const Descriptor*> stack;
+    for (int i = 0; i < file->message_type_count(); ++i) stack.push_back(file->message_type(i));
+    while (!stack.empty()) {
+        const auto* m = stack.back();
+        stack.pop_back();
+        for (int i = 0; i < m->enum_type_count(); ++i) enums.push_back(m->enum_type(i));
+        for (int i = 0; i < m->nested_type_count(); ++i) stack.push_back(m->nested_type(i));
+    }
+    for (const auto* enm : enums)
+        if (auto c = declare(bare(CsTypeName(enm)), "enum '" + enm->full_name() + "'")) return c;
+
+    for (const auto& p : PubSubMethods(file)) {
+        if (!p.skip_reason.empty()) continue;
+        const std::string what = "the pair of " + p.service + "." + p.method;
+        std::vector<std::string> names = {p.Base() + "Topic"};
+        if (native_pair)
+            names.insert(names.end(),
+                         {p.Base() + "Publisher", p.Base() + "Subscriber", p.Base() + "Handler"});
+        if (gateway_pair)
+            names.insert(names.end(),
+                         {p.Base() + "GatewayPublisher", p.Base() + "GatewaySubscriber",
+                          p.Base() + "GatewayHandler"});
+        for (const auto& name : names)
+            if (auto c = declare(name, what)) return c;
+    }
+    return std::nullopt;
+}
+
+std::string CsVisitor::GenerateGatewayFile() {
+    std::ostringstream o;
+    o << FileHeader(file_);
+    for (const auto& p : PubSubMethods(file_)) {
+        o << "\n";
+        if (!p.skip_reason.empty()) {
+            o << "// Skipped: " << p.service << "." << p.method << " — " << p.skip_reason << "\n";
+            continue;
+        }
+        // As the native pair: the gateway pair converts through ToArrow / FromArrow, so a
+        // message whose conversion waits gets no pair, for the same reason.
+        std::set<const Descriptor*> visiting;
+        const std::string blocker = ConversionBlocker(p.input, file_, cross_file_, visiting);
+        const std::string msg = CsTypeName(p.input);
+        const std::string msg_expr = CsTypeExpr(p.input);
+        if (!blocker.empty()) {
+            o << "// Skipped: " << p.service << "." << p.method << " — " << msg
+              << " has no ToArrow / FromArrow: " << blocker << "\n";
+            continue;
+        }
+        o << "/// <summary>Receives one <see cref=\"" << msg << "\"/> published on " << p.service
+          << "." << p.method << " through a gateway, with its envelope.</summary>\n"
+          << "/// <param name=\"row\">The decoded row; the handler owns it.</param>\n"
+          << "/// <param name=\"envelope\">BORROWED: valid until the handler returns.</param>\n"
+          << "public delegate void " << p.Base() << "GatewayHandler(" << msg << " row, " << kGw
+          << "Envelope envelope);\n\n"
+          << GenerateGatewayPublisher(p, msg, msg_expr) << "\n"
+          << GenerateGatewaySubscriber(p, msg, msg_expr);
+    }
+    return o.str();
+}
+
+}  // namespace fletcher::csharp_backend
