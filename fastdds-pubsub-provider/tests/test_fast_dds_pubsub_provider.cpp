@@ -24,6 +24,7 @@
 #include <fletcher/pubsub/delivery_channel.hpp>
 #include <fletcher/pubsub/schema_ipc.hpp>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -569,6 +570,77 @@ TEST(FastDDSPubSubProviderTest, DataSharingOversizedRowDoesNotThrow) {
     };
     EXPECT_NO_THROW(pub_provider.Publish({"datasharing", "oversized"}, oversized));
     EXPECT_NO_THROW(pub_provider.Publish({"datasharing", "oversized"}, MakeEncoder(3)));
+}
+
+// A RELIABLE + KEEP_ALL writer with a finite max_blocking_time drops a row once a matched reader
+// has left its whole history unacknowledged, and Publish must say so instead of returning
+// normally. The reader is a raw Fast DDS one that never takes: KEEP_ALL with two slots of its own,
+// it stops accepting (and so acknowledging) after two rows, the writer's two slots fill, and the
+// next write() waits 50 ms and times out. Data-sharing is off at both ends so acknowledgement runs
+// over the transport, the cross-process shape this was measured in.
+TEST(FastDDSPubSubProviderTest, PublishThrowsWhenTheWriterTimesOutOnAFullHistory) {
+    DocumentParts blocking;
+    blocking.writer_qos = R"(
+        <durability><kind>VOLATILE</kind></durability>
+        <reliability>
+          <kind>RELIABLE</kind>
+          <max_blocking_time><sec>0</sec><nanosec>50000000</nanosec></max_blocking_time>
+        </reliability>
+        <data_sharing><kind>OFF</kind></data_sharing>)";
+    blocking.writer_topic = R"(
+        <historyQos><kind>KEEP_ALL</kind></historyQos>
+        <resourceLimitsQos>
+          <max_samples>2</max_samples>
+          <max_instances>1</max_instances>
+          <max_samples_per_instance>2</max_samples_per_instance>
+          <allocated_samples>2</allocated_samples>
+        </resourceLimitsQos>)";
+    DataWriterMatchListener pub_listener;
+    FastDDSPubSubProvider pub_provider(BoundedConfig(blocking), &pub_listener);
+    pub_provider.CreateTopic({"timeout", "full"}, MakeSchema());
+
+    DomainParticipant* participant =
+        DomainParticipantFactory::get_instance()->create_participant(0, PARTICIPANT_QOS_DEFAULT);
+    ASSERT_NE(participant, nullptr);
+    TypeSupport data_type_support;
+    data_type_support.reset(new internal::FletcherSamplePubSubType(pub_provider.PayloadBytes()));
+    ASSERT_EQ(data_type_support.register_type(participant), RETCODE_OK);
+    Subscriber* subscriber = participant->create_subscriber(SUBSCRIBER_QOS_DEFAULT);
+    ASSERT_NE(subscriber, nullptr);
+    Topic* topic = participant->create_topic("timeout/full", data_type_support.get_type_name(),
+                                             TOPIC_QOS_DEFAULT);
+    ASSERT_NE(topic, nullptr);
+
+    DataReaderQos rqos = DATAREADER_QOS_DEFAULT;
+    rqos.reliability().kind = RELIABLE_RELIABILITY_QOS;
+    rqos.durability().kind = VOLATILE_DURABILITY_QOS;
+    rqos.history().kind = KEEP_ALL_HISTORY_QOS;
+    rqos.resource_limits().max_samples = 2;
+    rqos.resource_limits().max_instances = 1;
+    rqos.resource_limits().max_samples_per_instance = 2;
+    rqos.resource_limits().allocated_samples = 2;
+    rqos.data_sharing().off();
+    DataReader* reader = subscriber->create_datareader(topic, rqos);
+    ASSERT_NE(reader, nullptr);
+    ASSERT_TRUE(pub_listener.AwaitMatch()) << "the data writer never matched the stalled reader";
+
+    std::optional<PubSubError> error;
+    for (int32_t row = 0; row < 20 && !error.has_value(); ++row) {
+        try {
+            pub_provider.Publish({"timeout", "full"}, MakeEncoder(row));
+        } catch (const PubSubError& e) {
+            error.emplace(e);
+        }
+    }
+    ASSERT_TRUE(error.has_value()) << "20 rows into a stalled reader's full history, and every "
+                                      "Publish returned normally";
+    EXPECT_EQ(error->status(), PubSubStatus::kTransportFailure) << error->what();
+    EXPECT_THAT(error->what(), testing::HasSubstr("timed out"));
+
+    subscriber->delete_datareader(reader);
+    participant->delete_subscriber(subscriber);
+    participant->delete_topic(topic);
+    DomainParticipantFactory::get_instance()->delete_participant(participant);
 }
 
 // DataSharingKind::ON makes Fast DDS reject an endpoint whose type is not

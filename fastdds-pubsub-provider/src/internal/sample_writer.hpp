@@ -45,9 +45,9 @@ inline void WriteSample(eprosima::fastdds::dds::DataWriter* writer,
     // ASYNCHRONOUS_PUBLISH_MODE only hands the finished change to the flow controller), so a
     // failed encode has already recorded its reason by now and `transport` may live on the
     // stack. Fast DDS does not propagate a serialize failure into write()'s return code, and
-    // rc != OK is itself an ordinary outcome (no matched reader, backpressure) — so the
-    // diagnostic, not rc, is the reliable signal that THIS row failed to encode. Checked first
-    // so the caller gets the cause rather than a bare return code.
+    // rc != OK is mostly an ordinary outcome (no matched reader) — so the diagnostic, not rc, is
+    // the reliable signal that THIS row failed to encode. Checked first so the caller gets the
+    // cause rather than a bare return code.
     if (!transport.serialize_error.empty()) {
         // kInternal, NOT kTransportFailure: the only thing recorded here is the caller's encoder
         // throwing, and the transport is blameless. A binding that retries kTransportFailure must
@@ -60,6 +60,17 @@ inline void WriteSample(eprosima::fastdds::dds::DataWriter* writer,
         throw PubSubError(PubSubStatus::kInternal, "FastDDS: failed to publish to '" +
                                                        writer->get_topic()->get_name() +
                                                        "': " + transport.serialize_error);
+    }
+    // TIMEOUT is the one non-OK return that is a lost row, not an ordinary outcome: with the
+    // history full of samples a matched reader has not acknowledged, write() blocked for the
+    // profile's max_blocking_time (Fast DDS default 100 ms) and then dropped this row. Logging it
+    // left the caller with a successful Publish for a row no reader will ever get, so it throws,
+    // as kTransportFailure (the row did not go out; publishing it again may well succeed).
+    if (rc == eprosima::fastdds::dds::RETCODE_TIMEOUT) {
+        throw PubSubError(PubSubStatus::kTransportFailure,
+                          "FastDDS: writer on '" + writer->get_topic()->get_name() +
+                              "' timed out waiting for history space (max_blocking_time) and "
+                              "dropped the row: a matched reader is not keeping up");
     }
     if (rc != eprosima::fastdds::dds::RETCODE_OK) {
         EPROSIMA_LOG_ERROR(FLETCHER_PUBLICATION, "writer on '" << writer->get_topic()->get_name()
