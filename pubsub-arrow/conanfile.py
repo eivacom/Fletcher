@@ -9,14 +9,14 @@ import os
 
 class FletcherPubsubArrowConan(ConanFile):
     name = "fletcher-pubsub-arrow"
-    version = "0.5.1-alpha"
+    version = "0.5.2-alpha"
     description = "Arrow C++ wrappers around the fletcher-pubsub Publisher/Subscriber"
     license = "LGPL-3.0-or-later"
     package_type = "static-library"
     settings = "os", "compiler", "build_type", "arch"
 
-    options = {"run_tests": [True, False]}
-    default_options = {"run_tests": False}
+    options = {"run_tests": [True, False], "fPIC": [True, False]}
+    default_options = {"run_tests": False, "fPIC": True}
 
     exports_sources = (
         "CMakeLists.txt",
@@ -26,13 +26,17 @@ class FletcherPubsubArrowConan(ConanFile):
         "tests/*",
     )
 
+    def config_options(self):
+        if self.settings.os == "Windows":
+            self.options.rm_safe("fPIC")
+
     def requirements(self):
         # pubsub types appear in the public PubSubArrow interface (Publisher,
         # Subscriber, PubSubProvider, Attachments) and arrow-bridge types
         # (Codec, ArrowRow) appear in encode/decode paths, so headers must be
         # transitively visible.
-        self.requires("fletcher-pubsub/0.5.1-alpha", transitive_headers=True)
-        self.requires("fletcher-arrow-bridge/0.5.1-alpha", transitive_headers=True, transitive_libs=True)
+        self.requires("fletcher-pubsub/0.5.2-alpha", transitive_headers=True)
+        self.requires("fletcher-arrow-bridge/0.5.2-alpha", transitive_headers=True, transitive_libs=True)
         self.requires("arrow/23.0.1", transitive_headers=True, transitive_libs=True)
         # Resolve the same zlib conflict that arrow-bridge handles: arrow pins
         # 1.2.13, openssl pulls 1.3.1.

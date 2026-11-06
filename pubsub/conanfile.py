@@ -9,14 +9,14 @@ import os
 
 class FletcherPubsubConan(ConanFile):
     name = "fletcher-pubsub"
-    version = "0.5.1-alpha"
+    version = "0.5.2-alpha"
     description = "Fletcher PubSub library"
     license = "LGPL-3.0-or-later"
     package_type = "static-library"
     settings = "os", "compiler", "build_type", "arch"
 
-    options = {"run_tests": [True, False]}
-    default_options = {"run_tests": False}
+    options = {"run_tests": [True, False], "fPIC": [True, False]}
+    default_options = {"run_tests": False, "fPIC": True}
 
     exports_sources = (
         "CMakeLists.txt",
@@ -26,6 +26,10 @@ class FletcherPubsubConan(ConanFile):
         "tests/*",
         "third_party/*",
     )
+
+    def config_options(self):
+        if self.settings.os == "Windows":
+            self.options.rm_safe("fPIC")
 
     def requirements(self):
         self.requires("fletcher-core/0.5.0-alpha", transitive_headers=True)
