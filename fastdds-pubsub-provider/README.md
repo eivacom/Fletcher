@@ -586,6 +586,14 @@ as absent.
   lost). Cross-process runs (`integration-tests/gateway-fastdds-ts`) never did. Under the built-in
   `KEEP_LAST`, a lagging same-process reader loses the oldest samples instead of costing the
   publisher a stall.
+- **A RELIABLE + KEEP_ALL writer with a finite `max_blocking_time` drops a row when a reader falls a
+  full history behind, and `Publish` throws for it.** Fast DDS's own default is 100 ms: once the
+  writer's history is full of samples a matched reader has not acknowledged, `write()` waits that
+  long for space, then gives up and drops the row (`RETCODE_TIMEOUT`). `Publish` reports that as
+  `PubSubError(kTransportFailure)` so the caller knows the row did not go out; set
+  `max_blocking_time` to `DURATION_INFINITY` (as `lossless` does) if the publisher should wait
+  instead. Measured with a Fletcher 0.5.1 publisher and a slower cross-process subscriber: up to 2
+  of 30 000 rows lost, with `Publish` returning normally before this was reported.
 - **Fast DDS 3.4.0's data-sharing reader thread can spin forever, and a reader deleted while it
   spins never finishes deleting.** Every reader that data-sharing engages for owns a
   `DataSharingListener` thread (`dds.dsha.N`) that polls the publisher's shared-memory ring and
