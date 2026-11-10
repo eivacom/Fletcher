@@ -3,9 +3,12 @@
 //
 #include "ts_backend_visitor.hpp"
 
+#include <cctype>
+#include <map>
 #include <optional>
 #include <set>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -19,7 +22,6 @@ namespace fletcher::ts_backend {
 namespace {
 
 using google::protobuf::Descriptor;
-using google::protobuf::FieldDescriptor;
 using ir::IrNode;
 using ir::NodeKind;
 
@@ -36,32 +38,6 @@ std::string StripProtoSuffix(const std::string& proto_name) {
     return base;
 }
 
-std::string DotToSlash(const std::string& s) {
-    std::string out;
-    for (char c : s) {
-        if (c == '.')
-            out += '/';
-        else
-            out += c;
-    }
-    return out;
-}
-
-// The declared wrapper name to render for a field, or nullptr to use the IR's own
-// struct identity. Recovers today's byte output for SINGULAR flatten-wrapper list
-// fields: `StructListWrapper foo = N;` flattens to List<Struct(Leaf)> in the IR,
-// but the TS emits the declared IStructListWrapper[] / StructListWrapper.fields.
-// A REPEATED flatten-wrapper (a nested list) keeps the inner leaf name (ILeaf[][]),
-// so it is gated out here. The name comes from Descriptor::name() (a
-// language-neutral proto fact), never from a TS/C++ string on an IR node.
-const Descriptor* DeclaredWrapperFor(const FieldDescriptor* source_field) {
-    if (source_field == nullptr) return nullptr;
-    if (source_field->type() != FieldDescriptor::TYPE_MESSAGE) return nullptr;
-    if (source_field->is_repeated()) return nullptr;
-    if (!fletcher::IsFlattenedWrapper(source_field->message_type())) return nullptr;
-    return source_field->message_type();
-}
-
 const IrNode* ListElement(const IrNode& node) {
     if (node.kind == NodeKind::LIST) return std::get<ir::ListNode>(node.node).element.get();
     return std::get<ir::FixedSizeListNode>(node.node).element.get();
@@ -71,41 +47,97 @@ const Descriptor* StructIdentity(const IrNode& node) {
     return std::get<ir::StructNode>(node.node).identity.descriptor;
 }
 
-// IR-native cross-file import discovery (no flat-bridge projection). Recursively
-// find every struct message referenced by `node` whose file differs from
-// `context_file` and record that file's name. WKT/wrapper scalars carry no struct
-// identity, so they contribute nothing (matching today's scan, which only imports
-// STRUCT/REPEATED_STRUCT/NESTED_LIST-leaf/MAP-value message files). Cross-file
-// symbol resolution itself is GIR-8 scope; this only feeds the placeholder import
-// lines and must yield the same (empty, for the coverage fixture) set as before.
-void CollectStructImportFiles(const IrNode& node,
-                              const google::protobuf::FileDescriptor* context_file,
-                              std::set<std::string>& imports) {
+// The OTHER files whose messages a field's emitted TypeScript names (D-BIND-118, D-BIND-122). It
+// walks `node` as InterfaceType and AppendComposite render it. A struct is named by reference
+// (`<ns>.I<Msg>` and `<ns>.<Msg>.fields`), so its own fields are not walked: the imported file
+// resolves those. WKT/wrapper scalars carry no struct identity and import nothing.
+void CollectImportedFiles(const IrNode& node, const google::protobuf::FileDescriptor* context_file,
+                          std::set<std::string>& files) {
     switch (node.kind) {
         case NodeKind::SCALAR:
         case NodeKind::UNSUPPORTED:
             return;
         case NodeKind::LIST:
         case NodeKind::FIXED_SIZE_LIST:
-            CollectStructImportFiles(*ListElement(node), context_file, imports);
+            CollectImportedFiles(*ListElement(node), context_file, files);
             return;
         case NodeKind::STRUCT: {
             const Descriptor* d = StructIdentity(node);
-            if (d->file() != context_file) imports.insert(d->file()->name());
+            if (d->file() != context_file) files.insert(d->file()->name());
             return;
         }
         case NodeKind::MAP: {
             const auto& mp = std::get<ir::MapNode>(node.node);
-            CollectStructImportFiles(*mp.key, context_file, imports);
-            CollectStructImportFiles(*mp.value, context_file, imports);
+            CollectImportedFiles(*mp.key, context_file, files);
+            CollectImportedFiles(*mp.value, context_file, files);
             return;
         }
     }
 }
 
+// The namespace another file is imported as (D-BIND-122): its path without `.proto`, every
+// character that is not a letter or digit made `_`, then `_fletcher` (`dir/dep.proto` ->
+// `dir_dep_fletcher`). One namespace per file, so no imported name can clash with a local one,
+// another file's, or the runtime's `TypedSchema` / `WireTypeId`.
+std::string NamespaceAlias(const std::string& proto_file) {
+    std::string alias = StripProtoSuffix(proto_file);
+    for (char& c : alias) {
+        if (!std::isalnum(static_cast<unsigned char>(c))) c = '_';
+    }
+    return alias + "_fletcher";
+}
+
+// The module specifier of `to`'s generated file as `from`'s generated file imports it: relative
+// to `from`'s directory (review B1), since each `.fletcher.ts` is written at its `.proto`'s path.
+std::string RelativeModulePath(const std::string& from, const std::string& to) {
+    auto segments = [](const std::string& path) {
+        std::vector<std::string> out;
+        std::string part;
+        for (char c : path) {
+            if (c == '/') {
+                out.push_back(part);
+                part.clear();
+            } else {
+                part += c;
+            }
+        }
+        out.push_back(part);
+        return out;
+    };
+    std::vector<std::string> from_dir = segments(from);
+    from_dir.pop_back();  // the importing file's own name
+    const std::vector<std::string> target = segments(StripProtoSuffix(to) + ".fletcher.js");
+
+    size_t common = 0;
+    while (common < from_dir.size() && common + 1 < target.size() &&
+           from_dir[common] == target[common]) {
+        ++common;
+    }
+    std::string out;
+    for (size_t i = common; i < from_dir.size(); ++i) out += "../";
+    if (out.empty()) out = "./";
+    for (size_t i = common; i < target.size(); ++i) {
+        out += target[i];
+        if (i + 1 < target.size()) out += '/';
+    }
+    return out;
+}
+
 }  // namespace
 
-TsVisitor::TsVisitor(const google::protobuf::FileDescriptor* file) : file_(file) {}
+TsVisitor::TsVisitor(const google::protobuf::FileDescriptor* file,
+                     std::map<const Descriptor*, std::string> schema_ipc)
+    : file_(file), schema_ipc_(std::move(schema_ipc)) {}
+
+std::string TsVisitor::SchemaName(const Descriptor* msg) const {
+    if (msg->file() == file_) return TsSchemaConstName(msg);
+    return NamespaceAlias(msg->file()->name()) + "." + TsSchemaConstName(msg);
+}
+
+std::string TsVisitor::InterfaceName(const Descriptor* msg) const {
+    if (msg->file() == file_) return TsInterfaceName(msg);
+    return NamespaceAlias(msg->file()->name()) + "." + TsInterfaceName(msg);
+}
 
 std::string TsVisitor::WireType(const IrNode& node) {
     switch (node.kind) {
@@ -126,32 +158,25 @@ std::string TsVisitor::WireType(const IrNode& node) {
     return "WireTypeId.UNKNOWN";
 }
 
-std::string TsVisitor::InterfaceType(const IrNode& node, const Descriptor* declared_struct) {
+// A struct is always rendered by its IR identity, the message the wire carries (D-BIND-119).
+// A singular flatten wrapper (`StructListWrapper foo = N;`) is List<Struct(Leaf)> in the IR and
+// on the wire, so it is ILeaf[] / Leaf.fields; naming the wrapper there (IStructListWrapper[] /
+// StructListWrapper.fields, as GIR-7 did to keep the pre-IR output) described a list of the
+// WRAPPER, which no other language writes or reads.
+std::string TsVisitor::InterfaceType(const IrNode& node) {
     switch (node.kind) {
         case NodeKind::SCALAR: {
             const auto& s = std::get<ir::ScalarNode>(node.node);
             return TsLookupScalar(s.logical_type, s.enum_identity).ts_type_text;
         }
         case NodeKind::LIST:
-        case NodeKind::FIXED_SIZE_LIST: {
-            // The recovered wrapper name applies ONLY at the outer singular-wrapper
-            // level: a singular flatten wrapper that collapses to List<Struct> emits
-            // the wrapper name (IStructListWrapper[]), but one that collapses to a
-            // NESTED list keeps the leaf identity (ILeaf[][]). So only thread
-            // declared_struct into a DIRECT struct element; drop it for deeper lists.
-            const IrNode& elem = *ListElement(node);
-            const Descriptor* elem_declared =
-                elem.kind == NodeKind::STRUCT ? declared_struct : nullptr;
-            return InterfaceType(elem, elem_declared) + "[]";
-        }
-        case NodeKind::STRUCT: {
-            const Descriptor* d = declared_struct ? declared_struct : StructIdentity(node);
-            return TsInterfaceName(d);
-        }
+        case NodeKind::FIXED_SIZE_LIST:
+            return InterfaceType(*ListElement(node)) + "[]";
+        case NodeKind::STRUCT:
+            return InterfaceName(StructIdentity(node));
         case NodeKind::MAP: {
             const auto& mp = std::get<ir::MapNode>(node.node);
-            return "Map<" + InterfaceType(*mp.key, nullptr) + ", " +
-                   InterfaceType(*mp.value, nullptr) + ">";
+            return "Map<" + InterfaceType(*mp.key) + ", " + InterfaceType(*mp.value) + ">";
         }
         case NodeKind::UNSUPPORTED:
             return "unknown";
@@ -159,52 +184,42 @@ std::string TsVisitor::InterfaceType(const IrNode& node, const Descriptor* decla
     return "unknown";
 }
 
-void TsVisitor::AppendComposite(std::ostringstream& o, const IrNode& node,
-                                const Descriptor* declared_struct) {
+void TsVisitor::AppendComposite(std::ostringstream& o, const IrNode& node) {
     switch (node.kind) {
         case NodeKind::SCALAR:
         case NodeKind::UNSUPPORTED:
             return;
         case NodeKind::LIST:
-        case NodeKind::FIXED_SIZE_LIST: {
-            // See InterfaceType: declared_struct applies only to a DIRECT struct
-            // element (List<Struct>), never through a nested list.
-            const IrNode& elem = *ListElement(node);
-            const Descriptor* elem_declared =
-                elem.kind == NodeKind::STRUCT ? declared_struct : nullptr;
-            o << ", element: " << ElementDescriptor(elem, elem_declared);
+        case NodeKind::FIXED_SIZE_LIST:
+            o << ", element: " << ElementDescriptor(*ListElement(node));
             return;
-        }
-        case NodeKind::STRUCT: {
-            const Descriptor* d = declared_struct ? declared_struct : StructIdentity(node);
-            o << ", fields: " << TsSchemaConstName(d) << ".fields";
+        case NodeKind::STRUCT:
+            o << ", fields: " << SchemaName(StructIdentity(node)) << ".fields";
             return;
-        }
         case NodeKind::MAP: {
             const auto& mp = std::get<ir::MapNode>(node.node);
-            o << ", mapKey: " << ElementDescriptor(*mp.key, nullptr)
-              << ", mapValue: " << ElementDescriptor(*mp.value, nullptr);
+            o << ", mapKey: " << ElementDescriptor(*mp.key)
+              << ", mapValue: " << ElementDescriptor(*mp.value);
             return;
         }
     }
 }
 
-std::string TsVisitor::ElementDescriptor(const IrNode& node, const Descriptor* declared_struct) {
+std::string TsVisitor::ElementDescriptor(const IrNode& node) {
     std::ostringstream o;
     o << "{ name: '', fieldNumber: 0, wireType: " << WireType(node) << ", nullable: false";
-    AppendComposite(o, node, declared_struct);
+    AppendComposite(o, node);
     o << " }";
     return o.str();
 }
 
 std::string TsVisitor::DescriptorLiteral(const IrNode& node, std::string_view name,
-                                         int32_t field_number, const Descriptor* declared_struct,
-                                         std::string_view indent) {
+                                         int32_t field_number, std::string_view indent) {
     std::ostringstream o;
     o << indent << "{ name: '" << name << "', fieldNumber: " << field_number
       << ", wireType: " << WireType(node)
       << ", nullable: " << (node.facts.nullable ? "true" : "false");
-    AppendComposite(o, node, declared_struct);
+    AppendComposite(o, node);
     o << " },\n";
     return o.str();
 }
@@ -223,8 +238,7 @@ std::string TsVisitor::GenerateMessage(const Descriptor* msg) {
 
     o << "export interface " << iface << " {\n";
     for (const auto& rec : fields) {
-        const Descriptor* declared = DeclaredWrapperFor(rec.source_field);
-        std::string ts_type = InterfaceType(*rec.node, declared);
+        std::string ts_type = InterfaceType(*rec.node);
         if (rec.node->facts.nullable) ts_type += " | null";
         o << "  " << rec.name << ": " << ts_type << ";\n";
     }
@@ -233,13 +247,17 @@ std::string TsVisitor::GenerateMessage(const Descriptor* msg) {
     o << "export const " << schema_name << ": TypedSchema<" << iface << "> = {\n"
       << "  fields: [\n";
     for (const auto& rec : fields) {
-        const Descriptor* declared = DeclaredWrapperFor(rec.source_field);
-        o << DescriptorLiteral(*rec.node, rec.name, rec.field_number, declared, "    ");
+        o << DescriptorLiteral(*rec.node, rec.name, rec.field_number, "    ");
     }
     o << "  ],\n"
       << "  protoPackage: '" << msg->file()->package() << "',\n"
-      << "  protoMessage: '" << msg->name() << "',\n"
-      << "};\n\n";
+      << "  protoMessage: '" << msg->name() << "',\n";
+    if (const auto ipc = schema_ipc_.find(msg); ipc != schema_ipc_.end()) {
+        // D-BIND-130: the native declaration's own Arrow IPC bytes, so createTopic announces
+        // the schema with full fidelity.
+        o << "  schemaIpc: '" << ipc->second << "',\n";
+    }
+    o << "};\n\n";
 
     return o.str();
 }
@@ -252,22 +270,21 @@ std::string TsVisitor::GenerateFile() {
       << "import type { TypedSchema } from '@eiva/fletcher-gateway-client';\n"
       << "import { WireTypeId } from '@eiva/fletcher-gateway-client';\n\n";
 
-    // Cross-file placeholder imports (GIR-8 owns real symbol resolution). Fully
-    // IR-native: walk the shared flattened field list and inspect each IR node for
-    // referenced struct message files — no flat-bridge projection. Ordered
-    // lexically by the std::set, as before.
-    std::set<std::string> ts_imports;
+    // Cross-file imports (D-BIND-118, D-BIND-122): each other file whose messages a field
+    // names, as ONE namespace, from its generated module by a path relative to this file.
+    // Walks the shared flattened field list, IR-native. Ordered lexically by file.
+    std::set<std::string> imported;
     auto messages = fletcher::OrderedMessages(file_);
     for (const auto* msg : messages) {
         if (fletcher::IsRecursive(msg)) continue;
         for (const auto& rec : cpp_backend::BuildFlattenedFieldList(msg))
-            CollectStructImportFiles(*rec.node, file_, ts_imports);
+            CollectImportedFiles(*rec.node, file_, imported);
     }
-    for (const auto& proto_file : ts_imports) {
-        o << "import { " << "/* cross-file types */ " << "} from './"
-          << StripProtoSuffix(proto_file) << ".fletcher.js';\n";
+    for (const auto& proto_file : imported) {
+        o << "import * as " << NamespaceAlias(proto_file) << " from '"
+          << RelativeModulePath(file_->name(), proto_file) << "';\n";
     }
-    if (!ts_imports.empty()) o << "\n";
+    if (!imported.empty()) o << "\n";
 
     // Emit messages in dependency order. Unlike the C++ schema path, the TS walk
     // does NOT skip IsFlattenedWrapper messages — they get their own interface +
@@ -280,8 +297,17 @@ std::string TsVisitor::GenerateFile() {
         o << GenerateMessage(msg);
     }
 
-    // Topic constants for service methods.
-    std::set<const Descriptor*> generated_msgs(messages.begin(), messages.end());
+    // Topic constants for service methods. A method is checked against the messages C++
+    // generates a class for, so recursive messages and flatten wrappers left out: the shared
+    // ValidateServiceMethod then gives C++'s reason and TypeScript writes C++'s line
+    // (D-BIND-182, D-BIND-90's TypeScript half). Before, every message was in the set, so a
+    // wrapper's method got a topic constant no C++ or C# code ever uses.
+    std::set<const Descriptor*> generated_msgs;
+    for (const auto* msg : messages) {
+        if (!fletcher::IsRecursive(msg) && !fletcher::IsFlattenedWrapper(msg))
+            generated_msgs.insert(msg);
+    }
+    std::vector<const google::protobuf::MethodDescriptor*> pubsub;
     for (int si = 0; si < file_->service_count(); ++si) {
         const auto* svc = file_->service(si);
         for (int mi = 0; mi < svc->method_count(); ++mi) {
@@ -293,16 +319,124 @@ std::string TsVisitor::GenerateFile() {
                 continue;
             }
 
-            const std::string pkg = file_->package();
-            std::string topic_path;
-            if (!pkg.empty()) topic_path += DotToSlash(pkg) + "/";
-            topic_path += svc->name() + "/" + method->name();
-
+            // The segments every backend emits, joined with '/' (D-BIND-180): the gateway
+            // splits this string on '/' into the list C++'s TopicSegments() holds, so a
+            // TypeScript client and a C++ or C# publisher of one method share a topic
+            // (TopicPath.DottedPackageAgreesAcrossBackends).
             o << "export const " << svc->name() << "_" << method->name() << "Topic = '"
-              << topic_path << "';\n\n";
+              << fletcher::TopicKey(fletcher::MethodTopicSegments(method)) << "';\n\n";
+            pubsub.push_back(method);
         }
     }
 
+    // The pairs, appended after everything above so the output before them is unchanged
+    // (D-BIND-7). Their import may stand here: ES imports are hoisted, wherever they are written.
+    // It is aliased, so no message this file declares can clash with it (BIND-T review T5), and
+    // written only when a pair uses it (review M7: a method can get `// No pair:` instead).
+    std::string pairs;
+    bool any_pair = false;
+    for (const auto* method : pubsub) {
+        std::string pair = GeneratePair(method);
+        any_pair = any_pair || pair.rfind("// No pair:", 0) != 0;
+        pairs += pair;
+    }
+    if (any_pair) {
+        o << "// Publisher and subscriber per pub/sub method (D-BIND-181).\n"
+          << "import type {\n"
+          << "  BatchCallback as __FletcherBatchCallback,\n"
+          << "  BatchOptions as __FletcherBatchOptions,\n"
+          << "  FletcherClient as __FletcherClient,\n"
+          << "} from '@eiva/fletcher-gateway-client';\n\n";
+    }
+    o << pairs;
+
+    return o.str();
+}
+
+std::string TsVisitor::GeneratePair(const google::protobuf::MethodDescriptor* method) {
+    const std::string name = method->service()->name() + "_" + method->name();
+    const std::string where = method->service()->name() + "." + method->name();
+    const Descriptor* input = method->input_type();
+
+    // GenerateMessage writes nothing for a message without a field it can carry, so there is
+    // no TypedSchema to bind; C++ still writes its pair over an empty row.
+    if (cpp_backend::BuildFlattenedFieldList(input).empty()) {
+        return "// No pair: " + where + " — input message '" + input->name() +
+               "' has no field TypeScript can carry\n\n";
+    }
+
+    const std::string topic = name + "Topic";
+    const std::string schema = SchemaName(input);
+    const std::string row = InterfaceName(input);
+
+    std::ostringstream o;
+    // The statics are annotated, as every other declaration in the file is, so the file also
+    // compiles under `isolatedDeclarations` (BIND-T review M6).
+    const std::string statics =
+        "  /** The topic's key. */\n"
+        "  static readonly topic: typeof " +
+        topic + " = " + topic +
+        ";\n"
+        "  /** The schema rows travel under. */\n"
+        "  static readonly schema: TypedSchema<" +
+        row + "> = " + schema +
+        ";\n\n"
+        "  private readonly client: __FletcherClient;\n\n";
+    o << "/**\n"
+      << " * Publishes `" << row << "` rows on " << where << " through a gateway.\n"
+      << " *\n"
+      << " * Borrows a connected `FletcherClient`, which must outlive it: one client serves every\n"
+      << " * pair of an application. Create it with `create`, which declares the topic with\n"
+      << " * `" << schema << "`.\n"
+      << " */\n"
+      << "export class " << name << "Publisher {\n"
+      << statics << "  private constructor(client: __FletcherClient) {\n"
+      << "    this.client = client;\n"
+      << "  }\n\n"
+      << "  /** Declares the topic on the gateway with the row schema, and returns a publisher "
+         "for it. */\n"
+      << "  static async create(client: __FletcherClient): Promise<" << name << "Publisher> {\n"
+      << "    await client.createTopic(" << topic << ", " << schema << ");\n"
+      << "    return new " << name << "Publisher(client);\n"
+      << "  }\n\n"
+      << "  /** Publishes one row, and resolves when the gateway has acknowledged it. */\n"
+      << "  publish(row: " << row << ", attachments?: Map<string, Uint8Array>): Promise<void> {\n"
+      << "    return this.client.publish(" << topic << ", " << schema << ", row, attachments);\n"
+      << "  }\n"
+      << "}\n\n";
+
+    o << "/**\n"
+      << " * Receives `" << row << "` rows published on " << where << ", through a gateway.\n"
+      << " *\n"
+      << " * Borrows a connected `FletcherClient`, which must outlive it. A callback that throws "
+         "or\n"
+      << " * whose promise rejects, or a row that does not decode, is reported through the "
+         "client's\n"
+      << " * `onError`, or `console.error` without one.\n"
+      << " */\n"
+      << "export class " << name << "Subscriber {\n"
+      << statics << "  constructor(client: __FletcherClient) {\n"
+      << "    this.client = client;\n"
+      << "  }\n\n"
+      << "  /** Delivers each row to `handler`; resolves to the subscription's id. */\n"
+      << "  subscribe(\n"
+      << "    handler: (row: " << row << ", attachments: Map<string, Uint8Array>) => void,\n"
+      << "  ): Promise<bigint> {\n"
+      << "    return this.client.subscribe(" << topic << ", " << schema << ", handler);\n"
+      << "  }\n\n"
+      << "  /** Delivers rows in windows (D-BIND-183); resolves to the subscription's id. */\n"
+      << "  subscribeBatched(\n"
+      << "    handler: __FletcherBatchCallback<" << row << ">,\n"
+      << "    options?: __FletcherBatchOptions,\n"
+      << "  ): Promise<bigint> {\n"
+      << "    return this.client.subscribeBatched(" << topic << ", " << schema
+      << ", handler, options);\n"
+      << "  }\n\n"
+      << "  /** Ends a subscription at once; a batched one delivers its pending window first. */\n"
+      << "  unsubscribe(subscriptionId: bigint): Promise<void> {\n"
+      << "    return this.client.unsubscribe(subscriptionId);\n"
+      << "  }\n"
+      << "}\n\n";
     return o.str();
 }
 

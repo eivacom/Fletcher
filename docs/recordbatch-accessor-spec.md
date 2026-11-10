@@ -38,7 +38,9 @@ takes a whole `RecordBatch` in its constructor, **cheaply verifies it matches th
 message's schema once**, does all the casting once up front, and then exposes
 typed, zero-copy getters that index straight into the cached concrete column
 arrays — eliminating the boilerplate and the per-cell allocation. The accessor is
-emitted for **C++ and Rust**, selected by a plugin argument.
+emitted for **C++ and Rust**, selected by a plugin argument. Round BIND added a
+**C#** accessor and view under the same contract; where C# differs, §11 says how
+and why.
 
 ## §1 — Scope & the pure-add-on contract
 
@@ -63,6 +65,7 @@ Two new comma-separated `--fletcher_opt` tokens, parsed in
 |---|---|---|
 | `accessor` | C++ column accessor classes | `<stem>.fletcher.accessor.pb.h` |
 | `rust` | Rust column accessor structs | `<stem>.fletcher.rs` |
+| `csharp_accessor` (round BIND, §11; requires `csharp`) | C# `<Class>View` and `<Class>Accessor` | `<stem>.fletcher.arrow.cs`, `<stem>.fletcher.accessor.cs` |
 
 Absent ⇒ nothing new is written. The new files are **separate** from the existing
 `.fletcher.pb.h` / `.fletcher.arrow.pb.h` / `.fletcher.ts` / `.<Message>.ipc`
@@ -308,6 +311,10 @@ applied, and the accessor must respect each:
   path **must** `.slice()` each child by the struct's offset —
   `s.column(i).slice(s.offset(), s.len())` — or every getter on a sliced struct
   would misalign.
+- **C# (Apache.Arrow)** — C++'s case, settled by measurement (D-BIND-10):
+  `StructArray.Fields` returns every child already windowed to the struct's
+  `[offset, len)`, null counts adjusted, so the C# accessor does **not** re-slice
+  (§11).
 
 Per-row getters then index by `row` directly. No setter / builder / mutation API
 exists.
@@ -353,7 +360,7 @@ accessor lives in that file's generated output. Both languages must resolve it:
   conventional:
   - A message's accessor lives at `crate::fletcher_gen::<pkg-path>::<Class>Accessor`,
     where `<pkg-path>` is the proto `package` split on `.` into nested modules
-    (`navisuite.sensors` → `navisuite::sensors`). This matches the C++
+    (`myapp.telemetry` → `myapp::telemetry`). This matches the C++
     `fletcher_gen::<pkg>` namespacing 1:1. A message with **no** package sits
     directly under `crate::fletcher_gen`.
   - The package — not the file — is the namespace, so two imported files that share
@@ -431,5 +438,58 @@ item are green acceptance tests added in the same item.
   The mapping emits exactly: the scalar types in the README table, `list` (32-bit
   offsets), `map`, and `struct`. The gate validates against those; an unexpected
   layout is a validation error, never silently accepted.
-- Languages beyond C++ and Rust (TypeScript already has its descriptor path).
+- Languages beyond C++, Rust and C# (TypeScript already has its descriptor path).
 - Teaching the schema generator to bake any new (domain) metadata into schemas.
+
+## §11 — C# (round BIND)
+
+`--fletcher_opt=csharp_accessor`, given with `csharp` (D-BIND-99), emits per message a
+`<Class>View` in `<stem>.fletcher.arrow.cs` and a `<Class>Accessor` in
+`<stem>.fletcher.accessor.cs`, beside the generated model class. The contract of §3 to §7 holds:
+column-oriented and cast-once, a positional type-only gate with the actual-null check, both sources
+(`RecordBatch` and `StructArray`) for every message, generic metadata, coverage to the view's.
+`CapstoneTests` in [`integration-tests/protoc-dotnet`](../integration-tests/protoc-dotnet/README.md)
+is C#'s arm of the capstone (D-BIND-11): the same proto, fixture and committed oracle as the C++
+and Rust arms. What differs, and why:
+
+- **The factories are `TryMake`** (D-BIND-94): `TryMake(RecordBatch, out <Class>Accessor?, out
+  string? error)` and `TryMake(StructArray, …)` return `false` with the reason and never throw on
+  bad input, a null argument included. This is the documented deviation, and it is one of shape
+  only: the plans first called it a deviation from a C++ `Make` that throws, but C++'s `Make`
+  returns `arrow::Result` and Rust's `try_new` a `Result`, so all three return the reason, each in
+  its language's form for a fallible factory.
+- **The surfaces are split** (D-BIND-98): the accessor has no per-field getters, only `TryMake`,
+  `Length`, `IsNull(row)`, `At(row)` (the view), `ToRow(row)` (the model class) and the metadata
+  (`SchemaMetadata`, `FieldMetadata(int)`, `FieldMetadata(string)`, each empty and never null when
+  absent, and `Metadata(key)`; D-BIND-95). The view, a `readonly struct` of the accessor and a row,
+  has only the field properties, named and typed as on the model class (a C# `enum`, the lossless
+  `Timestamp` and `Duration`, `T?`, a nullable struct field as `<Inner>View?`), so no field name
+  can collide with a member: a column loop reads `acc.At(row).Speed` where C++ reads
+  `acc.speed(row)`. The row index is `int`, as Apache.Arrow indexes.
+- **Collections are borrowed windows** (D-BIND-101): `ListView<T>` and `MapView<TKey, TValue>`
+  from `Eiva.Fletcher.Model`, with `Count`, an indexer, `IsNull(j)` (a map: `Key(j)`, `Value(j)`,
+  `ValueIsNull(j)`), an allocation-free `foreach` and `ToList()`. A null element reads as C++ reads
+  it: a scalar as its proto default beside `IsNull(j)`, a struct element or message map value as a
+  null `<Inner>View?`. A string or bytes field also has a getter returning its bytes as a
+  `ReadOnlySpan<byte>`, which copies nothing (`NameUtf8` for a string, `NameSpan` for bytes;
+  D-BIND-97, D-BIND-102).
+- **The accessor borrows its source** (D-BIND-103): it keeps the source's arrays, whose buffers
+  `RecordBatch.Dispose` frees, so the accessor, its views, windows and spans are valid only while
+  the source is not disposed. C++'s accessor owns its buffers (§7); .NET has no equivalent short of
+  an accessor that owns, and must dispose, the batch.
+- **`StructArray` windowing and its cost.** Apache.Arrow's `StructArray.Fields` returns children
+  already windowed to the struct's slice, so nothing is re-sliced (D-BIND-10; forcing test
+  `GeneratedAccessorTests.AStructArrayAtANonZeroOffsetReadsItsOwnRows`). Measured with it, on
+  Apache.Arrow 23: reading `Fields` allocates 64 bytes on **every** read, although it returns the
+  same cached list. So the view reads the accessor's cast-once columns rather than going through a
+  `StructArray`, and the model's `FromArrow` reads `Fields` once per call (D-BIND-97, D-BIND-102).
+- **Wider than C++ in two places, so nothing a C++ or Rust producer may write is refused:** a list
+  of lists with a scalar leaf is read (C++ refuses it; the depth cap of 3 is C++'s, D-BIND-104),
+  and the actual-null gate counts a child's nulls only where its struct parent is valid, as Arrow
+  lets a null struct's children hold anything (D-BIND-106). A message C# cannot support still gets
+  its accessor, as in C++: the field has a comment instead of a property, and `TryMake` refuses
+  with the reason (D-BIND-96).
+- **Cross-file types** are read through the other file's own accessor, so every file a file imports
+  is generated with `csharp_accessor` too (D-BIND-105). The support types generated code uses
+  (`IArrowRows`, the element readers) are public but hidden from IntelliSense and not an extension
+  point (D-BIND-107).

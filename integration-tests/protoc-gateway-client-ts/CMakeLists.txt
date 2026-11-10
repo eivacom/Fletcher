@@ -60,6 +60,42 @@ foreach(_stem IN LISTS PROTO_STEMS)
     list(APPEND GENERATED_HEADERS "${_cpp_hdr}" "${_ts_out}")
 endforeach()
 
+# BIND-T-3 (D-BIND-184): the generated pub/sub pair, TypeScript only. pair.proto's method
+# returns google.protobuf.Empty, so protoc needs the well-known types' include directory, found
+# beside the protoc executable as gateway-fastdds-ts finds it.
+foreach(_cfg RELEASE DEBUG MINSIZEREL RELWITHDEBINFO)
+    get_target_property(_protoc_loc protobuf::protoc IMPORTED_LOCATION_${_cfg})
+    if(_protoc_loc AND NOT _protoc_loc MATCHES "NOTFOUND")
+        get_filename_component(_protoc_dir "${_protoc_loc}" DIRECTORY)
+        get_filename_component(PROTOBUF_WKT_INCLUDE_DIR "${_protoc_dir}/../include" ABSOLUTE)
+        break()
+    endif()
+endforeach()
+if(NOT PROTOBUF_WKT_INCLUDE_DIR)
+    get_target_property(_protoc_loc protobuf::protoc IMPORTED_LOCATION)
+    if(_protoc_loc AND NOT _protoc_loc MATCHES "NOTFOUND")
+        get_filename_component(_protoc_dir "${_protoc_loc}" DIRECTORY)
+        get_filename_component(PROTOBUF_WKT_INCLUDE_DIR "${_protoc_dir}/../include" ABSOLUTE)
+    else()
+        message(FATAL_ERROR "Cannot determine protobuf WKT include dir")
+    endif()
+endif()
+
+set(_pair_ts "${GENERATED_TS_DIR}/pair.fletcher.ts")
+add_custom_command(
+    OUTPUT  "${_pair_ts}"
+    COMMAND "$<TARGET_FILE:protobuf::protoc>"
+            "--plugin=protoc-gen-fletcher=$<TARGET_FILE:fletcher-protoc::plugin>"
+            "--fletcher_out=ts:${GENERATED_TS_DIR}"
+            "-I" "${PROTO_DIR}"
+            "-I" "${PROTOBUF_WKT_INCLUDE_DIR}"
+            "${PROTO_DIR}/pair.proto"
+    DEPENDS "${PROTO_DIR}/pair.proto" fletcher-protoc::plugin
+    COMMENT "protoc-gen-fletcher (TS): pair.proto"
+    VERBATIM
+)
+list(APPEND GENERATED_HEADERS "${_pair_ts}")
+
 add_custom_target(generate_headers ALL DEPENDS ${GENERATED_HEADERS})
 
 add_executable(emit_vectors src/emit_vectors.cpp)

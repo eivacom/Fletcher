@@ -1,0 +1,492 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+name: ci.dotnet
+
+concurrency:
+  group: ci.dotnet-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: >-
+          The commit to check out, or empty for the default (the merge ref on a pull
+          request). ci.pr.yml passes the PR head when it builds the BIND-9a preview
+          bundle, so every artifact names one commit, the one the bundle names
+          (D-BIND-145; the package-bundle job checks the two are one tree).
+        required: false
+        type: string
+        default: ''
+      devcontainer-image:
+        description: >-
+          Pre-built devcontainer image reference (e.g.
+          eivaorg/fletcher-devcontainer:<sha>). The caller is
+          responsible for invoking ci.setup-devcontainer-image.yml; this
+          workflow only consumes the resulting image. ci.pr.yml passes the
+          image it built once and shares across all callers; the
+          cd.dotnet.yml wrapper does the same for tag-push releases. Only the
+          Linux job needs it; the Windows job runs natively on the
+          windows-2022 runner.
+        required: true
+        type: string
+      package-version:
+        description: >-
+          The packages' full version, replacing Directory.Build.props'
+          VersionPrefix and VersionSuffix (BIND-9a: the per-push preview bundle
+          passes 0.6.0-pr.129.<run>, so every build has a version of its own,
+          D-BIND-138). Empty keeps the props' version.
+        required: false
+        type: string
+        default: ''
+
+# The two-job split is the one ci.integration-test.protoc-gen-fletcher-rust.yml
+# uses: Linux inside the devcontainer image (the same environment every other
+# Fletcher Linux build runs in, and the one a developer gets from "Reopen in
+# Container"), Windows natively with actions/setup-dotnet. Both legs restore with
+# --locked-mode, so a dependency that changed without its packages.lock.json
+# fails here rather than resolving differently on the two platforms.
+#
+# BOTH SPARSE CHECKOUTS INCLUDE protoc/tests/golden, AND THAT IS NOT A STRAY
+# ENTRY. Fletcher.Tests stages those .ipc files beside the test binary and opens
+# a codec over every one of them (SchemaIpcTests), which is the only check in the
+# tree that the descriptors the generator emits are descriptors the binding's
+# codec accepts. Without the entry the MSBuild glob matches nothing, the goldens
+# are silently absent, and the theory over them has no cases - which is exactly
+# how BIND-3c first went red here while passing on every developer machine, where
+# the whole repo is present. Cone mode also brings the files directly in protoc/
+# and protoc/tests/ along; that is a few hundred KB and is the price of the
+# check. A new consumer of a path outside this lane's checkout must add it HERE
+# and to ci.pr.yml's dotnet filter, in the same commit.
+#
+# integration-tests/protoc-coverage/golden is another (BIND-6d-2). Fletcher.Tests
+# compiles the plugin's C# for coverage.proto committed there and compares what it
+# encodes with the .v1.bin files beside it, which the C++ generated class wrote: C#
+# against C++ on the wire. Without the entry both globs match nothing and the
+# comparison has no cases.
+#
+# integration-tests/copy-probe is the second such entry (D-BIND-62). The copy
+# oracle's C# leg, Fletcher.CopyOracle.Tests, loads the PROBE shim, which c-abi
+# builds only under `with_probe_shim` and which links that test-only package. So
+# the loop creates it before c-abi, builds c-abi with the option, and passes both
+# shims in: the shipped one to Fletcher.Tests, the probe to Fletcher.CopyOracle.Tests.
+# The shipped shim in that package is the same build as the release one; the
+# option only ADDS the probe beside it.
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+          sparse-checkout: |
+            dotnet
+            .github
+            .conan-profiles
+            core
+            pubsub
+            fastdds-pubsub-provider
+            xrcedds-pubsub-provider
+            c-abi
+            integration-tests/copy-probe
+            protoc/tests/golden
+            integration-tests/protoc-coverage/golden
+            gateway/src
+            gateway/deployers
+            scripts
+            gateway-client-ts/src
+
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
+        with:
+          image: ${{ inputs.devcontainer-image }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # The image carries the pinned .NET SDK (DOTNET_SDK_VERSION in
+      # .devcontainer/Dockerfile) and dotnet/global.json pins the same band, so
+      # there is no toolchain install step here at all — the Node pattern, not
+      # the Rust one (D-BIND-21).
+      # BIND-3a: the managed suite now LOADS the native shim, so this lane builds
+      # it. One container invocation for both halves, because the shim is found
+      # inside the Conan cache and that cache is container-local.
+      #
+      # No Conan remote hosts the fletcher-* packages, so each dependency recipe
+      # has to be created before the next can resolve it. arrow-bridge is NOT in
+      # the loop: it is the c-abi lane byte-identity oracle, never linked into the
+      # shim, so this lane has no use for it.
+      #
+      # The find is checked rather than trusted. The two native rows in
+      # Fletcher.Tests fail rather than skip when the shim is absent, so an empty
+      # path here would surface as two confusing test failures instead of one
+      # clear lane failure naming the real cause.
+      - name: Build and check the native shim, then restore, build, test
+        shell: bash
+        run: |
+          docker run --rm             -v "${GITHUB_WORKSPACE}:/workspace"             -w /workspace             -e CI=true             fletcher-build             bash -c '
+              set -e
+              PROFILE=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release
+              for COMPONENT in core pubsub fastdds-pubsub-provider xrcedds-pubsub-provider integration-tests/copy-probe c-abi; do
+                OPTS=""
+                if [ "$COMPONENT" = c-abi ]; then OPTS="-o &:with_probe_shim=True"; fi
+                echo "::group::conan create $COMPONENT"
+                (cd /workspace/$COMPONENT && conan create . --build=missing -pr:a=$PROFILE $OPTS)
+                echo "::endgroup::"
+              done
+
+              SHIM=$(find ~/.conan2/p -path "*/p/lib/libfletcher-c-abi.so" -type f -print -quit)
+              if [ -z "$SHIM" ]; then
+                echo "::error::libfletcher-c-abi.so not found in the Conan cache after conan create"
+                exit 1
+              fi
+              echo "staging shim: $SHIM"
+              PROBE=$(find ~/.conan2/p -path "*/p/lib/libfletcher-c-abi-probe.so" -type f -print -quit)
+              if [ -z "$PROBE" ]; then
+                echo "::error::libfletcher-c-abi-probe.so not found in the Conan cache after conan create"
+                exit 1
+              fi
+              echo "staging probe shim: $PROBE"
+
+              # BIND-9a-0 (D-BIND-134): the shim must load nothing but the OS and the
+              # C/C++ runtime; then its third-party notice, read off the same graph
+              # (with_probe_shim, as built above: it adds only first-party packages),
+              # and both handed to the pack job.
+              NATIVE=/workspace/dotnet/native/linux-x64
+              mkdir -p "$NATIVE"
+              cp "$SHIM" "$NATIVE/"
+              # BIND-9b-1 (D-BIND-157): the packaged copy ships without its symbol table
+              # (3.5 MB of 14.6 MB that nothing loads); the exported C ABI must be exactly
+              # what it was, and from here on the tests, the AOT smoke and the checks all
+              # use this copy, the one that ships. The Conan package keeps its symbols.
+              EXPORTS_BEFORE=$(nm -D --defined-only "$NATIVE/libfletcher-c-abi.so" | cut -d" " -f3 | sort)
+              strip --strip-unneeded "$NATIVE/libfletcher-c-abi.so"
+              EXPORTS_AFTER=$(nm -D --defined-only "$NATIVE/libfletcher-c-abi.so" | cut -d" " -f3 | sort)
+              if [ -z "$EXPORTS_AFTER" ] || [ "$EXPORTS_BEFORE" != "$EXPORTS_AFTER" ]; then
+                echo "::error::stripping changed the shim exports"
+                exit 1
+              fi
+              echo "stripped: $(stat -c %s "$SHIM") -> $(stat -c %s "$NATIVE/libfletcher-c-abi.so") bytes, $(echo "$EXPORTS_AFTER" | wc -l) exports unchanged"
+              SHIM="$NATIVE/libfletcher-c-abi.so"
+              bash /workspace/scripts/check_shim_dependencies.sh "$SHIM"
+              # BIND-9b-7 (review L14, D-BIND-173): the lockfile of the same graph, third-party
+              # packages only, which a release attaches for the relinking route; checked to
+              # resolve exactly that graph from ConanCenter in an empty Conan home.
+              LOCK="$NATIVE/fletcher-shim-linux-x64.conan.lock"
+              conan install --requires="fletcher-c-abi/[*, include_prerelease]" -o "fletcher-c-abi/*:with_probe_shim=True" \
+                --deployer=/workspace/gateway/deployers/third_party_licenses.py --deployer-folder="$NATIVE" \
+                -c tools.graph:skip_binaries=False -pr:a=$PROFILE --lockfile-out="$LOCK"
+              test -s "$NATIVE/THIRD-PARTY-LICENSES.txt"
+              conan lock remove --requires="fletcher-*/*" --lockfile="$LOCK" --lockfile-out="$LOCK"
+              bash /workspace/scripts/check_conan_lockfile.sh "$LOCK" "$PROFILE"
+
+              cd /workspace/dotnet
+              echo "::group::dotnet --info"
+              dotnet --info
+              echo "::endgroup::"
+              dotnet restore Fletcher.slnx --locked-mode
+              dotnet build Fletcher.slnx -c Release --no-restore -p:FletcherNativeShim="$SHIM" -p:FletcherProbeShim="$PROBE"
+              # One results file per target framework (D-BIND-170): with a fixed LogFileName
+              # the net10.0 leg overwrote the file of the net8.0 leg, so the per-test
+              # timings of a failure never reached the uploaded artifact. (No apostrophes
+              # here: this script is single-quoted.)
+              dotnet test Fletcher.slnx -c Release --no-build --logger "trx;LogFilePrefix=linux"
+
+              # D-BIND-81: a consumer of the generated pair, published with NativeAOT for both
+              # TFMs. Warnings are errors (Directory.Build.props), so any trim or AOT warning
+              # fails the publish; the binary then runs against the shim and exits non-zero
+              # unless exactly the rows sent come back. gcc links: the image has no clang.
+              # Then again over fastdds (BIND-9b-3, D-BIND-88): two processes, so a delivery
+              # enters the AOT-compiled code on a Fast DDS thread (Program.cs says why).
+              for TFM in net8.0 net10.0; do
+                echo "::group::NativeAOT publish and run, $TFM"
+                dotnet publish tests/Fletcher.AotSmoke -c Release -f $TFM -r linux-x64 --no-restore -p:CppCompilerAndLinker=gcc
+                OUT=tests/Fletcher.AotSmoke/bin/Release/$TFM/linux-x64/publish
+                cp "$SHIM" "$OUT/"
+                "$OUT/Fletcher.AotSmoke"
+                "$OUT/Fletcher.AotSmoke" fastdds
+                echo "::endgroup::"
+              done
+            '
+
+      # Handed to the pack job, which packs once for both RIDs (BIND-9a-0).
+      - name: Upload the Linux shim, its notice and its lockfile
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: dotnet-native-linux-x64
+          path: dotnet/native/linux-x64/
+          retention-days: 1
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: dotnet-test-results-linux
+          path: dotnet/**/TestResults/*.trx
+          retention-days: 5
+
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+          sparse-checkout: |
+            dotnet
+            .github
+            .conan-profiles
+            core
+            pubsub
+            fastdds-pubsub-provider
+            xrcedds-pubsub-provider
+            c-abi
+            integration-tests/copy-probe
+            protoc/tests/golden
+            integration-tests/protoc-coverage/golden
+            gateway/src
+            gateway/deployers
+            scripts
+            gateway-client-ts/src
+
+      # global-json-file, not a literal version: dotnet/global.json is the single
+      # pin, and the runner's own pre-installed SDKs must not be what decides
+      # which one this job uses.
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: dotnet/global.json
+
+      - name: Install Conan
+        uses: ./.github/actions/conan-install
+
+      # BIND-3a: the managed suite loads the native shim, so this lane builds it.
+      # Same component order as the c-abi lane, minus arrow-bridge, which is that
+      # lane's byte-identity oracle and is never linked into the shim.
+      - name: Build the native shim
+        shell: bash
+        run: |
+          set -e
+          # Absolute, because integration-tests/copy-probe is two levels deep.
+          PROFILE="$PWD/.conan-profiles/Windows-msvc194-x86_64-Release"
+          for COMPONENT in core pubsub fastdds-pubsub-provider xrcedds-pubsub-provider integration-tests/copy-probe c-abi; do
+            OPTS=()
+            if [ "$COMPONENT" = c-abi ]; then OPTS=(-o "&:with_probe_shim=True"); fi
+            echo "::group::conan create $COMPONENT"
+            (cd "$COMPONENT" && conan create . --build=missing -pr:a="$PROFILE" "${OPTS[@]}")
+            echo "::endgroup::"
+          done
+
+      # Checked, not trusted: the native rows fail rather than skip when the shim
+      # is absent, so an empty path here would surface as test failures instead of
+      # a lane failure that names the cause.
+      - name: Locate the shim
+        id: shim
+        shell: bash
+        run: |
+          set -e
+          SHIM=$(find ~/.conan2/p -path '*/p/bin/fletcher-c-abi.dll' -type f -print -quit)
+          if [ -z "$SHIM" ]; then
+            echo "::error::fletcher-c-abi.dll not found in the Conan cache after conan create"
+            exit 1
+          fi
+          echo "staging shim: $SHIM"
+          echo "path=$SHIM" >> "$GITHUB_OUTPUT"
+          PROBE=$(find ~/.conan2/p -path '*/p/bin/fletcher-c-abi-probe.dll' -type f -print -quit)
+          if [ -z "$PROBE" ]; then
+            echo "::error::fletcher-c-abi-probe.dll not found in the Conan cache after conan create"
+            exit 1
+          fi
+          echo "staging probe shim: $PROBE"
+          echo "probe=$PROBE" >> "$GITHUB_OUTPUT"
+
+      # BIND-9a-0 (D-BIND-134): as the Linux leg. dumpbin comes with the MSVC toolset
+      # the shim was built with; vswhere finds it. The notice is read off the same graph.
+      - name: Check the shim's dependencies, stage it and its notice
+        shell: bash
+        run: |
+          set -e
+          VS=$("/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe" -latest -products '*' \
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | tr -d '\r')
+          DUMPBIN=$(find "$VS/VC/Tools/MSVC" -path '*/bin/Hostx64/x64/dumpbin.exe' -print -quit)
+          if [ -z "$DUMPBIN" ]; then
+            echo "::error::dumpbin.exe not found under $VS"
+            exit 1
+          fi
+          bash scripts/check_shim_dependencies.sh "${{ steps.shim.outputs.path }}" "$DUMPBIN"
+          NATIVE="$PWD/dotnet/native/win-x64"
+          mkdir -p "$NATIVE"
+          cp "${{ steps.shim.outputs.path }}" "$NATIVE/"
+          # BIND-9b-7 (review L14, D-BIND-173): the lockfile, as on the Linux leg.
+          LOCK="$NATIVE/fletcher-shim-win-x64.conan.lock"
+          conan install --requires="fletcher-c-abi/[*, include_prerelease]" -o "fletcher-c-abi/*:with_probe_shim=True" \
+            --deployer=gateway/deployers/third_party_licenses.py --deployer-folder="$NATIVE" \
+            -c tools.graph:skip_binaries=False -pr:a="$PWD/.conan-profiles/Windows-msvc194-x86_64-Release" \
+            --lockfile-out="$LOCK"
+          test -s "$NATIVE/THIRD-PARTY-LICENSES.txt"
+          conan lock remove --requires="fletcher-*/*" --lockfile="$LOCK" --lockfile-out="$LOCK"
+          bash scripts/check_conan_lockfile.sh "$LOCK" "$PWD/.conan-profiles/Windows-msvc194-x86_64-Release"
+
+      - name: Upload the Windows shim, its notice and its lockfile
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: dotnet-native-win-x64
+          path: dotnet/native/win-x64/
+          retention-days: 1
+
+      - name: Restore, build, test
+        shell: bash
+        working-directory: dotnet
+        env:
+          CI: "true"
+        run: |
+          set -e
+          dotnet --info
+          dotnet restore Fletcher.slnx --locked-mode
+          dotnet build Fletcher.slnx -c Release --no-restore -p:FletcherNativeShim="${{ steps.shim.outputs.path }}" -p:FletcherProbeShim="${{ steps.shim.outputs.probe }}"
+          # One results file per target framework (D-BIND-170), as on the Linux leg.
+          dotnet test Fletcher.slnx -c Release --no-build --logger "trx;LogFilePrefix=windows"
+
+      # BIND-9b-3 (D-BIND-88, D-BIND-160): the Linux leg's D-BIND-81 smoke, on Windows. ILC
+      # compiles, the MSVC linker links (the ILCompiler package finds it with vswhere, which
+      # the runner image has on PATH), and the binary runs against the shim this leg built.
+      # Warnings are errors here too, so a trim or AOT warning only Windows raises fails.
+      # Then over fastdds, as on Linux.
+      - name: NativeAOT publish and run
+        shell: bash
+        working-directory: dotnet
+        run: |
+          set -e
+          for TFM in net8.0 net10.0; do
+            echo "::group::NativeAOT publish and run, $TFM"
+            dotnet publish tests/Fletcher.AotSmoke -c Release -f $TFM -r win-x64 --no-restore
+            OUT=tests/Fletcher.AotSmoke/bin/Release/$TFM/win-x64/publish
+            cp "${{ steps.shim.outputs.path }}" "$OUT/"
+            "$OUT/Fletcher.AotSmoke.exe"
+            "$OUT/Fletcher.AotSmoke.exe" fastdds
+            echo "::endgroup::"
+          done
+
+      # No pack here: the packages are packed ONCE, by the pack job below, from both
+      # legs' shims; packing per leg would produce two artifacts claiming to be the
+      # same thing. Windows earns its place in this lane by RUNNING the tests — it is
+      # the primary development platform, and the P/Invoke surface these packages
+      # will carry is the part most likely to differ between the two.
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: dotnet-test-results-windows
+          path: dotnet/**/TestResults/*.trx
+          retention-days: 5
+
+  # BIND-9a-0 (D-BIND-134): the packages are packed ONCE, here, with both legs' shims
+  # inside Eiva.Fletcher.Interop (runtimes/linux-x64/native/, runtimes/win-x64/native/)
+  # and LICENSE + THIRD-PARTY-LICENSES.txt in every package (D-BIND-140). The two legs'
+  # notices are read off the same recipe on two platforms; they must name the same
+  # libraries, or the one notice shipped would be wrong for one of the shims.
+  pack:
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+          sparse-checkout: |
+            dotnet
+            .github
+            scripts
+            integration-tests/preview-bundle-consumer
+
+      # BIND-9a-4: the package README's code is the consumer test's code, region for region,
+      # so what the README shows compiles and runs (the package-consumer job runs it).
+      - name: Check the README's snippets
+        run: |
+          C=integration-tests/preview-bundle-consumer/dotnet/PreviewConsumer
+          python3 scripts/check_readme_snippets.py dotnet/README.package.md \
+            "$C/fix.proto" "$C/PreviewConsumer.csproj" "$C/Program.cs"
+
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
+        with:
+          image: ${{ inputs.devcontainer-image }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Download the Linux shim, its notice and its lockfile
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: dotnet-native-linux-x64
+          path: dotnet/native/linux-x64
+
+      - name: Download the Windows shim, its notice and its lockfile
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: dotnet-native-win-x64
+          path: dotnet/native/win-x64
+
+      - name: Stage one notice, the LICENSE and COPYING
+        shell: bash
+        run: |
+          set -e
+          # The notice's own list of libraries: the bullets between its first two rules,
+          # not the licence texts after them, which have bullets of their own.
+          listed() { awk '/^=+$/ {n++; next} n == 1 && /^  \* / {print}' "$1" | sort; }
+          if ! diff <(listed dotnet/native/linux-x64/THIRD-PARTY-LICENSES.txt) <(listed dotnet/native/win-x64/THIRD-PARTY-LICENSES.txt); then
+            echo "::error::the Linux and Windows shims are built from different third-party libraries (above); one notice cannot cover both"
+            exit 1
+          fi
+          mkdir -p dotnet/native/licences
+          cp dotnet/native/linux-x64/THIRD-PARTY-LICENSES.txt dotnet/native/licences/
+          cp LICENSE COPYING dotnet/native/licences/
+          listed dotnet/native/licences/THIRD-PARTY-LICENSES.txt
+          # Compiled into the shim from source, so not in the Conan graph: their texts
+          # come from the fletcher-* packages that vendor them, and must be here; since
+          # BIND-9b-7 (D-BIND-166) also what Fast DDS compiles in from its own thirdparty/,
+          # and nanoarrow's and flatcc's Apache NOTICE files.
+          bash scripts/check_third_party_notice.sh dotnet/native/licences/THIRD-PARTY-LICENSES.txt \
+            nanoarrow micro-cdr micro-xrce-dds-client fast-dds nlohmann-json filewatch taocpp-pegtl "boost 1.73.0"
+
+      # The commit the packages name in their README and nuspec (BIND-9a-2, D-BIND-145): the one
+      # checked out, `ref` when ci.pr passes the PR head for the preview bundle (whose
+      # package-bundle job checks it is the tree that was built), else the event's commit.
+      - name: Pack
+        shell: bash
+        env:
+          SOURCE_COMMIT: ${{ inputs.ref || github.sha }}
+        run: |
+          VERSION_ARG=""
+          if [ -n "${{ inputs.package-version }}" ]; then VERSION_ARG="-p:Version=${{ inputs.package-version }}"; fi
+          docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace/dotnet -e CI=true fletcher-build bash -c "
+              set -e
+              dotnet restore Fletcher.slnx --locked-mode
+              for P in Fletcher Fletcher.Interop Fletcher.Model Fletcher.GatewayClient; do
+                dotnet pack src/\$P/\$P.csproj -c Release --no-restore -o /workspace/dotnet/artifacts $VERSION_ARG \
+                  -p:FletcherShimLinuxX64=/workspace/dotnet/native/linux-x64/libfletcher-c-abi.so \
+                  -p:FletcherShimWinX64=/workspace/dotnet/native/win-x64/fletcher-c-abi.dll \
+                  -p:FletcherLicenceDir=/workspace/dotnet/native/licences \
+                  -p:FletcherSourceCommit=$SOURCE_COMMIT
+              done
+              # BIND-9b-7 (review L14, D-BIND-173): the two lockfiles travel with the packages,
+              # so a release attaches them and a preview bundle carries them in nuget/.
+              for RID in linux-x64 win-x64; do
+                cp /workspace/dotnet/native/\$RID/fletcher-shim-\$RID.conan.lock /workspace/dotnet/artifacts/
+              done
+            "
+
+      # D-BIND-13 and D-BIND-134 on the PACKED packages: Interop carries exactly the two
+      # shims, nothing else carries native assets or depends on a package that does (the
+      # gateway client's former Package.GatewayClientHasNoRuntimesFolder step), no probe
+      # shim, both licence files in every package, and (BIND-9a-2) a README naming the
+      # floors, the relinking route and this commit.
+      - name: Check the packages
+        shell: bash
+        env:
+          SOURCE_COMMIT: ${{ inputs.ref || github.sha }}
+        run: bash scripts/check_dotnet_packages.sh dotnet/artifacts "$SOURCE_COMMIT"
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: dotnet-packages
+          path: |
+            dotnet/artifacts/*.nupkg
+            dotnet/artifacts/*.snupkg
+            dotnet/artifacts/*.conan.lock
+          retention-days: 5

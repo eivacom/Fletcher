@@ -24,7 +24,10 @@
   },
   "files": [
     "bin/",
-    "README.md"
+    "README.md",
+    "LICENSE",
+    "COPYING",
+    "THIRD-PARTY-LICENSES.txt"
   ],
   "engines": {
     "node": ">=18"

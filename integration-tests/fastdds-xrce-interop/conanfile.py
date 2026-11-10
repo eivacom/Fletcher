@@ -12,7 +12,7 @@ class FastDdsXrceInteropIntegrationConan(ConanFile):
 
     Verifies that the fletcher-xrcedds-pubsub-provider (MCU-tier,
     XRCE-DDS protocol over UDP to an Agent) and the
-    fletcher-fastdds-pubsub-provider (vessel-tier, full DDS) can
+    fletcher-fastdds-pubsub-provider (workstation/server tier, full DDS) can
     exchange data end-to-end via a running MicroXRCEAgent. Neither
     provider's unit tests exercise the bridged path; this suite is the
     only test that proves topic naming, envelope serialisation, and the
@@ -47,7 +47,7 @@ class FastDdsXrceInteropIntegrationConan(ConanFile):
         # include directories. UAGENT_USE_SYSTEM_FASTDDS/FASTCDR still find those
         # targets and the Agent then fails to compile `#include <fastcdr/Cdr.h>`.
         # Requiring Fast DDS here restores headers=True for both.
-        self.requires("fast-dds/3.4.0")
+        self.requires("fast-dds/3.4.3")
 
     def layout(self):
         cmake_layout(self)

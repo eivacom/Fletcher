@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-import { readdirSync } from 'node:fs';
+import { readdirSync, type Dirent } from 'node:fs';
 import { join } from 'node:path';
 
 // Recursively search `dir` for a file named exactly `name`, returning the
@@ -13,7 +13,7 @@ import { join } from 'node:path';
 // `build/...`. Rather than enumerate every possible layout, the suites
 // locate the spawned binary by name, which is stable across both.
 export function findBinaryRecursive(dir: string, name: string): string | null {
-  let entries: ReturnType<typeof readdirSync>;
+  let entries: Dirent[];
   try {
     entries = readdirSync(dir, { withFileTypes: true });
   } catch {

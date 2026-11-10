@@ -44,6 +44,18 @@ struct PublishData {
         } catch (...) {  // NOLINT(bugprone-empty-catch) — a lost diagnostic beats a throw here.
         }
     }
+
+    // Set when the failure was the row NOT FITTING the transport's bound, as opposed to the
+    // caller's encoder failing. Publish reports the first as kPayloadTooLarge and the second as
+    // kInternal: the seam spec makes that mapping normative, so a caller can tell "make the row
+    // smaller or raise max_payload_bytes" from "your encoder is broken".
+    mutable bool serialize_overflow = false;
+
+    // The overflow form of RecordSerializeError, under the same exception-safety contract.
+    void RecordOverflow(const char* what) const noexcept {
+        serialize_overflow = true;
+        RecordSerializeError(what);
+    }
 };
 
 // What deserialize() fills, decoded in place and moved on by the listener.

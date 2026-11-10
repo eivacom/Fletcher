@@ -286,6 +286,16 @@ TEST(IrTest, BuildsLanguageNeutralIr) {
     oo->set_name("choice");
     AddField(host, "a", 8, FieldDescriptorProto::TYPE_INT32)->set_oneof_index(0);
     AddField(host, "b", 9, FieldDescriptorProto::TYPE_STRING)->set_oneof_index(0);
+    // map<string,StructListWrapper> -> Unsupported (D-BIND-85)
+    auto* e_sw = host->add_nested_type();
+    e_sw->set_name("MapWrapperEntry");
+    e_sw->mutable_options()->set_map_entry(true);
+    AddField(e_sw, "key", 1, FieldDescriptorProto::TYPE_STRING);
+    AddField(e_sw, "value", 2, FieldDescriptorProto::TYPE_MESSAGE)
+        ->set_type_name(".StructListWrapper");
+    AddField(host, "map_wrapper", 10, FieldDescriptorProto::TYPE_MESSAGE,
+             FieldDescriptorProto::LABEL_REPEATED)
+        ->set_type_name(".Host.MapWrapperEntry");
 
     const FileDescriptor* nfile = pool.BuildFile(nfp);
     ASSERT_NE(nfile, nullptr);
@@ -337,6 +347,13 @@ TEST(IrTest, BuildsLanguageNeutralIr) {
     ASSERT_EQ(oneof_ir.kind, ir::NodeKind::UNSUPPORTED);
     EXPECT_FALSE(AsUnsupported(oneof_ir).reason.empty());
     EXPECT_NE(AsUnsupported(oneof_ir).reason.find("oneof"), std::string::npos);
+
+    // map<string,StructListWrapper> -> Unsupported{reason}: a flatten wrapper has
+    // no class in any backend, so a Struct value would name a type that is absent
+    const auto map_wrapper = ir::BuildFieldIr(h->field(9));
+    ASSERT_EQ(map_wrapper.kind, ir::NodeKind::UNSUPPORTED);
+    EXPECT_NE(AsUnsupported(map_wrapper).reason.find("flatten wrapper"), std::string::npos)
+        << AsUnsupported(map_wrapper).reason;
 
     // ---- (6) Unsupported reasons ------------------------------------------
     FileDescriptorProto ufp;

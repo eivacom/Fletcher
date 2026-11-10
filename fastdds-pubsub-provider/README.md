@@ -2,7 +2,7 @@
 
 Implements `fletcher::PubSubProvider` using [eProsima Fast DDS](https://fast-dds.docs.eprosima.com/) (RTPS). Transports `EncodedRow` byte buffers over a DDS domain; the built-in QoS is a RELIABLE, VOLATILE, KEEP_LAST 25 latest-value stream, with named profiles for other shapes.
 
-> **Targets Fast DDS 3.4.x** (`fast-dds/3.4.0` from Conan Center). The provider's public API names **no eProsima type at all**: it is configured by `fletcher::ProviderConfig` plus a Fast DDS XML profiles document, so the Fast DDS headers are *not* exposed transitively and a consumer never needs them (see [QoS configuration](#qos-configuration) and [Consuming the package](#consuming-the-package)). The XML you write is Fast DDS 3.4's own profiles grammar, and v3 consolidated the legacy `eprosima::fastrtps` namespace into `eprosima::fastdds`, which matters if you paste profiles out of a 2.x application.
+> **Targets Fast DDS 3.4.x** (`fast-dds/3.4.3` from Conan Center, 3.4.0 until BIND-9b-7, D-BIND-167). The provider's public API names **no eProsima type at all**: it is configured by `fletcher::ProviderConfig` plus a Fast DDS XML profiles document, so the Fast DDS headers are *not* exposed transitively and a consumer never needs them (see [QoS configuration](#qos-configuration) and [Consuming the package](#consuming-the-package)). The XML you write is Fast DDS 3.4's own profiles grammar, and v3 consolidated the legacy `eprosima::fastrtps` namespace into `eprosima::fastdds`, which matters if you paste profiles out of a 2.x application.
 
 ## How it works
 
@@ -73,14 +73,21 @@ The reader side of this was `off()` for a time — the one place this provider o
 
 The provider was not the one dropping them: the pre-schema buffer in place when this was measured logged on every discard, and that log never fired. That a 0.5 MB pool is reliable where a 6.6 MB one — the built-in profile's pool at the time, `max_samples` 100 — is not points below the provider as well.
 
-Both ends ship `AUTOMATIC` again. The table above is kept as the historical measurement, and `integration-tests/gateway-fastdds-ts` is the guard going forward: it re-verifies the cross-process case, three runs at a time, because this defect is invisible to the provider's own test suite — that suite is single-process, so Fast DDS serves it over intra-process delivery, which bypasses data-sharing altogether. The `__schema` channel runs on the same Fast DDS default (AUTOMATIC) — see the Fast DDS 3.4.0 data-sharing reader defect in [Known limits of the document](#known-limits-of-the-document).
+Both ends ship `AUTOMATIC` again. The table above is kept as the historical measurement, and `integration-tests/gateway-fastdds-ts` is the guard going forward: it re-verifies the cross-process case, three runs at a time, because this defect is invisible to the provider's own test suite — that suite is single-process, so Fast DDS serves it over intra-process delivery, which bypasses data-sharing altogether. Its TS → C++ case still hits the defect intermittently in CI (`peer RECV lines: []`), so by owner ruling 2026-10-16 it retries the publish → receive exchange **once** with a fresh client and row: a pass on the retry logs that the first attempt hit this defect, and a second loss fails naming it and pointing here. The real fix is a Fast DDS upgrade; when one carries it, drop the retry. The `__schema` channel's READER is the exception since BIND-9b-6 (D-BIND-165): data-sharing OFF, because its one sample, written once, reaches a reader that matches later only through the backlog this defect drops, and losing it left a subscription that never delivered anything (the cross-language lane's subscriber-first row, on the Linux runner: schema reader matched, no schema). Its writer, and every data endpoint, keep `AUTOMATIC`.
+
+**Follow-up, not done — the Fast DDS 3.6.x upgrade** (checked 2026-10-16):
+
+- **Pins.** Every Fast DDS dependency pins `fast-dds/3.4.3` since BIND-9b-7 (D-BIND-167; 3.4.0 before it), for the CVEs 3.4.1 to 3.4.3 fix; none of them is #6490, so the data-sharing workarounds stay. The pins: `fastdds-pubsub-provider/conanfile.py` (`FAST_DDS_VERSION`, which also names the licence folder for the code Fast DDS vendors, D-BIND-166), `fastdds-pubsub-provider/benchmarks/conanfile.py`, `integration-tests/fastdds-xrce-interop/conanfile.py`, `integration-tests/pubsub-conformance/conanfile.py`, `integration-tests/pubsub-transport-conformance/agent/conanfile.py`. The 3.4 line is end of life since v3.4.3 (2026-06-17).
+- **Likely fix.** eProsima/Fast-DDS#6490, "Fix datasharing infinite loop", merged to master 2026-07-30. Its only release is the 2.14.x backport (#6494, v2.14.7); on the 3.6.x branch it sits 35 commits after v3.6.2 (2026-07-02, the latest 3.x release), so no 3.x release has it yet — 3.6.3 would. It is **not confirmed** to be this defect: confirm by running `gateway-fastdds-ts` repeatedly against a 3.6.x build.
+- **Recipe.** ConanCenter's `fast-dds` recipe stops at 3.4.3, so 3.6 needs a recipe of our own (e.g. published to conan-eiva).
+- **Options.** Wait for 3.6.3; build the 3.6.x branch at a pinned commit; or take 3.6.2 now — off the end-of-life line, but probably without the fix, so the retry stays. Any upgrade moves all four pins together and re-runs the Fast DDS lanes.
 
 What this costs:
 
 - **Memory.** A bounded type puts payload pools in `PREALLOCATED`, so every history slot reserves the whole sample. A data-sharing writer reserves its whole pool in one shared segment at creation — `depth + extra_samples` slots of about (bound + a small header) each. It is `<depth>` and not `max_samples`: under KEEP_LAST Fast DDS takes the pool maximum from the history depth and ignores `max_samples` (`DataWriterHistory::to_history_attributes` substitutes depth for it), which is why the built-in block keeps the two equal. The built-in document also sets `resource_limits().allocated_samples` equal to `max_samples` (25) on both data endpoints, so a pool that is not data-sharing is reserved at creation too, not grown into as samples arrive. Size `max_payload_bytes` and the resource limits to the rows the topics actually carry; nothing in the provider caps their product, and a reservation past the segment's 32-bit size does not shrink — Fast DDS logs `Could not initialize DataSharing writer pool` and that writer has no payload slots to hand out. The defaults are 64 KiB against depth 25, so **~1.7 MB per writer per topic**, reserved immediately — every slot 300x a typical 214-byte row. Lower `max_payload_bytes` for a deployment whose rows are small: `max_payload_bytes` is the publisher's knob, and a subscriber's reader pool is sized by the bound the publisher announces, so lowering it at the publisher lowers it everywhere. Dropping the default to 8 KiB was measured and reverted — it costs the subscriber-first burst its accidental headroom (see below).
 - **No pre-match headroom.** The data reader is not created until its schema and bound are known, so a subscriber that joins first buffers nothing of its own, and the built-in `VOLATILE` durability keeps nothing at the writer either: a burst published before the reader has matched is simply gone, not queued for later delivery. After the match, the WRITER's `<depth>` (25 by default) bounds the in-flight window between writer and reader, and a reader that lags past it loses the OLDEST samples (`KEEP_LAST`) rather than stalling the publisher. Raise `<depth>` at the writer — moving `max_samples` and `max_samples_per_instance` with it, see [Per-topic options](#per-topic-options) — or pace the publisher to widen that window.
 - **Wire size on the unselected loaned path.** Fast DDS stamps a loaned payload `length = max_serialized_type_size` and nothing recomputes it, so every sample would cross the wire at the full bound whatever the row weighs, were it selected. And it buys little: measured publish-side (`bench_dds_payload`, p50 of 2x4000 samples) it saved a **fixed ~0.1-0.2 us**, not a per-byte cost — 1.05 -> 0.95 us at a 198-byte row and 2.15 -> 2.00 us at 60 KB. Both paths write the row bytes exactly once, so loaning removes no copy: it removes the encapsulation and the length field, and the `PublishData` the serialising path hands to `write()`. Those are now **14.6 ns against 29.3 ns** at a 198-byte row (`bench_pub_sub_type`), so the publish-side case for it is weaker than those DDS-level numbers, which predate that work. Not selectable; kept in the tree.
-- **Oversized rows throw** regardless of path: a row plus attachments past `max_payload_bytes` raises `std::overflow_error` out of `Publish`, or is reported inside `serialize()` on the regular path; either way the sample is dropped.
+- **Oversized rows are refused by name** on both paths: a row plus attachments past `max_payload_bytes` makes `Publish` throw `PubSubError(kPayloadTooLarge)` — the regular path records the overflow inside `serialize()` and throws once `write()` has returned; the unselected loaned path raises `std::overflow_error`, which the seam's mapping turns into the same status. Either way the sample is not sent. (Until 2026-09 the regular path only logged it and `Publish` returned normally, while this line already claimed it threw; the C# binding's review found the gap — BIND D-BIND-53.)
 
 What the **read** side is worth, which is where the plain type actually pays: `bench_read_flow`
 publishes flat out and meters the receive path, medians of 3 runs x 8000 samples.
@@ -437,14 +444,16 @@ these two the defaults — eProsima's own mechanism, not a Fletcher convention.
       </topic>
     </data_reader>
     <!-- every sample, in order: commands, events, logs. A reader that stops taking samples stalls
-         the publisher; a crashed peer frees it when its participant lease expires (20 s by
-         default); the slowest reader can hold the publisher back once 25 samples are in flight -->
+         the publisher, for up to 30 s per sample, after which that sample is dropped and logged
+         (Fast DDS 3.4.3 refuses an infinite blocking time); a crashed peer frees it sooner, when
+         its participant lease expires (20 s by default); the slowest reader can hold the
+         publisher back once 25 samples are in flight -->
     <data_writer profile_name="lossless">
       <qos>
         <durability><kind>VOLATILE</kind></durability>
         <reliability>
           <kind>RELIABLE</kind>
-          <max_blocking_time>DURATION_INFINITY</max_blocking_time>
+          <max_blocking_time><sec>30</sec><nanosec>0</nanosec></max_blocking_time>
         </reliability>
       </qos>
       <topic>
@@ -530,7 +539,7 @@ bound:
 | `latest` | RELIABLE, VOLATILE, KEEP_LAST 1 | a live state that changes and must not be missed while live (the newest value, resent if a datagram is lost, nothing replayed to a late subscriber) | 2 slots, ~130 KiB | a reader more than one sample behind loses the older one |
 | `store_latest` | RELIABLE, TRANSIENT_LOCAL, KEEP_LAST 1 | state, configuration, status: the last value, replayed to a late subscriber | 2 slots, ~130 KiB | holds shared memory for replay |
 | `store_history` | RELIABLE, TRANSIENT_LOCAL, KEEP_LAST 25 | track tails, recent events: the last 25 values, replayed to a late subscriber | 26 slots, ~1.7 MB | holds shared memory for replay |
-| `lossless` | RELIABLE, VOLATILE, KEEP_ALL, infinite `max_blocking_time`, 20 ms heartbeat | commands, events, logs: every sample, in order | 26 slots, ~1.7 MB | can stall the publisher — a reader that stops taking samples blocks every future `Publish` until it (or its participant's 20 s lease) goes away |
+| `lossless` | RELIABLE, VOLATILE, KEEP_ALL, 30 s `max_blocking_time`, 20 ms heartbeat | commands, events, logs: every sample, in order | 26 slots, ~1.7 MB | can stall the publisher — a reader that stops taking samples blocks each `Publish` until it (or its participant's 20 s lease) goes away, or for 30 s, after which that sample is dropped and logged (infinite until Fast DDS 3.4.3 refused it, D-BIND-168) |
 | `default_writer` / `default_reader` | RELIABLE, VOLATILE, KEEP_LAST 25 | the built-in "stream" semantics, what a topic with no profile runs on | 26 slots, ~1.7 MB | a reader that falls more than 25 samples behind loses the oldest |
 
 `profile` only picks each endpoint's own QoS; it is not an agreement between the two. Mixing pairs
@@ -578,7 +587,7 @@ as absent.
   late-joining reader with no error anywhere (see [Zero-copy: the plain
   sample](#zero-copy-the-plain-sample)); the built-in default carries it too, guarded by
   `integration-tests/gateway-fastdds-ts`.
-- **Under the `lossless`-shaped configuration (RELIABLE + KEEP_ALL + infinite `max_blocking_time`,
+- **Under the `lossless`-shaped configuration (RELIABLE + KEEP_ALL + infinite `max_blocking_time`, as measured on 3.4.0,
   not the built-in default), a flat-out intraprocess publisher (publisher and subscriber in ONE
   process, no pacing) can lose a tail of samples.** Measured with `benchmarks/bench_e2e`'s 198 B
   throughput arm, 200 000 samples: reader data-sharing `AUTOMATIC` — 3 of 3 one-core runs lost
@@ -674,8 +683,9 @@ policies where Fletcher and Fast DDS genuinely differ are `durability`, `history
 `resource_limits`, which is why the starting-point block spells all three out.
 
 The companion schema channel (`__schema` topic) always uses `RELIABLE` + `KEEP_LAST(depth=1)` +
-`TRANSIENT_LOCAL`, data-sharing at Fast DDS's default. Its sample is carried as a Fletcher sample
-(`SchemaBytesPubSubType`) — a row (the IPC bytes) plus the `max_payload_bytes` attachment — the
+`TRANSIENT_LOCAL`, the writer with data-sharing at Fast DDS's default and the reader with
+data-sharing OFF (D-BIND-165, see [Zero-copy: the plain sample](#zero-copy-the-plain-sample)).
+Its sample is carried as a Fletcher sample (`SchemaBytesPubSubType`) — a row (the IPC bytes) plus the `max_payload_bytes` attachment — the
 same plain, bounded type as the data channel. **No profile name is ever consulted for it**: it is
 a Fletcher-internal implementation detail and not configurable. It is bounded at the fixed
 `kSchemaPayloadBytes` (`pubsub/include/fletcher/pubsub/payload_bound.hpp`), not a property.
@@ -1102,7 +1112,7 @@ compile error there.
 
 The library is STATIC, so consumers still *link* the Fast DDS chain (`transitive_libs` is kept);
 they just do not *see* it. If your own code uses Fast DDS directly for its own reasons, require
-`fast-dds/3.4.0` explicitly — as `benchmarks/conanfile.py` does.
+`fast-dds/3.4.3` explicitly — as `benchmarks/conanfile.py` does.
 
 ## CI pipeline
 

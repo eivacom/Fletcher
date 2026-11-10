@@ -1,0 +1,348 @@
+# BIND-6 — code review, all slices
+
+**Subject:** the code BIND-6 landed: the protoc plugin's C# backend (`protoc/src/csharp_backend_*`, the
+C# paths in `generator.cpp`), its output as a consumer compiles and runs it (the committed goldens, the
+generated publisher/subscriber pair), `Eiva.Fletcher.Model`, the runtime changes of 6e-2
+(`NativeLoader`, `IsAotCompatible`, `Directory.Build.targets`), and the tests and lanes that go with
+them. Commits `7d740e3..c8ae231`: 15 commits, 65 files.
+
+**Reviewed at:** `c8ae231`. CI: `ci.pr` green at `4e90f52` (run 37741456084). The run at `d32b9f7`
+(37768542754) was cancelled by the push of `c8ae231` after its `dotnet` jobs had passed, NativeAOT
+step included, on both platforms. The run at `c8ae231` (37771476240) was still in progress.
+
+**Outcome: 5 BLOCKERs, 10 questions for a ruling, 17 DEBT, NITs.** All five blockers were verified,
+four of them by running something. Three are generated C# that does not compile for ordinary
+`.proto` files. One is a wire-format disagreement with C++ for the most common message field. One is
+a missing test the acceptance asks for. BIND-6 does not close.
+
+> **CLOSED 2026-10-14, on CI at `63ab057` (`ci.pr` 38575041994).** All five blockers fixed, all ten
+> questions ruled and implemented (D-BIND-83 to 93), and every DEBT marked important done: P-D1, G-D1,
+> T-D1 to T-D5 and T-D9 fixed, P-D3 closed as unreachable by measurement. The remaining DEBT (P-D2,
+> P-D4, G-D2 to G-D4, T-D6, T-D8) and the NITs are carried out as KNOWN debt by the maintainer's
+> choice, listed with their natural homes in the tracker's BIND-6 section; one NIT (a null element in
+> the batch `Publish`) was resolved by D-BIND-92. Four findings changed a ruling's stated consequence
+> or scope, each recorded with the ruling: D-BIND-85 refuses rather than drops; D-BIND-86 has one
+> named exception (G-Q4); D-BIND-87's walk had to look inside a field-level flatten; D-BIND-92 was
+> widened to every non-null place.
+
+## How this review was done, and its limit
+
+The method of BIND-4 and BIND-5. Three reviewers with **fresh context** each took one area:
+1. the plugin's C# backend (C++);
+2. the generated C# and the managed runtime it calls;
+3. tests, CI and acceptance (graded in `BIND-6-conformance.md`).
+
+None had seen the session that wrote the code. They read the locked decisions, the tracker, the C++
+and TypeScript backends as the reference, and the code. They built and ran nothing.
+
+**Every BLOCKER was then checked by the author**, on throwaway copies, never the working tree:
+- **B1** was reproduced across both languages. A test spliced into a copy of `Fletcher.Tests` wrote
+  C#'s bytes. A gtest spliced into a copy of `protoc-coverage` decoded them with the C++ generated class.
+- **B2 to B4** were reproduced by generating three small `.proto` files with the real plugin and
+  compiling each one alone (`scratchpad/repro2`).
+- **B5** was confirmed by reading.
+
+DEBT and NIT items are marked *verified* where that was done and *reported* where they rest on the
+reviewer's reading.
+
+**The limit that remains** is the one BIND-4 named. The reviewers are the same model as the author,
+briefed by the author. Two of them found B1 independently, from opposite sides of the wire.
+
+---
+
+## BLOCKERs
+
+### B1 — An absent non-`optional` message field is a null on the wire, and C++ cannot decode the row
+
+> **FIXED 2026-10-09 (D-BIND-83).** A plain message field is now non-null and always written
+> present. The C++-written golden `coverage.CompositeCoverage.defaulted.v1.bin` is matched by C# byte
+> for byte, and a mutant restoring the old shape fails exactly that case.
+*Found by the runtime reviewer (G-B1) and the plugin reviewer (P-B3). Reproduced.*
+
+A proto3 message field without `optional` (`Stamp stamp = 7;`) is non-nullable in the class's own
+`Schema` (C++'s choice: `csharp_pair.fletcher.cs:74`, `..., false, ...`). The C# property is
+`Stamp?` (D-BIND-75), defaulting to `null`, and `ToArrowColumns` writes `null` as a cleared validity
+bit (`:143-149`: `else { r6.Add(new Stamp()); m6.Append(false); }`).
+
+- **The codec** sets the field's wire null bit from Arrow validity and writes no payload, whatever
+  the schema says (`c-abi/src/nanoarrow_codec.cpp:221-229`).
+- **The C++ decoder** reads a non-nullable struct field unconditionally
+  (`protoc/src/cpp_backend_decode_visitor.cpp:120-122`), so it parses the NEXT field's bytes as the
+  struct.
+- **C++ itself never writes that null.** It encodes `value_or(Cls())`, a default instance
+  (`cpp_backend_type_table.cpp:216-221`).
+
+**Reproduction.** C# encoded the coverage fixture's `CompositeCoverage` twice, through `ToArrow` and
+the native codec:
+- **`Scalars = new()`:** 558 bytes, **byte-identical** to C++'s own `Encode()` of the same row. C++
+  decodes them to the expected row.
+- **`Scalars = null`:** 449 bytes, first byte `0x09` (the null bit set). The C++ generated class
+  **throws: `PositionalReader: buffer underrun`**.
+
+**Why the tests missed it.** `CoverageWireBytesTests` always populates the non-optional message
+fields. `GeneratedPairTests.AnEmptyRowArrivesAsAnEmptyRowNotAsAFullOne` asserts
+`Assert.Null(got!.Stamp)`, which pins the divergent behaviour, because only C#-to-C# is run.
+
+**It breaks** the round's central promise (one codec, C# and C++ agree on the wire), the acceptance's
+G-5 bullet, and the visitor's own rule that "no ToArrow can build a batch its own Schema disagrees
+with". **The fix needs a ruling** (Q1), because it changes how D-BIND-75's "`?` when the field can be
+absent" reads.
+
+### B2 — A class name in an expression binds to a member of the same name, and the C# does not compile
+
+> **FIXED 2026-10-13.** Method bodies name a class in full (`CsTypeExpr`). The golden
+> `protoc/tests/golden/csharp_names.proto` holds every shape below, plus a message named `array`
+> (FromArrow's parameter) and an `optional` field, and is compiled and run in `Fletcher.Tests`. Found
+> while fixing it: CS8981 for a lower-case type name such as `row`, and a `message class` that never
+> compiled. Such names are now written `@name` (the compiled name keeps no `@`).
+*Plugin reviewer P-B1. Reproduced.*
+
+A same-namespace class is named bare (`CsTypeRef`). In a TYPE position that is fine. In an
+EXPRESSION position (`Cls.ToArrowColumns(..)`, `Cls.FromArrow(..)`, `Cls.ToArrow(..)`,
+`Cls.Schema`), C# simple-name lookup finds a member of the enclosing class first. The "Color Color"
+rule rescues only a member whose type IS `Cls`.
+
+Reproduced with `pb1.proto`:
+
+| Input | Result |
+|---|---|
+| `message RouteList { repeated Waypoint waypoint = 1; }` | CS0120 ×2 |
+| `message RouteMap { map<string, Waypoint> waypoint = 1; }` | CS0120 ×2 |
+| `message RouteMixed { Waypoint start = 1; int32 waypoint = 2; }` | CS0120 ×2 |
+| `message row {..} message UsesRow { row r = 1; }` | CS0176 (a generated local named `row`) |
+| `message Topic {..}` as a pub/sub input | CS1061 ×7 in the native pair (`Topic.Schema` binds to the pair's own `Topic`) |
+| **Control:** `message RouteSingle { Waypoint waypoint = 1; }` | compiles, as predicted |
+
+The golden passes only because its one such case is singular (`Stamp? Stamp`). A singular-named
+repeated field of a message type is common in real `.proto` files. **Fix, no ruling needed:** in
+expression positions always emit `global::<namespace>.<Name>`.
+
+### B3 — A message named after one of the generated class's own members does not compile
+
+> **FIXED 2026-10-13 (D-BIND-84).** The class is suffixed (`Schema_`), and a property that a suffix
+> made equal to it steps past it (`Schema__`). The names golden holds both, compiled and run in
+> `Fletcher.Tests`; mutants removing either half fail.
+*Plugin reviewer P-B2, runtime reviewer G-Q2. Reproduced.*
+
+`message Schema { int32 x = 1; }` emits `public sealed class Schema { public static
+global::Apache.Arrow.Schema Schema { get; } ... }`. That is **CS0542** (`pb2.fletcher.cs(13,47)`).
+The same holds for `ToArrow`, `FromArrow` and `ToArrowColumns`. D-BIND-73 reserves these names for
+PROPERTIES only. **Needs a ruling** (Q2): rename the type (`Schema_`), or refuse the file as D-BIND-82
+does.
+
+### B4 — A map whose value is a flatten wrapper names conversions the wrapper never gets
+
+> **FIXED 2026-10-14 (D-BIND-85).** `BuildMapNode` classifies the map value as UNSUPPORTED, so the
+> plugin refuses the file for every backend, naming the field and the reason, as for a map of `Any`.
+> C++ was broken too (measured). Held by `test_ir` and by `GenErrors.MapFlattenWrapperFailsBuild`
+> (real protoc and plugin) in protoc-coverage, which fails against the plugin before the fix.
+*Plugin reviewer P-B4. Reproduced in C#.*
+
+`map<string, W>`, where `W` has `(fletcher.flatten)`, is a STRUCT node pointing at the wrapper
+(`ir.cpp` `BuildMapNode`). `ConversionBlocker(W)` finds W's fields convertible, so the parent emits
+`W.ToArrowColumns(f0)` and `W.FromArrow(e, j)`. But a flatten wrapper gets neither (`GenerateMessage`,
+"No Schema: a flatten wrapper is inlined"). **CS0117 ×2** (`pb4.fletcher.cs(87)`, `(103)`).
+
+**Not verified:** whether C++ handles this input. Its wrapper classes are skipped as well, so it may be
+broken there too. **Needs a ruling** (Q3) on what such a map is: convert it (C# would need
+conversions for wrappers) or refuse it.
+
+### B5 — The acceptance's C#-against-C++ topic test does not exist
+
+> **FIXED 2026-10-13.** `ExpectBackendsAgree` now generates C# too and requires its topic class's
+> `Segments` and `Key` to equal C++'s. A mutant using the C# namespace form of the package fails it.
+> The maintainer asked, beyond this, for end-to-end cross-language pub/sub tests in every direction
+> and every language with a pub/sub surface: recorded as an open note in the tracker's BIND-6
+> section, with the coverage matrix and the owner to be ruled.
+*Tests reviewer T-B1. Confirmed by reading.*
+
+The tracker's D-BIND-72 bullet asks for "a test that a C# and a C++ publisher of one method register
+the same topic". `protoc/tests/test_topic_path.cpp`'s `ExpectBackendsAgree` (`:83-88`, `:135-156`)
+generates C++ and TypeScript only. `GeneratedPairTests.TheTopicIsCppsForm` and
+`CsVisitorPair.TheModelFileSpellsEachTopicAsAStaticClass` compare C# with hand-written literals, so a
+change to C++'s segment form passes. **Fix, no ruling needed:** generate with `csharp` in
+`ExpectBackendsAgree` and compare `Segments` and `Key`.
+
+---
+
+## Questions for a ruling
+
+| # | Question | Source |
+|---|---|---|
+| Q1 | **B1's fix.** Write a present default instance for a schema-non-nullable message field, as C++'s `value_or` does (and make the property non-null with a `new()` default, as C++'s getter returns `kDefault`)? Or keep `T?` and only write the default on the wire? | G-B1, P-B3 |
+| Q2 | **B3's fix.** Suffix the TYPE (`Schema_`), or refuse the file with an error, as D-BIND-82 does? | P-B2, G-Q2 |
+| Q3 | **B4.** A map whose value is a flatten wrapper: convert it, or refuse it? Which does C++ do? | P-B4 |
+| Q4 | **Nullability of children (G-5).** List items and map values are nullable in the schema (nanoarrow's defaults) and non-nullable in C# (`List<int>`). Does G-5 cover children, or only top-level fields? A reflection test (`NullabilityInfoContext`) would pin whichever is ruled. | T-Q1 |
+| Q5 | **The `CollectCrossFileIncludes` deviation** (6e-1) was recorded but never ruled. The dev plan's G-6 still says to reuse it. | T-Q2 |
+| Q6 | **The two open AOT notes.** The tests reviewer recommends neither block the close. Park both to BIND-9: Windows AOT with the win-x64 assets, and an AotSmoke run over `fastdds` for the foreign-thread callback. | T-Q3 |
+| Q7 | **Two fields that PascalCase to one property** (CS0102). Proto3's JSON-name check rejects most pairs. Proto2, and a field-level flatten that inlines a field named like an outer one, are not covered. D-BIND-69 left this open. | P-Q2, T-Q4 |
+| Q8 | **A flatten-wrapper pub/sub input.** C# gives it a topic class and a skip reason. C++ excludes wrappers from its `generated` set and skips the method with "no generated Arrow mapping". C# matches TypeScript, not C++. Which is canonical? | P-Q1 |
+| Q9 | **The other direction of D-BIND-82.** protoc can define a TYPE that clashes with our namespace: `csharp_namespace = "Fletcher"` with `message Gen`, or package `fletcher` with `message Gen`. In scope? | P-Q3 |
+| Q10 | **Null where the schema says non-nullable, by caller error** (`Name = null!`, a null map key, a null list element). It writes a null that C++ reads past, as B1 does. Coerce to `""`, or throw in `ToArrow`? Also: `default(Timestamp)` is `(0, Second)` and returns as `(0, Nanosecond)`, which compares unequal (G-Q3). Accept, or default to nanoseconds? | G-Q1, G-Q3 |
+
+### The rulings (the maintainer, 2026-10-08, one question each)
+
+They become D-BIND-83 to D-BIND-93 in the digest when the fixes land, and are then recorded in the
+four places.
+
+| Q | Ruling | Facts it rested on |
+|---|---|---|
+| Q1 → D-BIND-83 | **Mirror C++ fully.** A non-`optional` message field is a non-null property defaulting to `new()`, always written present; `optional` stays `T?`. Amends D-BIND-75's "`?` when the field can be absent": absent now means `optional` | B1's reproduction |
+| Q2 → D-BIND-84 | **Suffix the TYPE** with `_` (`Schema_`) when a message is named `Schema`, `ToArrow`, `FromArrow` or `ToArrowColumns`, everywhere the type is named, as protoc does for a clash | B3's CS0542 |
+| Q3 → D-BIND-85 | **A map whose value is a flatten wrapper is UNSUPPORTED in the IR**, with a reason, so every backend drops it consistently *(corrected 2026-10-14: every backend REFUSES the file with that reason, as for a oneof; see D-BIND-85)* | Measured: **C++ fails too** (`'W' was not declared`); it never compiled in any backend |
+| Q4 → D-BIND-86 | **G-5 covers fields, not children.** List items and map values follow the C++ row class's storage (non-null). A reflection test pins each property against its field's `IsNullable`. *DONE 2026-10-14: `GeneratedNullabilityTests`; one named exception, the `optional` flatten-wrapper list of G-Q4 (ruled 2026-10-14)* | C++ stores `std::vector<int32_t>`; the schema's child nullability is nanoarrow's default |
+| Q5 → D-BIND-87 | **Require reuse.** C#'s cross-file qualification goes through `CollectCrossFileIncludes`, or a shared helper both backends derive from it, so dependencies are found in one place. C++ and C# output stay byte-identical *(DONE 2026-10-14: one walk, `CollectCrossFileMessages`; it now looks inside a field-level flatten, which adds one redundant C++ `#include` for that shape only, ruled 2026-10-14; see D-BIND-87)* | The 6e-1 deviation |
+| Q6 → D-BIND-88 | **Park both AOT notes to BIND-9**, with an owner: a win-x64 AotSmoke publish and run with the RID matrix, and an AotSmoke run over `fastdds` for the foreign-thread callback *(DONE 2026-10-14: acceptance bullets in BIND-9)* | D-BIND-81 put the step on Linux only |
+| Q7 → D-BIND-89 | **(a) proto2 `foo_bar` + `fooBar`:** C# suffixes the later field's property with `_` until unique, in field order; C++ is unaffected. **(b) A flattened field that inlines an existing name:** refused for EVERY backend, with an error naming both fields *(DONE 2026-10-14: `CsUniquePropertyName`; `ValidateFlattenedNamesUnique`)* | Measured: proto3 cases are rejected by protoc 3.21.12 itself (case-insensitively). Proto2 is accepted, with C++ fine and C# CS0102. The flatten case breaks C++ too (`set_x` redeclared) and puts two columns named `x` in the schema |
+| Q8 → D-BIND-90 | **A flatten-wrapper pub/sub input follows C++:** no topic class, and C++'s skip line and reason. TypeScript's divergence is recorded as debt for its own lane *(DONE 2026-10-14: `PubSubMethods` leaves wrappers out as C++ does; TS debt in BIND-T)* | P-Q1 |
+| Q9 → D-BIND-91 | **Extend D-BIND-82** to the reverse clash: also refuse a file where protoc would declare a TYPE named `Fletcher` or `Fletcher.Gen` *(DONE 2026-10-14: measured CS0101 for three shapes; `CsProtocNamespaceConflict` checks top-level types)* | P-Q3 |
+| Q10a → D-BIND-92 | **The generated `ToArrow` throws `ArgumentException`** (message, field, row) on a caller-forced null in a non-nullable string or bytes field, map key or list element. **Separately recorded and parked to BIND-9/10:** an Arrow-tier batch with a null in a non-nullable column is encoded in BOTH languages, because no codec path checks nullability *(DONE 2026-10-14, widened by the maintainer to every non-null place: map values, collections, inner lists, rows; the Arrow-tier gap is a BIND-9 acceptance bullet)* | Checked: C++'s row class cannot hold such a null (`std::string`), so C++ never throws; no C++ Arrow path checks either |
+| Q10b → D-BIND-93 | **A non-nullable Timestamp or Duration property is initialised in its column's unit** (`new Timestamp(0, TimeUnit.Nanosecond)`), so a fresh row round-trips equal; the Model is unchanged *(DONE 2026-10-14)* | `default(Timestamp)` is `(0, Second)` |
+
+---
+
+## DEBT
+
+**Plugin**
+- **P-D1, a compile failure for a legal input:** `CsStringLiteral` passes U+0085, U+2028 and U+2029
+  through raw. C# treats them as line breaks, so an option-metadata value containing one is CS1010.
+  Escape them. *(reported)* **FIXED 2026-10-14:** written as `\u0085`, `\u2028`, `\u2029`;
+  measured first (raw: CS1010 "Newline in constant"; escaped: compiles), pinned in
+  `CsTypeTable.StringLiteralsEscapeWhatCannotAppearRaw`, which a mutant without the escapes fails.
+- P-D2: `ConversionBlocker` has no memo; it re-walks shared sub-messages. *(reported)*
+- **P-D3:** fields the IR drops (oneof members and the like) vanish from the C# class without the
+  note C++ writes. *(reported)* **CLOSED AS UNREACHABLE 2026-10-14 (maintainer's choice), measured:**
+  C++'s note needs a field the IR cannot represent that is not UNSUPPORTED, and the IR builds none;
+  every UNSUPPORTED field (a oneof member, `Any`, a map of flatten wrappers) refuses the whole file
+  for every backend before any output (GIR-8 `ValidateNoUnsupportedIr`, D-BIND-85). Probed through
+  real protoc: a flatten wrapper around a map (singular and repeated) and around a repeated scalar
+  are mapped by both backends with no note, and a recursive message is omitted by both without a
+  comment (C++'s "Skipped: recursive" line is unreachable too). C# and C++ therefore drop the same
+  nothing. If a future IR kind reaches that path, it gets its own fix and test.
+- P-D4: an exception from the schema sink would crash the plugin rather than return `*error`;
+  unreachable today. *(reported)*
+
+**Generated C# and runtime**
+- **G-D1:** `NativeLoader` (6e-2) no longer probes `runtimes/<rid>/native/` beside the ASSEMBLY.
+  In a plugin-style host (a PowerShell module, an MSBuild task, a custom AssemblyLoadContext) that is
+  not the app directory. Probe both: `Assembly.Location` when non-empty, IL3000 suppressed under that
+  guard, and `AppContext.BaseDirectory`. *(reported; the author agrees)* **FIXED 2026-10-14:**
+  `CandidatePaths(assemblyDirectory, appDirectory, rid)` probes beside the assembly first (when
+  `Assembly.Location` is non-empty, IL3000 suppressed on that guarded read), then the app directory,
+  once if they are the same. Pinned by
+  `NativeLoaderTests.TheShimIsLookedForBesideTheAssemblyThenBesideTheApplication`; mutants: no
+  suppression fails the Interop build (IL3000 ×4), app-only probing fails the case. NativeAOT
+  publish and run still green.
+- G-D2: D-BIND-81 pins ILCompiler but not the runtime pack it is used with. On an SDK other than
+  10.0.400 an AOT publish mixes 10.0.11 and 10.0.12. CI is unaffected. *(reported)*
+- G-D3: the generated subscriber allocates a `StructType` per delivery; build it once. *(verified by
+  reading)*
+- G-D4: decode failures surface through `HandlerFaulted` as if the handler had thrown; document them
+  or tell them apart. *(reported)*
+- G-Q4, accepted as DEBT: an `optional` flatten-wrapper list loses null versus empty, only for a
+  non-generated Arrow publisher. This matches C++'s storage. *(2026-10-14: the one named exception
+  in D-BIND-86.s nullability test.)*
+
+**Tests, CI, documents**
+- **T-D1:** the public-surface note is stale.
+  - §2.7 omits `.fletcher.native.cs`, `csharp_model_only` and the topic class.
+  - Its recipe glob misses `*.fletcher.native.cs` and `google/protobuf/*.fletcher.cs`.
+  - §5.3 still shows `Subscribe(Action<..>)`.
+  - **FIXED 2026-10-14:** §2.7 names both files, `csharp_model_only`, the topic class, the
+    naming and nullability rulings since (D-BIND-80, 83, 84, 86, 89, 92, 93) and the skip rule
+    (D-BIND-90), with the pair's real members; the recipe glob is `gen/**/*.fletcher*.cs`; §5.3
+    draws the topic class, the handler delegate and the pair's members, and marks the view and
+    accessor as BIND-7's. The diagram parses and renders under mermaid@11.
+- **T-D2:** the architecture diagrams are stale.
+  - The native pair is still drawn `<<planned>>`.
+  - "Emitted only when asked for" contradicts D-BIND-76.
+  - There is no topic class (D-BIND-77).
+  - Model box text predates 6c.
+  - **FIXED 2026-10-14:** in diagram 2 the native pair is `<<built>>` (`.fletcher.native.cs`,
+    emitted by default, `csharp_model_only` leaves it out), the note says so (D-BIND-76), a
+    `Generated_topic_cs` box shares the topic between the native and gateway pairs (D-BIND-77), the
+    model box names 6e-1, D-BIND-83/86 and D-BIND-92, and the Model box and the prose below say
+    built. Parses and renders under mermaid@11.
+- **T-D3:** the no-drift test covers `""`, `ts`, `ts,ipc` and `schema_only`, not `accessor` or
+  `rust`. **FIXED 2026-10-14:** `CsVisitor.CsharpTokenChangesNoExistingOutputAndAddsOnlyItsOwnFiles`
+  also runs over `accessor`, `rust` and `ts,ipc,accessor,rust`, and requires those bases to write
+  their `.accessor.pb.h` and `.rs` files, so it cannot pass vacuously. No drift found. Mutants making
+  `csharp` add a byte to the accessor header, or to the Rust module, each fail it.
+- **T-D4:** `ci.pr`'s `integration-protoc-dotnet` filter lacks `dotnet/Directory.Build.targets`.
+  *(verified by reading)* **FIXED 2026-10-14:** added; the lane's sparse checkout already took all of
+  `dotnet/`, and its header comment now names the file (the D-BIND-81 AOT pack pin that
+  `Fletcher.Model` builds with). The other filters take `dotnet/**`. actionlint clean.
+- **T-D5:** stale text.
+  - The tracker's D-BIND-72 bullet says "emitted only when requested".
+  - The 6b-2 slice note overclaims the topic test.
+  - The exit gate names `CsharpVisitor.*`.
+  - The protoc-dotnet README still says "until BIND-6c" and that the wire comparison arrives with 6d.
+  - **FIXED 2026-10-14:** the D-BIND-72 bullet says the native pair is left out with
+    `csharp_model_only` (correction noted); the 6b-2 note says it met the model-layer half, with the
+    topic test from B5 and the wire comparison from 6d-2; the exit gate in the tracker and the dev
+    plan names the real suites (`CsVisitor*`, `CsNames`, `CsTypeTable`); the README lists what
+    `ConversionTests` covers now and points to `CoverageWireBytesTests` for the wire bytes.
+- T-D6: the Arrow-only model is proven on net10.0 only.
+- **T-D7: answered.** A NativeAOT publish with warnings as errors was shown to fail, on IL3000, in
+  6e-2's probe (`aot_probe2`). AotSmoke inherits `TreatWarningsAsErrors` from
+  `Directory.Build.props`.
+- T-D8: the generated subscriber's schema handling (S-9) has never run over a schema-less transport.
+- **T-D9:** digest entries amended later are not annotated.
+  - D-BIND-75's "a comment naming BIND-6e" was superseded by D-BIND-80.
+  - D-BIND-72 point 3 was amended by D-BIND-76.
+  - **FIXED 2026-10-14:** both marked, and the digest swept for every "amends / extends /
+    supersedes / reverses" relation, checking each target names its amender. Two more were
+    unmarked and are now: D-BIND-72 point 3 by D-BIND-74 (the model also references
+    `Eiva.Fletcher.Model`), and D-BIND-14's three packages by D-BIND-74 (four). The rest already
+    point back (18←51, 69←70, 73←84/89, 75←83, 81←88, 82←91); D-BIND-72's mention of D-BIND-69 is a
+    declined option, not an amendment.
+
+## NITs
+
+- **Plugin:**
+  - P-N1: an enum value named `_` gives an empty member name, as in protoc.
+  - P-N2: a package segment `_1` gives a namespace segment `1`, as in protoc.
+  - P-N3: `message Clone_ { int32 clone = 1; }` collides, as in protoc.
+  - P-N4: `Outer.Inner` versus `Outer_Inner`, and service and method underscores, collide as in every
+    backend.
+  - P-N5: `Topic.Segments` exposes a mutable array through a cast.
+- **Generated C# and runtime:**
+  - Always-true validity bitmaps for non-nullable temporal columns.
+  - The `HandlerFaulted` sender is the inner subscriber.
+  - A null element in `Publish(IEnumerable<T>)` throws an NRE.
+  - The provider-lifetime doc overstates the caller's burden.
+- **Tests, CI, documents:**
+  - T-N1: `ci.dotnet.yml:45-49`'s comment misdescribes what a missing golden does.
+  - T-N2: two `GeneratedModelTests` cases test the BCL and Model rather than the generator.
+  - T-N3: a text-only Arrow-expression test, and stale headers in the plugin tests.
+  - T-N4: culture-dependent formatting in a symmetric `Describe`.
+
+## Checked and found correct (from the three reports, condensed)
+
+- **Naming:** protoc's naming functions as D-BIND-73 states them; the reserved list; namespace and
+  nesting per D-BIND-69; D-BIND-82's check (segment boundary, before any output, only with `csharp`).
+- **Options:** the two option tokens fold into three states, and the model is byte-identical in both
+  C# states.
+- **Topics:** segments match C++'s `EmitTopicSegments`.
+- **Cross-file (D-BIND-80):** the cross-file path and its `global::` qualification.
+- **Generator structure:**
+  - the field set and order come from the same walk as the schema;
+  - generated local names do not collide with each other;
+  - recursion is skipped transitively;
+  - output is deterministic, and no-drift holds by construction.
+- **The generated pair:**
+  - lifetimes, dispose order, and Dispose inside a handler;
+  - per-delivery ownership (everything copied out, the batch disposed);
+  - thread-safety of the shared codec;
+  - `Publish(T)` and `Publish(IEnumerable<T>)` as D-BIND-78 says;
+  - the net8.0 delegate (D-BIND-79).
+- **ToArrow/FromArrow layout:** offsets, map entries in order with duplicates kept, list-of-list
+  levels, null struct slots, and sliced input.
+- **Model:** checked arithmetic, exact recount, range checks.
+- **AOT:** no reflection, and the D-BIND-81 pin targets the right items.
+- **CI and goldens:**
+  - every new project runs in a lane;
+  - the gate waits for the new lane;
+  - sparse checkouts carry the goldens;
+  - matrix counts agree;
+  - no other backend's golden changed in the range.

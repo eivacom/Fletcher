@@ -6,11 +6,11 @@ Fletcher bridges two worlds: **Protocol Buffers** for message definition and **A
 
 ### Design Principles
 
-**Arrow-native from the start.** Every row is defined by an Arrow schema. The generated code, the wire format, and the pub/sub layer all operate on Arrow types. There are no intermediate representations or format conversions — a row encoded on an edge sensor arrives at a server-side consumer without impedance mismatch.
+**Arrow-native from the start.** Every row is defined by an Arrow schema. The generated code, the wire format, and the pub/sub layer all operate on Arrow types. There are no intermediate representations or format conversions — a row encoded on an edge device arrives at a server-side consumer without impedance mismatch.
 
 **Edge-compatible by default.** The core pub/sub path — generated message code, the `PubSub` interface, schema transport, positional I/O, and transport providers — depends only on nanoarrow (~100 KB). Server-side features (batching, view classes, `Codec`) use the full Apache Arrow C++ library through a separate adapter. This two-tier split means edge binaries carry no heavyweight dependencies.
 
-**Code generation over hand-writing.** Schema definitions live in `.proto` files — the single source of truth. The `protoc-gen-fletcher` plugin generates typed C++ message classes, Arrow view classes, and TypeScript interfaces with schema descriptors. No boilerplate to write, no schema drift between languages.
+**Code generation over hand-writing.** Schema definitions live in `.proto` files — the single source of truth. The `protoc-gen-fletcher` plugin generates typed C++ message classes, Arrow view classes and accessors, C# row classes, views and accessors, TypeScript interfaces with schema descriptors, and a publisher and subscriber for each pub/sub method in C++, C# and TypeScript. No boilerplate to write, no schema drift between languages.
 
 **Transport-agnostic pub/sub.** The `PubSub` interface decouples encoding from transport. Implementations exist for Fast DDS (desktop/server), XRCE-DDS (MCU/embedded), and WebSocket (browser). Adding a new transport (MQTT, Zenoh, custom TCP) means implementing that one interface **and registering it under a name**, after which callers reach it through `ProviderRegistry` by name — no changes to generated code or the codec. After PDA-ABI a loaded driver arrives the same way, by path through the same call, with no caller change. See the [pub/sub interface specification](pubsub-interface-spec.md) §4.
 
@@ -22,15 +22,15 @@ Fletcher bridges two worlds: **Protocol Buffers** for message definition and **A
 
 ## 2. Primary Usage Scenarios
 
-### Scenario 1 — Sensor Telemetry Capture
+### Scenario 1 — Telemetry Capture
 
-During a survey or inspection mission, sensors produce measurements that must be captured, serialized, and transported. Fletcher handles the path from sensor to subscriber: the protoc plugin generates typed message classes from the sensor's `.proto` definition, the generated publisher serializes each measurement into a compact positional buffer, and the DDS provider transports it reliably over the vessel network.
+Sensors, devices and services produce measurements that must be captured, serialized, and transported. Fletcher handles the path from producer to subscriber: the protoc plugin generates typed message classes from the producer's `.proto` definition, the generated publisher serializes each measurement into a compact positional buffer, and the DDS provider transports it reliably over the local network.
 
 Critical requirements: low per-row encoding overhead, reliable delivery, schema agreement between publisher and subscriber.
 
 ### Scenario 2 — Edge and Embedded Devices
 
-Resource-constrained devices (MCUs, embedded Linux gateways, ROTVs) need to publish Arrow-typed data without the full Arrow C++ library. Fletcher's nanoarrow-only tier provides generated message classes, positional encoding, and XRCE-DDS transport in under 75 KB of Flash. An XRCE-DDS Agent on a more powerful node bridges the data into the full DDS network.
+Resource-constrained devices (MCUs, embedded Linux gateways, remotely operated vehicles) need to publish Arrow-typed data without the full Arrow C++ library. Fletcher's nanoarrow-only tier provides generated message classes, positional encoding, and XRCE-DDS transport in under 75 KB of Flash. An XRCE-DDS Agent on a more powerful node bridges the data into the full DDS network.
 
 Critical requirements: minimal binary footprint, no dynamic allocation on the hot path, interoperability with desktop/server subscribers.
 
@@ -39,6 +39,12 @@ Critical requirements: minimal binary footprint, no dynamic allocation on the ho
 Live sensor data must reach browser-based clients for real-time visualization. The gateway exposes the pub/sub layer over WebSocket with a split text/binary protocol. The TypeScript gateway-client-ts library decodes the positional wire format using a pure-TypeScript codec, delivering typed objects to the visualization layer. Schema information is delivered automatically on subscription.
 
 Critical requirements: low-latency WebSocket delivery, schema auto-discovery, no WASM requirement for basic decoding (the original WASM-accelerated path was for the legacy tagged-row format and has been removed).
+
+### Scenario 4 — .NET Applications
+
+Desktop and server applications written in C# publish and subscribe on the same networks as the C++ nodes. Natively, through the C ABI shim: the generated C# publisher and subscriber reach Fast DDS, Micro XRCE-DDS or the in-process transport by name, and the one native codec writes their rows, so the bytes on the wire are a C++ publisher's. Or with no native code, through the gateway, with `Eiva.Fletcher.GatewayClient`. Rows are generated C# classes, read one at a time or as Arrow `RecordBatch`es through the generated accessor.
+
+Critical requirements: wire bytes identical to C++, no lost precision in temporal values, the zero-copy publish path kept across the managed/native boundary, NuGet packages for `linux-x64` and `win-x64`.
 
 ---
 
@@ -54,30 +60,35 @@ The **server tier** adds the full Apache Arrow C++ library. It includes the `Cod
 
 Both tiers produce byte-identical wire format. A row encoded via `PositionalWriter` on an edge device can be decoded by `Codec` on a server, and vice versa.
 
+The **.NET binding** sits beside the server tier rather than in it. Its native half, the C ABI shim (`fletcher-c-abi`), is built from the edge tier: it statically links `pubsub`, both providers and nanoarrow into one shared library per RID, and adds a schema-driven nanoarrow codec that encodes Arrow arrays handed over through the Arrow C Data Interface. Its managed half uses `Apache.Arrow` for .NET, not Arrow C++. The codec is held byte-identical to `arrow-bridge`'s, so a C# row is a C++ row on the wire (TD-009).
+
 ### 3.2 Architectural Layers
 
-The system provides seven composable layers:
+The system provides nine composable layers:
 
 1. **core** — a header-only library with `PositionalWriter`/`PositionalReader` for direct serialization, `WriteBuffer`, `Envelope`, and `EncodedRow` type aliases. No dependencies beyond the standard library.
 2. **arrow-bridge** — the `Codec` class for server-side ArrowRow encode/decode (Arrow C++), plus `ArrowRowView` helpers and CRS utilities.
-3. **protoc** — the `protoc-gen-fletcher` plugin. Generates typed C++ message classes (`.fletcher.pb.h`, nanoarrow only), optional Arrow C++ view classes and `ToArrowRow()` converters (`.fletcher.arrow.pb.h`), optional column-oriented `RecordBatch` accessors for C++ (`.fletcher.accessor.pb.h`, `--fletcher_opt=accessor`) and Rust (`.fletcher.rs`, `--fletcher_opt=rust`), and TypeScript interfaces with schema descriptors.
+3. **protoc** — the `protoc-gen-fletcher` plugin. Generates typed C++ message classes with their publisher and subscriber (`.fletcher.pb.h`, nanoarrow only), optional Arrow C++ view classes and `ToArrowRow()` converters (`.fletcher.arrow.pb.h`), optional column-oriented `RecordBatch` accessors for C++ (`.fletcher.accessor.pb.h`, `--fletcher_opt=accessor`) and Rust (`.fletcher.rs`, `--fletcher_opt=rust`), TypeScript interfaces with schema descriptors and a gateway publisher and subscriber (`.fletcher.ts`, `--fletcher_opt=ts`), and C# row classes with a native publisher and subscriber (`.fletcher.cs`, `.fletcher.native.cs`, `--fletcher_opt=csharp`), a gateway pair (`.fletcher.gateway.cs`, `csharp_gateway`) and an Arrow view and accessor (`.fletcher.arrow.cs`, `.fletcher.accessor.cs`, `csharp_accessor`). It ships as release archives and as the `@eiva/protoc-gen-fletcher` npm and `Eiva.Fletcher.Protoc` NuGet packages.
 4. **pubsub** — an abstract transport interface operating on raw bytes and nanoarrow `OwnedSchema`, with schema transport, zero-copy `RowEncoder` publishing, and raw-bytes subscriber callbacks.
 5. **pubsub-arrow** — a server-side wrapper that adds Arrow C++ convenience (arrow::Schema, ArrowRow encode/decode) on top of the nanoarrow provider.
 6. **gateway** — a Boost.Beast WebSocket server that exposes the Driver to browser clients over a split text/binary protocol. (Migrated from the prototype's `WebGateway`.)
-7. **gateway-client-ts** — a TypeScript client library (npm package `fletcher-gateway-client`) with a pure-TypeScript positional codec and a plain-object decoder backend. Apache Arrow JS support is stubbed and not implemented.
+7. **gateway-client-ts** — a TypeScript client library (npm package `@eiva/fletcher-gateway-client`) with a pure-TypeScript positional codec and a plain-object decoder backend. Apache Arrow JS support is stubbed and not implemented.
+8. **c-abi** — the C ABI shim `fletcher-c-abi`: a pure C99 surface over the seam's registry, publisher and subscriber and a schema-driven nanoarrow codec, shipped as one self-contained shared library per RID. It is what the .NET binding calls, and what a second binding (Rust, a Node.js add-on) would call. See [`c-abi/README.md`](../c-abi/README.md).
+9. **dotnet** — the .NET binding, four NuGet packages: `Eiva.Fletcher` (publishers, subscribers and the codec over the shim), `Eiva.Fletcher.Interop` (the P/Invoke surface, carrying the shim), `Eiva.Fletcher.Model` (the types generated C# refers to) and `Eiva.Fletcher.GatewayClient` (a managed client for the gateway, the C# counterpart of `gateway-client-ts`). See [`dotnet/README.md`](../dotnet/README.md).
 
 Each layer is independent. You can use the codec without pub/sub, the web gateway without DDS, or the full pipeline end-to-end.
 
 ### 3.3 Data Flow
 
-The end-to-end data flow for a sensor measurement follows this path:
+The end-to-end data flow for a measurement follows this path:
 
 1. A `.proto` file defines the message schema. The protoc plugin generates typed ArrowRow classes and pub/sub code at build time.
-2. The sensor driver populates an ArrowRow instance using typed setters.
+2. The producing application populates an ArrowRow instance using typed setters.
 3. The generated publisher calls `EncodeTo()`, writing the positional wire format directly into the transport provider's buffer (zero-copy via `RowEncoder`).
 4. The transport provider (FastDDS, XRCE-DDS) delivers the encoded bytes to subscribers across the network.
 5. On the server side, the `pubsub-arrow` adapter decodes received bytes into Arrow scalars via `Codec`.
-6. For browser delivery, the gateway forwards encoded bytes over WebSocket. The TypeScript gateway-client-ts decodes them using the positional codec.
+6. For browser delivery, the gateway forwards encoded bytes over WebSocket. The TypeScript gateway-client-ts decodes them using the positional codec; `Eiva.Fletcher.GatewayClient` does the same in C#.
+7. A C# application publishes a generated row by converting it to an Arrow batch and handing that batch to the C ABI shim, whose codec writes the row into the transport provider's buffer, as in step 3; a C# subscriber receives the bytes from the shim and decodes them through the same codec into an Arrow batch and then a generated row. See [.NET Publish and Subscribe](data-flow-diagrams.md#net-publish-and-subscribe-c-abi).
 
 For schema delivery, the flow is:
 
@@ -86,7 +97,7 @@ For schema delivery, the flow is:
 3. When a subscriber joins, `Subscribe` returns immediately with a **waitable schema arrival** in the `SubscriptionResult`; waiting on it yields the schema, or a typed outcome saying why it did not (spec §3.4).
 4. Both sides now share the same schema, enabling the compact positional wire format.
 
-For **batched, column-oriented reads** — once rows have been assembled into an Arrow `RecordBatch` for analytics, storage, or forwarding — the optional generated `<Class>Accessor` (C++ `.fletcher.accessor.pb.h`, Rust `.fletcher.rs`) takes a whole `RecordBatch` (or `StructArray`), validates it against the message's schema **once**, down-casts every column **once** up front, and then exposes typed, zero-copy getters that index straight into the cached concrete arrays — no per-cell scalar allocation and no hand-written `static_pointer_cast` boilerplate. This is the read-side counterpart to the row-at-a-time encode path above; the C++ and Rust accessors are proven to read the same batch identically. See [RecordBatch Accessor Specification](recordbatch-accessor-spec.md).
+For **batched, column-oriented reads** — once rows have been assembled into an Arrow `RecordBatch` for analytics, storage, or forwarding — the optional generated `<Class>Accessor` (C++ `.fletcher.accessor.pb.h`, Rust `.fletcher.rs`, C# `.fletcher.accessor.cs`) takes a whole `RecordBatch` (or `StructArray`), validates it against the message's schema **once**, down-casts every column **once** up front, and then exposes typed, zero-copy getters that index straight into the cached concrete arrays — no per-cell scalar allocation and no hand-written `static_pointer_cast` boilerplate. This is the read-side counterpart to the row-at-a-time encode path above; the C++, Rust and C# accessors are proven to read the same batch identically (the accessor capstone). See [RecordBatch Accessor Specification](recordbatch-accessor-spec.md).
 
 ### 3.4 Component Diagram
 
@@ -299,9 +310,10 @@ pub.CreateTopic({"nav", "imu"}, std::move(schema),
 
 ### 8.1 Prerequisites
 
-- **CMake** 3.15+
+- **CMake** 3.20+ (the Micro XRCE-DDS provider needs it)
 - **Conan 2** package manager
 - A C++20 compiler (MSVC 2022, GCC 12+, Clang 15+)
+- **.NET SDK** 10, for the .NET binding only (`dotnet/global.json` pins the band)
 
 ### 8.2 C++ Build
 
@@ -330,7 +342,21 @@ npm run build       # TypeScript compilation (tsc)
 npm run typecheck   # tsc --noEmit (faster, no dist/ output)
 ```
 
-### 8.4 Dependencies
+### 8.4 .NET binding
+
+The packages call the C ABI shim, so `c-abi/` goes into the Conan cache after the C++ components above, and the .NET solution builds against it; the tests load the shim they are given, and the copy-oracle tests load the test-only probe shim built beside it (`with_probe_shim`):
+
+```bash
+conan create integration-tests/copy-probe --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
+conan create c-abi/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release -o "&:with_probe_shim=True"
+cd dotnet
+dotnet build Fletcher.slnx -c Release
+dotnet test Fletcher.slnx -c Release -p:FletcherNativeShim=<path to libfletcher-c-abi.so or fletcher-c-abi.dll> -p:FletcherProbeShim=<path to libfletcher-c-abi-probe.so or fletcher-c-abi-probe.dll>
+```
+
+See [`dotnet/README.md`](../dotnet/README.md) for the probe shim, NativeAOT and locked restores.
+
+### 8.5 Dependencies
 
 | Package | Version | Purpose |
 |---|---|---|
@@ -339,15 +365,17 @@ npm run typecheck   # tsc --noEmit (faster, no dist/ output)
 | Protocol Buffers | 3.21.12 | Message definitions and compiler |
 | Boost | — | Beast/Asio for the `gateway` (header-only) |
 | GoogleTest | 1.17.0 | C++ test framework |
-| Fast DDS | 2.14.3 | DDS pub/sub transport |
+| Fast DDS | 3.4.3 | DDS pub/sub transport |
 | nlohmann/json | 3.11.3 | JSON parsing for `gateway` control protocol |
 | Node.js | 24+ | TypeScript build and tests (`gateway-client-ts` only) |
+| .NET SDK | 10 | The .NET binding (`dotnet/`); the packages target .NET 8 and .NET 10 |
+| Apache.Arrow (.NET) | 23.0.0, exact | The .NET binding's Arrow tier |
 
 ---
 
 ## 9. Testing
 
-C++ tests run through GTest in each component's `tests/` directory and are discovered via CTest. TypeScript tests use Vitest. Each Conan package builds and runs its own tests on `conan create`. A separate cross-component integration test under `integration-tests/protoc-arrow-bridge/` proves that protoc-generated row classes and arrow-bridge's `Codec` agree on every byte for every wire-format feature.
+C++ tests run through GTest in each component's `tests/` directory and are discovered via CTest. TypeScript tests use Vitest, C# tests xUnit. Each Conan package builds and runs its own tests on `conan create`. A separate cross-component integration test under `integration-tests/protoc-arrow-bridge/` proves that protoc-generated row classes and arrow-bridge's `Codec` agree on every byte for every wire-format feature.
 
 | Suite | Location | Covers |
 |---|---|---|
@@ -359,5 +387,8 @@ C++ tests run through GTest in each component's `tests/` directory and are disco
 | xrcedds-pubsub-provider | `xrcedds-pubsub-provider/tests/` | Same surface as the FastDDS provider, against an XRCE-DDS Agent |
 | protoc-arrow-bridge integration | `integration-tests/protoc-arrow-bridge/tests/` | Byte-compat invariants between protoc-generated row classes and `Codec` across every wire-format scenario (scalars, WKT, nested, collections, maps, complex, pubsub wrappers, flatten, schema evolution). Also exercises native (no Arrow C++) and ArrowRowView paths. |
 | gateway-client-ts | `gateway-client-ts/test/` | Envelope roundtrips, WebSocket protocol frames, positional codec roundtrips, end-to-end client behaviour against a mock WebSocket. |
+| c-abi | `c-abi/tests/` | Every entry point of the C ABI, the nanoarrow codec byte-identical to `arrow-bridge`'s, error containment, the single-copy check, a C99 self-containment probe |
+| dotnet | `dotnet/tests/` | The four packages (xUnit, .NET 8 and .NET 10): codec, pub/sub over the real shim, generated C# against the C++ goldens, the managed gateway codec against the native one, the copy oracle over C#'s publish, a NativeAOT consumer |
+| .NET integration lanes | `integration-tests/protoc-dotnet/`, `pubsub-transport-conformance/`, `binding-abi-conformance/`, `gateway-dotnet-end-to-end/`, `gateway-dotnet-crosslang/` | Generated C# from a project's own build, one body of C# over every transport, C# and C++ handing the codec the same arrays, the C# client against the real gateway, and the cross-language matrix's C# rows |
 
 See [Technology Decision Log](technology-decisions.md) for rationale behind each technology choice.

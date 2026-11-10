@@ -27,3 +27,7 @@ jobs:
           # actionlint 1.7.12 still rejects it as unknown. The key is valid;
           # we ignore the specific complaint until actionlint catches up.
           args: -color -ignore "unexpected key .queue. for .concurrency."
+
+      # BIND-9b-6: cd.dotnet's tag check runs only on a tag, so its logic is tested here.
+      - name: Test verify-tag-version-dotnet
+        run: bash .github/actions/verify-tag-version-dotnet/test.sh

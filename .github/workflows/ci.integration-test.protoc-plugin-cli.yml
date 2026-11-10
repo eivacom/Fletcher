@@ -68,9 +68,11 @@ jobs:
   # Windows runs natively on the windows-2022 image (Node + Git Bash are
   # pre-installed). conan-install brings Python + Conan onto the runner;
   # the static plugin build forces protobuf to be linked in so the
-  # resulting fletcher-protoc.exe has no DLL dependencies — that's the
+  # resulting fletcher-protoc.exe needs no DLL beside it — that's the
   # regression the third vitest test case ("runs standalone when copied
-  # to a clean directory with no co-located DLLs") guards.
+  # to a clean directory with no co-located DLLs") guards. It still needs
+  # the VC++ redistributable, which the runner image has installed
+  # (compiler.runtime=dynamic; protoc/README.md, D-BIND-172).
   windows:
     runs-on: windows-2022
     steps:

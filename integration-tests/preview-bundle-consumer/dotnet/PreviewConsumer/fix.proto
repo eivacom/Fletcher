@@ -1,0 +1,34 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// The message the preview-bundle consumer publishes and subscribes (BIND-9a-2): a nested
+// message, a Timestamp, a repeated field and a map beside plain scalars, and a service
+// whose method the generated native and gateway pairs are named after. The region between
+// the snippet markers is shown, verbatim, in dotnet/README.package.md (BIND-9a-4).
+// <snippet name="proto">
+syntax = "proto3";
+
+package preview.consumer;
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+message Position {
+  double lat = 1;
+  double lon = 2;
+}
+
+message Fix {
+  int32 id = 1;
+  string label = 2;
+  Position at = 3;
+  google.protobuf.Timestamp when = 4;
+  repeated double readings = 5;
+  map<string, int32> tags = 6;
+}
+
+// One topic per method that takes a stream: preview/consumer/FixFeed/Report carries Fix rows.
+service FixFeed {
+  rpc Report(stream Fix) returns (google.protobuf.Empty);
+}
+// </snippet>
