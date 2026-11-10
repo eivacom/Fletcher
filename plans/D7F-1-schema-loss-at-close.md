@@ -34,7 +34,7 @@ Three production changes, all in `cpp`:
    (L6: idleness gets no delivery). With no decoder, `HasPending()` is `dropped_ > 0`, so a
    schema-less window with drops is finished as a null batch carrying `dropped_`, and a schema-less
    window with nothing in it delivers nothing. The reason is whatever the caller passed. In this
-   stage only `Stop` (`kClosing`) can reach `Flush` without a decoder: the timer still parks on
+   stage only `Stop` (`kClosing`) can reach `Flush` with `ready_` false: the timer still parks on
    `ready_` (cpp:194-199; D7F-2 deletes that), and `AddRow`'s row-limit flush is reached only with a
    decoder.
 
@@ -90,7 +90,7 @@ reported instead of silent.
   rejected for the life of the subscription, with no later recovery and no partial decoding. A
   non-null batch may have zero rows. The paragraph after it (hpp:113-122, "What that costs depends
   on WHY…") keeps its meaning and is not touched.
-- **README:94-98:** same replacement, in prose. README:85-90 gains "(or null)" beside "zero-row".
+- **README:94-98:** same replacement, D9's sentence verbatim (D-D7F-3). README:85-90 gains "(or null)" beside "zero-row".
 - **d7:** L1's build mark becomes "built for decode failures, internal failures, undecodable
   schemas and a schema that never becomes usable (D7F-1); violation 2 open (D7F-3)". L7's mark
   becomes `[built]` (the header now states what the code does). L9's test list gains the destructor

@@ -791,3 +791,12 @@ per-envelope ceiling in the wire format and refuse past it in both decoders (`re
 `std::invalid_argument`). Measure first — the bound must be evidence, not a guess.
 **Addressed to:** PDA-ABI, at the item that gives the decode path its C form, or any round that
 first has a measured deployment figure.
+
+## D7F-1 — loss before a usable schema, reported at close (APPROVE-WITH-DEBT(2), cycle 1 of 2)
+
+Review: [D7F-1-design-review.md](D7F-1-design-review.md). No BLOCKERs; P1–P4 verified, rely on them.
+
+| Id | Owed | Where |
+|----|------|-------|
+| DEBT-1 | Add a BC-3 status note to the register edits: reporting gate cpp:210 removed and import failure counted via the no-decoder branch (D7F-1); state vs decoder-presence and `ready_` left to D7F-2; "one usability decision" waits on d7 Q7. | review §DEBT-1 |
+| DEBT-2 | d7 L1 mark: "violation 1: closing half built (D7F-1); deadline half open (D7F-2)", not fully built, since the timer still parks on `ready_` (cpp:198) and ladder:43 cites violation 1 for rung 2. | review §DEBT-2 |
