@@ -1,7 +1,7 @@
 # Domain 7: Batch assembly
 
-> **DRAFT: the laws are candidates awaiting owner confirmation.** No round may run in this domain
-> until the owner promotes it ([domain-map.md](../domain-map.md), status `draft`).
+> **Specified.** The owner confirmed these laws on 2026-11-10 ([RIX-rulings.md](../../plans/RIX-rulings.md), "Yes on all accounts"). A change to a law needs
+> an owner ruling, recorded in a decision of record.
 
 **Mode: survey, verified against the tree at `9a4780b`** (branch `feature/row-index`). The code is
 ground truth. Doc comments, READMEs and specs are claims checked against it. No spec exists for
@@ -133,9 +133,17 @@ every later row is dropped, and there is no recovery.
 - Tests: `NestedDictionarySchemaReportsEveryRowDropped`, which covers one window only.
 
 **L9. Closing is final and reported.** The pending window is delivered once, as `kClosing`. After
-`Unsubscribe` or `~SubscriberArrow` returns, no further batch is delivered. A row that arrives after
-closing is neither delivered nor counted.
-`[built]`
+`Unsubscribe` or `~SubscriberArrow` returns, no further batch is delivered. **The one exception:**
+when `Unsubscribe` is called from inside a batch callback, delivery continues after that callback
+returns: any full windows already queued are delivered first, in order, then the `kClosing` batch,
+and nothing after it. A row that arrives after closing is
+neither delivered nor counted.
+`[built for Unsubscribe outside a callback; violated inside one: today the kClosing batch is delivered nested, inside the calling callback]`
+- **Revised 2026-11-10** (owner ruling, "Deliver after it returns", [RIX-rulings.md](../../plans/RIX-rulings.md)).
+  The law used to say only "after `Unsubscribe` returns, no further batch is delivered". That could
+  not hold together with L12 and L1 when the window was non-empty (D7F pre-round audit, LL-1).
+- **Clarified 2026-11-10** (owner ruling, "Queued batch, then closing"): "right after that callback
+  returns" means that `kClosing` is the last delivery, after any windows already queued (D10).
 - Holds at: `cpp:130-149` (idempotent through `stopped_`), `cpp:80` and `cpp:123`, `cpp:428-429`
   (`Stop` before `Subscriber::Unsubscribe`), `cpp:275-288`.
 - Tests: `ClosingFlushOnUnsubscribe`, `UnsubscribeFromCallbackDuringRowLimitFlushStopsDeliveryCleanly`,
@@ -217,6 +225,10 @@ Surface (`hpp:72-144`):
 | D5 | Re-entry from inside a delivery is refused. `Subscriber` skips provider teardown when a handler cancels its own last subscription, which is what makes `Unsubscribe` from a `kRowLimit` callback safe. | Owner rulings, 2026-09-05 ([pubsub-interface-spec.md](../pubsub-interface-spec.md) §6, clauses 5-6; `pubsub/src/subscriber.cpp:722-740`). This is domain 3's decision, relied on here. |
 | D6 | L1's two violations and L12's violation are fixed in a round before RIX. | Owner ruling, 2026-11-10, "2. Fix both" ([RIX-rulings.md](../../plans/RIX-rulings.md)). |
 | D7 | The row index is always the caller's, never Fletcher's (L14). | Owner ruling, 2026-11-10 ([RIX-rulings.md](../../plans/RIX-rulings.md)). |
+| D8 | L9 revised: after an `Unsubscribe` from inside a batch callback, the closing batch is delivered once that callback returns. | Owner ruling, 2026-11-10, "Deliver after it returns" ([RIX-rulings.md](../../plans/RIX-rulings.md)). |
+| D9 | The header and README describe a null batch as "no batch could be built for this window: no usable schema has arrived yet, the schema was rejected (permanent), or finishing the batch failed; `rows_dropped` counts the window's rows in every case". Supersedes the header's "null only when the constructor rejected" (`hpp:106-111`). | Owner ruling, 2026-11-10, "Approve the rewording" ([RIX-rulings.md](../../plans/RIX-rulings.md)). Applied by round D7F. |
+| D10 | Every batch callback runs on the subscription's own batch thread. Full windows are queued for it in order, so the transport's delivery thread never runs or waits on a callback. Accepted cost: no back-pressure on the transport, so a callback slower than the data rate makes batches queue up in memory. Applied by round D7F, which also rewrites §4 "Who calls, and on which thread". | Owner ruling, 2026-11-10, "Always Fletcher's batch thread" ([RIX-rulings.md](../../plans/RIX-rulings.md)). |
+| D11 | The test for L1's second violation (~256 MiB row) carries the `heavy` label and is not in the default run. | Owner ruling, 2026-11-10, "Label it 'heavy'" ([RIX-rulings.md](../../plans/RIX-rulings.md)). |
 
 ## 6. Relationships
 

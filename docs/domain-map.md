@@ -35,12 +35,12 @@ Status meanings:
 | # | Domain | Owns | Main documents | Status |
 |---|---|---|---|---|
 | 1 | **Data model and code generation** | the protoc plugin; generated message classes, view classes, RecordBatch accessors; the schema and schema metadata generated from a `.proto` | [fletcher-options.md](fletcher-options.md), [recordbatch-accessor-spec.md](recordbatch-accessor-spec.md) | `draft`: the specs exist, but no numbered laws |
-| 2 | **Row encoding and the envelope** | the positional row codec (`core`, `arrow-bridge`), the envelope, the attachments byte layout, **the meaning of reserved attachment keys, and the meaning of schema metadata keys that are not data model, such as `fletcher.row_index*`** (owner rulings, 2026-11-10) | [wire-format-specification.md](wire-format-specification.md) | `draft`: promoted before RIX (owner ruling, 2026-11-10) |
+| 2 | **Row encoding and the envelope** | the positional row codec (`core`, `arrow-bridge`), the envelope, the attachments byte layout, **the meaning of reserved attachment keys, and the meaning of schema metadata keys that are not data model, such as `fletcher.row_index*`** (owner rulings, 2026-11-10) | [domains/d2-row-encoding.md](domains/d2-row-encoding.md); [wire-format-specification.md](wire-format-specification.md) | **`specified`** 2026-11-10 |
 | 3 | **The provider interface** | `PubSubProvider`: topic creation, schema delivery over `__schema`, conflict refusal (`internal/schema_conflict.hpp`, shared by `Publisher`), the delivery contract, threading and lifetime, `TopicOptions`. **Local fan-out and subscription lifetime in `Subscriber` belong here** (spec §6, §7 clause 4). | [pubsub-interface-spec.md](pubsub-interface-spec.md) | `draft`: a detailed spec with numbered clauses, but not laws in the required form |
 | 4 | **Transport providers** | FastDDS, XRCE, in-process: how each meets domain 3's contract, including the meaning of `max_payload_bytes` on `__schema` (owner ruling, 2026-11-10) | provider READMEs | `draft` |
 | 5 | **Gateway and browser client** | the WebSocket gateway, the TS client | wire spec (gateway frames), `gateway-client-ts` | `draft` |
 | 6 | **Protocol driver ABI** | loading providers across the ABI boundary | [protocol-driver-abi-spec.md](protocol-driver-abi-spec.md) | `draft` |
-| 7 | **Batch assembly** | turning a stream of rows into columnar batches: when windows close (row count, timeout, offset overflow), loss accounting, row-aligned side data (`RecordBatchBatcher`, [pubsub-arrow/src/subscriber_arrow.cpp](../pubsub-arrow/src/subscriber_arrow.cpp)) | none; its rules are only in code comments | `draft`: built, unspecified. Promoted by the next round (owner ruling, 2026-11-10) |
+| 7 | **Batch assembly** | turning a stream of rows into columnar batches: when windows close (row count, timeout, offset overflow), loss accounting, row-aligned side data (`RecordBatchBatcher`, [pubsub-arrow/src/subscriber_arrow.cpp](../pubsub-arrow/src/subscriber_arrow.cpp)) | [domains/d7-batch-assembly.md](domains/d7-batch-assembly.md) | **`specified`** 2026-11-10; L1 and L12 violated, fixed by the next round |
 | 8 | **Row bookkeeping** | per-row information that is not business data, starting with Surge's row index: its declaration at topic creation, its single writer, its delivery beside the batch | [plans/RIX-row-index.md](../plans/RIX-row-index.md) (plan, not a spec) | `draft`: not built. Created by round RIX |
 
 The numbers are labels, not a ranking. They differ from the first proposal: the application tier
@@ -48,21 +48,19 @@ The numbers are labels, not a ranking. They differ from the first proposal: the 
 
 ## Planned order of work (owner rulings, 2026-11-10)
 
-1. **Domains 2 and 7 specified:** drafts at [domains/d2-row-encoding.md](domains/d2-row-encoding.md)
-   and [domains/d7-batch-assembly.md](domains/d7-batch-assembly.md), awaiting the owner's review of
-   their laws.
+1. **Domains 2 and 7 specified:** done 2026-11-10.
 2. **Domain 7 fix round:** L1's violations (drops never reported) and L12's (batches delivered
    concurrently and out of order).
 3. **RIX:** creates domain 8, and deletes the PR #104 trailing-field helpers.
 
-Not yet placed: protoc's refusal of `fletcher.` metadata keys, which is domain 1 code
-(d2-row-encoding Q3a).
+Deferred: protoc's refusal of `fletcher.` metadata keys (domain 1 code, d2-row-encoding Q3a), until
+domain 1 is specified (owner ruling, 2026-11-10).
 
 ## Where this map is incomplete
 
-- **No domain is `specified`.** Every existing document predates this map and states its rules as
-  prose or as spec clauses, not as numbered laws marked with build state. Until a domain is
-  promoted, no round may run in it.
+- **Only domains 2 and 7 are `specified`.** The other existing documents predate this map and state their rules as
+  prose or as spec clauses, not as numbered laws marked with build state. Until one of those
+  domains is promoted, no round may run in it.
 - **Schema metadata keys are split between two owners.** Keys that are not data model
   (`fletcher.row_index*`) belong to domain 2. Keys generated from a `.proto` (`proto_package`,
   `proto_message`, `field_number`, `metadata_from_option` keys) stay with domain 1 (confirmed

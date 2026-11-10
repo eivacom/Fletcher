@@ -1,7 +1,7 @@
 # Domain 2: Row encoding and the envelope
 
-> **DRAFT: the laws are candidates awaiting owner confirmation.** No round may run in this domain
-> until the owner promotes it ([domain-map.md](../domain-map.md), status `draft`).
+> **Specified.** The owner confirmed these laws on 2026-11-10 ([RIX-rulings.md](../../plans/RIX-rulings.md), "Yes on all accounts"). A change to a law needs
+> an owner ruling, recorded in a decision of record.
 
 **Mode: survey, verified against the tree at `9a4780b`** (branch `feature/row-index`). The code is
 ground truth. [wire-format-specification.md](../wire-format-specification.md) ("wire spec"),
@@ -244,8 +244,8 @@ cannot reach it because the `__` segment prefix is refused. Confirmed by the own
 - **Q1–Q4: resolved 2026-11-10** (§5). Type mapping split between this domain and domain 1;
   `max_payload_bytes` is domain 4's; protoc refuses the `fletcher.` prefix; RIX deletes the
   trailing-field helpers.
-- **Q3a (PM):** protoc's `fletcher.` refusal is domain 1 code. Which round makes it? RIX
-  is scoped to domain 8, and domain 1 is still `draft`.
+- **Q3a: deferred 2026-11-10.** protoc's `fletcher.` refusal is domain 1 code. It is a known
+  gap until domain 1 is specified (owner ruling, "Yes on all accounts").
 - **Q5:** Is a trailing byte after the last attachment malformed (A5)? Is a body without `ATT_COUNT` (A6)?
 - **Q6 (owner):** should generated C++ decoders and TS refuse trailing bytes (L3)? That changes what they accept, not the wire.
 
