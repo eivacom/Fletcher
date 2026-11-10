@@ -1,0 +1,319 @@
+# Domain 7: Batch assembly
+
+> **DRAFT: the laws are candidates awaiting owner confirmation.** No round may run in this domain
+> until the owner promotes it ([domain-map.md](../domain-map.md), status `draft`).
+
+**Mode: survey, verified against the tree at `9a4780b`** (branch `feature/row-index`). The code is
+ground truth. Doc comments, READMEs and specs are claims checked against it. No spec exists for
+this domain; its rules live in code comments in
+[`subscriber_arrow.cpp`](../../pubsub-arrow/src/subscriber_arrow.cpp) (cited `cpp:N`) and
+[`subscriber_arrow.hpp`](../../pubsub-arrow/include/fletcher/pubsub_arrow/subscriber_arrow.hpp)
+(cited `hpp:N`). Tests are in `pubsub-arrow/tests/test_pubsub_arrow.cpp`, named without the
+`SubscriberArrowBatchTest.` prefix.
+
+## 1. Intent
+
+**Owns:** turning a subscription's stream of rows into a sequence of columnar batches. That means:
+deciding when a window closes (row count, timeout, 32-bit offset budget, close); accounting for every
+row that arrives (delivered or dropped); keeping row-aligned side data (attachments) parallel to the
+batch; reporting why each batch was delivered; and owning the timer thread and its teardown.
+
+**Refuses:**
+- **Decoding.** How a wire row becomes builder contents, which schemas can be decoded, and the
+  dictionary re-fold all belong to `BatchDecoder`, which is domain 2's. This domain only reacts to the
+  decoder's three outcomes: appended, `invalid_argument`/`BatchCapacityExceeded` (nothing appended),
+  or an internal failure (the pending window is undefined) (`batch_decoder.hpp:46-49`).
+- **Delivery and subscription lifetime.** Fan-out, the unsubscribe barrier, re-entry refusal and
+  delivery threading belong to domain 3. This domain relies on them (see §6).
+- **Retry, back-pressure, persistence.** A lost row is counted and never recovered. A slow callback
+  is not throttled. No code exists for any of these.
+- **Validating `BatchOptions`.** Out-of-range values are clamped silently, never refused
+  (`cpp:32`, `cpp:176`).
+
+## 2. Ubiquitous language
+
+| Term | Definition (as the code behaves) |
+|---|---|
+| **Window** | The rows and drops collected since the previous flush: `decoder_` rows + `atts_` + `dropped_` (`cpp:256-258`). |
+| **Pending** | The window is non-empty: at least one decoded row or one drop (`HasPending`, `cpp:152`). |
+| **Flush** | Closing the window: it is finished into a batch and handed to the callback with the lock released (`cpp:207-248`). |
+| **Flush reason** | `BatchStatus::Reason`: `kRowLimit`, `kTimeout` or `kClosing` (`hpp:80-84`). |
+| **Batch** | The `arrow::RecordBatch` a flush delivers. It may have zero rows, or be null (L6, L7). |
+| **Dropped row** | A row that reached the batcher and is not in any batch. It is counted in `rows_dropped` ("rows lost since the previous flush", `hpp:86`). |
+| **Deadline** | When a pending window times out: `max(now + 1 ms, last_flush + timeout)` (`cpp:176`). |
+| **Ready** | The batcher has received a schema (`ready_`, `cpp:68`). Ready with no decoder means the schema could not be decoded. |
+| **Offset budget** | Arrow's 32-bit builder limit, which `BatchDecoder` signals with `BatchCapacityExceeded` (`batch_decoder.hpp:16-21`). |
+| **Closing** | `Stop()`: the final flush. Any later row is ignored (`cpp:80`, `cpp:130-149`). |
+
+**Naming findings:**
+- *window* and *batch* both name the accumulating set. `hpp:97` says "first row/drop of the current
+  batch", and `cpp:203` says "a window with only dropped rows".
+- *row*, *sample* and *message* all name the unit that is dropped: "row" in `hpp:86`, "samples" in
+  the README (line 86), "message" in `cpp:359`.
+- `kRowLimit` has two meanings: `max_rows` was reached, **or** the offset budget was exceeded
+  (`cpp:92`, `hpp:93`). One name covers two causes.
+
+## 3. Invariants and laws
+
+**L1. A lost row is always reported, never silent.** Every row that reaches the batcher before
+closing and is not delivered is counted in the `rows_dropped` of a later delivered batch.
+`[built for decode failures, internal failures and undecodable schemas; violated on a topic whose
+schema never becomes usable]`
+- Holds at: `cpp:81-85` (no decoder), `cpp:100-111` (malformed, over budget, internal),
+  `cpp:159-166` (`DiscardPending`), `cpp:235-236`.
+- **Violation 1.** When `AcquireCodec` returns null (null schema, or `ImportArrowSchema` throws,
+  `cpp:402-409`), `NoteDropped` counts the row (`cpp:121-126`). But `SetSchema` is never called, so
+  `ready_` stays false. The timer then waits forever (`cpp:198`), and `Flush` returns early at
+  `cpp:210`, including the `kClosing` flush. The count is discarded without being reported.
+- **Violation 2.** A row that hit the offset budget, during whose early flush the callback called
+  `Unsubscribe`, is neither appended nor counted (`cpp:95`).
+- Tests: `DroppedRowReportedAndAttachmentDiscarded`, `CorruptRowIsCountedDroppedAndBatchStaysAligned`,
+  `OnlyDroppedRowsStillDeliversEmptyBatch`, `NestedDictionarySchemaReportsEveryRowDropped`,
+  `FinishFailureIsReportedNotFatal`. No test covers either violation.
+- **Both violations are to be fixed before RIX** (owner ruling 2026-11-10, "2. Fix both"). How the
+  fix reports a drop that happens before any usable schema is a design question for that round
+  (Q1).
+
+**L2. Rows are conserved.** For each window, rows in the batch + `rows_dropped` = rows that reached
+the batcher in that window, with each row counted exactly once.
+`[built as a property; no code owner]`
+- No single function holds this. It is the sum of each `AddRow` branch (`cpp:86-112`), of
+  `DiscardPending` (which moves pending rows into the drop count, `cpp:160`), and of the reset in
+  `Flush` (`cpp:233-236`). The exceptions are L1's.
+- Tests: `CorruptRowIsCountedDroppedAndBatchStaysAligned` (2 + 1), `FinishFailureIsReportedNotFatal`
+  (200 dropped, then 3 delivered), `ReuseAcrossWindows`.
+
+**L3. Side data stays row-aligned.** `attachments.size() == batch rows`, and `attachments[i]` belongs
+to batch row `i`. A dropped row takes its attachment with it.
+`[built]`
+- Holds at: an attachment is pushed only after a successful `Append` (`cpp:87-88`, `cpp:97-98`);
+  `DiscardPending` clears them (`cpp:161`); `Flush` moves them out together with the batch
+  (`cpp:233`). Stated at `hpp:100-104`.
+- Tests: `AttachmentsAlignWithRows`, `DroppedRowReportedAndAttachmentDiscarded`,
+  `CorruptRowIsCountedDroppedAndBatchStaysAligned`.
+
+**L4. A window is bounded.** It closes at the first of four events: `max_rows` rows, the deadline,
+the offset budget, or closing. The batch's reason names which, except that the offset budget is
+reported as `kRowLimit`. A row that meets the budget opens the next window rather than being lost.
+`[built]`
+- Holds at: `cpp:114-116` (count), `cpp:191-195` (deadline), `cpp:89-98` (budget: flush, then retry
+  once), `cpp:136` (closing). `max_rows < 1` is clamped to 1 (`cpp:32`).
+- Tests: `FlushesAtRowLimit`, `FlushesAtTimeout`, `ClosingFlushOnUnsubscribe`. There is **no test**
+  of the offset-budget early flush in this domain: the comment at test line 936 says it cannot be
+  forced. Only the decoder half is tested (`BatchDecoderTest.CapacityExceededLeavesBuildersUntouched`).
+
+**L5. Timeout cadence is anchored to the previous flush, not to the first event.** A continuous
+stream flushes every `timeout`. A stream idle for longer than `timeout` is delivered on the next
+event, after a 1 ms floor.
+`[built]`
+- Holds at: `cpp:168-180`, `cpp:209`, `cpp:261`.
+- Test: no test. `FlushesAtTimeout` checks only that a timeout flush happens, not when.
+- The header and README say otherwise (Findings a1).
+
+**L6. Loss gets a delivery, and idleness does not.** A window that contains only drops is still
+delivered: a zero-row batch, or a null batch if there is no decoder. A window with nothing pending
+delivers nothing.
+`[built]`
+- Holds at: `cpp:211`, `cpp:152`, `cpp:203-206`.
+- Tests: `OnlyDroppedRowsStillDeliversEmptyBatch`. The idle case has no test.
+
+**L7. A null batch means "no batch could be built for this window".** It is never "no rows".
+`[built for an undecodable schema; violated on Finish failure against the header's claim]`
+- The header says a batch is null *only* when `BatchDecoder`'s constructor rejected the schema
+  (`hpp:106-111`). The code also delivers a null batch when `Finish()` throws on a decodable schema,
+  for example a dictionary re-fold that overflows its index type (`cpp:217-225`). The law above states
+  what the code does. The header's narrower claim is the part that is violated.
+- Tests: `NestedDictionarySchemaReportsEveryRowDropped`. `FinishFailureIsReportedNotFatal` (test
+  line 914) pins the null-on-Finish behaviour, so the test contradicts the header.
+
+**L8. An undecodable schema is permanent for the subscription.** Once a schema has been rejected,
+every later row is dropped, and there is no recovery.
+`[built]`
+- Holds at: `cpp:58-67`, plus the one-shot `call_once` at `cpp:372`. Stated at `hpp:106-109`.
+- Tests: `NestedDictionarySchemaReportsEveryRowDropped`, which covers one window only.
+
+**L9. Closing is final and reported.** The pending window is delivered once, as `kClosing`. After
+`Unsubscribe` or `~SubscriberArrow` returns, no further batch is delivered. A row that arrives after
+closing is neither delivered nor counted.
+`[built]`
+- Holds at: `cpp:130-149` (idempotent through `stopped_`), `cpp:80` and `cpp:123`, `cpp:428-429`
+  (`Stop` before `Subscriber::Unsubscribe`), `cpp:275-288`.
+- Tests: `ClosingFlushOnUnsubscribe`, `UnsubscribeFromCallbackDuringRowLimitFlushStopsDeliveryCleanly`,
+  `UnsubscribeFromInsideATimeoutFlushIsSafe`. The closing flush from the destructor has no test.
+
+**L10. Neither user code nor allocation failure can kill an internal thread.** A throw from the
+callback is swallowed. An internal failure becomes a drop.
+`[built]`
+- Holds at: `cpp:243-246`; `cpp:104` and `cpp:111` (`catch (...)`), `cpp:162-165`, `cpp:228-231`.
+- Tests: `FinishFailureIsReportedNotFatal` covers internal failures. A throwing callback has no test.
+
+**L11. The batcher outlives every thread running inside it.** The timer thread co-owns the batcher.
+A `Stop` issued from the timer thread detaches the thread instead of joining it.
+`[built]`
+- Holds at: `cpp:39-51`, `cpp:141-148`.
+- Tests: `UnsubscribeFromInsideATimeoutFlushIsSafe`.
+
+**L12. Batches reach the callback one at a time, in window order.**
+`[built for one flushing thread; violated on timer and delivery-thread overlap]`
+- `Flush` releases `mu_` around the callback (`cpp:238-247`). A `kTimeout` callback running on the
+  timer thread can therefore overlap with, and be overtaken by, a `kRowLimit` callback from the
+  delivery thread, or a `kClosing` callback from the thread calling `Unsubscribe`. Commit `7cd3e53`
+  claims that "provider callbacks and the timer serialize through the batcher's mutex": that holds
+  for the window state, but not for the callback.
+- Test: no test.
+- **This is a law, and the violation is to be fixed before RIX** (owner ruling 2026-11-10, "2. Fix
+  both"). L14 depends on it.
+
+**L13. Subscribing never waits for the schema.** Assembly starts at the first decodable row.
+`[built]`
+- Holds at: `cpp:369-380`, `cpp:391-395`.
+- Test: no batched subscriber-first test. `PubSubArrowFastDdsTest.SubscribeBeforePublishDeliversWithSchema`
+  in `integration-tests/pubsub-arrow-fastdds` uses the per-row overload.
+
+**L14. The row index is always the caller's, never Fletcher's.** Batch assembly delivers each row's
+index exactly as the publisher supplied it. It never assigns, renumbers, reorders, fills or checks an
+index. Keeping indexes compact (no gaps) and in sequence is the caller's responsibility, and Fletcher
+makes no claim about it.
+`[designed-not-built]`
+- Source: owner ruling, 2026-11-10: *"The row index is always supplied by the caller, never by
+  fletcher itself; it is the caller's responsibility that the rows are indexed compactly and in
+  sequence"* ([RIX-rulings.md](../../plans/RIX-rulings.md)). It agrees with the earlier ruling *"For
+  now, we will make no counting check"*.
+- **Depends on L12.** A caller's correct sequence reaches the consumer in sequence only if batches
+  reach the callback in window order. While L12 is violated, batch assembly can reorder a correct
+  sequence, which is exactly what this law forbids.
+- Holds at: not built (RIX stage S4). Test: owed by RIX.
+
+## 4. The interface
+
+Surface (`hpp:72-144`):
+- `BatchOptions{max_rows = 8000, timeout = 1 min}`.
+- `BatchStatus{reason, rows_dropped}`.
+- `RecordBatchCallback(batch, attachments, status)`.
+- `Subscribe(segments, RecordBatchCallback, BatchOptions, TopicOptions = {})`, plus a convenience
+  overload with the default options (`hpp:139-142`).
+- `Unsubscribe(id)` and `~SubscriberArrow`, which trigger the closing flush.
+
+`RecordBatchBatcher` is private (`hpp:154`). Only `SubscriberArrow` constructs or drives it.
+`TopicOptions` passes through to domain 3 untouched (`cpp:383`).
+
+**Who calls, and on which thread:**
+- Applications call `Subscribe` and `Unsubscribe` from any thread, including from inside the batch
+  callback (tests above).
+- The callback runs on the provider's delivery thread for `kRowLimit` (`cpp:115`), on the batcher's
+  timer thread for `kTimeout` (`cpp:195`), and on the thread calling `Unsubscribe` or the destructor
+  for `kClosing`. That last thread is the timer thread when `Unsubscribe` is called from a timeout
+  callback.
+- The callback target must outlive the subscription (README line 90).
+
+## 5. Decisions of record
+
+| # | Decision | Source |
+|---|---|---|
+| D1 | Each window reports a reason and a drop count. A dropped row contributes neither a row nor an attachment. A window with only drops still delivers a zero-row batch. A partial window is flushed as `kClosing`. | Commit `7cd3e53` message (the domain's origin). The test comment "decision A" (test line 673) has no source in `plans/` or `docs/archive/`. |
+| D2 | The timeout is anchored to the previous flush, with a 1 ms floor. | Code comment `cpp:168-172`, with a measurement (65 ms against 33 ms at 30 Hz), introduced in `f33973c`. No owner ruling was found. |
+| D3 | This domain is specified, in its own survey round, before RIX. | Owner ruling, 2026-11-10, "3. (a)" ([RIX-rulings.md](../../plans/RIX-rulings.md)). |
+| D4 | `SubscriberArrow` is a boundary, not a domain. Batch assembly is a domain of its own. | Owner rulings, 2026-11-10 ([RIX-rulings.md](../../plans/RIX-rulings.md)). |
+| D5 | Re-entry from inside a delivery is refused. `Subscriber` skips provider teardown when a handler cancels its own last subscription, which is what makes `Unsubscribe` from a `kRowLimit` callback safe. | Owner rulings, 2026-09-05 ([pubsub-interface-spec.md](../pubsub-interface-spec.md) §6, clauses 5-6; `pubsub/src/subscriber.cpp:722-740`). This is domain 3's decision, relied on here. |
+| D6 | L1's two violations and L12's violation are fixed in a round before RIX. | Owner ruling, 2026-11-10, "2. Fix both" ([RIX-rulings.md](../../plans/RIX-rulings.md)). |
+| D7 | The row index is always the caller's, never Fletcher's (L14). | Owner ruling, 2026-11-10 ([RIX-rulings.md](../../plans/RIX-rulings.md)). |
+
+## 6. Relationships
+
+- **Domain 2 (`BatchDecoder`).** This domain consumes the decoder's exception contract
+  (`batch_decoder.hpp:28-57`) and maps it onto drops (L1, L2) and early flushes (L4). Which schemas are
+  rejected, and the dictionary re-fold, are domain 2's. The header (`hpp:113-122`) and the README
+  restate domain 2's dictionary-shape rule. The batched path also builds a per-row `Codec` that it
+  never decodes with, using it only as a schema cache (`cpp:360-368`, `cpp:410`); see Findings b2.
+- **Domain 3 (`Subscriber`, providers).** This domain relies on four of domain 3's guarantees:
+  delivery is serialized per subscription (spec §6.1), which makes `AddRow` single-producer;
+  `Subscriber::Unsubscribe` acts as a barrier, so no delivery is in flight after it returns, which
+  together with `Stop` gives L9; re-entry is handled (D5); and rows can arrive before `Subscribe`
+  returns (`cpp:355-359`).
+- **Domain 8 (row bookkeeping), upcoming.** [RIX-row-index.md](../../plans/RIX-row-index.md) stage S4
+  extends `RecordBatchBatcher`:
+  - it reads `fletcher.row_index*` at `SetSchema`;
+  - it strips the reserved attachment and checks the writer hash for each row;
+  - it adds a row-aligned `UInt64` index array, `BatchStatus::rows_foreign_writer` and
+    `SubscribeIndexed`.
+
+  That stage will touch L2 (a third bucket in the count) and L3 (a second row-aligned array). The
+  only law written for it here is L14, which comes from an owner ruling.
+
+## 7. Open questions
+
+| # | Question | Owner |
+|---|---|---|
+| Q1 | L1, violation 1: the owner ruled it is fixed (2026-11-10). Still open is *how* those drops are reported, for example as a null batch at closing or at the deadline. | design of the fix round, owner if it changes the interface |
+| Q2 | L12: resolved 2026-11-10. It is a law, and it is to be fixed. A delivery lock versus a single flushing thread is a design choice for the fix round. | design of the fix round |
+| Q3 | L7: should the header's "null only when the constructor rejected" claim be amended, or should a `Finish` failure deliver a zero-row batch instead? | owner |
+| Q4 | Should the offset-budget flush get its own reason (such as `kCapacity`), rather than sharing `kRowLimit`? Adding one is a public enum change. | owner |
+| Q5 | Should `BatchOptions` refuse `max_rows < 1` and `timeout <= 0` instead of clamping them silently? | owner |
+| Q6 | Where is "decision A" (test line 673) recorded? | owner or PM |
+| Q7 | Should the batched path cache an `arrow::Schema` instead of building an unused `Codec`? This touches the domain 2 boundary. | domain 2 and domain 7 |
+
+## 8. How to extend this domain
+
+1. **Name the bucket.** Any new reason a row may fail to reach a batch must have a named counter in
+   `BatchStatus` (`rows_dropped` today, `rows_foreign_writer` planned), so that L2 stays an equation.
+   No row may leave the window uncounted.
+2. **Keep side data aligned.** Any new per-row side data (index arrays, attachments) is appended in
+   the same branch as the successful `Append`, cleared in `DiscardPending`, and moved out in `Flush`
+   together with the batch (L3).
+3. **Decide windows here, decode in domain 2.** New decoder outcomes are added to `BatchDecoder`'s
+   contract first, then mapped to a drop or an early flush here.
+4. **Isolate every internal thread.** User code and allocation failures stay in `try` blocks on the
+   delivery, timer and teardown paths (L10, L11).
+5. **Record the change.** Write any change to a law here before writing the code, and mark its build
+   state.
+
+## Findings (reported, not fixed)
+
+**(a) Documents that disagree with the code**
+1. **Timeout anchoring.** `hpp:96-97` ("since the first row/drop of the current batch"), README
+   lines 66-67 ("since the batch started filling") and commit `7cd3e53` all disagree with
+   `cpp:168-176` (anchored to the previous flush). See L5.
+2. **When a batch is null.** `hpp:106-111` ("null only when the constructor rejected") disagrees with
+   `cpp:217-225`. See L7.
+3. **The codec cache's lifetime.** `cpp:345-347` says "Codecs live in `codecs_` for the
+   SubscriberArrow's lifetime", but `Unsubscribe` erases them (`cpp:448-450`). Before `cpp:388`
+   registers `sub_topic_`, a concurrent last-unsubscribe on the same topic can erase the entry. The
+   `call_once` would then pass `SetSchema(nullptr)` (`cpp:375-379`), giving permanent, unreported
+   drops (L1). This is reachable only under that race, and was found by reading, not reproduced.
+4. **The wire spec.** [wire-format-specification.md:222-226](../wire-format-specification.md) says a
+   nested dictionary is "rejected by that batched path at subscribe time". In the code the rejection
+   happens at the first decodable row (`cpp:372`), and it is a null batch with drops (L8), not an
+   error.
+5. **The architecture overview.** [architecture-overview.md:188-193](../architecture-overview.md)
+   names a `PubSubArrow::Subscribe`; the class is `SubscriberArrow`. It says nested value types are
+   "rejected with a clear error", whereas the batched path reports drops and gives no error. It also
+   omits `float16`, ordered dictionaries and dictionaries below the top level, which `BatchDecoder`
+   also rejects (`batch_decoder.hpp:28-31`).
+6. **The README.** The README (lines 146-147) also omits `float16` and ordered dictionaries from its
+   rejected list.
+
+**(b) Rules answered in two places**
+1. **Dropping when there is no decoder.** Two paths do it, `NoteDropped` (`cpp:121-126`, no codec)
+   and `AddRow` (`cpp:81-85`, no decoder), and they report differently: the first is never flushed
+   (L1).
+2. **Whether a schema is usable.** This is decided twice: `ImportArrowSchema` in `AcquireCodec`
+   (`cpp:403-409`), whose failure goes unreported, and the `BatchDecoder` constructor (`cpp:62`),
+   whose failure is reported.
+3. **The append-and-classify block.** It is duplicated for the retry after the budget is exceeded
+   (`cpp:86-112` and `cpp:96-104`).
+4. **The dictionary-shape fallback rule.** It is stated three times: `hpp:113-122`, README lines
+   100-112, and `batch_decoder.hpp:28-40`. It belongs to domain 2.
+5. **Dead branch.** The `kRowLimit` flush in `SetSchema` (`cpp:69-71`) is unreachable: the decoder
+   is brand new there, so it holds 0 rows, and `max_rows` is at least 1.
+
+**(c) Behaviour with no test**
+- The early flush on the offset budget, at the batcher level (L4).
+- Timeout anchoring and the 1 ms floor (L5).
+- No delivery for an idle window (L6).
+- Pre-schema drops that are never reported (L1, violation 1), and the uncounted row after the
+  budget retry (L1, violation 2).
+- The closing flush from `~SubscriberArrow` (L9).
+- A callback that throws (L10).
+- Overlapping or reordered callbacks (L12).
+- A batched subscriber-first subscription (L13).
+- Clamping of `max_rows` and `timeout` (§1).

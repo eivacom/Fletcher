@@ -5,6 +5,14 @@ one, **without** putting it in the `.proto` data model and **without** changing 
 
 Status: **draft — not started.** Branch: `feature/row-index`, off `main`, rebased before the PR.
 
+**Prerequisites:**
+- Domains 2 and 7 are specified: [docs/domains/](../docs/domains/), owner review pending.
+- A domain 7 fix round has fixed L1 (drops never reported) and L12 (batches delivered out of
+  order), which this round's subscriber side depends on.
+
+The runbook (config, test ladder, tracker) is written by `round-designer` once those are done.
+Until then the stage table below is a sketch.
+
 ## Why
 
 Surge stores sensor data in **LogTables**. Every row in a LogTable has an `_ingest_offset`: a dense
@@ -69,6 +77,18 @@ A proposed deviation from any of these is stop-and-ask.
   name and position Surge's LogTables register (SurgeClient README, "Tables": "the batch's schema
   plus `_ingest_offset` (UInt64) as the first column"). It is a fixed constant, not a parameter, so
   it cannot drift from Surge. (Owner decision, 2026-11-10.)
+- **D-RIX-12 — RIX deletes the trailing-field helpers.** `AppendTrailingUint64Field` and
+  `ReadTrailingUint64Field` (`core/include/fletcher/core/positional_io.hpp:158-260`, PR #104) carry
+  `_ingest_offset` as a trailing schema field, which the first ruling forbids. RIX deletes them and
+  the tests that pin them (`core/tests/test_positional_io.cpp:86-203`,
+  `arrow-bridge/tests/test_codec.cpp:752-831`). Those tests' subject is now forbidden, so they are
+  deleted, never re-anchored. Monorepo calls the helpers in production
+  (`data-acquisition.drivers/modules/RowBatcherFletcher/src/FletcherRowCodec.cpp`), so the round
+  ships as a breaking `fletcher-core` 0.4 release, and those callers stay on 0.3 until they move.
+  (Owner decision, 2026-11-10: "1. (a) RIX should delete them".)
+- **D-RIX-13 — The row index is the caller's.** Fletcher never supplies, renumbers, reorders, fills or
+  checks an index. Keeping indexes compact and in sequence is the caller's responsibility. (Owner
+  ruling, 2026-11-10; domain 7 L14.)
 - **D-RIX-7 — Reserved attachments are invisible at the Arrow tier.** `SubscriberArrow` strips them
   from the per-row `Attachments` it delivers. The raw `Subscriber` tier passes attachments through
   unchanged, as it passes everything else, and gets a parse helper instead.
@@ -196,6 +216,8 @@ Each stage lands green with its own tests before the next starts.
 | S4 | **Arrow subscribing** | `RecordBatchBatcher`: reads `fletcher.row_index*` from the schema at `SetSchema`; per row, removes the reserved attachment, checks the writer hash, appends to a `UInt64Builder`; `rows_foreign_writer`; `SubscribeIndexed`; `WithRowIndexColumn`. | Tests: index aligned row for row across row-limit, timeout and closing flushes, including with dropped rows; foreign-writer rows refused and counted; the cases under "What subscribers see"; a generated C++ accessor accepts the `SubscribeIndexed` batch; `WithRowIndexColumn` is zero-copy (same buffer address), puts `_ingest_offset` `UInt64` at column 0, and refuses a batch that already has that column. |
 | S5 | **Cross-provider conformance** | Extend `integration-tests/pubsub-conformance` with an indexed-topic subject for in-process, FastDDS and XRCE. | Index survives each transport; two processes with different writer ids: the second's rows refused at the subscriber; a restart with the same writer id is accepted with no gap; payloads are byte-identical to an unindexed topic apart from the attachment (proves D-RIX-1). |
 | S6 | **Docs** | [docs/wire-format-specification.md](../docs/wire-format-specification.md): new "Reserved attachments" and "Row index metadata" sections stating the envelope is unchanged; [docs/pubsub-interface-spec.md](../docs/pubsub-interface-spec.md) §3.2: reserved prefix; `pubsub-arrow` README: `SubscribeIndexed`, `WithRowIndexColumn`, the accessor caveat; the limits listed above. | Docs reviewed against the code. |
+| S7 | **Delete the trailing-field helpers** (D-RIX-12) | Remove `AppendTrailingUint64Field` / `ReadTrailingUint64Field` and the tests that pin them; bump `fletcher-core` to 0.4; release note pointing Monorepo's callers to row bookkeeping. | Neither symbol exists in the tree; the full suite is green. |
+
 
 ## Out of scope (follow-ups)
 
