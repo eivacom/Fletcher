@@ -805,3 +805,8 @@ Review: [D7F-1-design-review.md](D7F-1-design-review.md). No BLOCKERs; P1–P4 v
 - **DEBT-3 (S1):** inside the batched `call_once`, the codec entry is looked up a second time; a concurrent last-`Unsubscribe` can erase it, so the batcher gets `SetSchema(nullptr)` for good (rows counted, reported only at close). Fix: `AcquireCodec` returns the schema it found or built and that is passed to `SetSchema`. Rides D7F-2, which retires `ready_`. Source: `plans/reviews/D7F-1-codereview.md`.
 - **DEBT-4 (S2):** no test covers drops before the schema followed by good rows after it. D7F-2's ladder rung 2 subject covers it; make sure its forcing test asserts it.
 - **DEBT-5 (record):** header `hpp:95-98` promises a timeout flush "since the first row/drop", false for a schema-less open subscription until D7F-2 lands. D7F-2 makes it true again; verify at D7F-2 close.
+
+## D7F-2 — loss before a usable schema, reported at each deadline (APPROVE-WITH-DEBT(3), cycle 1 of 2) — [review](D7F-2-design-review.md)
+- **DEBT-1 (must land):** only a *throw* from `ImportArrowSchema` decides "unusable". A null return means nothing arrived, as for a released handle (`schema_import.hpp:31-34`), so it must not decide. Fix the `found.arrow_schema || schema` test and correct P3.
+- **DEBT-2:** (a) the BC-3 row names both `schema_decided` (the per-row cache) and the once-flag (the decision); (b) the d7 L8 edit goes under *Holds at*, and the law's sentence is unchanged; (c) drop "lost rows never count towards `max_rows`" from hpp and README, or pin it with a `max_rows`=1 guard cell.
+- **DEBT-3:** the forcing test asserts row order within each delivery and the set {1,2,3} across deliveries. While L12 is open, a stalled `kTimeout`/`kClosing` split can be recorded in either order.

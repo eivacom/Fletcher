@@ -46,7 +46,7 @@ window". Code review N3 asked whether D7F-2 would change this; it does not, on p
 
 ### 2. `ready_` is deleted, not renamed (census C3, BC-3)
 
-`ready_` has three readers: the timer branch (deleted above), `AddRow` cpp:110 `ready_ &&`, and
+`ready_` has three uses: the timer branch (deleted above), `AddRow` cpp:110 `ready_ &&`, and
 `SetSchema`'s `cv_.notify_all()`. At cpp:110 it is redundant, because the `!decoder_` early return
 at cpp:77 means a decoder exists whenever line 110 runs. It becomes
 `if (decoder_->num_rows() >= max_rows_)`. The notify in `SetSchema` existed only for the deleted
