@@ -10,6 +10,7 @@
 #include <cstring>
 #include <fletcher/arrow_bridge/codec.hpp>
 #include <fletcher/core/write_buffer.hpp>
+#include <fletcher/pubsub/in_process_provider.hpp>
 #include <fletcher/pubsub/internal/segments.hpp>
 #include <fletcher/pubsub/provider.hpp>
 #include <fletcher/pubsub_arrow/publisher_arrow.hpp>
@@ -674,6 +675,143 @@ TEST(SubscriberArrowBatchTest, OnlyDroppedRowsStillDeliversEmptyBatch) {
     EXPECT_EQ(sink.deliveries[0].attachments.size(), 0u);
     EXPECT_EQ(sink.deliveries[0].status.rows_dropped, 1);
     EXPECT_EQ(sink.deliveries[0].status.reason, BatchStatus::Reason::kTimeout);
+}
+
+// ---------------------------------------------------------------------------
+// D7F-1 -- rows lost before a usable schema are reported at close (L1, L3, L6, L7, L9, D9)
+//
+// A batched subscription that never receives a usable schema counts every row it is handed as
+// dropped. At close it must deliver exactly one batch: reason kClosing, batch == nullptr,
+// rows_dropped == rows sent, no attachments (a dropped row takes its attachment with it).
+// max_rows and timeout keep both flush triggers out of the window, so the only possible
+// delivery is the closing one. Results are read straight after the ending returns: a closing
+// call from outside delivers everything before it returns (L9).
+// ---------------------------------------------------------------------------
+
+namespace {
+
+constexpr int kSchemaLessRows = 3;
+
+SubscriberArrow::BatchOptions NoTriggerBatchOptions() {
+    SubscriberArrow::BatchOptions opt;
+    opt.max_rows = 100000;
+    opt.timeout = std::chrono::minutes(10);
+    return opt;
+}
+
+// Attachments for the second of the three rows; the other two carry none.
+Attachments OrphanAttachments() {
+    Attachments att;
+    att.Set("orphan", Blob{std::vector<uint8_t>{0x01}});
+    return att;
+}
+
+// Sends kSchemaLessRows raw rows through the Publisher, one with an attachment, for a topic that
+// was never declared (so PublisherArrow has no codec). The bytes are never decoded.
+void PublishSchemaLessRows(PublisherArrow& pub) {
+    const auto row = [](WriteBuffer& buf) { buf.AppendByte(0x00); };
+    pub.PublishDirect(kTopic, row);
+    pub.PublishDirect(kTopic, row, OrphanAttachments());
+    pub.PublishDirect(kTopic, row);
+}
+
+// The same count of well-formed rows, one with an attachment, for a declared topic: the rows are
+// fine and the schema exists at the topic; only this subscription never received it.
+void PublishWellFormedRows(PublisherArrow& pub) {
+    pub.Publish(kTopic, MakeRow(1, "a"));
+    pub.Publish(kTopic, MakeRow(2, "b"), OrphanAttachments());
+    pub.Publish(kTopic, MakeRow(3, "c"));
+}
+
+void ExpectOneNullClosingReportOfAllRows(BatchSink& sink) {
+    std::lock_guard<std::mutex> lk(sink.mu);
+    ASSERT_EQ(sink.deliveries.size(), 1u);
+    const auto& d = sink.deliveries[0];
+    EXPECT_EQ(d.status.reason, BatchStatus::Reason::kClosing);
+    EXPECT_EQ(d.batch, nullptr);
+    EXPECT_EQ(d.status.rows_dropped, kSchemaLessRows);
+    EXPECT_TRUE(d.attachments.empty());
+}
+
+}  // namespace
+
+// F1: the topic is never declared, so the Mock hands every row a null schema.
+TEST(SubscriberArrowBatchTest, NoUsableSchemaDropsReportedAtUnsubscribe) {
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
+
+    BatchSink sink;
+    auto result = sub.Subscribe(kTopic, sink.callback(), NoTriggerBatchOptions());
+
+    PublishSchemaLessRows(pub);
+    sub.Unsubscribe(result.subscription_id);
+
+    ExpectOneNullClosingReportOfAllRows(sink);
+}
+
+// F2: as F1, ended by destroying the SubscriberArrow; the sink outlives it.
+TEST(SubscriberArrowBatchTest, NoUsableSchemaDropsReportedAtDestruction) {
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+
+    BatchSink sink;
+    {
+        SubscriberArrow sub(mock);
+        static_cast<void>(sub.Subscribe(kTopic, sink.callback(), NoTriggerBatchOptions()));
+        PublishSchemaLessRows(pub);
+    }
+
+    ExpectOneNullClosingReportOfAllRows(sink);
+}
+
+// F3: the topic is declared only AFTER the subscriber joined. The in-process provider
+// (schema_carriage=as_declared) latches a subscription's schema once, at Subscribe, so this
+// subscription's schema stays null for life although the topic now has one.
+TEST(SubscriberArrowBatchTest, SchemaDeclaredAfterSubscribeDropsReportedAtUnsubscribe) {
+    auto provider = std::make_shared<InProcessPubSubProvider>();
+    PublisherArrow pub(provider);
+    SubscriberArrow sub(provider);
+
+    BatchSink sink;
+    auto result = sub.Subscribe(kTopic, sink.callback(), NoTriggerBatchOptions());
+
+    pub.CreateTopic(kTopic, TestSchema());
+    PublishWellFormedRows(pub);
+    sub.Unsubscribe(result.subscription_id);
+
+    ExpectOneNullClosingReportOfAllRows(sink);
+}
+
+// F4: as F3, ended by destroying the SubscriberArrow; the sink outlives it.
+TEST(SubscriberArrowBatchTest, SchemaDeclaredAfterSubscribeDropsReportedAtDestruction) {
+    auto provider = std::make_shared<InProcessPubSubProvider>();
+    PublisherArrow pub(provider);
+
+    BatchSink sink;
+    {
+        SubscriberArrow sub(provider);
+        static_cast<void>(sub.Subscribe(kTopic, sink.callback(), NoTriggerBatchOptions()));
+
+        pub.CreateTopic(kTopic, TestSchema());
+        PublishWellFormedRows(pub);
+    }
+
+    ExpectOneNullClosingReportOfAllRows(sink);
+}
+
+// G1 (guard, green before and after): an idle schema-less subscription delivers nothing at
+// close. Forbids a null batch that means "no rows" (L7) and any delivery for an idle window (L6).
+TEST(SubscriberArrowBatchTest, NoUsableSchemaIdleSubscriptionDeliversNothingAtClose) {
+    auto mock = std::make_shared<MockProvider>();
+    SubscriberArrow sub(mock);
+
+    BatchSink sink;
+    auto result = sub.Subscribe(kTopic, sink.callback(), NoTriggerBatchOptions());
+    sub.Unsubscribe(result.subscription_id);
+
+    std::lock_guard<std::mutex> lk(sink.mu);
+    EXPECT_EQ(sink.deliveries.size(), 0u);
 }
 
 // ---------------------------------------------------------------------------

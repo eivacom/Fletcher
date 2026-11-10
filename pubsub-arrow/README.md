@@ -86,16 +86,17 @@ The callback's third argument, `BatchStatus`, says **why** the batch was
 delivered (`reason`) and whether any samples were lost (`rows_dropped`). A row
 that fails to decode is counted in `rows_dropped` and contributes neither a row
 nor an attachment, so a window with only dropped rows still delivers a zero-row
-batch to report the loss. The partial batch is flushed with reason `kClosing`
+(or null) batch to report the loss. The partial batch is flushed with reason `kClosing`
 on `Unsubscribe`. The callback target must outlive the subscription.
 
 Rows are decoded straight into Arrow builders (`fletcher::BatchDecoder`, from
 `fletcher-arrow-bridge`) rather than through per-row scalars, so the batched
-path never pays for the ArrowRow round trip. A topic whose schema
-`BatchDecoder`'s constructor rejects delivers a null `batch` with **every**
-row counted in `rows_dropped` instead, for the entire life of the
-subscription — there is no later recovery once the schema is known, and no
-partial decoding.
+path never pays for the ArrowRow round trip. `batch` is null when no batch
+could be built for this window: no usable schema has arrived yet, the schema
+was rejected (permanent), or finishing the batch failed; `rows_dropped` counts
+the window's rows in every case. A rejected schema stays rejected for the life
+of the subscription: there is no later recovery once the schema is known, and
+no partial decoding. A non-null `batch` may have zero rows.
 
 That refusal has two different causes, and only one of them has a fallback.
 Null, extension, decimal32/64, run-end-encoded, and list-view types are not

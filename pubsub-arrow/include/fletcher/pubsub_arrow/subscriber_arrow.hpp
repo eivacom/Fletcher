@@ -101,14 +101,16 @@ class SubscriberArrow {
     /// A row that fails to decode is counted in `status.rows_dropped` and
     /// contributes neither a row nor an attachment — the metadata identifying
     /// its attachment lived in that row. If a window contains only dropped
-    /// rows, a zero-row batch is still delivered so the loss is reported.
+    /// rows, a zero-row (or null) batch is still delivered so the loss is
+    /// reported.
     ///
-    /// `batch` is null only when `BatchDecoder`'s constructor rejected the
-    /// topic's schema; every row is then counted in `rows_dropped`, with a
-    /// null batch, for the entire life of this subscription — there is no
-    /// later recovery once the schema is known. Otherwise `batch` is never
-    /// null, and may have zero rows when a window contained only dropped
-    /// rows.
+    /// `batch` is null when no batch could be built for this window: no usable
+    /// schema has arrived yet, the schema was rejected (permanent), or
+    /// finishing the batch failed; `rows_dropped` counts the window's rows in
+    /// every case. A rejected schema stays rejected for the entire life of this
+    /// subscription — there is no later recovery once the schema is known, and
+    /// no partial decoding. A non-null `batch` may have zero rows when a window
+    /// contained only dropped rows.
     ///
     /// What that costs depends on WHY `BatchDecoder` rejected the schema.
     /// Null, extension, decimal32/64, run-end-encoded and list-view types are

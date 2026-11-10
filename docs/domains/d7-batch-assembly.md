@@ -57,8 +57,8 @@ batch; reporting why each batch was delivered; and owning the timer thread and i
 
 **L1. A lost row is always reported, never silent.** Every row that reaches the batcher before
 closing and is not delivered is counted in the `rows_dropped` of a later delivered batch.
-`[built for decode failures, internal failures and undecodable schemas; violated on a topic whose
-schema never becomes usable]`
+`[built for decode failures, internal failures and undecodable schemas; violation 1: closing half
+built (D7F-1), deadline half open (D7F-2); violation 2 open (D7F-3)]`
 - Holds at: `cpp:81-85` (no decoder), `cpp:100-111` (malformed, over budget, internal),
   `cpp:159-166` (`DiscardPending`), `cpp:235-236`.
 - **Violation 1.** When `AcquireCodec` returns null (null schema, or `ImportArrowSchema` throws,
@@ -69,7 +69,7 @@ schema never becomes usable]`
   `Unsubscribe`, is neither appended nor counted (`cpp:95`).
 - Tests: `DroppedRowReportedAndAttachmentDiscarded`, `CorruptRowIsCountedDroppedAndBatchStaysAligned`,
   `OnlyDroppedRowsStillDeliversEmptyBatch`, `NestedDictionarySchemaReportsEveryRowDropped`,
-  `FinishFailureIsReportedNotFatal`. No test covers either violation.
+  `FinishFailureIsReportedNotFatal`. Violation 1's closing half: the four `NoUsableSchema*` / `SchemaDeclaredAfterSubscribe*` tests (D7F-1). Its deadline half and violation 2 have no test yet.
 - **Both violations are to be fixed before RIX** (owner ruling 2026-11-10, "2. Fix both"). How the
   fix reports a drop that happens before any usable schema is a design question for that round
   (Q1).
@@ -118,7 +118,7 @@ delivers nothing.
 - Tests: `OnlyDroppedRowsStillDeliversEmptyBatch`. The idle case has no test.
 
 **L7. A null batch means "no batch could be built for this window".** It is never "no rows".
-`[built for an undecodable schema; violated on Finish failure against the header's claim]`
+`[built]`
 - The header says a batch is null *only* when `BatchDecoder`'s constructor rejected the schema
   (`hpp:106-111`). The code also delivers a null batch when `Finish()` throws on a decodable schema,
   for example a dictionary re-fold that overflows its index type (`cpp:217-225`). The law above states
@@ -147,7 +147,9 @@ neither delivered nor counted.
 - Holds at: `cpp:130-149` (idempotent through `stopped_`), `cpp:80` and `cpp:123`, `cpp:428-429`
   (`Stop` before `Subscriber::Unsubscribe`), `cpp:275-288`.
 - Tests: `ClosingFlushOnUnsubscribe`, `UnsubscribeFromCallbackDuringRowLimitFlushStopsDeliveryCleanly`,
-  `UnsubscribeFromInsideATimeoutFlushIsSafe`. The closing flush from the destructor has no test.
+  `UnsubscribeFromInsideATimeoutFlushIsSafe`, `NoUsableSchemaDropsReportedAtDestruction` and
+  `SchemaDeclaredAfterSubscribeDropsReportedAtDestruction` (the closing flush from the destructor,
+  D7F-1).
 
 **L10. Neither user code nor allocation failure can kill an internal thread.** A throw from the
 callback is swallowed. An internal failure becomes a drop.
@@ -286,7 +288,7 @@ Surface (`hpp:72-144`):
    lines 66-67 ("since the batch started filling") and commit `7cd3e53` all disagree with
    `cpp:168-176` (anchored to the previous flush). See L5.
 2. **When a batch is null.** `hpp:106-111` ("null only when the constructor rejected") disagrees with
-   `cpp:217-225`. See L7.
+   `cpp:217-225`. See L7. **Resolved by D7F-1:** the header and README now state D9's wording.
 3. **The codec cache's lifetime.** `cpp:345-347` says "Codecs live in `codecs_` for the
    SubscriberArrow's lifetime", but `Unsubscribe` erases them (`cpp:448-450`). Before `cpp:388`
    registers `sub_topic_`, a concurrent last-unsubscribe on the same topic can erase the entry. The
@@ -307,7 +309,7 @@ Surface (`hpp:72-144`):
 **(b) Rules answered in two places**
 1. **Dropping when there is no decoder.** Two paths do it, `NoteDropped` (`cpp:121-126`, no codec)
    and `AddRow` (`cpp:81-85`, no decoder), and they report differently: the first is never flushed
-   (L1).
+   (L1). **Resolved by D7F-1:** `NoteDropped` is deleted and `AddRow` is the one entry.
 2. **Whether a schema is usable.** This is decided twice: `ImportArrowSchema` in `AcquireCodec`
    (`cpp:403-409`), whose failure goes unreported, and the `BatchDecoder` constructor (`cpp:62`),
    whose failure is reported.
@@ -316,15 +318,16 @@ Surface (`hpp:72-144`):
 4. **The dictionary-shape fallback rule.** It is stated three times: `hpp:113-122`, README lines
    100-112, and `batch_decoder.hpp:28-40`. It belongs to domain 2.
 5. **Dead branch.** The `kRowLimit` flush in `SetSchema` (`cpp:69-71`) is unreachable: the decoder
-   is brand new there, so it holds 0 rows, and `max_rows` is at least 1.
+   is brand new there, so it holds 0 rows, and `max_rows` is at least 1. **Resolved by D7F-1:** the
+   branch is deleted.
 
 **(c) Behaviour with no test**
 - The early flush on the offset budget, at the batcher level (L4).
 - Timeout anchoring and the 1 ms floor (L5).
 - No delivery for an idle window (L6).
-- Pre-schema drops that are never reported (L1, violation 1), and the uncounted row after the
-  budget retry (L1, violation 2).
-- The closing flush from `~SubscriberArrow` (L9).
+- Pre-schema drops reported at the deadline (L1, violation 1, deadline half), and the uncounted row
+  after the budget retry (L1, violation 2). The closing half is tested since D7F-1.
+- The closing flush from `~SubscriberArrow` (L9): tested since D7F-1 (the two `*AtDestruction` tests).
 - A callback that throws (L10).
 - Overlapping or reordered callbacks (L12).
 - A batched subscriber-first subscription (L13).

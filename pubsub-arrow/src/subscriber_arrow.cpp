@@ -51,12 +51,11 @@ class SubscriberArrow::RecordBatchBatcher {
     }
 
     // Provides the schema once known (from the subscription result). Until a
-    // non-null schema is set the batcher buffers but cannot build batches.
-    // A schema the decoder cannot build (see BatchDecoder) leaves decoder_
-    // null — every row is then counted dropped and the periodic report
-    // carries a null batch, so the loss is visible rather than silent.
+    // non-null schema is set, and for a schema the decoder cannot build (see
+    // BatchDecoder), decoder_ stays null: every row is then counted dropped
+    // and reported with a null batch, so the loss is visible rather than silent.
     void SetSchema(std::shared_ptr<arrow::Schema> schema) {
-        std::unique_lock<std::mutex> lk(mu_);
+        std::lock_guard<std::mutex> lk(mu_);
         if (schema) {
             try {
                 decoder_ = std::make_unique<BatchDecoder>(schema);
@@ -66,9 +65,6 @@ class SubscriberArrow::RecordBatchBatcher {
             }
         }
         ready_ = (schema != nullptr);
-        if (ready_ && decoder_ && decoder_->num_rows() >= max_rows_) {
-            Flush(lk, BatchStatus::Reason::kRowLimit);
-        }
         cv_.notify_all();
     }
 
@@ -114,15 +110,6 @@ class SubscriberArrow::RecordBatchBatcher {
         if (ready_ && decoder_->num_rows() >= max_rows_) {
             Flush(lk, BatchStatus::Reason::kRowLimit);
         }
-    }
-
-    // A row that failed to decode: counted as lost. Its attachment is dropped
-    // with it, since the metadata identifying the attachment was in that row.
-    void NoteDropped() {
-        std::unique_lock<std::mutex> lk(mu_);
-        if (stopped_) return;
-        ++dropped_;
-        ArmTimer();
     }
 
     // Stops the timer thread and delivers any pending rows/drops (reason
@@ -200,14 +187,13 @@ class SubscriberArrow::RecordBatchBatcher {
         }
     }
 
-    // Hands the pending batch to the callback. Per design, a window with only
-    // dropped rows still delivers a zero-row (or null, if the schema can't be
-    // decoded) batch so the loss is reported. Caller holds `lk`; the callback
-    // runs with it released.
+    // Hands the pending batch to the callback. A window with only dropped
+    // rows still delivers a zero-row batch (or a null one when there is no
+    // decoder: no usable schema has arrived, or the schema was rejected) so
+    // the loss is reported. Caller holds `lk`; the callback runs with it released.
     void Flush(std::unique_lock<std::mutex>& lk, BatchStatus::Reason reason) {
         has_deadline_ = false;
         last_flush_ = std::chrono::steady_clock::now();
-        if (!ready_) return;        // schema not set — cannot build
         if (!HasPending()) return;  // truly idle — nothing to deliver
 
         // Finish() only hands the builders' buffers over — O(1) per column —
@@ -355,29 +341,31 @@ SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
             // Lazy-init the codec from the per-message schema: in
             // subscriber-first mode (no prior CreateTopic) the codec isn't
             // registered yet and the provider can deliver before Subscribe
-            // returns. If no codec can be built, count the message as dropped
-            // so the loss is reported.
+            // returns.
             Codec* codec = cached_codec->load(std::memory_order_acquire);
             if (!codec) {
                 codec = AcquireCodec(key, schema);
                 if (codec) cached_codec->store(codec, std::memory_order_release);
             }
-            if (!codec) {
-                batcher->NoteDropped();
-                return;
-            }
             // Hand the batcher the schema on the first decodable sample so it
             // can build batches (idempotent; lets the batched path work
             // subscriber-first without blocking Subscribe on the schema).
-            std::call_once(*schema_set, [&] {
-                std::shared_ptr<arrow::Schema> arrow_schema;
-                {
-                    std::lock_guard lock(mu_);
-                    auto it = codecs_.find(key);
-                    if (it != codecs_.end()) arrow_schema = it->second.arrow_schema;
-                }
-                batcher->SetSchema(std::move(arrow_schema));
-            });
+            // No codec means the call_once has not run, so the batcher has no
+            // decoder (see AddRow).
+            if (codec) {
+                std::call_once(*schema_set, [&] {
+                    std::shared_ptr<arrow::Schema> arrow_schema;
+                    {
+                        std::lock_guard lock(mu_);
+                        auto it = codecs_.find(key);
+                        if (it != codecs_.end()) arrow_schema = it->second.arrow_schema;
+                    }
+                    batcher->SetSchema(std::move(arrow_schema));
+                });
+            }
+            // The one entry for every transport row. Without a decoder (no usable
+            // schema yet, or one that was rejected) AddRow counts the row dropped,
+            // so the loss is reported at the next flush, closing included.
             batcher->AddRow(data, len, att);
         },
         topic_options);
