@@ -800,3 +800,8 @@ Review: [D7F-1-design-review.md](D7F-1-design-review.md). No BLOCKERs; P1–P4 v
 |----|------|-------|
 | DEBT-1 | Add a BC-3 status note to the register edits: reporting gate cpp:210 removed and import failure counted via the no-decoder branch (D7F-1); state vs decoder-presence and `ready_` left to D7F-2; "one usability decision" waits on d7 Q7. | review §DEBT-1 |
 | DEBT-2 | d7 L1 mark: "violation 1: closing half built (D7F-1); deadline half open (D7F-2)", not fully built, since the timer still parks on `ready_` (cpp:198) and ladder:43 cites violation 1 for rung 2. | review §DEBT-2 |
+
+## Carried from D7F-1 code review to D7F-2
+- **DEBT-3 (S1):** inside the batched `call_once`, the codec entry is looked up a second time; a concurrent last-`Unsubscribe` can erase it, so the batcher gets `SetSchema(nullptr)` for good (rows counted, reported only at close). Fix: `AcquireCodec` returns the schema it found or built and that is passed to `SetSchema`. Rides D7F-2, which retires `ready_`. Source: `plans/reviews/D7F-1-codereview.md`.
+- **DEBT-4 (S2):** no test covers drops before the schema followed by good rows after it. D7F-2's ladder rung 2 subject covers it; make sure its forcing test asserts it.
+- **DEBT-5 (record):** header `hpp:95-98` promises a timeout flush "since the first row/drop", false for a schema-less open subscription until D7F-2 lands. D7F-2 makes it true again; verify at D7F-2 close.

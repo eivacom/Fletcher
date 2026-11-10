@@ -53,6 +53,7 @@ rather than adds it.
 Declared net lines: +10 / −25 (production) · new public surface: 0 · design cycles used: 1/2
 
 ---
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
-<delta vs the above — actual net lines, anything retired or added the brief did
-not predict, fix cycles used>.
+*As landed (2026-11-10, `a2c8b97`):* production +25/−37 (net −12; declared +10/−25, the extra is one
+re-indented block). Retired as designed: `NoteDropped`, the `ready_` gate in `Flush`, the dead `SetSchema` flush.
+0 design rework cycles, 0 fix cycles, 1 implementer launch. Carried to D7F-2: DEBT-3..5 (codec race, a
+drops-then-good-rows test, the header's timeout sentence).

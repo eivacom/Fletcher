@@ -3,7 +3,7 @@
 > **Specified.** The owner confirmed these laws on 2026-11-10 ([RIX-rulings.md](../../plans/RIX-rulings.md), "Yes on all accounts"). A change to a law needs
 > an owner ruling, recorded in a decision of record.
 
-**Mode: survey, verified against the tree at `9a4780b`** (branch `feature/row-index`). The code is
+**Mode: survey, verified against the tree at `9a4780b`; `cpp:N` citations predate D7F-1 (`a2c8b97`) and may be off by up to 14 lines** (branch `feature/row-index`). The code is
 ground truth. Doc comments, READMEs and specs are claims checked against it. No spec exists for
 this domain; its rules live in code comments in
 [`subscriber_arrow.cpp`](../../pubsub-arrow/src/subscriber_arrow.cpp) (cited `cpp:N`) and
@@ -61,10 +61,10 @@ closing and is not delivered is counted in the `rows_dropped` of a later deliver
 built (D7F-1), deadline half open (D7F-2); violation 2 open (D7F-3)]`
 - Holds at: `cpp:81-85` (no decoder), `cpp:100-111` (malformed, over budget, internal),
   `cpp:159-166` (`DiscardPending`), `cpp:235-236`.
-- **Violation 1.** When `AcquireCodec` returns null (null schema, or `ImportArrowSchema` throws,
-  `cpp:402-409`), `NoteDropped` counts the row (`cpp:121-126`). But `SetSchema` is never called, so
-  `ready_` stays false. The timer then waits forever (`cpp:198`), and `Flush` returns early at
-  `cpp:210`, including the `kClosing` flush. The count is discarded without being reported.
+- **Violation 1.** When `AcquireCodec` returns null (null schema, or `ImportArrowSchema` throws),
+  the row is counted through `AddRow`'s no-decoder branch. Since `a2c8b97` (D7F-1) the closing flush
+  reports it. The timer still waits on `ready_`, so an open subscription is not told at the deadline
+  until D7F-2. (Before D7F-1, `NoteDropped` counted it and `Flush` discarded the count.)
 - **Violation 2.** A row that hit the offset budget, during whose early flush the callback called
   `Unsubscribe`, is neither appended nor counted (`cpp:95`).
 - Tests: `DroppedRowReportedAndAttachmentDiscarded`, `CorruptRowIsCountedDroppedAndBatchStaysAligned`,
@@ -115,16 +115,15 @@ delivered: a zero-row batch, or a null batch if there is no decoder. A window wi
 delivers nothing.
 `[built]`
 - Holds at: `cpp:211`, `cpp:152`, `cpp:203-206`.
-- Tests: `OnlyDroppedRowsStillDeliversEmptyBatch`. The idle case has no test.
+- Tests: `OnlyDroppedRowsStillDeliversEmptyBatch`; the idle case: `NoUsableSchemaIdleSubscriptionDeliversNothingAtClose` (D7F-1).
+- **Interim (until D7F-2):** a drop-only window with no decoder is delivered at close but not at the deadline.
 
 **L7. A null batch means "no batch could be built for this window".** It is never "no rows".
 `[built]`
-- The header says a batch is null *only* when `BatchDecoder`'s constructor rejected the schema
-  (`hpp:106-111`). The code also delivers a null batch when `Finish()` throws on a decodable schema,
-  for example a dictionary re-fold that overflows its index type (`cpp:217-225`). The law above states
-  what the code does. The header's narrower claim is the part that is violated.
-- Tests: `NestedDictionarySchemaReportsEveryRowDropped`. `FinishFailureIsReportedNotFatal` (test
-  line 914) pins the null-on-Finish behaviour, so the test contradicts the header.
+- Since `a2c8b97` (D7F-1) the header and README state D9's wording, which matches the law. (Before,
+  the header claimed a batch was null *only* when the schema was rejected.)
+- Tests: `NestedDictionarySchemaReportsEveryRowDropped`, `FinishFailureIsReportedNotFatal`, and the
+  four D7F-1 no-usable-schema tests.
 
 **L8. An undecodable schema is permanent for the subscription.** Once a schema has been rejected,
 every later row is dropped, and there is no recovery.
@@ -260,7 +259,7 @@ Surface (`hpp:72-144`):
 |---|---|---|
 | Q1 | L1, violation 1: the owner ruled it is fixed (2026-11-10). Still open is *how* those drops are reported, for example as a null batch at closing or at the deadline. | design of the fix round, owner if it changes the interface |
 | Q2 | L12: resolved 2026-11-10. It is a law, and it is to be fixed. A delivery lock versus a single flushing thread is a design choice for the fix round. | design of the fix round |
-| Q3 | L7: should the header's "null only when the constructor rejected" claim be amended, or should a `Finish` failure deliver a zero-row batch instead? | owner |
+| Q3 | Resolved 2026-11-10 (D9): the header was amended; a `Finish` failure keeps delivering a null batch. Applied in `a2c8b97`. | — |
 | Q4 | Should the offset-budget flush get its own reason (such as `kCapacity`), rather than sharing `kRowLimit`? Adding one is a public enum change. | owner |
 | Q5 | Should `BatchOptions` refuse `max_rows < 1` and `timeout <= 0` instead of clamping them silently? | owner |
 | Q6 | Where is "decision A" (test line 673) recorded? | owner or PM |
@@ -292,8 +291,10 @@ Surface (`hpp:72-144`):
 3. **The codec cache's lifetime.** `cpp:345-347` says "Codecs live in `codecs_` for the
    SubscriberArrow's lifetime", but `Unsubscribe` erases them (`cpp:448-450`). Before `cpp:388`
    registers `sub_topic_`, a concurrent last-unsubscribe on the same topic can erase the entry. The
-   `call_once` would then pass `SetSchema(nullptr)` (`cpp:375-379`), giving permanent, unreported
-   drops (L1). This is reachable only under that race, and was found by reading, not reproduced.
+   `call_once` would then pass `SetSchema(nullptr)` (`cpp:375-379`), giving permanent drops (L1).
+   This is reachable only under that race, and was found by reading, not reproduced. **Since
+   `a2c8b97` (D7F-1)** those drops are reported at close; removing the race is carried to D7F-2
+   (code review S1, `plans/reviews/D7F-1-codereview.md`).
 4. **The wire spec.** [wire-format-specification.md:222-226](../wire-format-specification.md) says a
    nested dictionary is "rejected by that batched path at subscribe time". In the code the rejection
    happens at the first decodable row (`cpp:372`), and it is a null batch with drops (L8), not an
@@ -311,8 +312,8 @@ Surface (`hpp:72-144`):
    and `AddRow` (`cpp:81-85`, no decoder), and they report differently: the first is never flushed
    (L1). **Resolved by D7F-1:** `NoteDropped` is deleted and `AddRow` is the one entry.
 2. **Whether a schema is usable.** This is decided twice: `ImportArrowSchema` in `AcquireCodec`
-   (`cpp:403-409`), whose failure goes unreported, and the `BatchDecoder` constructor (`cpp:62`),
-   whose failure is reported.
+   (`cpp:403-409`) and the `BatchDecoder` constructor (`cpp:62`). Since `a2c8b97` (D7F-1) both
+   failures are reported; the single decision is still open (BC-3, Q7).
 3. **The append-and-classify block.** It is duplicated for the retry after the budget is exceeded
    (`cpp:86-112` and `cpp:96-104`).
 4. **The dictionary-shape fallback rule.** It is stated three times: `hpp:113-122`, README lines
