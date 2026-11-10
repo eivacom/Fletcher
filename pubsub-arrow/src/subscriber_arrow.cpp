@@ -50,10 +50,10 @@ class SubscriberArrow::RecordBatchBatcher {
         timer_ = std::thread([self = std::move(self)] { self->TimerLoop(); });
     }
 
-    // Provides the schema once known (from the subscription result). Until a
-    // non-null schema is set, and for a schema the decoder cannot build (see
-    // BatchDecoder), decoder_ stays null: every row is then counted dropped
-    // and reported with a null batch, so the loss is visible rather than silent.
+    // Provides the schema once decided (called at most once per subscription). Until a non-null
+    // schema is set, and for a null one (the delivered schema could not be imported) or one the
+    // decoder cannot build (see BatchDecoder), decoder_ stays null: every row is then counted
+    // dropped and reported with a null batch, so the loss is visible rather than silent.
     void SetSchema(std::shared_ptr<arrow::Schema> schema) {
         std::lock_guard<std::mutex> lk(mu_);
         if (schema) {
@@ -64,8 +64,6 @@ class SubscriberArrow::RecordBatchBatcher {
                 decoder_.reset();
             }
         }
-        ready_ = (schema != nullptr);
-        cv_.notify_all();
     }
 
     // Decodes one wire row straight into the pending batch. Runs on the
@@ -107,7 +105,7 @@ class SubscriberArrow::RecordBatchBatcher {
             DiscardPending(1);
         }
         ArmTimer();
-        if (ready_ && decoder_->num_rows() >= max_rows_) {
+        if (decoder_->num_rows() >= max_rows_) {
             Flush(lk, BatchStatus::Reason::kRowLimit);
         }
     }
@@ -178,12 +176,9 @@ class SubscriberArrow::RecordBatchBatcher {
             if (cv_.wait_until(lk, deadline_, [this] { return stopped_ || !has_deadline_; })) {
                 continue;
             }
-            if (ready_) {
-                Flush(lk, BatchStatus::Reason::kTimeout);
-            } else {
-                // Deadline reached but schema not ready yet — wait for it.
-                cv_.wait(lk, [this] { return stopped_ || ready_ || !has_deadline_; });
-            }
+            // Every reached deadline flushes: with no decoder the window closes as a null batch
+            // reporting its drops, and an idle window finds nothing pending (L5, L6).
+            Flush(lk, BatchStatus::Reason::kTimeout);
         }
     }
 
@@ -246,7 +241,6 @@ class SubscriberArrow::RecordBatchBatcher {
     std::chrono::steady_clock::time_point last_flush_{std::chrono::steady_clock::now()};
     static constexpr std::chrono::milliseconds kMinWindow{1};
     bool has_deadline_ = false;
-    bool ready_ = false;
     bool stopped_ = false;
     std::thread timer_;
 };
@@ -291,11 +285,11 @@ SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
             // subscriber-first mode the codec is not registered at Subscribe
             // time (no prior CreateTopic), and the provider may deliver before
             // Subscribe returns. AcquireCodec builds + caches it on first use.
-            Codec* codec = AcquireCodec(key, schema);
-            if (!codec) {
+            TopicCodec found = AcquireCodec(key, schema);
+            if (!found.codec) {
                 return;
             }
-            ArrowRow row = codec->DecodeRow(data, len);
+            ArrowRow row = found.codec->DecodeRow(data, len);
             cb(std::move(row), att);
         },
         options);
@@ -328,44 +322,31 @@ SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
                                                         options.timeout);
     batcher->Start(batcher);  // timer thread co-owns; see Start()'s comment
     auto schema_set = std::make_shared<std::once_flag>();
-    // The codec, once resolved, for this subscription's samples. Codecs live in `codecs_` for the
-    // SubscriberArrow's lifetime, so the pointer stays valid; without this every sample of every
-    // topic took the process-wide `mu_` and hashed the topic key.
-    auto cached_codec = std::make_shared<std::atomic<Codec*>>(nullptr);
+    // Set once the schema has been decided for this subscription (usable or not): afterwards the
+    // per-row path never asks again, so it takes no process-wide lock and hashes no topic key.
+    auto schema_decided = std::make_shared<std::atomic<bool>>(false);
 
     Subscriber::SubscribeResult result = subscriber_->Subscribe(
         segments,
-        [this, key, batcher, schema_set, cached_codec](uint64_t /*sub_id*/, const uint8_t* data,
-                                                       size_t len, const SharedSchema& schema,
-                                                       const Attachments& att) {
-            // Lazy-init the codec from the per-message schema: in
-            // subscriber-first mode (no prior CreateTopic) the codec isn't
-            // registered yet and the provider can deliver before Subscribe
-            // returns.
-            Codec* codec = cached_codec->load(std::memory_order_acquire);
-            if (!codec) {
-                codec = AcquireCodec(key, schema);
-                if (codec) cached_codec->store(codec, std::memory_order_release);
+        [this, key, batcher, schema_set, schema_decided](
+            uint64_t /*sub_id*/, const uint8_t* data, size_t len, const SharedSchema& schema,
+            const Attachments& att) {
+            // Lazy-init the schema from the per-message one: in subscriber-first mode (no prior
+            // CreateTopic) nothing is registered yet and the provider can deliver before Subscribe
+            // returns. A row that brings no schema leaves the question open for the next row.
+            if (!schema_decided->load(std::memory_order_acquire)) {
+                TopicCodec found = AcquireCodec(key, schema);
+                // Decided when the schema is known, or its import threw (permanent, L8). A schema
+                // that is merely absent (null, or nothing to import) decides nothing.
+                if (found.arrow_schema || found.import_failed) {
+                    std::call_once(*schema_set,
+                                   [&] { batcher->SetSchema(std::move(found.arrow_schema)); });
+                    schema_decided->store(true, std::memory_order_release);
+                }
             }
-            // Hand the batcher the schema on the first decodable sample so it
-            // can build batches (idempotent; lets the batched path work
-            // subscriber-first without blocking Subscribe on the schema).
-            // No codec means the call_once has not run, so the batcher has no
-            // decoder (see AddRow).
-            if (codec) {
-                std::call_once(*schema_set, [&] {
-                    std::shared_ptr<arrow::Schema> arrow_schema;
-                    {
-                        std::lock_guard lock(mu_);
-                        auto it = codecs_.find(key);
-                        if (it != codecs_.end()) arrow_schema = it->second.arrow_schema;
-                    }
-                    batcher->SetSchema(std::move(arrow_schema));
-                });
-            }
-            // The one entry for every transport row. Without a decoder (no usable
-            // schema yet, or one that was rejected) AddRow counts the row dropped,
-            // so the loss is reported at the next flush, closing included.
+            // The one entry for every transport row. Without a decoder (no usable schema yet, or
+            // one that was rejected) AddRow counts the row dropped, so the loss is reported at the
+            // window's deadline or at close.
             batcher->AddRow(data, len, att);
         },
         topic_options);
@@ -383,22 +364,22 @@ SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
     return {result.subscription_id, result.schema};
 }
 
-Codec* SubscriberArrow::AcquireCodec(const std::string& key, const SharedSchema& schema) {
+SubscriberArrow::TopicCodec SubscriberArrow::AcquireCodec(const std::string& key,
+                                                           const SharedSchema& schema) {
     std::lock_guard lock(mu_);
     auto it = codecs_.find(key);
-    if (it != codecs_.end()) return it->second.codec.get();
-    if (!schema) return nullptr;
+    if (it != codecs_.end()) return it->second;  // copies both owners; nothing is looked up again
+    if (!schema) return {};
     std::shared_ptr<arrow::Schema> arrow_schema;
     try {
         arrow_schema = ImportArrowSchema(schema);
     } catch (...) {
-        return nullptr;
+        return {nullptr, nullptr, true};
     }
-    if (!arrow_schema) return nullptr;
-    auto codec = std::make_unique<Codec>(arrow_schema);
-    Codec* codec_ptr = codec.get();
-    codecs_.emplace(key, TopicCodec{arrow_schema, std::move(codec)});
-    return codec_ptr;
+    if (!arrow_schema) return {};  // nothing to import (a released handle): not a decision
+    TopicCodec entry{arrow_schema, std::make_shared<Codec>(arrow_schema), false};
+    codecs_.emplace(key, entry);
+    return entry;
 }
 
 void SubscriberArrow::Unsubscribe(uint64_t subscription_id) {

@@ -92,10 +92,11 @@ class SubscriberArrow {
     /// window that would overflow a 32-bit Arrow offset (utf8/binary/list
     /// columns beyond 2 GiB) is flushed early with reason kRowLimit.
     ///
-    /// Decoded rows are accumulated and flushed to `callback` when
-    /// `options.max_rows` is reached or `options.timeout` elapses since the
-    /// first row/drop of the current batch — whichever comes first. A partial
-    /// batch is flushed on Unsubscribe with reason kClosing.
+    /// Decoded rows are accumulated and flushed to `callback` when `options.max_rows` rows have
+    /// been decoded, or at the window's deadline — `options.timeout` after the previous flush, but
+    /// never sooner than 1 ms after the window's first row or drop — whichever comes first. This
+    /// holds whether or not a usable schema has arrived: a window of lost rows is reported at its
+    /// deadline too. A partial batch is flushed on Unsubscribe with reason kClosing.
     ///
     /// `attachments[i]` belongs to batch row `i` (parallel, in batch order).
     /// A row that fails to decode is counted in `status.rows_dropped` and
@@ -160,7 +161,8 @@ class SubscriberArrow {
     mutable std::mutex mu_;
     struct TopicCodec {
         std::shared_ptr<arrow::Schema> arrow_schema;
-        std::unique_ptr<Codec> codec;
+        std::shared_ptr<Codec> codec;
+        bool import_failed = false;  // only from AcquireCodec: the delivered schema's import threw
     };
     std::unordered_map<std::string, TopicCodec> codecs_;
     // Maps subscription_id -> topic key so Unsubscribe can free codec
@@ -169,11 +171,12 @@ class SubscriberArrow {
     // Live batched subscriptions (sub_id -> batcher).
     std::unordered_map<uint64_t, std::shared_ptr<RecordBatchBatcher>> batchers_;
 
-    // Look up the codec for `key`, lazily creating one from the
-    // delivered schema if none is registered yet. Used by the batched
-    // path so a subscriber-only process can still decode rows that
-    // arrive before subscriber_->Subscribe returns.
-    Codec* AcquireCodec(const std::string& key, const SharedSchema& schema);
+    // The codec entry for `key`, lazily created from the delivered schema if none is registered
+    // yet, returned BY VALUE so the caller holds what it found whatever happens to `codecs_`
+    // afterwards (a last Unsubscribe on the topic erases the entry). Empty when no entry exists and
+    // the row brings no importable schema; `import_failed` when importing the row's schema threw.
+    // Lets a subscriber-only process decode rows that arrive before subscriber_->Subscribe returns.
+    TopicCodec AcquireCodec(const std::string& key, const SharedSchema& schema);
 };
 
 }  // namespace fletcher

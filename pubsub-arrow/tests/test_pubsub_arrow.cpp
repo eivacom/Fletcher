@@ -4,6 +4,7 @@
 #include <arrow/api.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -812,6 +813,246 @@ TEST(SubscriberArrowBatchTest, NoUsableSchemaIdleSubscriptionDeliversNothingAtCl
 
     std::lock_guard<std::mutex> lk(sink.mu);
     EXPECT_EQ(sink.deliveries.size(), 0u);
+}
+
+// ---------------------------------------------------------------------------
+// D7F-2 -- rows lost before a usable schema are reported at each deadline (L1, L5, L6, L7, L8, L13)
+//
+// A batched subscription that is still open and has no usable schema must report its loss at the
+// window's deadline, once per window, not only when it closes: reason kTimeout, batch == nullptr,
+// rows_dropped == the window's rows. Reads go through sink.WaitFor, or happen after an outside
+// Unsubscribe (L9), so none of this depends on which thread delivers (L12).
+// ---------------------------------------------------------------------------
+
+namespace {
+
+constexpr auto kDeadlineTimeout = std::chrono::milliseconds(100);
+constexpr int kWellFormedRows = 3;  // what PublishWellFormedRows sends
+
+SubscriberArrow::BatchOptions DeadlineBatchOptions() {
+    SubscriberArrow::BatchOptions opt;
+    opt.max_rows = 100000;  // high, so only the deadline (or the close) can flush
+    opt.timeout = kDeadlineTimeout;
+    return opt;
+}
+
+void ExpectNullTimeoutReport(const BatchSink::Delivery& d, int64_t dropped) {
+    EXPECT_EQ(d.status.reason, BatchStatus::Reason::kTimeout);
+    EXPECT_EQ(d.batch, nullptr);
+    EXPECT_EQ(d.status.rows_dropped, dropped);
+    EXPECT_TRUE(d.attachments.empty());
+}
+
+// Checks the deliveries from `first` on, after the topic's schema became usable and three
+// well-formed rows (x = 1, 2, 3; the attachment on x = 2) were published: every delivery is a
+// non-null batch with no drops and aligned attachments; within one delivery the rows are in
+// order; across deliveries each of x = 1, 2, 3 appears exactly once with its attachment on x = 2.
+// Order across deliveries is deliberately not asserted: while L12 is open a stalled
+// kTimeout/kClosing split can be recorded in either order, and that order is rung 3's subject.
+// Caller holds sink.mu.
+void ExpectLateSchemaRowsAssembled(const std::vector<BatchSink::Delivery>& ds, size_t first) {
+    ASSERT_GT(ds.size(), first);
+    std::vector<std::pair<int32_t, bool>> seen;  // (x, has attachment)
+    for (size_t i = first; i < ds.size(); ++i) {
+        const auto& d = ds[i];
+        ASSERT_NE(d.batch, nullptr) << "delivery " << i;
+        EXPECT_EQ(d.status.rows_dropped, 0) << "delivery " << i;
+        ASSERT_EQ(d.attachments.size(), static_cast<size_t>(d.batch->num_rows())) << "delivery " << i;
+        const auto x = std::static_pointer_cast<arrow::Int32Array>(d.batch->column(0));
+        for (int64_t r = 0; r < d.batch->num_rows(); ++r) {
+            if (r > 0) EXPECT_LT(x->Value(r - 1), x->Value(r)) << "delivery " << i;
+            seen.emplace_back(x->Value(r), d.attachments[r].Find("orphan") != nullptr);
+        }
+    }
+    std::sort(seen.begin(), seen.end());
+    const std::vector<std::pair<int32_t, bool>> expected = {{1, false}, {2, true}, {3, false}};
+    EXPECT_EQ(seen, expected);
+}
+
+}  // namespace
+
+// Forcing (mock): the topic is not declared when the rows arrive, so the Mock hands every row a
+// null schema. Two windows of lost rows each get a null kTimeout report at their own deadline
+// while the subscription stays open; an idle stretch reports nothing; a schema that becomes
+// usable later gives normal batches; and rows received plus rows reported lost equal rows sent.
+TEST(SubscriberArrowBatchTest, NoUsableSchemaDropsReportedAtEachDeadlineThenLateSchemaAssembles) {
+    BatchSink sink;  // declared first: it must outlive the subscription, even on a failed ASSERT
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
+
+    auto result = sub.Subscribe(kTopic, sink.callback(), DeadlineBatchOptions());
+
+    // W1: three lost rows, one with an attachment.
+    PublishSchemaLessRows(pub);
+    ASSERT_TRUE(sink.WaitFor(1, std::chrono::seconds(2)))
+        << "no report at the first deadline: the subscription stayed silent while open";
+    {
+        std::lock_guard<std::mutex> lk(sink.mu);
+        ASSERT_EQ(sink.deliveries.size(), 1u);
+        ExpectNullTimeoutReport(sink.deliveries[0], kSchemaLessRows);
+    }
+
+    // Idle: nothing happens for three timeouts, so nothing is reported (L6).
+    std::this_thread::sleep_for(3 * kDeadlineTimeout);
+    {
+        std::lock_guard<std::mutex> lk(sink.mu);
+        EXPECT_EQ(sink.deliveries.size(), 1u);
+    }
+
+    // W2: one more lost row, reported at its own deadline.
+    pub.PublishDirect(kTopic, [](WriteBuffer& buf) { buf.AppendByte(0x00); });
+    ASSERT_TRUE(sink.WaitFor(2, std::chrono::seconds(2)))
+        << "no report at the second deadline";
+    {
+        std::lock_guard<std::mutex> lk(sink.mu);
+        ASSERT_EQ(sink.deliveries.size(), 2u);
+        ExpectNullTimeoutReport(sink.deliveries[1], 1);
+    }
+
+    // Late schema: the topic is declared and good rows arrive; a batch can be built again (L13).
+    pub.CreateTopic(kTopic, TestSchema());
+    PublishWellFormedRows(pub);
+    sub.Unsubscribe(result.subscription_id);
+
+    std::lock_guard<std::mutex> lk(sink.mu);
+    ExpectLateSchemaRowsAssembled(sink.deliveries, 2);
+    int64_t accounted = 0;  // rows received + rows reported lost
+    for (const auto& d : sink.deliveries) {
+        accounted += (d.batch ? d.batch->num_rows() : 0) + d.status.rows_dropped;
+    }
+    EXPECT_EQ(accounted, kSchemaLessRows + 1 + kWellFormedRows);
+}
+
+// Forcing (in-process variant). The in-process provider (schema_carriage=as_declared) latches a
+// subscription's schema once, at Subscribe, so a subscription made before the declaration has no
+// schema for life. This pins L1/L6/L7 for "no usable schema" at each deadline; it does not pin
+// that a late schema is unusable, which is the provider's rule and not Fletcher's.
+TEST(SubscriberArrowBatchTest, SchemaDeclaredAfterSubscribeDropsReportedAtEachDeadline) {
+    BatchSink sink;
+    auto provider = std::make_shared<InProcessPubSubProvider>();
+    PublisherArrow pub(provider);
+    SubscriberArrow sub(provider);
+
+    auto result = sub.Subscribe(kTopic, sink.callback(), DeadlineBatchOptions());
+
+    pub.CreateTopic(kTopic, TestSchema());
+    PublishWellFormedRows(pub);  // W1
+    ASSERT_TRUE(sink.WaitFor(1, std::chrono::seconds(2)))
+        << "no report at the first deadline: the subscription stayed silent while open";
+    {
+        std::lock_guard<std::mutex> lk(sink.mu);
+        ASSERT_EQ(sink.deliveries.size(), 1u);
+        ExpectNullTimeoutReport(sink.deliveries[0], kWellFormedRows);
+    }
+
+    pub.Publish(kTopic, MakeRow(4, "d"));  // W2
+    ASSERT_TRUE(sink.WaitFor(2, std::chrono::seconds(2)))
+        << "no report at the second deadline";
+    {
+        std::lock_guard<std::mutex> lk(sink.mu);
+        ASSERT_EQ(sink.deliveries.size(), 2u);
+        ExpectNullTimeoutReport(sink.deliveries[1], 1);
+    }
+
+    sub.Unsubscribe(result.subscription_id);  // both windows were reported; nothing is left
+    std::lock_guard<std::mutex> lk(sink.mu);
+    EXPECT_EQ(sink.deliveries.size(), 2u);
+}
+
+namespace {
+
+enum class AssemblyState { kAwaitingSchema, kUndecodableSchema, kAssembling };
+enum class Ending { kDeadline, kClose };
+
+// One cell of the guard: a fresh subscription in `state`, one malformed row, ended by `ending`.
+void RunAssemblyCell(AssemblyState state, Ending ending) {
+    BatchSink sink;
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
+
+    if (state == AssemblyState::kUndecodableSchema) {
+        // BatchDecoder rejects a dictionary below the top level.
+        auto dict_type = arrow::dictionary(arrow::int32(), arrow::utf8());
+        pub.CreateTopic(kTopic, arrow::schema({arrow::field("tags", arrow::list(dict_type))}));
+    } else if (state == AssemblyState::kAssembling) {
+        pub.CreateTopic(kTopic, TestSchema());
+    }  // kAwaitingSchema: the topic is never declared
+
+    auto result = sub.Subscribe(kTopic, sink.callback(),
+                                ending == Ending::kDeadline ? DeadlineBatchOptions()
+                                                            : NoTriggerBatchOptions());
+    pub.PublishDirect(kTopic, [](WriteBuffer& buf) { buf.AppendByte(0x00); });
+
+    if (ending == Ending::kDeadline) {
+        ASSERT_TRUE(sink.WaitFor(1, std::chrono::seconds(2)))
+            << "no report at the deadline";
+    }
+    sub.Unsubscribe(result.subscription_id);
+
+    std::lock_guard<std::mutex> lk(sink.mu);
+    ASSERT_EQ(sink.deliveries.size(), 1u);  // exactly one report: not none, not two
+    const auto& d = sink.deliveries[0];
+    EXPECT_EQ(d.status.reason, ending == Ending::kDeadline ? BatchStatus::Reason::kTimeout
+                                                           : BatchStatus::Reason::kClosing);
+    EXPECT_EQ(d.status.rows_dropped, 1);
+    EXPECT_TRUE(d.attachments.empty());
+    if (state == AssemblyState::kAssembling) {
+        ASSERT_NE(d.batch, nullptr);  // a batch could be built: non-null, zero rows (L7)
+        EXPECT_EQ(d.batch->num_rows(), 0);
+    } else {
+        EXPECT_EQ(d.batch, nullptr);  // no batch could be built (L7)
+    }
+}
+
+}  // namespace
+
+// Guard (green once D7F-2 lands): every state the assembly can be in reports its loss at either
+// ending. Forbids a state that suppresses reporting, which is how the schema-less deadline was
+// silent while the other five cells were not.
+TEST(SubscriberArrowBatchTest, EveryAssemblyStateReportsItsDropsAtEitherEnding) {
+    struct StateName {
+        AssemblyState state;
+        const char* name;
+    };
+    for (const auto& s : {StateName{AssemblyState::kAwaitingSchema, "awaiting a schema"},
+                          StateName{AssemblyState::kUndecodableSchema, "undecodable schema"},
+                          StateName{AssemblyState::kAssembling, "assembling"}}) {
+        for (const Ending ending : {Ending::kDeadline, Ending::kClose}) {
+            SCOPED_TRACE(std::string(s.name) +
+                         (ending == Ending::kDeadline ? " x deadline" : " x close"));
+            RunAssemblyCell(s.state, ending);
+        }
+    }
+}
+
+// Leg: a schema that arrives in the middle of a window gives one normal batch carrying the rows
+// lost before it (L2, L3, L7): the batch's shape is decided when the window closes.
+TEST(SubscriberArrowBatchTest, SchemaArrivingMidWindowGivesOneBatchCarryingEarlierDrops) {
+    BatchSink sink;
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
+
+    auto result = sub.Subscribe(kTopic, sink.callback(), NoTriggerBatchOptions());
+
+    PublishSchemaLessRows(pub);
+    pub.CreateTopic(kTopic, TestSchema());
+    pub.Publish(kTopic, MakeRow(1, "a"));
+    pub.Publish(kTopic, MakeRow(2, "b"), OrphanAttachments());
+    sub.Unsubscribe(result.subscription_id);
+
+    std::lock_guard<std::mutex> lk(sink.mu);
+    ASSERT_EQ(sink.deliveries.size(), 1u);
+    const auto& d = sink.deliveries[0];
+    EXPECT_EQ(d.status.reason, BatchStatus::Reason::kClosing);
+    ASSERT_NE(d.batch, nullptr);
+    EXPECT_EQ(d.batch->num_rows(), 2);
+    EXPECT_EQ(d.status.rows_dropped, kSchemaLessRows);
+    ASSERT_EQ(d.attachments.size(), 2u);
+    EXPECT_EQ(d.attachments[0].Find("orphan"), nullptr);
+    EXPECT_NE(d.attachments[1].Find("orphan"), nullptr);
 }
 
 // ---------------------------------------------------------------------------

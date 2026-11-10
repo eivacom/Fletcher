@@ -64,8 +64,11 @@ class — `TopicOptions` is not nested in `SubscriberArrow`, so it defaults fine
 Rows arrive one at a time, but analytics wants columns. `SubscriberArrow`
 provides a batched `Subscribe` overload that accumulates incoming rows and
 delivers an `arrow::RecordBatch` when **either** a row-count limit is reached
-**or** a timeout elapses since the batch started filling — whichever comes
-first (defaults: 8000 rows, 1 minute).
+**or** the window's deadline passes — `timeout` after the previous delivery, but
+never sooner than 1 ms after the window's first row — whichever comes first
+(defaults: 8000 rows, 1 minute). This holds whether or not a usable schema has
+arrived: rows lost for want of one are reported at the deadline, not only when
+you unsubscribe.
 
 ```cpp
 fletcher::SubscriberArrow sub(provider);
