@@ -800,8 +800,6 @@ std::string GenerateViewClass(const std::string& view_cls, const std::vector<Fie
 // Emit EncodeTo, EncodeStructTo_, and Encode methods for a message class.
 void EmitEncodeTo(std::ostringstream& o, const std::string& cls,
                   const std::vector<FieldInfo>& fields) {
-    std::string fc = std::to_string(fields.size());
-
     // EncodeStructTo_ — positional format, writes fields into a parent-provided writer.
     o << "    /// Internal: writes this message's fields into a parent writer\n"
       << "    /// when the message is nested as a struct field inside another row.\n";
@@ -816,7 +814,7 @@ void EmitEncodeTo(std::ostringstream& o, const std::string& cls,
       << "    /// format. Used by Publisher to write directly into the provider's\n"
       << "    /// transport buffer without an intermediate copy.\n";
     o << "    void EncodeTo(fletcher::WriteBuffer& buf) const {\n"
-      << "        fletcher::PositionalWriter w(buf, " << fc << ");\n";
+      << "        fletcher::PositionalWriter w(buf, kNumFields);\n";
     for (size_t i = 0; i < fields.size(); ++i)
         cpp_backend::EmitFieldEncodeFromIr(o, *fields[i].ir, fields[i].name + "_", i,
                                            fields[i].descriptor->file());
@@ -840,10 +838,19 @@ void EmitEncodeTo(std::ostringstream& o, const std::string& cls,
 std::string GenerateMessageClass(const std::string& cls, const std::vector<FieldInfo>& fields,
                                  const google::protobuf::Descriptor* msg) {
     std::ostringstream o;
-    std::string fc = std::to_string(fields.size());
 
     // ---- class header ---------------------------------------------------
     o << "class " << cls << " {\n public:\n";
+
+    // The field count every positional reader/writer for this message is sized with: the
+    // top-level ones below, and the BeginStruct/ReadStruct a parent message emits for each
+    // nested instance. A compile-time constant, so a nested list element no longer builds the
+    // whole <cls>Schema() (metadata included) just to read its child count. `fields` is the
+    // GatherFields list, whose size test_schema_codec_lockstep pins to the schema's child count
+    // (BuildFlattenedFieldList); the protoc-arrow-bridge integration tests check the compiled
+    // constant against <cls>Schema()->n_children.
+    o << "    /// Number of fields (Arrow struct children) in this message's wire layout.\n"
+      << "    static constexpr int kNumFields = " << fields.size() << ";\n\n";
 
     // GIR-9 (#75): nested enums are emitted once, inside their owning class's
     // public section, before any accessor that may name them. A nested enum
@@ -863,7 +870,7 @@ std::string GenerateMessageClass(const std::string& cls, const std::vector<Field
     o << "    /// Reconstructs a row from a raw wire-format buffer, e.g. one\n"
       << "    /// received from a Subscriber callback or read from a WAL.\n";
     o << "    explicit " << cls << "(const uint8_t* data, size_t len) {\n"
-      << "        fletcher::PositionalReader r(data, len, " << fc << ");\n"
+      << "        fletcher::PositionalReader r(data, len, kNumFields);\n"
       << "        DecodeFrom_(r);\n"
       << "    }\n\n";
 
@@ -890,7 +897,7 @@ std::string GenerateMessageClass(const std::string& cls, const std::vector<Field
       << "    ///\n"
       << "    /// Every field is written or cleared, so no value survives from the previous row.\n";
     o << "    void DecodeInto(const uint8_t* data, size_t len) {\n"
-      << "        fletcher::PositionalReader r(data, len, " << fc << ");\n"
+      << "        fletcher::PositionalReader r(data, len, kNumFields);\n"
       << "        DecodeFrom_(r);\n"
       << "    }\n\n";
 

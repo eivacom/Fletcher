@@ -56,3 +56,26 @@ message Roster {
     map<string, Card>     by_name = 3;  // map(utf8, struct<label,rank>) — MAP message value
     repeated CardRowList  spreads = 4;  // list(list(list(struct<label,rank>))) — depth 3
 }
+
+// ── Multibeam-shaped nesting ────────────────────────────────────────────────
+// A list of structs (no flatten wrapper) whose element carries nullable scalars
+// and its own list of structs: the shape of a sonar ping's beams[].detections[].
+// Every element is written/read through BeginStruct/ReadStruct with the nested
+// class's field count, so this pins that count at two list depths.
+
+message Detection {
+    double          range_m   = 1;
+    optional float  intensity = 2;   // nullable float32
+    optional string label     = 3;   // nullable utf8
+}
+
+message Beam {
+    uint32             beam_index = 1;
+    optional double    angle_rad  = 2;   // nullable float64
+    repeated Detection detections = 3;   // list(struct<range_m,intensity,label>)
+}
+
+message Swath {
+    uint64        ping_number = 1;
+    repeated Beam beams       = 2;   // list(struct<beam_index,angle_rad,list(struct)>)
+}

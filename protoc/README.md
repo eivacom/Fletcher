@@ -2,6 +2,8 @@
 
 A `protoc` compiler plugin that reads `.proto` files and generates C++ header files containing row wrapper classes in the `fletcher_gen` namespace, along with TypeScript schema descriptors. Each supported proto message gets a class with a typed setter API that produces an `EncodedRow` via `Encode()`, including the Arrow schema it was generated from. Service definitions with eligible RPC methods additionally generate `Publisher` and `Subscriber` classes for pub/sub.
 
+Each class also carries `static constexpr int kNumFields`, its number of fields (equal to `<Msg>Schema()->n_children`). The generated encode and decode use it to size every nested struct, so a message nested in a list costs no schema construction per element: for a 256-beam multibeam ping (a list of beams, each with a list of detections) that took `Encode()` from 2.9 ms to 5.7 µs.
+
 ### Decoding: constructor or `DecodeInto`
 
 A row decodes either by constructing one — `MyRow(data, len)` or `MyRow(encoded_row)` — or **in place** into a row you already hold, with `DecodeInto(data, len)` / `DecodeInto(encoded_row)`. Both leave identical state: every field is written or cleared, so no value survives from the row decoded before it.

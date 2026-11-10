@@ -112,13 +112,13 @@ class EdgeDecodeVisitor {
         const std::string cls = CppClassName(st.identity.descriptor, context_file_);
         if (nullable) {
             out_ << "        if (!r.IsNull(" << si_ << ")) {\n"
-                 << "            auto sr = r.ReadStruct(" << cls << "Schema()->n_children);\n"
+                 << "            auto sr = r.ReadStruct(" << cls << "::kNumFields);\n"
                  << "            " << n_ << ".emplace(sr);\n"
                  << "        } else {\n"
                  << "            " << n_ << ".reset();\n"
                  << "        }\n";
         } else {
-            out_ << "        { auto sr = r.ReadStruct(" << cls << "Schema()->n_children);\n"
+            out_ << "        { auto sr = r.ReadStruct(" << cls << "::kNumFields);\n"
                  << "          " << n_ << ".emplace(sr); }\n";
         }
     }
@@ -165,7 +165,7 @@ class EdgeDecodeVisitor {
              << "          " << n_ << ".clear();\n"
              << "          " << n_ << ".reserve(lh.count);\n"
              << "          for (uint32_t li_ = 0; li_ < lh.count; ++li_) {\n"
-             << "            auto sr = r.ReadStruct(" << nc << "Schema()->n_children);\n"
+             << "            auto sr = r.ReadStruct(" << nc << "::kNumFields);\n"
              << "            " << n_ << ".emplace_back(sr);\n"
              << "          } }\n";
     }
@@ -218,7 +218,7 @@ class EdgeDecodeVisitor {
         if (struct_leaf) {
             const std::string nc = CppClassName(
                 std::get<ir::StructNode>(cur->node).identity.descriptor, context_file_);
-            out_ << indent << "auto sr = r.ReadStruct(" << nc << "Schema()->n_children);\n"
+            out_ << indent << "auto sr = r.ReadStruct(" << nc << "::kNumFields);\n"
                  << indent << cur_ref << " = " << nc << "(sr);\n";
         } else {
             // Scalar leaf: read the innermost element through the C++ backend's
@@ -268,7 +268,7 @@ class EdgeDecodeVisitor {
         if (val_is_msg) {
             const std::string mvc = CppClassName(
                 std::get<ir::StructNode>(map.value->node).identity.descriptor, context_file_);
-            out_ << "            auto sr = r.ReadStruct(" << mvc << "Schema()->n_children);\n"
+            out_ << "            auto sr = r.ReadStruct(" << mvc << "::kNumFields);\n"
                  << "            " << n_ << ".emplace_back(std::move(keys_[mi_]), " << mvc
                  << "(sr));\n";
         } else {
