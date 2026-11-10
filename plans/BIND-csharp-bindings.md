@@ -3554,6 +3554,22 @@ bindings should not follow C++, every codec takes C++'s spelling (`readings[].x`
   narrowed) and T-N2 (the TypeScript → TypeScript cell is one client looping through a gateway).
   **Not done here, by the runbook:** `LICENSE-EXCEPTION`'s wiring (with EIVA legal since
   2026-10-30, D-BIND-175), the bump, the preview retirement, the merge and the tags.
+- **2026-11-10, waiting on EIVA legal: `main` merged, and the SDK raised (D-BIND-199).** `main`'s
+  #135 (a generated `kNumFields` constant sizes nested C++ structs) and #136 (`protoc`
+  0.5.2-alpha) merged cleanly as `d04cb6d`; no golden here holds generated C++. Its CI failed only
+  where a new advisory, GHSA-p3jp-9v83-76w9, marks the pinned ILCompiler packs vulnerable, so
+  NuGet's audit refused the AOT smoke test's restore. On the maintainer's go-ahead the SDK and the
+  packs moved to 10.0.403 / 10.0.14 / 8.0.33 with the lock files re-written (D-BIND-199).
+  The same run failed two Windows lanes (`protoc-dotnet`, `protoc-gen-fletcher-rust`) for a reason
+  of their own: protobuf was built from source on the runner, and the lanes' `find ~/.conan2 …
+  -print -quit` took the first `protoc.exe` in the cache, a build-tree copy whose `../include`
+  does not exist, so `google/protobuf/timestamp.proto` was not found. The `protoc` lookup in the
+  four lanes that have it (also `gateway-dotnet-crosslang` and `gateway-dotnet-end-to-end`, on both
+  legs) now searches package folders only (`~/.conan2/p -path '*/p/bin/*'`), as their plugin
+  lookup already did. Verified in the devcontainer: SDK 10.0.403, a locked restore with the audit,
+  the .NET suites on .NET 8 and 10 (434, 223, 71, 5), the AOT smoke test published and run on
+  both, pack, `dotnet format`; the restricted lookup finds the packaged `protoc` and its
+  `include/`.
 
 ---
 

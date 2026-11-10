@@ -4380,3 +4380,18 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   it would fail on history. **Declined:** checking the archived copy (pointing the script and the
   workflow's sparse checkout at `docs/archive/BIND/`); keeping the plan in `plans/` until the
   second step.
+
+- **D-BIND-199 - the .NET SDK and the pinned AOT packs move to 10.0.403 / 10.0.14 / 8.0.33 for a
+  security advisory. Amends D-BIND-81's pin values, not its rule.** *LOCKED BY THE MAINTAINER
+  2026-11-10.* GHSA-p3jp-9v83-76w9 (CVE-2026-111497, a .NET Brotli decoder out-of-bounds write,
+  high), published 2026-11-03, marks `Microsoft.DotNet.ILCompiler` below 10.0.14 and 8.0.33
+  vulnerable; NuGet's audit fails the restore of `Fletcher.AotSmoke` (NU1903, an error under
+  `TreatWarningsAsErrors`), so `ci.format-check-cs` and `ci.pr`'s `dotnet / linux` failed on the
+  merge of `main` (`d04cb6d`), whatever a push contains. As D-BIND-81 prescribes, the pins move
+  together: `dotnet/global.json` and the devcontainer's `DOTNET_SDK_VERSION` to SDK 10.0.403
+  (released 2026-10-25, the first that bundles 10.0.14 / 8.0.33), `FletcherAotPackNet10` /
+  `FletcherAotPackNet8` in `dotnet/Directory.Build.targets` to 10.0.14 / 8.0.33, and the five lock
+  files that record them re-written by `dotnet restore --force-evaluate`. The shipped packages do
+  not change: ILLink and ILCompiler are build-time tools no package depends on. **Declined:**
+  suppressing NU1903 for this advisory in the test project (CI would build with a vulnerable
+  compiler, and the pin would have to move before the release anyway).

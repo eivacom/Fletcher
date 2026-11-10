@@ -13,21 +13,23 @@
        rolls forward to 10.0.401 (10.0.12), and a lock file written on one fails NU1004 on
        the other.
 
-       So the versions are fixed here, at what SDK 10.0.400 (dotnet/global.json) bundles,
-       for every SDK that builds this tree. Raise them deliberately, with the global.json
-       pin, then re-write the lock files. A newer SDK builds with these older packs without
-       complaint; they are build-time tools, not shipped.
+       So the versions are fixed here, at what the dotnet/global.json SDK bundles, for every
+       SDK that builds this tree. Raise them deliberately, with the global.json pin, then
+       re-write the lock files. A newer SDK builds with these older packs without complaint;
+       they are build-time tools, not shipped. Raised 2026-11-10 to SDK 10.0.403's 10.0.14 /
+       8.0.33 (D-BIND-199): GHSA-p3jp-9v83-76w9 (CVE-2026-111497) marks ILCompiler below
+       those vulnerable, and NuGet's audit fails the restore (NU1903 as an error).
 
        A NativeAOT PUBLISH is the exception, so the runtime pack is pinned with them
        (BIND-9b-3). The SDK picks a self-contained app's runtime pack at its own latest
        patch, and ILC refuses a System.Private.CoreLib newer than its own ("Overriding
        System.Private.CoreLib.dll with a newer version is not supported"): measured
-       2026-10-22, SDK 10.0.402 brings runtime packs 10.0.13 / 8.0.32 against these
-       10.0.11 / 8.0.30. CI's Linux image runs exactly 10.0.400, so only a newer SDK, as
-       on the Windows runner, meets it. -->
+       2026-10-22, SDK 10.0.402 brings runtime packs 10.0.13 / 8.0.32 against the then
+       pinned 10.0.11 / 8.0.30. CI's Linux image runs exactly the pinned SDK, so only a
+       newer SDK, as on the Windows runner, meets it. -->
   <PropertyGroup>
-    <FletcherAotPackNet10>10.0.11</FletcherAotPackNet10>
-    <FletcherAotPackNet8>8.0.30</FletcherAotPackNet8>
+    <FletcherAotPackNet10>10.0.14</FletcherAotPackNet10>
+    <FletcherAotPackNet8>8.0.33</FletcherAotPackNet8>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(PublishAot)' == 'true'">

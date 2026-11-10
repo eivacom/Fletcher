@@ -74,7 +74,7 @@ jobs:
                      echo '::group::locate the plugin, protoc and the shim' && \
                        BIN=\$(find ~/.conan2/p -path '*/p/bin/fletcher-protoc' -type f -print -quit) && \
                        if [ -z \"\$BIN\" ]; then echo '::error::fletcher-protoc binary not found in Conan cache'; exit 1; fi && \
-                       PROTOC=\$(find ~/.conan2 \( -name protoc -o -name 'protoc-[0-9]*' \) \( -type f -o -type l \) -print -quit 2>/dev/null || true) && \
+                       PROTOC=\$(find ~/.conan2/p -path '*/p/bin/*' \( -name protoc -o -name 'protoc-[0-9]*' \) \( -type f -o -type l \) -print -quit 2>/dev/null || true) && \
                        if [ -z \"\$PROTOC\" ]; then echo '::error::protoc not found in the Conan cache'; exit 1; fi && \
                        SHIM=\$(find ~/.conan2/p -path '*/p/lib/libfletcher-c-abi.so' -type f -print -quit) && \
                        if [ -z \"\$SHIM\" ]; then echo '::error::libfletcher-c-abi.so not found in the Conan cache'; exit 1; fi && \
@@ -148,7 +148,7 @@ jobs:
             echo "::error::fletcher-protoc.exe not found in Conan cache"
             exit 1
           fi
-          PROTOC=$(find ~/.conan2 \( -name protoc.exe -o -name 'protoc-[0-9]*.exe' \) -type f -print -quit 2>/dev/null || true)
+          PROTOC=$(find ~/.conan2/p -path '*/p/bin/*' \( -name protoc.exe -o -name 'protoc-[0-9]*.exe' \) -type f -print -quit 2>/dev/null || true)
           if [ -z "$PROTOC" ]; then
             echo "::error::protoc.exe not found in the Conan cache"
             exit 1

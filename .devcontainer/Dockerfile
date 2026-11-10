@@ -55,7 +55,7 @@ RUN npm install -g "prettier@${PRETTIER_VERSION}"
 # libicu is a hard runtime requirement of the SDK on Ubuntu (without it every
 # dotnet invocation aborts unless globalization is switched to invariant mode,
 # which would change string comparison semantics under the tests).
-ARG DOTNET_SDK_VERSION=10.0.400
+ARG DOTNET_SDK_VERSION=10.0.403
 ENV DOTNET_ROOT=/usr/share/dotnet
 ENV PATH="${PATH}:/usr/share/dotnet:/root/.dotnet/tools"
 ENV DOTNET_CLI_TELEMETRY_OPTOUT=1
