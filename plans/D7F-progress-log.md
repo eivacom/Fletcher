@@ -36,3 +36,19 @@ design are in the working tree too.
 space) on `pubsub-arrow` and on `integration-tests/pubsub-arrow-fastdds`, even with one build job.
 **To resume:** with memory freed, run the inner loop (expect 43/43), re-run 4a on the fix, then the full
 suite, then close D7F-2.
+
+## D7F-2 — Loss before a schema is reported at each deadline — 🟢 2026-11-11
+
+**Resumed:** the memory blocker has cleared (10.6 GB virtual free). Owner directive: "Resume D7F-2, then D7F-3".
+**Landed:** `dbaa2b6` + fix cycle 1 `7170ca9` + the close commit. The deadline now reports schema-less loss
+without waiting for a schema; a late schema gives normal batches; rows plus drops add up across the change.
+**Steps:** 0a CLEAR · design `e30f2aa` · review APPROVE-WITH-DEBT(3) `7916105` · red at phase A · 0b CLEAR ·
+green · 4a cycle 1 ISSUES(2, 1 blocking) → cycle 2 ISSUES(1, 0 blocking; F3 comment fixed at close) ·
+4b no blocking (S1 fixed in cycle 1; S2 → DEBT-6, carried to D7F-3).
+**Verification:** pubsub-arrow 43/43 (PM, forced rebuild, `7170ca9`); pubsub-arrow-fastdds 4/4 (PM).
+(The earlier "uncommitted and unverified" state was superseded by `7170ca9`.)
+**Numbers:** production +64/−76 against declared +20/−40; adds >50% over, disclosed in the brief, mostly
+D9 doc wording. Design cycles 1; fix cycles 1; implementer launches 2 (incl. the close-out edits).
+**Record corrections:** design "As built" note and Risks line; d7 L8 close-cell order; design-debt
+D7F-1/D7F-2 entries struck to where they landed.
+**Carried to D7F-3:** DEBT-6 (the decided state lives in three places).

@@ -798,18 +798,18 @@ Review: [D7F-1-design-review.md](D7F-1-design-review.md). No BLOCKERs; P1–P4 v
 
 | Id | Owed | Where |
 |----|------|-------|
-| DEBT-1 | Add a BC-3 status note to the register edits: reporting gate cpp:210 removed and import failure counted via the no-decoder branch (D7F-1); state vs decoder-presence and `ready_` left to D7F-2; "one usability decision" waits on d7 Q7. | review §DEBT-1 |
-| DEBT-2 | d7 L1 mark: "violation 1: closing half built (D7F-1); deadline half open (D7F-2)", not fully built, since the timer still parks on `ready_` (cpp:198) and ladder:43 cites violation 1 for rung 2. | review §DEBT-2 |
+| ~~DEBT-1~~ | ~~BC-3 status note in the register edits~~ | Landed in `dbaa2b6`: `docs/domains/bounded-context-register.md:17` (BC-3). |
+| ~~DEBT-2~~ | ~~d7 L1 mark~~ | Landed in `dbaa2b6`: `docs/domains/d7-batch-assembly.md:59-60` (violation 1 built, closing D7F-1, deadline D7F-2). |
 
 ## Carried from D7F-1 code review to D7F-2
-- **DEBT-3 (S1):** inside the batched `call_once`, the codec entry is looked up a second time; a concurrent last-`Unsubscribe` can erase it, so the batcher gets `SetSchema(nullptr)` for good (rows counted, reported only at close). Fix: `AcquireCodec` returns the schema it found or built and that is passed to `SetSchema`. Rides D7F-2, which retires `ready_`. Source: `plans/reviews/D7F-1-codereview.md`.
-- **DEBT-4 (S2):** no test covers drops before the schema followed by good rows after it. D7F-2's ladder rung 2 subject covers it; make sure its forcing test asserts it.
-- **DEBT-5 (record):** header `hpp:95-98` promises a timeout flush "since the first row/drop", false for a schema-less open subscription until D7F-2 lands. D7F-2 makes it true again; verify at D7F-2 close.
+- ~~**DEBT-3 (S1):** second codec lookup in the batched `call_once`~~ Landed in `dbaa2b6`: `AcquireCodec` returns `TopicCodec` by value (`subscriber_arrow.cpp:338-343`, `:368-384`; `subscriber_arrow.hpp:162-165`).
+- ~~**DEBT-4 (S2):** drops-then-good-rows test~~ Landed in `dbaa2b6`: `test_pubsub_arrow.cpp:902-939` (forcing, with the `:877-894` helper) and `:1076` (leg).
+- ~~**DEBT-5 (record):** header timeout sentence~~ Landed in `dbaa2b6`: `subscriber_arrow.hpp:95-99` and `README.md:66-70`.
 
 ## D7F-2 — loss before a usable schema, reported at each deadline (APPROVE-WITH-DEBT(3), cycle 1 of 2) — [review](D7F-2-design-review.md)
-- **DEBT-1 (must land):** only a *throw* from `ImportArrowSchema` decides "unusable". A null return means nothing arrived, as for a released handle (`schema_import.hpp:31-34`), so it must not decide. Fix the `found.arrow_schema || schema` test and correct P3.
-- **DEBT-2:** (a) the BC-3 row names both `schema_decided` (the per-row cache) and the once-flag (the decision); (b) the d7 L8 edit goes under *Holds at*, and the law's sentence is unchanged; (c) drop "lost rows never count towards `max_rows`" from hpp and README, or pin it with a `max_rows`=1 guard cell.
-- **DEBT-3:** the forcing test asserts row order within each delivery and the set {1,2,3} across deliveries. While L12 is open, a stalled `kTimeout`/`kClosing` split can be recorded in either order.
+- ~~**DEBT-1 (must land):** only a throw decides "unusable"~~ Landed in `dbaa2b6`: `subscriber_arrow.cpp:341` and `:380`; P3 corrected in `plans/D7F-2-schema-loss-at-deadline.md:176` (`7170ca9`).
+- ~~**DEBT-2:** BC-3 row, d7 L8 placement, `max_rows` sentence~~ Landed in `dbaa2b6`: `bounded-context-register.md:17` (a), `d7-batch-assembly.md:138-142` (b), `subscriber_arrow.hpp:95-99` and `README.md:66-70` (c, sentence dropped).
+- ~~**DEBT-3:** forcing test order assertions~~ Landed in `dbaa2b6` (tweaked `7170ca9`): `test_pubsub_arrow.cpp:877-894` (order within a delivery, the set {1,2,3} across deliveries).
 
 ## Carried from D7F-2 code review to D7F-3
 - **DEBT-6 (S2):** "has the schema been decided" lives in three places (the once-flag, the `schema_decided` atomic, decoder presence), and `SetSchema` trusts its caller to call it once. A `decided_` flag set under the batcher's own lock would let `SetSchema` refuse a second decision. D7F-3 reworks the batcher's state and threading; settle it there. Source: `plans/reviews/D7F-2-codereview.md`.

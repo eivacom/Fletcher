@@ -144,8 +144,11 @@ every later row is dropped, and there is no recovery.
   `EveryAssemblyStateReportsItsDropsAtEitherEnding`, which cover one window each. An import failure
   is forced by that guard's unimportable-schema cells: `Publisher::CreateTopic` accepts a schema
   whose format string Arrow rejects, and the Mock hands it on, so `ImportArrowSchema` throws. Each
-  cell reports its row as a null batch (at the deadline and at close), then declares a good schema
-  and sends a well-formed row: the subscription still drops it, so the failed import was not retried.
+  cell sends one malformed row, then declares a good schema and sends a well-formed row: the
+  subscription still drops it, so the failed import was not retried. The deadline cell waits for the
+  first row's `kTimeout` report, sends the second row, waits for its own `kTimeout` report, and
+  gets two null batches with `rows_dropped` 1 and 1. The close cell sends both rows before
+  `Unsubscribe` and gets one null `kClosing` batch at the end, with `rows_dropped` 2.
 
 **L9. Closing is final and reported.** The pending window is delivered once, as `kClosing`. After
 `Unsubscribe` or `~SubscriberArrow` returns, no further batch is delivered. **The one exception:**

@@ -55,6 +55,5 @@ idleness is not), L8 (rejection is permanent) and L13 (subscribing never waits f
 Declared net lines: +20 / −40 (production) · new public surface: 0 · design cycles used: 1/2
 
 ---
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
-<delta vs the above — actual net lines, anything retired or added the brief did
-not predict, fix cycles used>.
+*As landed (2026-11-11):*
+2026-11-11: production +64/−76 (net −12) vs declared +20/−40; adds >50% over, mostly D9 doc wording in hpp/README — disclosed, no owner note. Tests +285. Fix cycles 1 (4a blocker: unimportable-schema guard cell). DEBT-6 (decided-state in three places) carried to D7F-3.

@@ -194,6 +194,18 @@ All are external (`PublisherArrow` / `SubscriberArrow`). They read results only 
 | `EveryAssemblyStateReportsItsDropsAtEitherEnding` (Mock) | **guard** (BC-3/C3 structural test, ladder "States × endings") | A table of {awaiting: topic never declared; undecodable: nested-dictionary schema, as test:1003-1005; assembling: `TestSchema`} × {timeout: 100 ms, then `WaitFor(1)`, then `Unsubscribe`; closing: 10 min, then `Unsubscribe`}. Each cell sends one 0x00 row. Each cell gets exactly one delivery, whose reason matches the ending and whose `rows_dropped` is 1. The batch is null for awaiting and undecodable, and non-null with 0 rows for assembling. `SCOPED_TRACE` per cell. | Only the awaiting×timeout cell is red. The other five are green before and after (declared). It fails if any state suppresses reporting. |
 | `SchemaArrivingMidWindowGivesOneBatchCarryingEarlierDrops` (Mock) | **leg** (DEBT-4, code-review S2 shape; L2/L3/L7 in the transition window) | 10 min timeout. `PublishSchemaLessRows`, `CreateTopic`, 2× `Publish` (one with an attachment), `Unsubscribe`. Exactly one `kClosing`, non-null, `num_rows` 2, `rows_dropped` 3, 2 attachments aligned. | Green before and after (declared). The forcing test carries the promise; this pins the mixed window's shape. |
 
+**As built (`dbaa2b6`, `7170ca9`):**
+- The forcing test does not assume one delivery per window. It waits (2 s) until null `kTimeout`
+  reports add up to exactly 3 lost rows for W1, then exactly 4 for W2, and checks every report in
+  between as null and non-empty (L6). Σ`num_rows` + Σ`rows_dropped` = 7 is checked at the end.
+- The guard has four states, not three: awaiting, undecodable, **unimportable** and assembling, each
+  at both endings (eight cells). The unimportable state is a struct whose child has a format string
+  Arrow rejects. `Publisher::CreateTopic` accepts it and the Mock hands it on, so
+  `ImportArrowSchema` throws (the Risks line below is corrected).
+- Each unimportable cell then declares `TestSchema` and sends a well-formed row, to pin L8. So the
+  deadline cell gets two reports (`kTimeout`, null, `rows_dropped` 1 and 1), and the close cell gets
+  one (`kClosing`, null, `rows_dropped` 2).
+
 Every test was checked against tier 1:
 - None asserts drops counting towards `max_rows`, either way. That stays unpinned, as the rung does
   not name it.
@@ -207,12 +219,12 @@ No new value subject.
 - **No STOP-AND-ASK.** L1, L5, L6, L8 and L13 agree with D9, with "2. Fix both" and with the rung's
   wording. The header's timing sentence (tier 3) contradicts L5 and is corrected.
 - **Import failure made final (§3)** is a narrowing that only a provider handing one subscription an
-  unimportable schema and later an importable one could observe. No in-tree provider does. It
-  follows L8, and the brief discloses it. `PublisherArrow` cannot declare an unimportable schema.
+  unimportable schema and later an importable one could observe. The Mock can (corrected
+  after build; see "As built" above). It follows L8, and the brief discloses it. `PublisherArrow` cannot declare an unimportable schema.
   If `Publisher::CreateTopic` accepts an `OwnedSchema` whose format string `ImportArrowSchema`
   rejects, the implementer adds that as a fourth "undecodable" row of the guard. Otherwise the
   case stays untested and disclosed. It goes through the same `SetSchema` door as the guard's
-  nested-dictionary cell.
+  nested-dictionary cell. **As built:** it does accept one, so the guard has the fourth state.
 - **D7F-3 interplay.** This stage only removes code from `TimerLoop`, which D7F-3 turns into the
   batch loop. It adds nothing D7F-3 deletes (ladder:62-65). The four tests are not in the
   re-anchoring list.
