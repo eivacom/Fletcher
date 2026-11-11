@@ -49,3 +49,4 @@ worktree, implementer, 2026-11-11): **red**, 1.05 s. The one failed assertion is
 `captured.expired()`: "the failed Subscribe's batch thread still holds the callback it was given".
 The batch thread started before the refused `Subscribe` was never stopped, so it kept the callback
 for the life of the process. Green on the fix; red again with the fix disabled (a local control).
+| 2026-11-11 | D7F-3 | `EveryCallbackRunsOnTheBatchThreadInWindowOrder` | 140c216 |
