@@ -791,3 +791,30 @@ per-envelope ceiling in the wire format and refuse past it in both decoders (`re
 `std::invalid_argument`). Measure first — the bound must be evidence, not a guess.
 **Addressed to:** PDA-ABI, at the item that gives the decode path its C form, or any round that
 first has a measured deployment figure.
+
+## D7F-1 — loss before a usable schema, reported at close (APPROVE-WITH-DEBT(2), cycle 1 of 2)
+
+Review: [D7F-1-design-review.md](D7F-1-design-review.md). No BLOCKERs; P1–P4 verified, rely on them.
+
+| Id | Owed | Where |
+|----|------|-------|
+| ~~DEBT-1~~ | ~~BC-3 status note in the register edits~~ | Landed in `dbaa2b6`: `docs/domains/bounded-context-register.md:17` (BC-3). |
+| ~~DEBT-2~~ | ~~d7 L1 mark~~ | Landed in `dbaa2b6`: `docs/domains/d7-batch-assembly.md:59-60` (violation 1 built, closing D7F-1, deadline D7F-2). |
+
+## Carried from D7F-1 code review to D7F-2
+- ~~**DEBT-3 (S1):** second codec lookup in the batched `call_once`~~ Landed in `dbaa2b6`: `AcquireCodec` returns `TopicCodec` by value (`subscriber_arrow.cpp:338-343`, `:368-384`; `subscriber_arrow.hpp:162-165`).
+- ~~**DEBT-4 (S2):** drops-then-good-rows test~~ Landed in `dbaa2b6`: `test_pubsub_arrow.cpp:902-939` (forcing, with the `:877-894` helper) and `:1076` (leg).
+- ~~**DEBT-5 (record):** header timeout sentence~~ Landed in `dbaa2b6`: `subscriber_arrow.hpp:95-99` and `README.md:66-70`.
+
+## D7F-2 — loss before a usable schema, reported at each deadline (APPROVE-WITH-DEBT(3), cycle 1 of 2) — [review](D7F-2-design-review.md)
+- ~~**DEBT-1 (must land):** only a throw decides "unusable"~~ Landed in `dbaa2b6`: `subscriber_arrow.cpp:341` and `:380`; P3 corrected in `plans/D7F-2-schema-loss-at-deadline.md:176` (`7170ca9`).
+- ~~**DEBT-2:** BC-3 row, d7 L8 placement, `max_rows` sentence~~ Landed in `dbaa2b6`: `bounded-context-register.md:17` (a), `d7-batch-assembly.md:138-142` (b), `subscriber_arrow.hpp:95-99` and `README.md:66-70` (c, sentence dropped).
+- ~~**DEBT-3:** forcing test order assertions~~ Landed in `dbaa2b6` (tweaked `7170ca9`): `test_pubsub_arrow.cpp:877-894` (order within a delivery, the set {1,2,3} across deliveries).
+
+## Carried from D7F-2 code review to D7F-3
+- ~~**DEBT-6 (S2):** the schema decision in three places.~~ Landed in D7F-3 (`5b4e807`): the batcher's `decided_`, set under its `mu_`; `SetSchema` refuses a second decision.
+
+## D7F-3 — one batch thread, in order, nothing lost at close (cycle 1 NEEDS-REWORK; cycle 2 APPROVE-WITH-DEBT(2)) — [review](D7F-3-design-review.md)
+- ~~DEBT-1..3 (deadline forbid, `notify_all`, benchmark and fastdds Files-to-touch)~~ Folded into design revision 2 (§2, §1, Files-to-touch).
+- **C2-1 (PM-facing, before the owner reads the brief):** Remove the destructor from Decision 2. Destroying over a provider inside its own delivery is already forbidden (§6 clause 5, ruling 2026-09-05; `sub:556-578`), and the program stops under either option. Scope (b)'s "No hang" to the subscription's own provider.
+- ~~**C2-2:** the provider token and the third `Stop` case.~~ Landed in D7F-3 (`5b4e807`): `SubscriberArrow::provider_token_` (private, hpp), `Stop`'s `InsideDeliveryOn(provider_)` case moves and detaches `thread_`; the "may not free" case is in the hpp `Unsubscribe` doc, the README and d7 L9.

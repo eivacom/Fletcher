@@ -206,8 +206,9 @@ TEST(PubSubArrowFastDdsTest, MultipleRowsDeliveredInOrder) {
 //
 // Covers two integration-only aspects of the batched path:
 //
-//   - the batcher's internal timer thread interacting with FastDDS' listener
-//     thread (rows arrive from a thread the publisher does not own)
+//   - the subscription's batch thread, which runs every callback, fed by
+//     FastDDS' listener thread (rows arrive from a thread the publisher does
+//     not own)
 //   - lazy codec acquisition from the SharedSchema delivered with each
 //     sample, which is the subscriber-only mode for the batched path
 // ---------------------------------------------------------------------------
@@ -218,7 +219,7 @@ TEST(PubSubArrowFastDdsTest, BatchedRecordBatchDeliveredAcrossDdsBoundary) {
     auto sub_provider =
         std::make_shared<FastDDSPubSubProvider>(ProviderConfig{.domain_id = kTestDomain});
 
-    // Capture state must outlive `sub`: a delivery on the FastDDS listener
+    // Capture state must outlive `sub`: a delivery on the subscription's batch
     // thread could otherwise touch destroyed locals during teardown.
     std::mutex mu;
     std::condition_variable cv;
@@ -260,7 +261,7 @@ TEST(PubSubArrowFastDdsTest, BatchedRecordBatchDeliveredAcrossDdsBoundary) {
 
     // The data stream is VOLATILE, so the test publishes only once the writer reports the
     // match; RELIABLE then delivers in order to a matched reader. Once the batcher has
-    // counted three rows on the listener thread, it flushes a kRowLimit batch.
+    // counted three rows from the listener thread, its batch thread delivers a kRowLimit batch.
     ASSERT_TRUE(pub_listener.AwaitMatch(std::chrono::seconds(10)))
         << "the data writer never matched the subscriber's data reader";
     pub.Publish(topic, SensorRow(0, 0.5, "a"));
@@ -273,8 +274,8 @@ TEST(PubSubArrowFastDdsTest, BatchedRecordBatchDeliveredAcrossDdsBoundary) {
             << "batched callback never fired within 10 s";
     }
 
-    // Tear down before reading deliveries so the FastDDS listener thread can
-    // no longer mutate the vector.
+    // Tear down before reading deliveries so the batch thread can no longer
+    // mutate the vector: Unsubscribe returns after the last delivery.
     sub.Unsubscribe(result.subscription_id);
 
     ASSERT_EQ(deliveries.size(), 1u) << "expected exactly one row-limit flush";
