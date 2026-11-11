@@ -125,8 +125,9 @@ TEST(PubSubProtoTest, PublisherConstructionCreatesTopicWithCorrectSchema) {
     fletcher_gen::integration::pubsub::TelemetryFeed_TelemetryStreamPublisher pub(mock);
 
     ASSERT_EQ(mock->created_topics.size(), 1u);
-    EXPECT_EQ(mock->created_topics[0].segments,
-              (std::vector<std::string>{"integration.pubsub", "TelemetryFeed", "TelemetryStream"}));
+    EXPECT_EQ(
+        mock->created_topics[0].segments,
+        (std::vector<std::string>{"integration", "pubsub", "TelemetryFeed", "TelemetryStream"}));
     auto schema = ImportNano(OwnedSchema::DeepCopy(mock->created_topics[0].schema.get()));
     EXPECT_EQ(schema->num_fields(), 4);
 }
@@ -158,8 +159,9 @@ TEST(PubSubProtoTest, PublishEncodesAndDeliversToProvider) {
     pub.Publish(row);
 
     ASSERT_EQ(mock->published.size(), 1u);
-    EXPECT_EQ(mock->published[0].segments,
-              (std::vector<std::string>{"integration.pubsub", "TelemetryFeed", "TelemetryStream"}));
+    EXPECT_EQ(
+        mock->published[0].segments,
+        (std::vector<std::string>{"integration", "pubsub", "TelemetryFeed", "TelemetryStream"}));
     EXPECT_FALSE(mock->published[0].encoded.empty());
 }
 

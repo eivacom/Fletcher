@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// BIND-T-3 (D-BIND-181, D-BIND-184): one pub/sub method, so the plugin writes its TypeScript
+// publisher and subscriber; test/pair.test.ts drives them over a stub gateway, and
+// `npm run typecheck` compiles them against gateway-client-ts. Generated as TypeScript only.
+syntax = "proto3";
+
+package integration.pair;
+
+import "google/protobuf/empty.proto";
+
+message Reading {
+    int32 id = 1;
+    optional double value = 2;
+    repeated string tags = 3;
+}
+
+service Feed {
+    rpc Send(stream Reading) returns (google.protobuf.Empty);
+}

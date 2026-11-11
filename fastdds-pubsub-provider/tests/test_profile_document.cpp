@@ -898,8 +898,9 @@ TEST(FastDdsConfig, BuiltInNamedProfilesResolveOnBothSides) {
         EXPECT_EQ(reader.resource_limits().allocated_samples, row.allocated_samples);
 
         if (std::string(row.name) == "lossless") {
-            EXPECT_EQ(writer.reliability().max_blocking_time, c_TimeInfinite)
-                << "the lossless writer's max_blocking_time is not infinite";
+            // 30 s since D-BIND-168: Fast DDS 3.4.3 refuses an infinite reliable blocking time.
+            EXPECT_EQ(writer.reliability().max_blocking_time, Duration_t(30, 0))
+                << "the lossless writer's max_blocking_time is not 30 s";
             EXPECT_EQ(writer.reliable_writer_qos().times.heartbeat_period, Duration_t(0, 20000000))
                 << "the lossless writer's heartbeat period is not 20 ms";
         } else {

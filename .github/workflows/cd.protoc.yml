@@ -6,17 +6,29 @@
 #
 #   setup-devcontainer
 #       │
-#       └── release (ci.protoc.yml)
-#               │  produces 4 artifacts:
-#               │    fletcher-protoc-{linux,windows}            (Conan .tgz)
-#               │    fletcher-protoc-{linux,windows}-static     (raw binary)
+#       ├── release (ci.protoc.yml)
+#       │       │  produces 6 artifacts:
+#       │       │    fletcher-protoc-{linux,windows}            (Conan .tgz)
+#       │       │    fletcher-protoc-{linux,windows}-static     (raw binary)
+#       │       │    fletcher-protoc-licences                   (LICENSE, COPYING,
+#       │       │                                                THIRD-PARTY-LICENSES.txt)
+#       │       │    fletcher-protoc-nuget                      (Eiva.Fletcher.Protoc)
+#       ├── dotnet  (ci.dotnet.yml)   ┐ built only for the gate,
+#       └── gateway (ci.gateway.yml)  ┘ never released here
 #               ▼
-#         npm-publish                            ── @eiva/protoc-gen-fletcher
-#               │
+#         gate (ci.package-consumer.yml)         ── the consumer test on exactly
+#               │                                   the files released below
+#               │                                   (BIND-9b-8 Q3, D-BIND-177)
+#               ▼
+#         npm-publish                            ── @eiva/protoc-gen-fletcher,
+#               │                                   with the licence files
 #               ▼
 #         create-release                         ── GitHub Release with
 #                                                   npm link prepended to
-#                                                   auto-generated notes
+#                                                   auto-generated notes;
+#                                                   the licence files beside
+#                                                   the binaries (BIND-9b-7,
+#                                                   review T13, M6)
 #
 # All build jobs (shared + static) live in ci.protoc.yml as the single
 # source of truth. On tag-push it produces both the Conan tarballs and
@@ -32,6 +44,13 @@
 #
 # Triggers:
 #   * push: tags 'protoc-v*'     — real release.
+#   * workflow_dispatch          — a DRY RUN (BIND-9b-6, D-BIND-164): the build, the static binaries
+#                                  and Eiva.Fletcher.Protoc packed and checked, and the gate; never
+#                                  npm, the Release or nuget.org. Dispatchable once this file is on
+#                                  main.
+#
+# BIND-9b-6 (D-BIND-71, D-BIND-176): the Release also carries Eiva.Fletcher.Protoc, the C# locator
+# ci.protoc packs, and the nuget-org job then pushes it to nuget.org by Trusted Publishing.
 
 name: cd.protoc
 
@@ -39,6 +58,7 @@ on:
   push:
     tags:
       - 'protoc-v[0-9]*.[0-9]*.[0-9]*'
+  workflow_dispatch:
 
 jobs:
   setup-devcontainer:
@@ -50,11 +70,38 @@ jobs:
     uses: ./.github/workflows/ci.protoc.yml
     with:
       devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+      release-artifacts: true
     secrets: inherit
 
+  # BIND-9b-8 Q3 (D-BIND-177): npm and nuget.org never re-use a version, so nothing is published
+  # until the packed files pass the consumer test, as in cd.dotnet (D-BIND-159). The dotnet
+  # packages and the gateway are built here only so the gate can generate code with this run's
+  # plugin and reach a gateway; cd.dotnet and cd.gateway release them.
+  dotnet:
+    needs: setup-devcontainer
+    uses: ./.github/workflows/ci.dotnet.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+    secrets: inherit
+
+  gateway:
+    needs: setup-devcontainer
+    uses: ./.github/workflows/ci.gateway.yml
+    with:
+      devcontainer-image: ${{ needs.setup-devcontainer.outputs.image }}
+      release-artifacts: true
+    secrets: inherit
+
+  gate:
+    needs: [release, dotnet, gateway]
+    uses: ./.github/workflows/ci.package-consumer.yml
+
   npm-publish:
-    needs: release
+    needs: gate
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    # D-BIND-176: deployable from the release tags only, as the nuget-org environment is.
+    environment: npm
     # id-token: write is required for `npm publish --provenance` to mint
     # an OIDC token that npm exchanges for a signed Sigstore attestation
     # linking the package back to this exact workflow run. Matches the
@@ -81,6 +128,26 @@ jobs:
           package-json: protoc/npm/package.json
           tag-prefix: protoc-v
 
+      # BIND-9b-7 (review T13, M6): the package ships LICENSE, COPYING and the plugin's
+      # THIRD-PARTY-LICENSES.txt, the files ci.protoc's Linux leg wrote and checked, so a
+      # consumer who never opens the Release still receives the notices of what the native
+      # plugin it downloads links statically. package.json's "files" lists them; the publish
+      # is refused if the tarball would not carry all three.
+      - name: Stage the licence files into the package
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: fletcher-protoc-licences
+          path: protoc/npm
+
+      - name: Require the licence files in the tarball
+        working-directory: protoc/npm
+        run: |
+          set -euo pipefail
+          for f in LICENSE COPYING THIRD-PARTY-LICENSES.txt; do
+            test -s "$f" || { echo "::error::protoc/npm/$f is missing or empty"; exit 1; }
+            npm pack --dry-run --json | grep -q "\"path\": *\"$f\"" || { echo "::error::npm pack would not carry $f"; exit 1; }
+          done
+
       - name: Resolve dist-tag
         id: dist-tag
         working-directory: protoc/npm
@@ -103,10 +170,11 @@ jobs:
         run: npm publish --access public --provenance --tag ${{ steps.dist-tag.outputs.tag }}
 
   create-release:
-    # `release` is also a transitive dep (via npm-publish), but it's
+    # `release` is also a transitive dep (via gate and npm-publish), but it's
     # named explicitly here so the verify-tag-version-conan step below
     # can reference ${{ needs.release.outputs.conan-ref }}.
     needs: [release, npm-publish]
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -123,14 +191,19 @@ jobs:
           conan-ref: ${{ needs.release.outputs.conan-ref }}
           tag-prefix: protoc-v
 
-      # Download all four upstream artifacts at once:
+      # Download the upstream artifacts at once:
       #   - fletcher-protoc-linux + fletcher-protoc-windows
       #       → shared-linked Conan-package tarballs (from ci.protoc.yml)
       #   - fletcher-protoc-linux-static + fletcher-protoc-windows-static
       #       → static-linked raw binaries (from build-static-* jobs)
-      # `merge-multiple: true` flattens each artifact's single file into
-      # the current directory, matching the file names the gh release
-      # create command below expects.
+      #   - fletcher-protoc-licences → LICENSE, COPYING, THIRD-PARTY-LICENSES.txt
+      #       (BIND-9b-7, review T13, M6: attached beside the binaries)
+      #   - fletcher-protoc-nuget → Eiva.Fletcher.Protoc
+      # `merge-multiple: true` flattens each artifact's files into the
+      # current directory, matching the file names the gh release create
+      # command below expects. (protoc-notice-windows, the Windows leg's
+      # notice, is named outside this pattern: it exists to be compared
+      # in ci.protoc's pack-nuget, not to be shipped.)
       - name: Download all release artifacts
         uses: actions/download-artifact@v8.0.1
         with:
@@ -145,7 +218,9 @@ jobs:
             fletcher-protoc-linux-conan-package.tgz \
             fletcher-protoc-windows-conan-package.tgz \
             protoc-gen-fletcher-linux-x64 \
-            protoc-gen-fletcher-windows-x64.exe; do
+            protoc-gen-fletcher-windows-x64.exe \
+            "Eiva.Fletcher.Protoc.${GITHUB_REF_NAME#protoc-v}.nupkg" \
+            LICENSE COPYING THIRD-PARTY-LICENSES.txt; do
             if [ ! -f "$asset" ]; then
               echo "::error::Missing release asset: $asset"
               ls -lah
@@ -175,4 +250,50 @@ jobs:
             "fletcher-protoc-windows-conan-package.tgz" \
             "fletcher-protoc-linux-conan-package.tgz" \
             "protoc-gen-fletcher-linux-x64" \
-            "protoc-gen-fletcher-windows-x64.exe"
+            "protoc-gen-fletcher-windows-x64.exe" \
+            "Eiva.Fletcher.Protoc.${VERSION}.nupkg" \
+            "LICENSE" \
+            "COPYING" \
+            "THIRD-PARTY-LICENSES.txt"
+
+  # D-BIND-176: Eiva.Fletcher.Protoc to nuget.org, by Trusted Publishing, as cd.dotnet's nuget-org
+  # job does (a policy of its own names this file). nuget.org never deletes a version, so the
+  # first push of one is final; --skip-duplicate makes a re-run safe.
+  nuget-org:
+    needs: create-release
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: nuget-org
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download the package
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: fletcher-protoc-nuget
+          path: packages
+
+      - name: Check that the nuget.org user is set
+        env:
+          NUGET_USER: ${{ vars.NUGET_USER }}
+        run: |
+          if [ -z "$NUGET_USER" ]; then
+            echo "::error::the nuget-org environment has no NUGET_USER variable: set it to the nuget.org profile name of the member who created the Trusted Publishing policy (D-BIND-176)"
+            exit 1
+          fi
+
+      - name: NuGet login (OIDC token for a one-hour API key)
+        id: login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ vars.NUGET_USER }}
+
+      - name: Push the package
+        shell: bash
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+        run: |
+          set -euo pipefail
+          dotnet nuget push "packages/Eiva.Fletcher.Protoc.${GITHUB_REF_NAME#protoc-v}.nupkg" \
+            --source https://api.nuget.org/v3/index.json --api-key "$NUGET_API_KEY" --skip-duplicate

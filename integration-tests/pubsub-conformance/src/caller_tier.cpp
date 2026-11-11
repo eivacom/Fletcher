@@ -37,6 +37,7 @@
 #include <memory>
 #include <mutex>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -522,6 +523,57 @@ TEST(CallerTier, ReentrantSubscribeFromInsideDeliveryDoesNotDeadlock) {
 }
 
 // ── Control — the gate did not simply silence delivery ──────────────
+// ADDED BY BIND-4d-iv (seam §12.1, which expects a binding to grow this suite).
+//
+// The property is DOCUMENTED on `Subscriber::SubscribeCallback` and was not
+// asserted at this tier: a handler that throws is "contained at the point of
+// invocation, EVERY REMAINING SUBSCRIBER on that topic still receives that
+// sample, and the throw is not reported to any caller". Three claims, and the
+// middle one had no case.
+//
+// FOUND BY WRITING THE C# ARM. The managed binding must absorb a handler throw
+// on a transport thread or the process dies, so BIND wrote a case asserting the
+// fan-out survives it - and then found this suite, the oracle that is supposed to
+// pin exactly such tier properties, did not. The gap matters beyond C#: a
+// fan-out that aborted at the first throw would starve every subscriber
+// registered after the faulty one, silently, and `AbsorbedCallbackFailures`
+// would report a count that looked correct.
+//
+// Ordering is deliberate: the throwing handler is registered FIRST, so a fan-out
+// that stops at a throw cannot reach the survivor. Registering it second would
+// pass against exactly the defect this guards.
+TEST(CallerTier, AThrowingHandlerDoesNotAbortTheFanOut) {
+    auto probe = std::make_shared<ProbeProvider>();
+    Subscriber subscriber(probe);
+
+    int thrown = 0;
+    std::vector<uint8_t> seen;
+
+    (void)subscriber.Subscribe(
+        kT1, Sub{[&](uint64_t, const uint8_t*, size_t, const SharedSchema&, const Attachments&) {
+            ++thrown;
+            throw std::runtime_error("this handler is unhappy");
+        }});
+    (void)subscriber.Subscribe(
+        kT1, Sub{[&](uint64_t, const uint8_t* data, size_t len, const SharedSchema&,
+                     const Attachments&) { seen.assign(data, data + len); }});
+
+    const uint64_t absorbed_before = subscriber.AbsorbedCallbackFailures();
+
+    // Not EXPECT_NO_THROW alone: the vacuity rule for this file forbids a case
+    // that passes on "it did not throw", so the delivery's effects are asserted
+    // below and the containment is only the precondition.
+    ASSERT_NO_THROW(probe->Deliver(kT1, Row(9)))
+        << "a handler's exception escaped the fan-out into the provider's frame";
+
+    EXPECT_EQ(thrown, 1) << "the throwing handler did not run";
+    EXPECT_EQ(seen, Row(9))
+        << "the fan-out stopped at the throwing handler: every subscriber registered after a "
+           "faulty one would be starved, silently";
+    EXPECT_EQ(subscriber.AbsorbedCallbackFailures(), absorbed_before + 1)
+        << "the absorbed throw was not counted, which is the only report there can be";
+}
+
 TEST(CallerTier, ALiveSubscriptionStillReceives) {
     auto probe = std::make_shared<ProbeProvider>();
     Subscriber subscriber(probe);

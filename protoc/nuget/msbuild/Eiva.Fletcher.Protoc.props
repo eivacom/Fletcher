@@ -1,0 +1,23 @@
+<!-- SPDX-License-Identifier: LGPL-3.0-or-later
+     Copyright (C) 2026 The Fletcher Authors
+-->
+<Project>
+
+  <!-- BIND-9b-5 (D-BIND-71, D-BIND-158): the two properties a consumer's protoc call uses.
+
+         $(FletcherProtocPlugin)  the plugin for this machine, for protoc's
+                                  plugin=protoc-gen-fletcher=<path> argument
+         $(FletcherProtoInclude)  the folder holding fletcher/options.proto, for -I
+
+       The counterparts of C++'s fletcher-protoc::plugin and FLETCHER_PROTO_INCLUDE_DIR. A value
+       the project already set wins, so a build may point at another plugin (as the in-tree
+       tests do with FLETCHER_PROTOC_PLUGIN). linux-x64 and win-x64 only: on any other machine
+       the plugin property stays empty, and the targets file says so. -->
+  <PropertyGroup>
+    <FletcherProtoInclude Condition="'$(FletcherProtoInclude)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../include'))</FletcherProtoInclude>
+    <_FletcherProtocArch>$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)</_FletcherProtocArch>
+    <FletcherProtocPlugin Condition="'$(FletcherProtocPlugin)' == '' And '$(_FletcherProtocArch)' == 'X64' And $([MSBuild]::IsOSPlatform('Windows'))">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../tools/win-x64/protoc-gen-fletcher-windows-x64.exe'))</FletcherProtocPlugin>
+    <FletcherProtocPlugin Condition="'$(FletcherProtocPlugin)' == '' And '$(_FletcherProtocArch)' == 'X64' And $([MSBuild]::IsOSPlatform('Linux'))">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../tools/linux-x64/protoc-gen-fletcher-linux-x64'))</FletcherProtocPlugin>
+  </PropertyGroup>
+
+</Project>

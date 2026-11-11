@@ -34,15 +34,17 @@ Each top-level directory is an independent component with its own version, CI wo
 | `pubsub-arrow/` | `fletcher-pubsub-arrow` (Conan, static lib) |
 | `fastdds-pubsub-provider/` | `fletcher-fastdds-pubsub-provider` (Conan, static lib) |
 | `xrcedds-pubsub-provider/` | `fletcher-xrcedds-pubsub-provider` (Conan, static lib) |
-| `protoc/` | `fletcher-protoc` (Conan, application) |
+| `protoc/` | `fletcher-protoc` (Conan, application), `@eiva/protoc-gen-fletcher` (npm), `Eiva.Fletcher.Protoc` (NuGet) |
 | `gateway/` | `gateway` (standalone executable) |
-| `gateway-client-ts/` | `fletcher-gateway-client` (npm) |
+| `gateway-client-ts/` | `@eiva/fletcher-gateway-client` (npm) |
+| `c-abi/` | `fletcher-c-abi` (shared library, shipped inside `Eiva.Fletcher.Interop`) |
+| `dotnet/` | `Eiva.Fletcher`, `Eiva.Fletcher.Interop`, `Eiva.Fletcher.Model`, `Eiva.Fletcher.GatewayClient` (NuGet) |
 
 ## Coding conventions
 
 ### License headers
 
-Every tracked source file must carry these two lines within its first ten lines, using the right comment prefix for the language (`//` for C/C++/TypeScript/Protobuf, `#` for Python/CMake/YAML/Dockerfile):
+Every tracked source file must carry these two lines within its first ten lines, using the right comment prefix for the language (`//` for C/C++/C#/TypeScript/Protobuf, `#` for Python/CMake/YAML/Dockerfile):
 
 ```
 // SPDX-License-Identifier: LGPL-3.0-or-later
@@ -50,7 +52,15 @@ Every tracked source file must carry these two lines within its first ten lines,
 //
 ```
 
-The `license-headers` CI job checks every tracked file on each PR and will block merge if the headers are missing. Files that genuinely cannot carry a header (binary formats, strict-JSON files like `package.json`) must be added to the denylist in `.github/workflows/ci.license-headers.yml`.
+MSBuild and solution files (`.csproj`, `.props`, `.targets`, `.slnx`) are XML and carry the two lines in one comment, before the root element:
+
+```xml
+<!-- SPDX-License-Identifier: LGPL-3.0-or-later
+     Copyright (C) <year> The Fletcher Authors
+-->
+```
+
+Use a `.slnx` solution, not a `.sln`: the old format cannot hold a comment. The `license-headers` CI job checks every tracked file on each PR and will block merge if the headers are missing. Files that genuinely cannot carry a header (binary formats, strict-JSON files like `package.json`) must be added to the denylist in `.github/workflows/ci.license-headers.yml`.
 
 ### C++ style
 
@@ -64,7 +74,9 @@ The `license-headers` CI job checks every tracked file on each PR and will block
 | Ecosystem | Pattern | Example |
 |---|---|---|
 | Conan package | `fletcher-<component>` | `fletcher-core` |
-| npm package | `fletcher-<component>` | `fletcher-gateway-client` |
+| npm package | `@eiva/fletcher-<component>`, `@eiva/protoc-gen-fletcher` | `@eiva/fletcher-gateway-client` |
+| NuGet package | `Eiva.Fletcher` or `Eiva.Fletcher.<Part>`; the C# namespace is the package's name | `Eiva.Fletcher.GatewayClient` |
+| Generated C# namespace | `Fletcher.Gen.<Package>`, one PascalCase part per proto package part | `Fletcher.Gen.Myapp` |
 | CMake target | `<conan-name>::<conan-name>` | `fletcher-core::fletcher-core` |
 
 ## Submitting a pull request
@@ -83,7 +95,7 @@ Use a short imperative subject line (≤ 72 characters). Reference an issue numb
 
 ## Releases
 
-Releases are cut by maintainers by pushing a component-prefixed git tag (`<component>-v<version>`). Contributors do not need to tag — bump the version in `conanfile.py` (or `package.json` for `gateway-client-ts`) in your PR and a maintainer will tag after merge.
+Releases are cut by maintainers by pushing a component-prefixed git tag (`<component>-v<version>`). Contributors do not need to tag — bump the version in `conanfile.py` (`package.json` for `gateway-client-ts`, `Directory.Build.props` for `dotnet/`) in your PR and a maintainer will tag after merge.
 
 ## License
 

@@ -3,8 +3,11 @@
 #
 from conan import ConanFile
 from conan.tools.cmake import CMake, CMakeToolchain, CMakeDeps, cmake_layout
-from conan.tools.files import copy
+from conan.errors import ConanException
+from conan.tools.files import copy, save
+import json
 import os
+import re
 
 
 class FletcherPubsubConan(ConanFile):
@@ -15,8 +18,19 @@ class FletcherPubsubConan(ConanFile):
     package_type = "static-library"
     settings = "os", "compiler", "build_type", "arch"
 
-    options = {"run_tests": [True, False]}
-    default_options = {"run_tests": False}
+    # fPIC, and why a static library in this tree needs it stated.
+    #
+    # Round BIND adds `c-abi/`, the first component packaged as a SHARED library:
+    # it links this archive into `libfletcher-c-abi.so`. Without the option Conan
+    # never sets CMAKE_POSITION_INDEPENDENT_CODE, and the link fails with
+    # "relocation R_X86_64_TPOFF32 against `__tls_guard' can not be used when
+    # making a shared object" — found by the first Linux lane run of PR #129, on a
+    # tree where every local Windows build was green.
+    #
+    # Deleted on Windows in config_options(): the flag has no meaning for MSVC, and
+    # keeping the option there would change package IDs for no reason.
+    options = {"run_tests": [True, False], "fPIC": [True, False]}
+    default_options = {"run_tests": False, "fPIC": True}
 
     exports_sources = (
         "CMakeLists.txt",
@@ -39,6 +53,10 @@ class FletcherPubsubConan(ConanFile):
 
     def package_id(self):
         del self.info.options.run_tests
+
+    def config_options(self):
+        if self.settings.os == "Windows":
+            del self.options.fPIC
 
     def layout(self):
         cmake_layout(self)
@@ -82,6 +100,28 @@ class FletcherPubsubConan(ConanFile):
              src=os.path.join(self.source_folder, "cmake"),
              dst=os.path.join(self.package_folder, "cmake"),
              keep_path=False)
+        # Micro-CDR and the Micro XRCE-DDS Client (both Apache-2.0) are fetched by
+        # CMakeLists.txt with FetchContent and compiled into this package, so they are
+        # not in the Conan graph: their licence texts travel here for the third-party
+        # notice deployer (gateway/deployers/third_party_licenses.py, BIND-9a-0,
+        # D-BIND-140). The versions are the GIT_TAG pins the build fetched.
+        with open(os.path.join(self.source_folder, "CMakeLists.txt"), encoding="utf-8") as handle:
+            cmake = handle.read()
+        for name, fetched, repo, homepage in (
+                ("micro-cdr", "microcdr", "Micro-CDR", "https://github.com/eProsima/Micro-CDR"),
+                ("micro-xrce-dds-client", "microxrcedds_client", "Micro-XRCE-DDS-Client",
+                 "https://github.com/eProsima/Micro-XRCE-DDS-Client")):
+            match = re.search(rf"{repo}\.git\s+GIT_TAG\s+v?(\S+?)\)", cmake)
+            if not match:
+                raise ConanException(f"no GIT_TAG for {repo} in CMakeLists.txt")
+            vendored = os.path.join(self.package_folder, "licenses", "vendored", name)
+            copy(self, "LICENSE", src=os.path.join(self.build_folder, "_deps", f"{fetched}-src"),
+                 dst=vendored, keep_path=False)
+            if not os.path.isfile(os.path.join(vendored, "LICENSE")):
+                raise ConanException(f"{fetched}'s LICENSE was not fetched into {self.build_folder}/_deps")
+            save(self, os.path.join(vendored, "vendored.json"), json.dumps({
+                "name": name, "version": match.group(1), "license": "Apache-2.0",
+                "homepage": homepage}, indent=2))
 
     def package_info(self):
         # The xrce_dds_pubsub_provider static library links privately

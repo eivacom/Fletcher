@@ -47,4 +47,12 @@ export type {
 
 // Client
 export { FletcherClient } from './client.js';
-export type { FletcherClientOptions, MessageCallback, BackendType } from './types.js';
+export type {
+  FletcherClientOptions,
+  MessageCallback,
+  BackendType,
+  FletcherClientFault,
+  FletcherFaultReason,
+} from './types.js';
+export { MAX_BATCH_TIMEOUT_MS } from './batcher.js';
+export type { BatchCallback, BatchOptions, BatchReason, BatchStatus } from './batcher.js';

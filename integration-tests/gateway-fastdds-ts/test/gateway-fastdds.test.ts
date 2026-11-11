@@ -276,25 +276,59 @@ describe('gateway FastDDS provider — bidirectional', () => {
   });
 
   it('TS publish -> C++ FastDDS peer subscribe through the gateway', async () => {
-    const client = new FletcherClient({ url: TEST_URL });
-    await client.connect();
+    // This case is the guard for the known Fast DDS 3.4 data-sharing defect (a late-joining
+    // reader can silently miss TRANSIENT_LOCAL samples; fastdds-pubsub-provider/README.md,
+    // "Zero-copy: the plain sample"). Owner ruling 2026-10-16: name it and retry the
+    // publish -> peer-receive exchange ONCE with a fresh client and a fresh row — not a longer
+    // wait — so an intermittent hit stays visible in the log without failing CI, while a
+    // persistent loss still fails. The real fix is the Fast DDS 3.6.x bump (README, same section).
+    const attempt = async (sensorId: number): Promise<string | undefined> => {
+      const client = new FletcherClient({ url: TEST_URL });
+      await client.connect();
+      try {
+        // Announce the schema so the gateway's FastDDS DataWriter + __schema
+        // channel are established before publishing.
+        await client.createTopic(SensorFeed_TsToCppTopic, SensorReading);
+        const sent: ISensorReading = { sensor_id: sensorId, value: 1.5, unit: 'celsius' };
+        await client.publish(SensorFeed_TsToCppTopic, SensorReading, sent);
+        const tag = `sensor_id=${sensorId} `;
+        await waitFor(() => recvLines.some((l) => l.includes(tag)), 15_000);
+        return recvLines.find((l) => l.includes(tag));
+      } finally {
+        client.close();
+      }
+    };
 
-    // Announce the schema so the gateway's FastDDS DataWriter + __schema
-    // channel are established before publishing.
-    await client.createTopic(SensorFeed_TsToCppTopic, SensorReading);
+    let match = await attempt(7);
+    if (match === undefined) {
+      console.warn(
+        '[gateway-fastdds-ts] TS -> C++ attempt 1 (sensor_id=7) was not received within 15 s: ' +
+          'the known Fast DDS 3.4 data-sharing late-joiner defect ' +
+          '(fastdds-pubsub-provider/README.md, "Zero-copy: the plain sample"). ' +
+          `Retrying once. peer RECV lines so far: ${JSON.stringify(recvLines)}`,
+      );
+      match = await attempt(8);
+      if (match !== undefined) {
+        console.warn(
+          '[gateway-fastdds-ts] TS -> C++ retry (sensor_id=8) passed: attempt 1 hit the known ' +
+            'Fast DDS 3.4 data-sharing defect. Not a Fletcher regression; the fix is the ' +
+            'Fast DDS 3.6.x upgrade.',
+        );
+      }
+    }
 
-    const sent: ISensorReading = { sensor_id: 7, value: 1.5, unit: 'celsius' };
-    await client.publish(SensorFeed_TsToCppTopic, SensorReading, sent);
-
-    await waitFor(() => recvLines.some((l) => l.includes('sensor_id=7')), 15_000);
-
-    const match = recvLines.find((l) => l.includes('sensor_id=7'));
-    expect(match, `peer RECV lines: ${JSON.stringify(recvLines)}`).toBeDefined();
+    expect(
+      match,
+      'TS -> C++ row lost on both attempts. Known Fast DDS 3.4 data-sharing defect: a ' +
+        'late-joining reader can silently miss TRANSIENT_LOCAL samples — see ' +
+        'fastdds-pubsub-provider/README.md, "Zero-copy: the plain sample" (Data-sharing). ' +
+        `peer RECV lines: ${JSON.stringify(recvLines)}`,
+    ).toBeDefined();
     expect(match).toContain('value=1.5');
     expect(match).toContain('unit=celsius');
-
-    client.close();
-  });
+    // Two 15 s attempts exceed the suite's 30 s testTimeout (vitest.config.ts); without this a
+    // double loss would surface as a bare timeout instead of the message naming the defect.
+  }, 45_000);
 
   it('gateway forwards the peer-announced schema once it has propagated', async () => {
     // Hold a typed subscription open so the gateway's (shared) Subscriber

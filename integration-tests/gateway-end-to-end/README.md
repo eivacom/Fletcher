@@ -26,6 +26,11 @@ Tests are split across two files by whether they need the proto-gen toolchain. E
 | `subscribe + publish using Telemetry are typed end-to-end` | Canonical typed happy path: `client.subscribe(topic, Telemetry, cb)` infers `row: ITelemetry` from the schema's phantom binding; `client.publish(topic, Telemetry, data)` infers `data: ITelemetry`. No `<T>` generic, no local `Row` interface at the call site. |
 | `client publish ↔ subscription round-trip` | Stress variant: three samples with distinct values across the three field types, still fully typed via `Telemetry`. |
 | `subscribe<ITelemetry> with gateway-supplied schema` | Gateway-supplied-schema flow: publisher announces `Telemetry` via `createTopic`, subscriber calls `subscribe<ITelemetry>(topic, cb)` without a local schema and gets typed delivery from the schema the gateway forwards. |
+| `generated TelemetryFeed pair: publishes and subscribes a typed row with its attachments, until unsubscribed` | The generated `TelemetryFeed_ReportPublisher.create(client)` declares its topic and publishes a row with an attachment; `TelemetryFeed_ReportSubscriber` receives both, typed. After `unsubscribe` a later row reaches a second client's subscriber (the sentinel) but not this one. |
+| `generated TelemetryFeed pair: subscribeBatched … as RowLimit` | `subscribeBatched` with `maxRows: 2` and no deadline delivers four rows as two `RowLimit` windows, in order. |
+| `generated TelemetryFeed pair: subscribeBatched … as Timeout` | With a 200 ms deadline every row arrives in a `Timeout` window, in order, however the rows fall into windows. |
+
+`proto/telemetry.proto`'s `service TelemetryFeed` exists for the generated pair: one method per pair case, so each case has a topic of its own (`integration/gateway/TelemetryFeed/<Method>`). Every case runs against both providers.
 
 ## Server binary
 
@@ -42,7 +47,7 @@ The CLI args used at spawn time are minimal:
 | `--provider TYPE` | `inprocess` / `fastdds` | Pub/sub backend; the suite spawns one gateway per provider. |
 | `--domain-id N` | (fastdds only) | Isolated DDS domain for the `fastdds` context. |
 
-The gateway is schema-agnostic — there is no `--config` and no topic pre-declaration. Topics are established when the test client subscribes; schemas live entirely on the test side via the proto-generated `TelemetrySchema` (from [`proto/telemetry.proto`](proto/telemetry.proto)). The gateway selects its pub/sub backend with `--provider {inprocess|fastdds}` and this suite runs against both; the cross-language FastDDS bridge (a real external DDS app ↔ the gateway) is covered by [gateway-fastdds-ts](../gateway-fastdds-ts/README.md).
+The gateway is schema-agnostic — there is no `--config` and no topic pre-declaration. Topics are established when the test client subscribes; schemas live entirely on the test side via the proto-generated `Telemetry` TypedSchema and the generated `TelemetryFeed` pair (from [`proto/telemetry.proto`](proto/telemetry.proto)). The gateway selects its pub/sub backend with `--provider {inprocess|fastdds}` and this suite runs against both; the cross-language FastDDS bridge (a real external DDS app ↔ the gateway) is covered by [gateway-fastdds-ts](../gateway-fastdds-ts/README.md).
 
 ## How it runs in CI
 
@@ -72,7 +77,7 @@ conan create protoc/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-R
 conan create fastdds-pubsub-provider/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 ```
 
-`protoc` is needed because one of the test cases drives the gateway with the `TelemetrySchema` class that `protoc-gen-fletcher` generates from [`proto/telemetry.proto`](proto/telemetry.proto); the CMake build runs the plugin on every reconfigure. `fastdds-pubsub-provider` is needed because the gateway always links the FastDDS provider, and the suite runs its `fastdds` provider context.
+`protoc` is needed because the `protoc-gen.test.ts` cases drive the gateway with the `Telemetry` TypedSchema and the `TelemetryFeed_*Publisher` and `*Subscriber` classes that `protoc-gen-fletcher` generates from [`proto/telemetry.proto`](proto/telemetry.proto); the CMake build runs the plugin on every reconfigure. `fastdds-pubsub-provider` is needed because the gateway always links the FastDDS provider, and the suite runs its `fastdds` provider context.
 
 Then build and run the integration test itself:
 

@@ -24,6 +24,7 @@
 #include <fletcher/arrow_bridge/codec.hpp>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -426,4 +427,92 @@ TEST(CodecEdge, DecodeRejectsFixedSizeBinaryWidthTruncation) {
     // Present field but only 3 of the 8 required payload bytes are supplied.
     const std::vector<uint8_t> buf = {0x00, 0x01, 0x02, 0x03};
     EXPECT_THROW(static_cast<void>(codec.DecodeRow(buf.data(), buf.size())), std::invalid_argument);
+}
+
+// ---------------------------------------------------------------------------
+// D-BIND-156 — a null where the schema promises a value is refused before encoding
+// ---------------------------------------------------------------------------
+
+namespace {
+
+std::shared_ptr<arrow::Array> Int32Values(const std::vector<std::optional<int32_t>>& values) {
+    arrow::Int32Builder builder;
+    for (const auto& v : values) EXPECT_TRUE((v ? builder.Append(*v) : builder.AppendNull()).ok());
+    return builder.Finish().ValueOrDie();
+}
+
+// The message EncodeRow refused `row` with under `field`, or "" when it encoded.
+std::string Refusal(const std::shared_ptr<arrow::Field>& field, const fletcher::ArrowRow& row) {
+    fletcher::Codec codec(arrow::schema({field}));
+    try {
+        static_cast<void>(codec.EncodeRow(row));
+    } catch (const std::invalid_argument& e) {
+        return e.what();
+    }
+    return "";
+}
+
+}  // namespace
+
+TEST(CodecNullability, ANullInANonNullableFieldIsRefused) {
+    const std::string refusal = Refusal(arrow::field("id", arrow::int32(), /*nullable=*/false),
+                                        {arrow::MakeNullScalar(arrow::int32())});
+    EXPECT_NE(refusal.find("field 'id' is not nullable"), std::string::npos) << refusal;
+}
+
+TEST(CodecNullability, ANullInANonNullableFieldOfAPresentStructIsRefused) {
+    auto type = arrow::struct_({arrow::field("x", arrow::int32(), /*nullable=*/false)});
+    auto value = std::make_shared<arrow::StructScalar>(
+        arrow::ScalarVector{arrow::MakeNullScalar(arrow::int32())}, type);
+    const std::string refusal = Refusal(arrow::field("s", type), {value});
+    EXPECT_NE(refusal.find("field 's.x' is not nullable"), std::string::npos) << refusal;
+}
+
+TEST(CodecNullability, ANullStructWithNonNullableFieldsIsAccepted) {
+    auto type = arrow::struct_({arrow::field("x", arrow::int32(), /*nullable=*/false)});
+    EXPECT_EQ(Refusal(arrow::field("s", type), {arrow::MakeNullScalar(type)}), "");
+}
+
+TEST(CodecNullability, ANullElementOfAListWithNonNullableElementsIsRefused) {
+    auto type = arrow::list(arrow::field("item", arrow::int32(), /*nullable=*/false));
+    auto value = std::make_shared<arrow::ListScalar>(Int32Values({1, std::nullopt}), type);
+    const std::string refusal = Refusal(arrow::field("readings", type), {value});
+    EXPECT_NE(refusal.find("field 'readings[]' is not nullable"), std::string::npos) << refusal;
+}
+
+TEST(CodecNullability, ANullFieldOfAStructInsideAListIsRefused) {
+    auto element = arrow::struct_({arrow::field("x", arrow::int32(), /*nullable=*/false)});
+    auto type = arrow::list(arrow::field("item", element, /*nullable=*/true));
+    auto structs = std::make_shared<arrow::StructArray>(
+        element, 2, std::vector<std::shared_ptr<arrow::Array>>{Int32Values({1, std::nullopt})});
+    auto value = std::make_shared<arrow::ListScalar>(structs, type);
+    const std::string refusal = Refusal(arrow::field("history", type), {value});
+    EXPECT_NE(refusal.find("field 'history[].x' is not nullable"), std::string::npos) << refusal;
+}
+
+TEST(CodecNullability, ANullMapValueOfANonNullableValueFieldIsRefused) {
+    auto type =
+        std::make_shared<arrow::MapType>(arrow::field("key", arrow::utf8(), false),
+                                         arrow::field("value", arrow::int32(), /*nullable=*/false));
+    arrow::StringBuilder keys;
+    ASSERT_TRUE(keys.AppendValues({"a", "b"}).ok());
+    arrow::Int32Builder offsets;
+    ASSERT_TRUE(offsets.AppendValues({0, 2}).ok());
+    auto map =
+        arrow::MapArray::FromArrays(type, offsets.Finish().ValueOrDie(), keys.Finish().ValueOrDie(),
+                                    Int32Values({1, std::nullopt}))
+            .ValueOrDie();
+    const std::string refusal =
+        Refusal(arrow::field("tags", type), {map->GetScalar(0).ValueOrDie()});
+    EXPECT_NE(refusal.find("field 'tags{}.value' is not nullable"), std::string::npos) << refusal;
+}
+
+TEST(CodecNullability, NullsInNullableFieldsStillEncode) {
+    EXPECT_EQ(Refusal(arrow::field("id", arrow::int32(), /*nullable=*/true),
+                      {arrow::MakeNullScalar(arrow::int32())}),
+              "");
+    auto type = arrow::list(arrow::field("item", arrow::int32(), /*nullable=*/true));
+    EXPECT_EQ(Refusal(arrow::field("readings", type),
+                      {std::make_shared<arrow::ListScalar>(Int32Values({1, std::nullopt}), type)}),
+              "");
 }

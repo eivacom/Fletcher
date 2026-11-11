@@ -63,6 +63,9 @@ jobs:
                      echo '::endgroup::' && \
                      echo '::group::npm test' && \
                      npm test && \
+                     echo '::endgroup::' && \
+                     echo '::group::npm run typecheck (the generated pair, D-BIND-184)' && \
+                     npm run typecheck && \
                      echo '::endgroup::'"
 
   windows:
@@ -107,3 +110,8 @@ jobs:
         shell: bash
         working-directory: integration-tests/protoc-gateway-client-ts
         run: npm test
+
+      - name: npm run typecheck (the generated pair, D-BIND-184)
+        shell: bash
+        working-directory: integration-tests/protoc-gateway-client-ts
+        run: npm run typecheck
