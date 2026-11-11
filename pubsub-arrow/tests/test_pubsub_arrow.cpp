@@ -1928,12 +1928,19 @@ TEST(SubscriberArrowBatchTest, ClosingFromAnotherThreadDeliversQueuedWindowsThen
 
 namespace {
 
-enum class InsideClosing { kFromTimeout, kFromRowLimit, kWithQueuedWindow, kFromRowDelivery };
+enum class InsideClosing {
+    kFromTimeout,
+    kFromRowLimit,
+    kWithQueuedWindow,
+    kFromRowDelivery,
+    kDestroyFromCallback,
+};
 
 // Rung 6. The first batch callback is held while a publisher thread sends rows after it; then the
-// subscription is closed from inside that callback (a-c), or from a thread delivering rows on the
-// subscription's own transport while that callback is held (d; owner ruling 2026-11-11 (2)). The
-// Unsubscribe returns at once with nothing delivered inside it; after the held callback returns,
+// subscription is closed from inside that callback (a-c), from a thread delivering rows on the
+// subscription's own transport while that callback is held (d; owner ruling 2026-11-11 (2)), or
+// by destroying the SubscriberArrow inside that callback (e; owner ruling 2026-11-11 (1)). The
+// closing call returns at once with nothing delivered inside it; after the held callback returns,
 // the batch thread delivers any queued window, then kClosing, then nothing.
 void RunClosingFromInside(InsideClosing closing) {
     DeliveryLog log;
@@ -1945,6 +1952,7 @@ void RunClosingFromInside(InsideClosing closing) {
     std::atomic<bool> released_by_unsubscribe{false};
     std::atomic<bool> first_returned{false};
     const bool from_row_delivery = closing == InsideClosing::kFromRowDelivery;
+    const bool destroy = closing == InsideClosing::kDestroyFromCallback;
     log.hook = [&](size_t index, const DeliveryLog::Rec&) {
         if (index != 0) return;
         entered.Open();
@@ -1953,7 +1961,11 @@ void RunClosingFromInside(InsideClosing closing) {
             released_by_unsubscribe = release.WaitFor(kHold);
         } else {
             static_cast<void>(published.WaitFor(kHold));
-            sub->Unsubscribe(id.load());
+            if (destroy) {
+                sub.reset();  // the callback (this log) outlives what follows, as ruled
+            } else {
+                sub->Unsubscribe(id.load());
+            }
             at_unsubscribe_return = log.Count();
             unsubscribe_returned_at_once = true;
         }
@@ -1965,10 +1977,15 @@ void RunClosingFromInside(InsideClosing closing) {
     pub.CreateTopic(kTopic, TestSchema());
     pub.CreateTopic(kOtherTopic, TestSchema());
     sub = std::make_unique<SubscriberArrow>(provider);
-    const bool timeout_first = closing == InsideClosing::kFromTimeout || from_row_delivery;
+    // (e) starts from a kTimeout window too: destroying a SubscriberArrow inside a delivery on its
+    // own transport is forbidden (2026-09-05), and a pre-D10 kRowLimit callback runs there.
+    const bool timeout_first =
+        closing == InsideClosing::kFromTimeout || from_row_delivery || destroy;
     SubscriberArrow::BatchOptions opt = RowLimitOptions(2);
     if (timeout_first) {
-        opt.max_rows = 100;  // never reached: the first window closes at its deadline
+        // The first row alone closes at its deadline; (e) keeps max_rows = 2 so that the rows
+        // published while the callback is held queue a full window.
+        if (!destroy) opt.max_rows = 100;
         opt.timeout = std::chrono::milliseconds(200);
     }
     id = sub->Subscribe(kTopic, log.callback(), opt).subscription_id;
@@ -1984,7 +2001,7 @@ void RunClosingFromInside(InsideClosing closing) {
         }));
     }
 
-    // Rows left pending (k < max_rows) after the held window; (c) first queues a full window.
+    // Rows left pending (k < max_rows) after the held window; (c) and (e) first queue a full one.
     const int more = closing == InsideClosing::kFromRowLimit ? 1 : 3;
     std::thread::id publisher_id;
     std::atomic<bool> published_while_held{false};
@@ -2000,18 +2017,19 @@ void RunClosingFromInside(InsideClosing closing) {
         if (from_row_delivery) pub.Publish(kOtherTopic, MakeRow(-1, "trigger"));
     });
     publisher.join();
-    EXPECT_TRUE(log.WaitFor(closing == InsideClosing::kWithQueuedWindow ? 3 : 2, kAwait));
+    const bool queued = closing == InsideClosing::kWithQueuedWindow || destroy;
+    EXPECT_TRUE(log.WaitFor(queued ? 3 : 2, kAwait));
     EXPECT_TRUE(log.WaitAllReturned(kAwait));
-    sub.reset();
+    if (!destroy) sub.reset();
 
     EXPECT_TRUE(published_while_held.load())
         << "rows could not be published while the first callback was held (D10)";
     EXPECT_TRUE(unsubscribe_returned_at_once.load())
         << (from_row_delivery ? "the row-delivery thread's Unsubscribe waited for the held batch "
                                 "callback instead of returning at once"
-                              : "the in-callback Unsubscribe did not return");
+                              : "the in-callback closing call did not return");
     EXPECT_EQ(at_unsubscribe_return.load(), 1u)
-        << "a batch was delivered before the Unsubscribe returned";
+        << "a batch was delivered before the closing call returned";
     if (from_row_delivery) {
         EXPECT_TRUE(released_by_unsubscribe.load())
             << "the batch callback was released by its own timeout, not by the returned Unsubscribe";
@@ -2032,6 +2050,11 @@ void RunClosingFromInside(InsideClosing closing) {
                         {BatchStatus::Reason::kRowLimit, 2, 2},
                         {BatchStatus::Reason::kClosing, 4, 1}};
             break;
+        case InsideClosing::kDestroyFromCallback:
+            expected = {{BatchStatus::Reason::kTimeout, 0, 1},
+                        {BatchStatus::Reason::kRowLimit, 1, 2},
+                        {BatchStatus::Reason::kClosing, 3, 1}};
+            break;
     }
     std::vector<std::thread::id> foreign = {publisher_id, std::this_thread::get_id()};
     ExpectDeliveredInOrderOnOneBatchThread(log, expected, foreign);
@@ -2040,7 +2063,7 @@ void RunClosingFromInside(InsideClosing closing) {
 }  // namespace
 
 // Rung 6 (L9 as revised, L11, L12; owner rulings "Deliver after it returns", "Queued batch, then
-// closing", and 2026-11-11 (2) for case (d)).
+// closing", and 2026-11-11 (2) and (1) for cases (d) and (e)).
 TEST(SubscriberArrowBatchTest, UnsubscribeFromInsideACallbackNeverDeliversNested) {
     {
         SCOPED_TRACE("(a) from a kTimeout callback, 3 rows pending");
@@ -2057,6 +2080,10 @@ TEST(SubscriberArrowBatchTest, UnsubscribeFromInsideACallbackNeverDeliversNested
     {
         SCOPED_TRACE("(d) from a thread delivering rows on the same transport, a callback held");
         RunClosingFromInside(InsideClosing::kFromRowDelivery);
+    }
+    {
+        SCOPED_TRACE("(e) ~SubscriberArrow inside a kTimeout callback, a full window queued");
+        RunClosingFromInside(InsideClosing::kDestroyFromCallback);
     }
 }
 

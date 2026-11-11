@@ -89,8 +89,19 @@ The callback's third argument, `BatchStatus`, says **why** the batch was
 delivered (`reason`) and whether any samples were lost (`rows_dropped`). A row
 that fails to decode is counted in `rows_dropped` and contributes neither a row
 nor an attachment, so a window with only dropped rows still delivers a zero-row
-(or null) batch to report the loss. The partial batch is flushed with reason `kClosing`
-on `Unsubscribe`. The callback target must outlive the subscription.
+(or null) batch to report the loss. The callback target must outlive the subscription.
+
+The callback runs on a thread the subscription owns, one batch at a time, in window order;
+never inside `Publish` or on the transport's delivery thread, so publishing never waits on it.
+A callback slower than the data lets finished batches queue up in memory.
+
+`Unsubscribe`, or destroying the `SubscriberArrow`, delivers every finished batch and then the
+partial one, with reason `kClosing`, before it returns; nothing is delivered after it. Two
+calls return at once instead: one made from inside the subscription's own batch callback
+(`Unsubscribe`, or destroying the `SubscriberArrow`), and an `Unsubscribe` made from a thread
+that is delivering rows on the subscription's own transport, such as a per-row callback. The
+remaining batches, then `kClosing`, still arrive in order after that call returns, so what
+those callbacks use may not be freed until the `kClosing` batch has arrived.
 
 Rows are decoded straight into Arrow builders (`fletcher::BatchDecoder`, from
 `fletcher-arrow-bridge`) rather than through per-row scalars, so the batched

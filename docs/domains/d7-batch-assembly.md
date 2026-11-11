@@ -36,7 +36,7 @@ batch; reporting why each batch was delivered; and owning the timer thread and i
 |---|---|
 | **Window** | The rows and drops collected since the previous flush: `decoder_` rows + `atts_` + `dropped_` (`cpp:256-258`). |
 | **Pending** | The window is non-empty: at least one decoded row or one drop (`HasPending`, `cpp:152`). |
-| **Flush** | Closing the window: it is finished into a batch and handed to the callback with the lock released (`cpp:207-248`). |
+| **Flush** | Closing the window: it is finished into a batch and queued, in window order; the subscription's batch thread delivers it (D10; `Close`, since D7F-3). |
 | **Flush reason** | `BatchStatus::Reason`: `kRowLimit`, `kTimeout` or `kClosing` (`hpp:80-84`). |
 | **Batch** | The `arrow::RecordBatch` a flush delivers. It may have zero rows, or be null (L6, L7). |
 | **Dropped row** | A row that reached the batcher and is not in any batch. It is counted in `rows_dropped` ("rows lost since the previous flush", `hpp:86`). |
@@ -56,8 +56,7 @@ batch; reporting why each batch was delivered; and owning the timer thread and i
 
 **L1. A lost row is always reported, never silent.** Every row that reaches the batcher before
 closing and is not delivered is counted in the `rows_dropped` of a later delivered batch.
-`[built for decode failures, internal failures and undecodable schemas; violation 1 built (closing:
-D7F-1; deadline: D7F-2); violation 2 open (D7F-3)]`
+`[built]` (violation 1: closing D7F-1, deadline D7F-2; violation 2: D7F-3)
 - Holds at: `cpp:81-85` (no decoder), `cpp:100-111` (malformed, over budget, internal),
   `cpp:159-166` (`DiscardPending`), `cpp:235-236`.
 - **Violation 1.** While no usable schema exists (none decided yet, or an import that threw, which
@@ -65,8 +64,10 @@ D7F-1; deadline: D7F-2); violation 2 open (D7F-3)]`
   reports it; since D7F-2 the timer reports it at each deadline too, because `TimerLoop` flushes at
   every deadline it reaches and the wait on `ready_` is deleted. (Before D7F-1, `NoteDropped` counted
   it and `Flush` discarded the count.)
-- **Violation 2.** A row that hit the offset budget, during whose early flush the callback called
-  `Unsubscribe`, is neither appended nor counted (`cpp:95`).
+- **Violation 2** (fixed by D7F-3). A row that hit the offset budget, during whose early flush the
+  callback called `Unsubscribe`, was neither appended nor counted. Closing a window now only queues
+  its batch, so the row is retried, and counted if it does not fit even alone, before any callback
+  can run.
 - Tests: `DroppedRowReportedAndAttachmentDiscarded`, `CorruptRowIsCountedDroppedAndBatchStaysAligned`,
   `OnlyDroppedRowsStillDeliversEmptyBatch`, `NestedDictionarySchemaReportsEveryRowDropped`,
   `FinishFailureIsReportedNotFatal`. Violation 1's closing half: the four `NoUsableSchema*` / `SchemaDeclaredAfterSubscribe*` tests (D7F-1). Its deadline half (D7F-2):
@@ -74,9 +75,10 @@ D7F-1; deadline: D7F-2); violation 2 open (D7F-3)]`
   `SchemaDeclaredAfterSubscribeDropsReportedAtEachDeadline`, the guard
   `EveryAssemblyStateReportsItsDropsAtEitherEnding`, and the leg
   `SchemaArrivingMidWindowGivesOneBatchCarryingEarlierDrops` (drops, then a schema, in one window).
-  Violation 2 has no test yet.
+  Violation 2: `OverBudgetRowAroundInCallbackUnsubscribeIsCounted` (labelled `heavy`, D11), and the
+  guard `RowsConservedAtEveryEnding`.
 - **Both violations are to be fixed before RIX** (owner ruling 2026-11-10, "2. Fix both"). Violation 1
-  is fixed by D7F-1 and D7F-2 (Q1 resolved); violation 2 is D7F-3's.
+  is fixed by D7F-1 and D7F-2 (Q1 resolved); violation 2 by D7F-3.
 
 **L2. Rows are conserved.** For each window, rows in the batch + `rows_dropped` = rows that reached
 the batcher in that window, with each row counted exactly once.
@@ -102,9 +104,10 @@ reported as `kRowLimit`. A row that meets the budget opens the next window rathe
 `[built]`
 - Holds at: `cpp:114-116` (count), `cpp:191-195` (deadline), `cpp:89-98` (budget: flush, then retry
   once), `cpp:136` (closing). `max_rows < 1` is clamped to 1 (`cpp:32`).
-- Tests: `FlushesAtRowLimit`, `FlushesAtTimeout`, `ClosingFlushOnUnsubscribe`. There is **no test**
-  of the offset-budget early flush in this domain: the comment at test line 936 says it cannot be
-  forced. Only the decoder half is tested (`BatchDecoderTest.CapacityExceededLeavesBuildersUntouched`).
+- Tests: `FlushesAtRowLimit`, `FlushesAtTimeout`, `ClosingFlushOnUnsubscribe`. The offset-budget
+  early flush: `OverBudgetRowAroundInCallbackUnsubscribeIsCounted` (`heavy`, D7F-3), whose first
+  batch is `kRowLimit` with one row under a large `max_rows`; the decoder half:
+  `BatchDecoderTest.CapacityExceededLeavesBuildersUntouched`.
 
 **L5. Timeout cadence is anchored to the previous flush, not to the first event.** A continuous
 stream flushes every `timeout`. A stream idle for longer than `timeout` is delivered on the next
@@ -151,23 +154,32 @@ every later row is dropped, and there is no recovery.
   `Unsubscribe` and gets one null `kClosing` batch at the end, with `rows_dropped` 2.
 
 **L9. Closing is final and reported.** The pending window is delivered once, as `kClosing`. After
-`Unsubscribe` or `~SubscriberArrow` returns, no further batch is delivered. **The one exception:**
-when `Unsubscribe` is called from inside a batch callback, delivery continues after that callback
-returns: any full windows already queued are delivered first, in order, then the `kClosing` batch,
-and nothing after it. A row that arrives after closing is
+`Unsubscribe` or `~SubscriberArrow` returns, no further batch is delivered. **The exceptions:**
+when `Unsubscribe` is called, or the `SubscriberArrow` is destroyed, from inside the subscription's
+own batch callback, or when `Unsubscribe` is called from a thread delivering rows on the
+subscription's own transport, the call returns at once and delivery continues: any full windows
+already queued are delivered first, in order, then the `kClosing` batch, and nothing after it. The
+callback must outlive those batches, and the caller may not free what they use until the
+`kClosing` batch has arrived. A row that arrives after closing is
 neither delivered nor counted.
-`[built for Unsubscribe outside a callback; violated inside one: today the kClosing batch is delivered nested, inside the calling callback]`
+`[built]` (D7F-3)
 - **Revised 2026-11-10** (owner ruling, "Deliver after it returns", [RIX-rulings.md](../../plans/RIX-rulings.md)).
   The law used to say only "after `Unsubscribe` returns, no further batch is delivered". That could
   not hold together with L12 and L1 when the window was non-empty (D7F pre-round audit, LL-1).
 - **Clarified 2026-11-10** (owner ruling, "Queued batch, then closing"): "right after that callback
   returns" means that `kClosing` is the last delivery, after any windows already queued (D10).
+- **Widened 2026-11-11** (owner rulings, Decisions 1 (a) and 2 (b), D12 and D13): the exception
+  covers destroying the `SubscriberArrow` inside its own batch callback, and an `Unsubscribe` from a
+  row-delivery thread on the same transport (domain 3's no-wait-in-delivery rule, extended to
+  batches). Destroying it from a row-delivery thread stays forbidden (2026-09-05).
 - Holds at: `cpp:130-149` (idempotent through `stopped_`), `cpp:80` and `cpp:123`, `cpp:428-429`
   (`Stop` before `Subscriber::Unsubscribe`), `cpp:275-288`.
 - Tests: `ClosingFlushOnUnsubscribe`, `UnsubscribeFromCallbackDuringRowLimitFlushStopsDeliveryCleanly`,
   `UnsubscribeFromInsideATimeoutFlushIsSafe`, `NoUsableSchemaDropsReportedAtDestruction` and
   `SchemaDeclaredAfterSubscribeDropsReportedAtDestruction` (the closing flush from the destructor,
-  D7F-1).
+  D7F-1). D7F-3: `ClosingFromAnotherThreadDeliversQueuedWindowsThenClosing` (from outside, the
+  destructor, a racing cancel) and `UnsubscribeFromInsideACallbackNeverDeliversNested` (cases (a)-(c)
+  in-callback, (d) from a row-delivery thread, (e) destruction inside the callback).
 
 **L10. Neither user code nor allocation failure can kill an internal thread.** A throw from the
 callback is swallowed. An internal failure becomes a drop.
@@ -182,13 +194,14 @@ A `Stop` issued from the timer thread detaches the thread instead of joining it.
 - Tests: `UnsubscribeFromInsideATimeoutFlushIsSafe`.
 
 **L12. Batches reach the callback one at a time, in window order.**
-`[built for one flushing thread; violated on timer and delivery-thread overlap]`
-- `Flush` releases `mu_` around the callback (`cpp:238-247`). A `kTimeout` callback running on the
-  timer thread can therefore overlap with, and be overtaken by, a `kRowLimit` callback from the
-  delivery thread, or a `kClosing` callback from the thread calling `Unsubscribe`. Commit `7cd3e53`
-  claims that "provider callbacks and the timer serialize through the batcher's mutex": that holds
-  for the window state, but not for the callback.
-- Test: no test.
+`[built]` (D7F-3)
+- Holds at: the batch thread's loop, the only call to the callback; every window closes under
+  `mu_` onto one in-order queue that only that thread drains (D10).
+- Fixed by D7F-3. Before, `Flush` released `mu_` around the callback, so a `kTimeout` callback on
+  the timer thread could overlap with, and be overtaken by, a `kRowLimit` callback from the
+  delivery thread or a `kClosing` callback from the thread calling `Unsubscribe`.
+- Tests: `EveryCallbackRunsOnTheBatchThreadInWindowOrder`, the guard `DeliveryOrderStress`, and the
+  in-flight and nesting checks of rungs 4 and 6.
 - **This is a law, and the violation is to be fixed before RIX** (owner ruling 2026-11-10, "2. Fix
   both"). L14 depends on it.
 
@@ -230,10 +243,10 @@ Surface (`hpp:72-144`):
 **Who calls, and on which thread:**
 - Applications call `Subscribe` and `Unsubscribe` from any thread, including from inside the batch
   callback (tests above).
-- The callback runs on the provider's delivery thread for `kRowLimit` (`cpp:115`), on the batcher's
-  timer thread for `kTimeout` (`cpp:195`), and on the thread calling `Unsubscribe` or the destructor
-  for `kClosing`. That last thread is the timer thread when `Unsubscribe` is called from a timeout
-  callback.
+- The callback runs only on the subscription's own batch thread, for every reason, one batch at a
+  time, in window order (D10). The provider's delivery thread only queues finished windows; it
+  never runs or waits on a callback. `Unsubscribe` and the destructor queue the `kClosing` batch and
+  wait for it, except in L9's exceptions, where they return at once.
 - The callback target must outlive the subscription (README line 90).
 
 ## 5. Decisions of record
@@ -251,6 +264,8 @@ Surface (`hpp:72-144`):
 | D9 | The header and README describe a null batch as "no batch could be built for this window: no usable schema has arrived yet, the schema was rejected (permanent), or finishing the batch failed; `rows_dropped` counts the window's rows in every case". Supersedes the header's "null only when the constructor rejected" (`hpp:106-111`). | Owner ruling, 2026-11-10, "Approve the rewording" ([RIX-rulings.md](../../plans/RIX-rulings.md)). Applied by round D7F. |
 | D10 | Every batch callback runs on the subscription's own batch thread. Full windows are queued for it in order, so the transport's delivery thread never runs or waits on a callback. Accepted cost: no back-pressure on the transport, so a callback slower than the data rate makes batches queue up in memory. Applied by round D7F, which also rewrites §4 "Who calls, and on which thread". | Owner ruling, 2026-11-10, "Always Fletcher's batch thread" ([RIX-rulings.md](../../plans/RIX-rulings.md)). |
 | D11 | The test for L1's second violation (~256 MiB row) carries the `heavy` label and is not in the default run. | Owner ruling, 2026-11-10, "Label it 'heavy'" ([RIX-rulings.md](../../plans/RIX-rulings.md)). |
+| D12 | Destroying the `SubscriberArrow` inside its own batch callback is treated like an in-callback `Unsubscribe`: queued batches, then `kClosing`, arrive after the callback returns, and the callback must outlive them (L9). | Owner ruling, 2026-11-11, Decision 1 (a) ([RIX-rulings.md](../../plans/RIX-rulings.md)). Applied by D7F-3. |
+| D13 | An `Unsubscribe` from a thread delivering rows on the subscription's own transport returns at once; the remaining batches, then `kClosing`, still arrive in order on the batch thread, and the caller may not free what those callbacks use until `kClosing` has arrived (L9). | Owner ruling, 2026-11-11, Decision 2 (b) ([RIX-rulings.md](../../plans/RIX-rulings.md)). Applied by D7F-3. |
 
 ## 6. Relationships
 
@@ -279,7 +294,7 @@ Surface (`hpp:72-144`):
 | # | Question | Owner |
 |---|---|---|
 | Q1 | Resolved by D7F-1 and D7F-2: those drops are reported as a null batch, at each deadline and at closing. | — |
-| Q2 | L12: resolved 2026-11-10. It is a law, and it is to be fixed. A delivery lock versus a single flushing thread is a design choice for the fix round. | design of the fix round |
+| Q2 | Resolved: L12 is a law (2026-11-10), fixed by D7F-3 with a single batch thread (D10). | — |
 | Q3 | Resolved 2026-11-10 (D9): the header was amended; a `Finish` failure keeps delivering a null batch. Applied in `a2c8b97`. | — |
 | Q4 | Should the offset-budget flush get its own reason (such as `kCapacity`), rather than sharing `kRowLimit`? Adding one is a public enum change. | owner |
 | Q5 | Should `BatchOptions` refuse `max_rows < 1` and `timeout <= 0` instead of clamping them silently? | owner |
@@ -340,7 +355,7 @@ Surface (`hpp:72-144`):
    decisions now share one door (`SetSchema`, once per subscription) and both are permanent; an
    import failure is no longer retried on every row.
 3. **The append-and-classify block.** It is duplicated for the retry after the budget is exceeded
-   (`cpp:86-112` and `cpp:96-104`).
+   (`cpp:86-112` and `cpp:96-104`). **Resolved by D7F-3:** one `TryAppend`, called twice.
 4. **The dictionary-shape fallback rule.** It is stated three times: `hpp:113-122`, README lines
    100-112, and `batch_decoder.hpp:28-40`. It belongs to domain 2.
 5. **Dead branch.** The `kRowLimit` flush in `SetSchema` (`cpp:69-71`) is unreachable: the decoder
@@ -348,12 +363,12 @@ Surface (`hpp:72-144`):
    branch is deleted.
 
 **(c) Behaviour with no test**
-- The early flush on the offset budget, at the batcher level (L4).
+- ~~The early flush on the offset budget, at the batcher level (L4).~~ Tested by D7F-3 (`heavy`).
 - Timeout anchoring and the 1 ms floor (L5).
 - No delivery for an idle window (L6).
-- The uncounted row after the budget retry (L1, violation 2). Pre-schema drops are tested at close
-  (D7F-1) and at the deadline (D7F-2).
+- ~~The uncounted row after the budget retry (L1, violation 2).~~ Tested by D7F-3 (`heavy`).
+  Pre-schema drops are tested at close (D7F-1) and at the deadline (D7F-2).
 - The closing flush from `~SubscriberArrow` (L9): tested since D7F-1 (the two `*AtDestruction` tests).
 - A callback that throws (L10).
-- Overlapping or reordered callbacks (L12).
+- ~~Overlapping or reordered callbacks (L12).~~ Tested by D7F-3.
 - Clamping of `max_rows` and `timeout` (§1).

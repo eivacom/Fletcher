@@ -21,15 +21,19 @@ include(GoogleTest)
 # in full are in `xrcedds-pubsub-provider/tests/CMakeLists.txt`, whose first Linux run spent
 # 2 h 04 m inside one hung test before the job was cancelled with no result at all.
 #
-# 30 s, chosen from this suite's own measured wall clock: the two slowest gtest rows are
-# `SubscriberArrowBatchTest.FlushesAtTimeout` and
-# `SubscriberArrowBatchTest.OnlyDroppedRowsStillDeliversEmptyBatch` at 0.15 s each, with the
-# rest well under 0.1 s (msvc-194 x86_64 Release). Both slow rows are WAITS, not work - they set
-# `opt.timeout = 100 ms` and then wait for the batch flush timer to fire, which is wall clock and
-# therefore does not stretch on a slower or more contended runner. 30 s is ~200x the slowest row
-# for a suite whose real ceiling is fixed by a 100 ms timer, and it turns a future hang into a
-# 30-second red instead of a cancelled job. The NodiscardTest entry below is a compile
-# invocation, not a gtest row, and gets its own longer cap for that reason.
+# 30 s, chosen from this suite's own measured wall clock (re-measured at D7F-3, msvc-194 x86_64
+# Release): the slowest gtest rows are `SubscriberArrowBatchTest.DeliveryOrderStress` 2.34 s,
+# `RowsConservedAtEveryEnding` 1.08 s, `UnsubscribeFromInsideACallbackNeverDeliversNested`
+# 0.66 s, `EveryAssemblyStateReportsItsDropsAtEitherEnding` 0.61 s and
+# `ClosingFromAnotherThreadDeliversQueuedWindowsThenClosing` 0.49 s; the rest are under 0.5 s.
+# They are mostly WAITS, not work: 1-200 ms batch timers, 2-3 ms pauses between seeded bursts and
+# 100 ms helper delays, which are wall clock and do not stretch on a slower runner; what does
+# stretch is thread hand-off between publisher, batch and test threads. Every wait inside those
+# rows is itself bounded (2-3 s), so a red run fails well inside the cap. 30 s is ~13x the slowest
+# row, and it turns a future hang into a 30-second red instead of a cancelled job. (Before D7F-3's
+# production change the rung-6 row took 12.5 s, almost all of it bounded waits timing out.) The
+# NodiscardTest entry below is a compile invocation, not a gtest row, and gets its own longer cap
+# for that reason.
 gtest_discover_tests(pubsub_arrow_tests DISCOVERY_MODE PRE_TEST
     PROPERTIES TIMEOUT 30)
 

@@ -34,8 +34,10 @@ class SubscriberArrow {
    public:
     explicit SubscriberArrow(std::shared_ptr<PubSubProvider> provider);
 
-    /// Stops and flushes any batched subscriptions (see the RecordBatch
-    /// Subscribe overload) before teardown.
+    /// Closes every batched subscription as `Unsubscribe` does (see there): it returns once each
+    /// one has delivered its last batch. Destroyed from inside one of its own batch callbacks, it
+    /// returns at once for that callback's subscription, whose remaining batches then arrive
+    /// after the callback returns, so the callback must outlive them.
     ~SubscriberArrow();
 
     SubscriberArrow(const SubscriberArrow&) = delete;
@@ -98,6 +100,10 @@ class SubscriberArrow {
     /// holds whether or not a usable schema has arrived: a window of lost rows is reported at its
     /// deadline too. A partial batch is flushed on Unsubscribe with reason kClosing.
     ///
+    /// `callback` runs on a thread the subscription owns, one batch at a time, in window order;
+    /// never inside `Publish` or on the transport's delivery thread, so publishing never waits on
+    /// it. A callback slower than the data lets finished batches queue up in memory.
+    ///
     /// `attachments[i]` belongs to batch row `i` (parallel, in batch order).
     /// A row that fails to decode is counted in `status.rows_dropped` and
     /// contributes neither a row nor an attachment — the metadata identifying
@@ -144,6 +150,12 @@ class SubscriberArrow {
         return Subscribe(segments, std::move(callback), BatchOptions{});
     }
 
+    /// For a batched subscription, every finished batch and then the partial one (reason
+    /// kClosing) is delivered before this returns; nothing is delivered after. Two calls return
+    /// at once instead: one from inside this subscription's own batch callback, and one from a
+    /// thread that is delivering rows on the subscription's own transport (e.g. inside a per-row
+    /// callback). The remaining batches, then kClosing, still arrive in order after that, so what
+    /// those callbacks use may not be freed until the kClosing batch has arrived.
     void Unsubscribe(uint64_t subscription_id);
 
     /// The topic's schema without its data — Subscriber::SubscribeSchema, forwarded as is. Poll or
@@ -156,6 +168,10 @@ class SubscriberArrow {
    private:
     class RecordBatchBatcher;  // defined in subscriber_arrow.cpp
 
+    // The provider's identity, compared by address and never dereferenced: is the thread calling
+    // Unsubscribe delivering rows on this transport? Declared before subscriber_, which takes the
+    // provider over.
+    const void* provider_token_;
     std::unique_ptr<Subscriber> subscriber_;
 
     mutable std::mutex mu_;
@@ -168,7 +184,7 @@ class SubscriberArrow {
     // Maps subscription_id -> topic key so Unsubscribe can free codec
     // entries once the last subscription for a topic is gone.
     std::unordered_map<uint64_t, std::string> sub_topic_;
-    // Live batched subscriptions (sub_id -> batcher).
+    // Batched subscriptions whose deliveries have not ended (sub_id -> batcher).
     std::unordered_map<uint64_t, std::shared_ptr<RecordBatchBatcher>> batchers_;
 
     // The codec entry for `key`, lazily created from the delivered schema if none is registered
