@@ -44,3 +44,10 @@ Verdict: **nothing blocking**. S1 and S3 are closed. S2 is closed as documented.
 - `subscriber_arrow.cpp:405-411`: the guard is disarmed before `batchers_`/`sub_topic_` are inserted. A bad_alloc there leaks the thread, and also a live transport subscription. OOM-only. Disarming after the insert would close it.
 - `subscriber_arrow.cpp:65-68`: `SetSchema` does not check `stopped_`. A row whose schema has not been decided yet, arriving between `Stop` and `subscriber_->Unsubscribe`, rebuilds `decoder_` after the loop released it. That decoder is then freed by whoever drops the batcher last. Adding `if (stopped_) return;` refuses it.
 - The rung 4/6 waits (`kHold`/`kAwait` = 1 s) against a 100-200 ms trigger leave about 5x margin. That is acceptable; I am noting it only because it is the same trade as should-fix 1.
+
+## Cycle 3 (`git diff f55c525 HEAD -- pubsub-arrow`, HEAD 5293cab)
+
+Verdict: **nothing blocking, nothing to fix.** The cycle-2 should-fix and both nits are closed.
+- The guard is now disarmed after the inserts (`subscriber_arrow.cpp:405-411`), and the batcher is copied in rather than moved, so the guard's pointer stays valid. If `sub_topic_` throws, the `batchers_` entry is left stopped; its loop ends at once, and a later sweep or the destructor removes it. That is OOM-only.
+- `SetSchema` now refuses once stopped (`:67`) and leaves `decided_` false. Late rows then call `AcquireCodec` until the transport unsubscribes, which is harmless because `AddRow` ignores them.
+- The seeded guards' early stop (`if (HasFailure()) return;` at the end of each seed) is correct, and 2 s gives about 8x margin over a ~0.25 s coarse-timer seed. nit: on a red inside seed, a late hook can still call `sub->Unsubscribe` while `sub.reset()` runs. That is a test-only race that only exists once the test has already failed.

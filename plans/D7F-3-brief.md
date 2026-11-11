@@ -54,6 +54,6 @@ Declared net lines: +92 / −64 (production; +6 more and one private header memb
 design cycles used: 2/2
 
 ---
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
-<delta vs the above — actual net lines, anything retired or added the brief did
-not predict, fix cycles used>.
+*As landed (2026-11-11):*
+Code +137/−81 (net +56) vs declared +98/−64: adds +40%, under the >50% line; ceiling 250. Owner rulings: Decisions 1 (a), 2 (b); rungs 6(d), 6(e) added. Not predicted: S1 guard (failed Subscribe stops its thread) + its test; S3 release at loop end; L1/L11/§1 term rename (no meaning change).
+Fix cycles 2; implementer launches 4/5; design cycles 2/2. Open, recorded in BC-5: mutual-unsubscribe deadlock (pre-existing, documented); N2 domain-3 question.

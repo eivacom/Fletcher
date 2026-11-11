@@ -52,3 +52,24 @@ D9 doc wording. Design cycles 1; fix cycles 1; implementer launches 2 (incl. the
 **Record corrections:** design "As built" note and Risks line; d7 L8 close-cell order; design-debt
 D7F-1/D7F-2 entries struck to where they landed.
 **Carried to D7F-3:** DEBT-6 (the decided state lives in three places).
+
+## D7F-3 — One delivery thread, window order, safe in-callback close — 🟢 2026-11-11
+
+**Landed:** `5e35328` (tests red) · `5b4e807` (phase B) · `a06031b`, `5293cab` (fix cycles). Every batch callback
+runs on the subscription's batch thread, one at a time, in window order; `Publish` never runs or waits on one.
+A close from another thread drains queued windows, then `kClosing`. An in-callback close, or an Unsubscribe from a
+row-delivery thread of the same transport, returns at once and delivery continues after.
+**Owner touches (3):** Decision 1 (a), Decision 2 (b) on the design brief; rungs 6(d) and 6(e) after 0b.
+All are in the ledger (2026-11-11 entries). L9 is amended to match; L1/L11/§1 had a term-only rename, timer thread → batch thread.
+**Steps:**
+- 0a CLEAR (10 re-anchors).
+- Design `b02747f`, then review NEEDS-REWORK(2 blockers: map window B1, malformed Decision 2 B2), revised to `243a3c3`, then cycle 2 APPROVE-WITH-DEBT(2), C2-1 brief fix before the owner saw it.
+- Phase A red, then 0b CLEAR (6(d) plan change → owner), then phase B green.
+- 4a ISSUES(3, 1 blocking: 6(e) had no red record and no 0b), then CONFORMS. 4b: 3 should-fix, then 1, then 0.
+**PM process slip:** I told the implementer 6(e) needed no 0b; 4a caught it. Its red-on-base record was rebuilt against
+`7080670` and a 0b addendum audited it. Rule: every new test, even one on an already-ruled subject, gets 0b before green.
+**Verification:** pubsub-arrow 50/50, heavy 2/2, pubsub-arrow-fastdds 4/4 (PM, `5293cab`).
+**Numbers:** code +137/−81 vs declared +98/−64 (adds +40%, under the 50% line; ceiling 250). Design cycles 2/2;
+fix cycles 2; implementer launches 4/5.
+**Open, recorded:** mutual-unsubscribe deadlock (pre-existing, documented, BC-5); N2 domain-3 question (BC-5);
+L5 cadence and L10 throwing-callback marked built with no test (0a/0b notes); BC-7 out of scope.
