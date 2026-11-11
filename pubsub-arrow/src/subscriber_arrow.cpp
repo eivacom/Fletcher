@@ -357,10 +357,11 @@ SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
         sub_topic_[result.subscription_id] = key;
     }
 
-    // Subscribe is non-blocking (mirrors the ArrowRow overload). The batcher
-    // receives the schema lazily from the first decodable sample above, so this
-    // works subscriber-first without blocking and without dropping the first
-    // window for want of a schema.
+    // Subscribe is non-blocking (mirrors the ArrowRow overload) and never waits for a schema
+    // (L13). The batcher is handed the schema by the first row that brings one, above. Rows that
+    // arrive before that are not decoded: they are counted dropped and reported with a null batch
+    // at the window's deadline or at close, so subscriber-first works, and its early windows are
+    // told as losses rather than held back.
     return {result.subscription_id, result.schema};
 }
 

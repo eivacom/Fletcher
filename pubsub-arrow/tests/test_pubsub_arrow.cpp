@@ -14,6 +14,7 @@
 #include <fletcher/pubsub/in_process_provider.hpp>
 #include <fletcher/pubsub/internal/segments.hpp>
 #include <fletcher/pubsub/provider.hpp>
+#include <fletcher/pubsub/publisher.hpp>
 #include <fletcher/pubsub_arrow/publisher_arrow.hpp>
 #include <fletcher/pubsub_arrow/schema_import.hpp>
 #include <fletcher/pubsub_arrow/subscriber_arrow.hpp>
@@ -843,6 +844,29 @@ void ExpectNullTimeoutReport(const BatchSink::Delivery& d, int64_t dropped) {
     EXPECT_TRUE(d.attachments.empty());
 }
 
+// Waits until the deliveries so far report exactly `total` lost rows in all, each as a null
+// kTimeout report. A stalled window may split its rows across several reports, so the number of
+// deliveries is not assumed. Returns the number of deliveries on success, 0 on failure (reported).
+size_t WaitForNullTimeoutReportsTotalling(BatchSink& sink, int64_t total) {
+    std::unique_lock<std::mutex> lk(sink.mu);
+    const auto dropped = [&] {
+        int64_t n = 0;
+        for (const auto& d : sink.deliveries) n += d.status.rows_dropped;
+        return n;
+    };
+    if (!sink.cv.wait_for(lk, std::chrono::seconds(2), [&] { return dropped() >= total; })) {
+        ADD_FAILURE() << "reports add up to " << dropped() << " lost rows, expected " << total
+                      << ": the subscription stayed silent while open";
+        return 0;
+    }
+    EXPECT_EQ(dropped(), total);
+    for (const auto& d : sink.deliveries) {
+        ExpectNullTimeoutReport(d, d.status.rows_dropped);
+        EXPECT_GT(d.status.rows_dropped, 0);  // no report for an idle window (L6)
+    }
+    return sink.deliveries.size();
+}
+
 // Checks the deliveries from `first` on, after the topic's schema became usable and three
 // well-formed rows (x = 1, 2, 3; the attachment on x = 2) were published: every delivery is a
 // non-null batch with no drops and aligned attachments; within one delivery the rows are in
@@ -885,30 +909,20 @@ TEST(SubscriberArrowBatchTest, NoUsableSchemaDropsReportedAtEachDeadlineThenLate
 
     // W1: three lost rows, one with an attachment.
     PublishSchemaLessRows(pub);
-    ASSERT_TRUE(sink.WaitFor(1, std::chrono::seconds(2)))
-        << "no report at the first deadline: the subscription stayed silent while open";
-    {
-        std::lock_guard<std::mutex> lk(sink.mu);
-        ASSERT_EQ(sink.deliveries.size(), 1u);
-        ExpectNullTimeoutReport(sink.deliveries[0], kSchemaLessRows);
-    }
+    const size_t after_w1 = WaitForNullTimeoutReportsTotalling(sink, kSchemaLessRows);
+    ASSERT_GT(after_w1, 0u);
 
     // Idle: nothing happens for three timeouts, so nothing is reported (L6).
     std::this_thread::sleep_for(3 * kDeadlineTimeout);
     {
         std::lock_guard<std::mutex> lk(sink.mu);
-        EXPECT_EQ(sink.deliveries.size(), 1u);
+        EXPECT_EQ(sink.deliveries.size(), after_w1);
     }
 
     // W2: one more lost row, reported at its own deadline.
     pub.PublishDirect(kTopic, [](WriteBuffer& buf) { buf.AppendByte(0x00); });
-    ASSERT_TRUE(sink.WaitFor(2, std::chrono::seconds(2)))
-        << "no report at the second deadline";
-    {
-        std::lock_guard<std::mutex> lk(sink.mu);
-        ASSERT_EQ(sink.deliveries.size(), 2u);
-        ExpectNullTimeoutReport(sink.deliveries[1], 1);
-    }
+    const size_t after_w2 = WaitForNullTimeoutReportsTotalling(sink, kSchemaLessRows + 1);
+    ASSERT_GT(after_w2, after_w1);
 
     // Late schema: the topic is declared and good rows arrive; a batch can be built again (L13).
     pub.CreateTopic(kTopic, TestSchema());
@@ -916,7 +930,7 @@ TEST(SubscriberArrowBatchTest, NoUsableSchemaDropsReportedAtEachDeadlineThenLate
     sub.Unsubscribe(result.subscription_id);
 
     std::lock_guard<std::mutex> lk(sink.mu);
-    ExpectLateSchemaRowsAssembled(sink.deliveries, 2);
+    ExpectLateSchemaRowsAssembled(sink.deliveries, after_w2);
     int64_t accounted = 0;  // rows received + rows reported lost
     for (const auto& d : sink.deliveries) {
         accounted += (d.batch ? d.batch->num_rows() : 0) + d.status.rows_dropped;
@@ -938,34 +952,39 @@ TEST(SubscriberArrowBatchTest, SchemaDeclaredAfterSubscribeDropsReportedAtEachDe
 
     pub.CreateTopic(kTopic, TestSchema());
     PublishWellFormedRows(pub);  // W1
-    ASSERT_TRUE(sink.WaitFor(1, std::chrono::seconds(2)))
-        << "no report at the first deadline: the subscription stayed silent while open";
-    {
-        std::lock_guard<std::mutex> lk(sink.mu);
-        ASSERT_EQ(sink.deliveries.size(), 1u);
-        ExpectNullTimeoutReport(sink.deliveries[0], kWellFormedRows);
-    }
+    const size_t after_w1 = WaitForNullTimeoutReportsTotalling(sink, kWellFormedRows);
+    ASSERT_GT(after_w1, 0u);
 
     pub.Publish(kTopic, MakeRow(4, "d"));  // W2
-    ASSERT_TRUE(sink.WaitFor(2, std::chrono::seconds(2)))
-        << "no report at the second deadline";
-    {
-        std::lock_guard<std::mutex> lk(sink.mu);
-        ASSERT_EQ(sink.deliveries.size(), 2u);
-        ExpectNullTimeoutReport(sink.deliveries[1], 1);
-    }
+    const size_t after_w2 = WaitForNullTimeoutReportsTotalling(sink, kWellFormedRows + 1);
+    ASSERT_GT(after_w2, after_w1);
 
     sub.Unsubscribe(result.subscription_id);  // both windows were reported; nothing is left
     std::lock_guard<std::mutex> lk(sink.mu);
-    EXPECT_EQ(sink.deliveries.size(), 2u);
+    EXPECT_EQ(sink.deliveries.size(), after_w2);
 }
 
 namespace {
 
-enum class AssemblyState { kAwaitingSchema, kUndecodableSchema, kAssembling };
+enum class AssemblyState { kAwaitingSchema, kUndecodableSchema, kUnimportableSchema, kAssembling };
 enum class Ending { kDeadline, kClose };
 
+// A struct whose child has a format string Arrow does not know: Publisher::CreateTopic accepts it
+// (the declaration's encoder never throws) and a provider hands it on, but ImportArrowSchema throws.
+OwnedSchema UnimportableSchema() {
+    OwnedSchema schema;
+    ArrowSchemaInit(schema.get());
+    ArrowSchemaSetTypeStruct(schema.get(), 1);
+    ArrowSchemaSetName(schema->children[0], "x");
+    ArrowSchemaSetType(schema->children[0], NANOARROW_TYPE_INT32);
+    ArrowSchemaSetFormat(schema->children[0], "zz");
+    return schema;
+}
+
 // One cell of the guard: a fresh subscription in `state`, one malformed row, ended by `ending`.
+// The unimportable cell also proves the failed import is final (L8): after the first row (and its
+// report, at the deadline ending) the topic is declared with a good schema and a well-formed row is
+// sent, and the subscription still drops it instead of reviving.
 void RunAssemblyCell(AssemblyState state, Ending ending) {
     BatchSink sink;
     auto mock = std::make_shared<MockProvider>();
@@ -976,6 +995,11 @@ void RunAssemblyCell(AssemblyState state, Ending ending) {
         // BatchDecoder rejects a dictionary below the top level.
         auto dict_type = arrow::dictionary(arrow::int32(), arrow::utf8());
         pub.CreateTopic(kTopic, arrow::schema({arrow::field("tags", arrow::list(dict_type))}));
+    } else if (state == AssemblyState::kUnimportableSchema) {
+        // The cell must not pass vacuously: the schema really is one the import rejects.
+        ASSERT_ANY_THROW(
+            static_cast<void>(ImportArrowSchema(MakeSharedSchema(UnimportableSchema()))));
+        Publisher(mock).CreateTopic(kTopic, UnimportableSchema());
     } else if (state == AssemblyState::kAssembling) {
         pub.CreateTopic(kTopic, TestSchema());
     }  // kAwaitingSchema: the topic is never declared
@@ -989,20 +1013,38 @@ void RunAssemblyCell(AssemblyState state, Ending ending) {
         ASSERT_TRUE(sink.WaitFor(1, std::chrono::seconds(2)))
             << "no report at the deadline";
     }
+
+    // Rows lost in each expected delivery: one, or (unimportable) a second row that a revived
+    // subscription would have decoded.
+    std::vector<int64_t> expected_dropped = {1};
+    if (state == AssemblyState::kUnimportableSchema) {
+        pub.CreateTopic(kTopic, TestSchema());  // the topic now carries a good schema
+        pub.Publish(kTopic, MakeRow(1, "a"));
+        if (ending == Ending::kDeadline) {
+            ASSERT_TRUE(sink.WaitFor(2, std::chrono::seconds(2)))
+                << "no report at the second deadline";
+            expected_dropped = {1, 1};
+        } else {
+            expected_dropped = {2};
+        }
+    }
     sub.Unsubscribe(result.subscription_id);
 
     std::lock_guard<std::mutex> lk(sink.mu);
-    ASSERT_EQ(sink.deliveries.size(), 1u);  // exactly one report: not none, not two
-    const auto& d = sink.deliveries[0];
-    EXPECT_EQ(d.status.reason, ending == Ending::kDeadline ? BatchStatus::Reason::kTimeout
-                                                           : BatchStatus::Reason::kClosing);
-    EXPECT_EQ(d.status.rows_dropped, 1);
-    EXPECT_TRUE(d.attachments.empty());
-    if (state == AssemblyState::kAssembling) {
-        ASSERT_NE(d.batch, nullptr);  // a batch could be built: non-null, zero rows (L7)
-        EXPECT_EQ(d.batch->num_rows(), 0);
-    } else {
-        EXPECT_EQ(d.batch, nullptr);  // no batch could be built (L7)
+    ASSERT_EQ(sink.deliveries.size(), expected_dropped.size());  // exactly these: not none, not more
+    for (size_t i = 0; i < expected_dropped.size(); ++i) {
+        const auto& d = sink.deliveries[i];
+        EXPECT_EQ(d.status.reason, ending == Ending::kDeadline ? BatchStatus::Reason::kTimeout
+                                                               : BatchStatus::Reason::kClosing)
+            << "delivery " << i;
+        EXPECT_EQ(d.status.rows_dropped, expected_dropped[i]) << "delivery " << i;
+        EXPECT_TRUE(d.attachments.empty()) << "delivery " << i;
+        if (state == AssemblyState::kAssembling) {
+            ASSERT_NE(d.batch, nullptr);  // a batch could be built: non-null, zero rows (L7)
+            EXPECT_EQ(d.batch->num_rows(), 0);
+        } else {
+            EXPECT_EQ(d.batch, nullptr) << "delivery " << i;  // no batch could be built (L7)
+        }
     }
 }
 
@@ -1010,7 +1052,8 @@ void RunAssemblyCell(AssemblyState state, Ending ending) {
 
 // Guard (green once D7F-2 lands): every state the assembly can be in reports its loss at either
 // ending. Forbids a state that suppresses reporting, which is how the schema-less deadline was
-// silent while the other five cells were not.
+// silent while the other cells were not. The unimportable-schema cells also pin L8: a failed
+// import is decided once and is permanent.
 TEST(SubscriberArrowBatchTest, EveryAssemblyStateReportsItsDropsAtEitherEnding) {
     struct StateName {
         AssemblyState state;
@@ -1018,6 +1061,7 @@ TEST(SubscriberArrowBatchTest, EveryAssemblyStateReportsItsDropsAtEitherEnding) 
     };
     for (const auto& s : {StateName{AssemblyState::kAwaitingSchema, "awaiting a schema"},
                           StateName{AssemblyState::kUndecodableSchema, "undecodable schema"},
+                          StateName{AssemblyState::kUnimportableSchema, "unimportable schema"},
                           StateName{AssemblyState::kAssembling, "assembling"}}) {
         for (const Ending ending : {Ending::kDeadline, Ending::kClose}) {
             SCOPED_TRACE(std::string(s.name) +

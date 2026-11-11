@@ -3,7 +3,7 @@
 > **Specified.** The owner confirmed these laws on 2026-11-10 ([RIX-rulings.md](../../plans/RIX-rulings.md), "Yes on all accounts"). A change to a law needs
 > an owner ruling, recorded in a decision of record.
 
-**Mode: survey, verified against the tree at `9a4780b`; `cpp:N` citations predate D7F-1 (`a2c8b97`) and may be off by up to 14 lines** (branch `feature/row-index`). The code is
+**Mode: survey, verified against the tree at `9a4780b`; `cpp:N` citations predate D7F-1 (`a2c8b97`) and D7F-2 (`dbaa2b6`); `subscriber_arrow.cpp` has shrunk by about 30 lines since, so treat them as approximate** (branch `feature/row-index`). The code is
 ground truth. Doc comments, READMEs and specs are claims checked against it. No spec exists for
 this domain; its rules live in code comments in
 [`subscriber_arrow.cpp`](../../pubsub-arrow/src/subscriber_arrow.cpp) (cited `cpp:N`) and
@@ -60,8 +60,8 @@ closing and is not delivered is counted in the `rows_dropped` of a later deliver
 D7F-1; deadline: D7F-2); violation 2 open (D7F-3)]`
 - Holds at: `cpp:81-85` (no decoder), `cpp:100-111` (malformed, over budget, internal),
   `cpp:159-166` (`DiscardPending`), `cpp:235-236`.
-- **Violation 1.** When no schema has been decided (null schema, or `ImportArrowSchema` throws), the
-  row is counted through `AddRow`'s no-decoder branch. Since `a2c8b97` (D7F-1) the closing flush
+- **Violation 1.** While no usable schema exists (none decided yet, or an import that threw, which
+  decides the schema as unusable for good), the row is counted through `AddRow`'s no-decoder branch. Since `a2c8b97` (D7F-1) the closing flush
   reports it; since D7F-2 the timer reports it at each deadline too, because `TimerLoop` flushes at
   every deadline it reaches and the wait on `ready_` is deleted. (Before D7F-1, `NoteDropped` counted
   it and `Flush` discarded the count.)
@@ -75,9 +75,8 @@ D7F-1; deadline: D7F-2); violation 2 open (D7F-3)]`
   `EveryAssemblyStateReportsItsDropsAtEitherEnding`, and the leg
   `SchemaArrivingMidWindowGivesOneBatchCarryingEarlierDrops` (drops, then a schema, in one window).
   Violation 2 has no test yet.
-- **Both violations are to be fixed before RIX** (owner ruling 2026-11-10, "2. Fix both"). How the
-  fix reports a drop that happens before any usable schema is a design question for that round
-  (Q1).
+- **Both violations are to be fixed before RIX** (owner ruling 2026-11-10, "2. Fix both"). Violation 1
+  is fixed by D7F-1 and D7F-2 (Q1 resolved); violation 2 is D7F-3's.
 
 **L2. Rows are conserved.** For each window, rows in the batch + `rows_dropped` = rows that reached
 the batcher in that window, with each row counted exactly once.
@@ -142,8 +141,11 @@ every later row is dropped, and there is no recovery.
   schema `BatchDecoder` rejects. A schema that is merely absent, or nothing to import (a released
   handle), decides nothing.
 - Tests: `NestedDictionarySchemaReportsEveryRowDropped` and the undecodable-schema cells of
-  `EveryAssemblyStateReportsItsDropsAtEitherEnding`, which cover one window each. No test forces an
-  import failure: no in-tree provider can hand over an unimportable schema.
+  `EveryAssemblyStateReportsItsDropsAtEitherEnding`, which cover one window each. An import failure
+  is forced by that guard's unimportable-schema cells: `Publisher::CreateTopic` accepts a schema
+  whose format string Arrow rejects, and the Mock hands it on, so `ImportArrowSchema` throws. Each
+  cell reports its row as a null batch (at the deadline and at close), then declares a good schema
+  and sends a well-formed row: the subscription still drops it, so the failed import was not retried.
 
 **L9. Closing is final and reported.** The pending window is delivered once, as `kClosing`. After
 `Unsubscribe` or `~SubscriberArrow` returns, no further batch is delivered. **The one exception:**

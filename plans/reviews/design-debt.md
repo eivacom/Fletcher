@@ -810,3 +810,6 @@ Review: [D7F-1-design-review.md](D7F-1-design-review.md). No BLOCKERs; P1–P4 v
 - **DEBT-1 (must land):** only a *throw* from `ImportArrowSchema` decides "unusable". A null return means nothing arrived, as for a released handle (`schema_import.hpp:31-34`), so it must not decide. Fix the `found.arrow_schema || schema` test and correct P3.
 - **DEBT-2:** (a) the BC-3 row names both `schema_decided` (the per-row cache) and the once-flag (the decision); (b) the d7 L8 edit goes under *Holds at*, and the law's sentence is unchanged; (c) drop "lost rows never count towards `max_rows`" from hpp and README, or pin it with a `max_rows`=1 guard cell.
 - **DEBT-3:** the forcing test asserts row order within each delivery and the set {1,2,3} across deliveries. While L12 is open, a stalled `kTimeout`/`kClosing` split can be recorded in either order.
+
+## Carried from D7F-2 code review to D7F-3
+- **DEBT-6 (S2):** "has the schema been decided" lives in three places (the once-flag, the `schema_decided` atomic, decoder presence), and `SetSchema` trusts its caller to call it once. A `decided_` flag set under the batcher's own lock would let `SetSchema` refuse a second decision. D7F-3 reworks the batcher's state and threading; settle it there. Source: `plans/reviews/D7F-2-codereview.md`.

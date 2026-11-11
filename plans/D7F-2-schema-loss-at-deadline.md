@@ -173,7 +173,8 @@ Handled residue:
   usable schema", not "a late schema is unusable". Its comment must say so (audit 0a caution).
 - **P3.** `SharedSchema` is tested for null as `AcquireCodec` already does, and `ImportArrowSchema`
   signals failure by throwing or returning null (cpp:390-397). *If a third failure shape exists,
-  STOP-AND-ASK.*
+  STOP-AND-ASK.* **As built (DEBT-1, `dbaa2b6`):** only a throw decides "unusable"; a null return
+  (a released or empty handle) decides nothing, so a later schema is still used.
 - **P4.** Sharing one `Codec` between per-row subscriptions on one topic is today's arrangement.
   `shared_ptr` changes who owns it, not who calls it. *If `Codec` holds per-call mutable state that
   shared ownership would newly expose, STOP-AND-ASK. Do not add a lock.*
