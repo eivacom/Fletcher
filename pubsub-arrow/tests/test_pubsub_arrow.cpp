@@ -1540,10 +1540,12 @@ namespace {
 // How long a held callback waits for its release, and how long the test thread waits for any
 // event. On a correct tree each wait ends within the 200 ms batch timer or kLetItWait. On a broken
 // one a test row runs at most about (3 x kAwait + kHold) per case, 5 cases at most, so even a red
-// row ends well inside the suite's 30 s ctest TIMEOUT. The seeded guards wait kSeedAwait per seed.
+// row ends well inside the suite's 30 s ctest TIMEOUT. The seeded guards wait up to kSeedAwait
+// for a seed's events (a seed takes ~0.25 s on a coarse timer) and stop at the first failed seed,
+// so a red row costs one seed's waits, not sixteen.
 constexpr auto kHold = std::chrono::milliseconds(1000);
 constexpr auto kAwait = std::chrono::milliseconds(1000);
-constexpr auto kSeedAwait = std::chrono::milliseconds(500);
+constexpr auto kSeedAwait = std::chrono::milliseconds(2000);
 // How long a helper lets a closing call sit before releasing the callback it waits behind.
 constexpr auto kLetItWait = std::chrono::milliseconds(100);
 
@@ -2219,6 +2221,7 @@ TEST(SubscriberArrowBatchTest, DeliveryOrderStress) {
                 EXPECT_EQ(i, recs.size() - 1) << "a delivery after kClosing (L9)";
             }
         }
+        if (HasFailure()) return;  // one failed seed is enough, and keeps a red row short
     }
 }
 
@@ -2288,6 +2291,7 @@ TEST(SubscriberArrowBatchTest, RowsConservedAtEveryEnding) {
             accounted += std::max<int64_t>(r.num_rows, 0) + r.dropped;
         }
         EXPECT_EQ(accounted, sent) << "rows received + rows reported lost != rows sent";
+        if (HasFailure()) return;  // one failed seed is enough, and keeps a red row short
     }
 }
 

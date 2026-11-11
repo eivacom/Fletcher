@@ -221,6 +221,7 @@ proposals; the PM decides.
 | `InCallbackUnsubscribeWhilePublishingDoesNotDeadlock` | guard (ladder; BC-5) | A callback `Unsubscribe`s while another thread is inside `Publish` holding the in-process mutex; both return within the ctest TIMEOUT. | Declared green before and after. |
 | `DeliveryOrderStress` | guard (BC-1) | Fixed seeds; `max_rows` 1–3, `timeout` 1 ms; `Unsubscribe` from inside or outside at a seeded point. In-flight ≤ 1, one thread, first x strictly increasing, `kClosing` last. | Red: overlap or a second thread. |
 | `RowsConservedAtEveryEnding` | guard (BC-2) | Fixed seeds; good, malformed and schema-less rows; ended outside, or inside on the first delivery after the publisher has returned from its last `Publish`. Σ rows + Σ dropped = rows sent. | Declared green before (violation 2 needs the heavy row). |
+| `FailedBatchedSubscribeReleasesItsCallback` | guard (code review 4b S1, fix cycle 1); not a rung | A batched `Subscribe` made from inside a per-row delivery is refused with `kReentrantCall`; the callback it was handed is released (a captured `weak_ptr` expires within 1 s). | Red: the batch thread started before the refused `Subscribe` waits forever and keeps the callback. |
 
 **Re-anchored** (audit 0a; subjects kept, reads moved to `sink.WaitFor` / a latch / after
 `~SubscriberArrow`): `FlushesAtRowLimit` :531 (delete comment :545), `AttachmentsAlignWithRows` :599,

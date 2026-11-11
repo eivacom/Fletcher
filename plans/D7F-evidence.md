@@ -39,3 +39,12 @@ The recorded sequence matched the expected reasons and rows (`kTimeout` x0 (1), 
 nothing" is read only up to the snapshot**: on the base the timer thread is detached by the
 in-callback `Stop`, so nothing waits for it, and the test reads after every recorded callback has
 returned.
+
+### `FailedBatchedSubscribeReleasesItsCallback` red on base
+
+The guard added in fix cycle 1 (code review 4b S1), run with the full light suite against
+`7080670`'s production `pubsub-arrow/src` and `include` and the tests of fix cycle 1 (temporary
+worktree, implementer, 2026-11-11): **red**, 1.05 s. The one failed assertion is
+`captured.expired()`: "the failed Subscribe's batch thread still holds the callback it was given".
+The batch thread started before the refused `Subscribe` was never stopped, so it kept the callback
+for the life of the process. Green on the fix; red again with the fix disabled (a local control).

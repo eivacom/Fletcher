@@ -28,8 +28,9 @@ include(GoogleTest)
 # mostly WAITS, not work (1-200 ms batch timers, 2-3 ms pauses between seeded bursts, 100 ms helper
 # delays), which are wall clock and do not stretch on a slower runner; what does stretch is the
 # thread hand-off between publisher, batch and test threads. A FAILING run must also end inside
-# the cap: every wait in the D7F-3 rows is bounded (1 s, or 0.5 s per seed in the seeded guards),
-# so a row's worst case is about 4 s per case and 20 s for the five-case rung-6 row. Measured
+# the cap: every wait in the D7F-3 rows is bounded (1 s; 2 s in the seeded guards, which stop at
+# the first failed seed, so a red seeded row costs at most ~2.5 s of passing seeds plus two 2 s
+# waits), so a row's worst case is about 4 s per case and 20 s for the five-case rung-6 row. Measured
 # against the pre-D7F-3 production code (all D7F-3 rows red): rung 6 5.7 s, rung 4 4.5 s, the
 # stress guard 2.3 s. 30 s is ~13x the slowest green row and above every red row's bound, and it
 # turns a future hang into a 30-second red instead of a cancelled job. The NodiscardTest entry

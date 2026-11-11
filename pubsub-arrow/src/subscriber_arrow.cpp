@@ -64,7 +64,7 @@ class SubscriberArrow::RecordBatchBatcher {
     // is then counted dropped and reported with a null batch, so the loss is visible.
     void SetSchema(std::shared_ptr<arrow::Schema> schema) {
         std::lock_guard<std::mutex> lk(mu_);
-        if (decided_) return;
+        if (decided_ || stopped_) return;  // closed: no decoder is built again
         decided_ = true;
         if (schema) {
             try {
@@ -402,13 +402,13 @@ SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
             batcher->AddRow(data, len, att);
         },
         topic_options);
-    stop_on_throw.batcher = nullptr;
 
     {
         std::lock_guard lock(mu_);
-        batchers_[result.subscription_id] = std::move(batcher);
+        batchers_[result.subscription_id] = batcher;
         sub_topic_[result.subscription_id] = key;
     }
+    stop_on_throw.batcher = nullptr;  // registered: the batcher is closed by the usual paths
 
     // Subscribe is non-blocking (mirrors the ArrowRow overload) and never waits for a schema
     // (L13). The batcher is handed the schema by the first row that brings one, above. Rows that
