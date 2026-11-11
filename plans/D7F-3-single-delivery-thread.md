@@ -1,10 +1,9 @@
 # D7F-3 — One batch thread, in order, nothing lost at close (design)
 
-Round D7F, item D7F-3, ladder rungs 3–6 (one stage by standing decision). Branch
-`feature/d7f-batch-assembly`, HEAD `9ab5d86`. Citations: `cpp` = `pubsub-arrow/src/subscriber_arrow.cpp`,
-`hpp` = its header, `test` = `pubsub-arrow/tests/test_pubsub_arrow.cpp`, `d7` =
-`docs/domains/d7-batch-assembly.md`, `reg` = `docs/domains/bounded-context-register.md`, `sub` =
-`pubsub/src/subscriber.cpp`. Line numbers are at `9ab5d86` (the ladder's are stale; audit 0a).
+Round D7F, item D7F-3, rungs 3–6, revision 2 (review cycle 1: B1, B2, DEBT-1..3). Citations: `cpp`,
+`hpp` = `pubsub-arrow/{src/subscriber_arrow.cpp, include/…/subscriber_arrow.hpp}`, `test` = its
+`tests/test_pubsub_arrow.cpp`, `d7`/`reg` = `docs/domains/{d7-batch-assembly, bounded-context-register}.md`,
+`sub` = `pubsub/src/subscriber.cpp`, `ipp` = `pubsub/include/fletcher/pubsub/in_process_provider.hpp`; lines at `9ab5d86`.
 
 **Proof of read:** `plans/RIX-rulings.md` read top to bottom: **169 lines, 14 entries**; the last is
 "2026-11-10 — Queued windows are delivered before the closing batch".
@@ -16,8 +15,7 @@ Closing a window only queues its batch; the batch thread is the one place that c
 one batch at a time, in window order (L12, D10). Closing from another thread waits until the queue
 and the `kClosing` batch are delivered (L9); closing from inside a callback returns at once and the
 batch thread delivers the rest after the callback returns (L9 as revised). The over-budget row is
-retried under the lock, so it is always counted (L1 violation 2). DEBT-6 is settled: the batcher
-owns "has the schema been decided". Net production lines ≈ +30.
+retried under the lock, so it is always counted (L1 violation 2). DEBT-6 is settled. Net ≈ +28.
 
 ## Design
 
@@ -35,9 +33,12 @@ owns "has the schema been decided". Net production lines ≈ +30.
   3. else a reached deadline → `Close(kTimeout)` (L5's arithmetic in `ArmTimer` is untouched);
   4. else wait on `cv_` (until the deadline if one is armed). Spurious wakeups only re-run the checks.
   On leaving, it sets `ended_ = true` under `mu_` and notifies.
-- Three triggers call the one closer: `AddRow` (`kRowLimit`, count or budget), the loop
-  (`kTimeout`), `Stop` (`kClosing`). Windows close in arrival order under `mu_` and the queue is FIFO
-  with one consumer, so **delivery order = window order and in-flight ≤ 1 by construction** (L12).
+- **`cv_` has many waiters** (the loop, and any number of `Stop` callers: several `Unsubscribe`s and
+  the destructor), so **every notify on it is `notify_all`** (`Close`, `ArmTimer`, `Stop`, loop end).
+- Three triggers call the one closer: `AddRow` (`kRowLimit`, count or budget; `kTimeout` for a
+  passed deadline, §2), the loop (`kTimeout`), `Stop` (`kClosing`). Windows close in arrival order
+  under `mu_` and the queue is FIFO with one consumer, so **delivery order = window order and
+  in-flight ≤ 1 by construction** (L12).
 - **No bound, no blocking producer** (D-D7F-2): `AddRow` pushes and returns. A slow callback grows
   `queue_`; that is the owner's accepted cost.
 
@@ -49,6 +50,8 @@ append-and-classify block exists once, as a private `TryAppend(data, len, att)`:
 `DiscardPending(1)`; `BatchCapacityExceeded` → returns *budget* with nothing appended. `AddRow`:
 
 ```
+if (has_deadline_ && steady_clock::now() >= deadline_) Close(kTimeout);   // L4: deadline first
+if (!decoder_) { ++dropped_; ArmTimer(); return; }
 if (TryAppend(...) == kBudget) {      // the window cannot take this row (L4)
     Close(kRowLimit);                 // only queues; mu_ is never released here
     if (TryAppend(...) == kBudget) ++dropped_;   // the row alone exceeds the budget
@@ -60,6 +63,10 @@ if (decoder_->num_rows() >= max_rows_) Close(kRowLimit);
 Because `Close` no longer releases `mu_`, nothing can run `Stop` between the early close and the
 retry. The guard `if (stopped_) return;` (cpp:87-89) is **deleted**: it was the silent loss (L1
 violation 2), and it is now unreachable. The duplicate block (cpp:90-99) is deleted (census C2).
+The first line (one clock read per row; it only queues, so D10-clean) means a row never joins a
+window whose deadline has passed, even while the batch thread is busy in a callback: L4's "closes at
+the first of four events" holds by construction. An idle window that times out mid-callback closes
+when the loop next runs; its content is the same, and it cannot be delivered sooner (L12).
 
 ### 3. Stop: one closing path, two callers (C5, BC-5, L9, L11)
 
@@ -83,28 +90,31 @@ bool Stop() {                              // idempotent; true = every delivery 
 - **From inside the callback** (rung 6): no delivery happens on this path at all, so nothing is
   nested. `Stop` returns; after the callback returns the loop delivers the queue, then `kClosing`,
   then ends. The detach is today's L11 behaviour; the self-owning capture in `Start` is unchanged.
-- `ended_` is `std::atomic<bool>`, **initialised true** and set false in `Start` just before the
-  thread is created (reset to true if creation throws), so a batcher whose thread never started
-  cannot make `Stop` wait forever. `~RecordBatchBatcher` stays `Stop()` (plus the detach above when
-  the last owner is the batch thread itself, exactly today's case).
-- "Is this thread inside this batcher's callback?" (C6, BC-6) is answered by `loop_id_`, since under
-  D10 the callback only ever runs on the loop thread. **No `DeliveryScope` token and no
-  `thread_local`** are added; BC-6's single site is not duplicated.
+- `ended_` (`std::atomic<bool>`) is **initialised true**, set false in `Start` just before the thread
+  is created (reset if creation throws), so `Stop` never waits on a thread that never started.
+  `~RecordBatchBatcher` stays `Stop()` (detaching when its last owner is the batch thread, as today).
+- "Is this thread inside this batcher's callback?" (C6, BC-6) is answered by `loop_id_`: under D10 the
+  callback only runs there. **No `DeliveryScope` and no `thread_local`** are added.
 
 ### 4. SubscriberArrow waits for every batch thread it started (L9, ownership rule)
 
-An in-callback `Unsubscribe` returns before its subscription's deliveries end. If `batchers_` then
-forgot the batcher, a later `~SubscriberArrow` on another thread could return while that batch
-thread is still calling the callback: a delivery after the destructor returned, into a callback
-target the caller may already have freed. Made unrepresentable:
+**The rule: a batcher leaves `batchers_` only after its loop has ended.** No path removes an entry
+whose subscription is still delivering, so every waiter (a duplicate `Unsubscribe`, the destructor)
+can always find it. Today `Unsubscribe` erases first (cpp:391-395) and the destructor clears first
+(cpp:258-260); both orders go.
 
-- `Unsubscribe(id)`: take the batcher out of `batchers_` under `mu_` (as today); call `Stop()`
-  **outside** `mu_`; if it returns false (own callback), put it back under the same id. Under `mu_`,
-  also move out every entry whose `Ended()` (a lock-free read of `ended_`) is true, and drop them
-  after the lock is released. Then `subscriber_->Unsubscribe(id)` and the codec clean-up, unchanged.
-- `~SubscriberArrow` already stops every entry of `batchers_` (cpp:255-262); it now thereby waits for
-  draining ones too. A duplicate `Unsubscribe(id)` from another thread finds the draining entry and
-  waits for it, like domain 3's duplicate cancel (sub:660-665).
+- `Unsubscribe(id)`: under `mu_`, **copy** the `shared_ptr` from `batchers_` (no erase), and move out
+  every entry whose `Ended()` (a lock-free read of `ended_`) is true. Outside `mu_`, drop the ended
+  ones, then `Stop()`. **Erase `id` under `mu_` only if `Stop` returned true** (an erase of an absent
+  key is harmless). If it returned false (own callback), the entry stays and a later sweep or the
+  destructor collects it. Then `subscriber_->Unsubscribe(id)` and the codec clean-up, unchanged.
+- **A racing cancel** (2026-09-04, `pubsub-interface-spec.md:1028-1033`): a second `Unsubscribe(id)`
+  on another thread finds the entry and its own `Stop` waits on `ended_`, the same drain.
+- `~SubscriberArrow`: **snapshot** `batchers_` under `mu_` without clearing it, `Stop()` each outside
+  `mu_`, then `subscriber_.reset()` as today. A callback that calls `Unsubscribe` on any
+  subscription meanwhile still finds its entry, and the destructor's wait on that callback's batcher
+  (`ended_` is set only after the callback returns) covers the whole of that in-callback call, so
+  `subscriber_`, `mu_` and the maps outlive it.
 - The `batchers_` comment (hpp:171) becomes "batched subscriptions whose deliveries have not ended".
   No member is added; the header changes in comments only.
 
@@ -124,28 +134,24 @@ found.import_failed) batcher->SetSchema(...); } batcher->AddRow(...);`. Two fact
   `Stop`'s `ended_` wait (both release it), `Subscriber::Unsubscribe`, or `SubscriberArrow::mu_`.
 - `SubscriberArrow::mu_` is never held across `Stop` or a batcher destruction. `Ended()` and
   `SchemaDecided()` are atomic reads, so no lock nests in either direction.
-- The transport's delivery thread holds the provider's lock (InProcess) and takes batcher `mu_`
-  briefly in `AddRow`/`SetSchema`; nothing holding batcher `mu_` waits for anything, so **row
-  delivery never waits on a callback** (D10). The in-callback `subscriber_->Unsubscribe(id)` now
-  runs on the batch thread, outside any delivery frame, so it takes domain 3's barrier (sub:247),
-  which waits only for row deliveries, and those never wait on the batch thread (premise P1).
+- `AddRow` and `SetSchema` take batcher `mu_` briefly and nothing holding it waits for anything.
+  Whether a transport thread may wait on a batch thread when *user code* on it calls `Unsubscribe`
+  is Decision 2 (Risks).
+- The in-callback `subscriber_->Unsubscribe(id)` runs on the batch thread, outside any delivery
+  frame, so it takes domain 3's barrier (sub:247) and may enter `provider->Unsubscribe` (sub:742-750),
+  which takes the provider's lock (premise P1).
 
 ### 7. Documentation (not counted as production)
 
-- **hpp**: beside `RecordBatchCallback` (hpp:89-100), one paragraph: the callback runs on a thread
+- **hpp** (beside `RecordBatchCallback`, hpp:89-100) and **README:93**: the callback runs on a thread
   the subscription owns, one batch at a time, in window order, never inside `Publish` or the
-  transport's thread; and a doc comment on `Unsubscribe` (hpp:147): it delivers every finished
-  window, then `kClosing`, and returns once they are delivered; called from inside this
-  subscription's callback it returns at once and they follow once the callback returns.
-- **README:93**: the same two sentences in the README's words.
-- **d7**: §4 "Who calls, and on which thread" rewritten for D10 (the ladder's charge); §2 **Flush**
-  becomes "the window is finished into a batch and queued; the batch thread delivers it";
-  L1 → violation 2 built (D7F-3); L9 and L12 → `[built]` with their tests; L4 gains the heavy test
-  (the first batcher-level budget test); L11's holds-at; Q2 resolved (one delivery thread); Findings
-  b3 resolved; (c) budget flush, uncounted row and overlapping callbacks now tested.
-- **reg**: BC-1, BC-2 `[built]`; BC-3's decided-site moves to the batcher (DEBT-6); BC-5 batch side
-  `[built]`, plus the residue in Risks; BC-6: "answered by the loop's thread identity; no
-  `DeliveryScope`" (the ladder left this to the architect).
+  transport's thread; `Unsubscribe` (hpp:147) delivers every finished window, then `kClosing`, before
+  it returns, except from inside this subscription's callback, where they follow once it returns.
+- **d7**: §4 "Who calls, and on which thread" rewritten for D10; §2 **Flush** → "finished and
+  queued; the batch thread delivers it"; L1 violation 2, L9, L12 → `[built]` with their tests; L4
+  gains the heavy test; Q2 resolved; Findings b3 resolved; (c) updated.
+- **reg**: BC-1, BC-2 `[built]`; BC-3's decided-site → the batcher (DEBT-6); BC-5 batch side
+  `[built]` plus the Risks residue; BC-6: "answered by the loop's thread identity; no `DeliveryScope`".
 - **Ladder**: drop `ReuseAcrossWindows` from rung 3's re-anchor list (audit 0a: listed in error).
 
 ## Corner cases forbidden
@@ -161,10 +167,13 @@ Rung 1, unrepresentable:
   window behind the queue in the critical section that sets `stopped_`; `AddRow` ignores later rows;
   the loop ends only with `stopped_` and an empty queue.
 - **A nested delivery from an in-callback `Unsubscribe`/destructor**: `Stop` contains no delivery.
-- **A delivery after `~SubscriberArrow` returns on another thread, including for a subscription
-  unsubscribed from its own callback**: §4's ownership rule.
+- **A batcher removed while still delivering** (B1's class: a racing `Unsubscribe` or the destructor
+  missing it, a delivery after the destructor returned, use of `subscriber_`/`mu_` after it): §4's
+  rule, an entry leaves `batchers_` only after its loop has ended.
+- **A row joining a window whose deadline has passed** (L4): `AddRow` closes it first (§2).
 - **A second schema decision** (DEBT-6, L8): `decided_` under `mu_`.
-- **`Stop` waiting on a thread that never started**: `ended_` starts true.
+- **`Stop` waiting on a thread that never started**: `ended_` starts true. **A missed wake-up** of a
+  `Stop` waiter: every notify on `cv_` is `notify_all`.
 
 Rung 2, refused at the door: `SetSchema` after a decision returns without effect (internal door; the
 only caller is the lambda).
@@ -172,10 +181,6 @@ only caller is the lambda).
 Handled residue:
 - **A callback slower than the data rate queues batches without bound.** *Why not forbidden?* The
   owner ruled no back-pressure (D10, D-D7F-2).
-- **A deadline that passes while a callback runs closes when the callback returns**, so that window
-  may hold rows past its timeout. *Why not forbidden?* Closing on time needs a second clock-watching
-  thread or a clock read per row on the transport's thread (D10 hot path). Nothing is lost; today a
-  slow `kTimeout` callback already delays the next deadline the same way; L5 has no test.
 - **In-callback `Unsubscribe` lets delivery continue after it returns.** *Why not forbidden?* Ruled
   ("Deliver after it returns", "Queued batch, then closing").
 
@@ -183,8 +188,11 @@ Handled residue:
 
 - **P1.** `Subscriber::Unsubscribe` from a thread outside any delivery takes the gate barrier, which
   waits only for that subscription's in-flight row deliveries, and `provider->Unsubscribe` waits only
-  for its own deliveries (sub:212-249, 641-751, read). *If either can wait on something the batch
-  thread holds, STOP-AND-ASK: it is a domain 3 change.*
+  for its own deliveries and the provider's lock (sub:212-249, 641-751, read). *If either can wait on
+  something the batch thread holds, STOP-AND-ASK: it is a domain 3 change.* **This stop condition
+  fires under Decision 2 option (a):** a transport thread holding the in-process provider's lock
+  would wait in `Stop` for a batch thread whose callback needs that lock (`ipp:48-52`, sub:742-750).
+  Under option (b) it does not fire.
 - **P2.** `InProcessPubSubProvider` delivers synchronously inside `Publish` under its instance mutex
   (ladder ground rules). Rungs 3–6 depend on it to show `Publish` returning while a callback blocks.
   *If false, STOP-AND-ASK; do not switch providers silently.*
@@ -208,7 +216,7 @@ proposals; the PM decides.
 | Test | Kind | Asserts | Red on `9ab5d86`, for the right reason |
 |---|---|---|---|
 | `EveryCallbackRunsOnTheBatchThreadInWindowOrder` | forcing, rung 3 | `max_rows` 2. Callback signals entered, then waits for "all publishes returned". A publisher thread publishes 6 rows. Every `Publish` returns while the first callback blocks; callback thread ≠ publisher thread, one id for all; in-flight ≤ 1; first x = 0, 2, 4. | The first callback runs inside `Publish`; its wait times out. |
-| `ClosingFromAnotherThreadDeliversQueuedWindowsThenClosing` | forcing, rung 4 | (a) A `kRowLimit` callback is held while 2 more full windows queue and 1 row is pending; main `Unsubscribe`s, a helper releases the latch. Deliveries `kRowLimit`×3 then `kClosing`(1), all on the batch thread, all before `Unsubscribe` returns. (b) Same, ended by `~SubscriberArrow`. (c) Same as rung 6(c), then `~SubscriberArrow` from main while the in-callback-unsubscribed subscription still has a queued window: the destructor returns only after its `kClosing`. | `kClosing` runs on the `Unsubscribe` thread, overlapping the held callback (in-flight 2). |
+| `ClosingFromAnotherThreadDeliversQueuedWindowsThenClosing` | forcing, rung 4 | (a) A `kRowLimit` callback is held while 2 more full windows queue and 1 row is pending; main `Unsubscribe`s, a helper releases the latch. Deliveries `kRowLimit`×3 then `kClosing`(1), all on the batch thread, all before `Unsubscribe` returns. (b) Same, ended by `~SubscriberArrow`. (c) Same as rung 6(c), then `~SubscriberArrow` from main while the in-callback-unsubscribed subscription still has a queued window: the destructor returns only after its `kClosing`. (d) Racing cancel: while (a)'s `Unsubscribe` waits, a second thread's `Unsubscribe(id)` also returns only after `kClosing`. | `kClosing` runs on the `Unsubscribe` thread, overlapping the held callback (in-flight 2). |
 | `OverBudgetRowAroundInCallbackUnsubscribeIsCounted` | forcing, rung 5, **`heavy`**, own executable | `list<int8>` schema, large `max_rows`. One good row, then `PublishDirect` of the crafted row. First delivery: `kRowLimit`, 1 row (the budget path ran). Its callback `Unsubscribe`s. Then `kClosing`, 0 rows, `rows_dropped` 1. Σ rows + Σ dropped = 2. | Σ = 1: the guard drops the row uncounted. |
 | `UnsubscribeFromInsideACallbackNeverDeliversNested` | forcing, rung 6 | (a) a `kTimeout` callback blocks while another thread publishes k < `max_rows` rows, then `Unsubscribe`s (returns inside the callback) and returns: depth ≤ 1, then `kClosing` with k rows, then nothing. (b) same from a `kRowLimit` callback. (c) a held `kRowLimit` callback while another full window queues and one row is pending, then `Unsubscribe`: queued `kRowLimit`, `kClosing`(1), nothing. | `kClosing` is delivered inside the calling callback: depth 2. |
 | `InCallbackUnsubscribeWhilePublishingDoesNotDeadlock` | guard (ladder; BC-5) | A callback `Unsubscribe`s while another thread is inside `Publish` holding the in-process mutex; both return within the ctest TIMEOUT. | Declared green before and after. |
@@ -237,18 +245,24 @@ record each red on `9ab5d86` (rung 5 under `-L heavy`), then implement §1–§5
   L12 (no nesting) and L1 (no silent loss) cannot all hold — LL-1's collision, for the destructor.
   The mechanism treats it like an in-callback `Unsubscribe` (no special case); the owner decides
   whether L9's exception is amended to name it. No test until ruled (it would be a new subject).
-- **Owner decision 2 (Brief).** d7 D10 and D-D7F-2 say the transport's thread "never waits on a
-  callback". The owner's ruling text does not; it concerns row delivery. A user who `Unsubscribe`s a
-  batched subscription *from* a transport thread (e.g. a per-row callback) waits for its last
-  batches, as L9 requires. Suggested D10 wording: "batch assembly never makes the transport's
-  thread run or wait on a callback". Today that same call runs `kClosing` on that thread.
+- **Owner decision 2 (Brief), STOP-AND-ASK.** User code on a transport delivery thread (e.g. a
+  per-row callback) calls `Unsubscribe`/the destructor on a batched subscription. (a) Waiting, as
+  L9's main clause says, makes that thread, which holds the in-process provider's lock, wait for the
+  batch thread; any of that subscription's callbacks calling `Publish`/`Subscribe`/`Unsubscribe` on
+  the provider then hangs both, silently (P1 fires). (b) Not waiting is domain 3's published
+  carve-out: an `Unsubscribe` from inside a delivery does not wait, because waiting "lets two
+  handlers hang one another" (`pubsub-interface-spec.md:1015-1021`, ruling 2026-09-04); L9's
+  exception would widen to it. Fact, not authority: today's tree already hangs here when the
+  callback is a timer-thread `kTimeout`. **Recommended and default: (b)**, built as follows (under
+  (a), §3 stands as written): `Stop` gains a third case, "caller inside a delivery on this subscription's provider"
+  (`internal::InsideDeliveryOn(provider)`, BC-6's single site, reused; the provider pointer kept as
+  a private `const void*` token), returning false like the in-callback case: ≈ +6 lines, one
+  private member, and a rung-6 variant test. No domain 3 change either way.
 - **Residue, pre-existing, unchanged:** callbacks of two subscriptions that each `Unsubscribe` the
   other wait on each other forever (today's timer joins do the same). Outside the ladder; recorded
   under BC-5, not designed around.
-- **ABI:** no member added (§4 reuses `batchers_`); `RecordBatchBatcher` is cpp-private.
-- **Coexistence window:** none. `Flush`'s delivery half, `TimerLoop` and the retry copy go in this
-  stage; nothing later deletes what this stage adds.
-- **Size:** within one stage, far under the 250 ceiling; no split proposed.
+- **ABI:** no member added under (a); `RecordBatchBatcher` is cpp-private. **Coexistence window:**
+  none; nothing later deletes what this stage adds. **Size:** far under 250; no split.
 
 ## Files-to-touch
 
@@ -260,12 +274,16 @@ record each red on `9ab5d86` (rung 5 under `-L heavy`), then implement §1–§5
 - `pubsub-arrow/tests/test_pubsub_arrow_heavy.cpp` (new) and `pubsub-arrow/tests/CMakeLists.txt`:
   `pubsub_arrow_heavy_tests`, `LABELS heavy`, a TIMEOUT stated with its measurement (file precedent).
 - `pubsub-arrow/conanfile.py`: `cmake.test()` → `cmake.ctest(cli_args=["-LE", "heavy"])` (P5).
-- `integration-tests/pubsub-arrow-fastdds/tests/test_roundtrip.cpp`: stale thread comments :263,
-  :276-277.
+- `integration-tests/pubsub-arrow-fastdds/tests/test_roundtrip.cpp`: stale thread comments
+  :209-210, :221-222, :263, :276-277.
+- `arrow-bridge/benchmarks/bench_arrow_codec.cpp`: declare `received` (:511) before `sub` (:507), so
+  the destructor's drain never calls the callback on a destroyed atomic; fix the stale "Flush runs"
+  comment (:18).
 - `docs/domains/d7-batch-assembly.md`, `docs/domains/bounded-context-register.md`,
   `plans/D7F-test-ladder.md`: §7.
 
-**Declared net lines (production, cpp + header code): +90 / −60, net ≈ +30.** Tests ≈ +500 and docs
+**Declared net lines (production, cpp + header code): +92 / −64, net ≈ +28** (B1's fix removes the
+put-back; the deadline check adds 1). Decision 2 (b) would add ≈ +6. Tests ≈ +520 and docs
 ≈ +40 / −25, not counted. New public surface: **0**.
 
 ## Files-to-delete
@@ -277,5 +295,6 @@ record each red on `9ab5d86` (rung 5 under `-L heavy`), then implement §1–§5
 - `Stop`'s inline `Flush(kClosing)` delivery (cpp:121) → `Close(kClosing)` queued behind the queue.
 - `schema_set` and `schema_decided` in the batched lambda (cpp:324-327, 337-345) → `decided_`.
 - Comments stating the retired behaviour: cpp:39-48 (rewritten), 185-188; test :545, :1223,
-  :1355-1365, :1381-1382, :1397-1403, :1422-1423; `BatchSink` :481-482; fastdds :263, :276-277;
-  d7 §4 :233-236. No test is deleted: audit 0a found no forbidden subject.
+  :1355-1365, :1381-1382, :1397-1403, :1422-1423; `BatchSink` :481-482; fastdds :209-210,
+  :221-222, :263, :276-277; benchmark :18; d7 §4 :233-236. The erase-before-stop in `Unsubscribe`
+  (cpp:391-395) and clear-before-stop in the destructor (cpp:258-260) → §4's rule. No test is deleted: audit 0a found no forbidden subject.

@@ -30,29 +30,28 @@ No public type, method or signature changes. New public surface: 0.
 ## Corner cases forbidden vs handled
 **Forbidden:** two callbacks at once or out of order; a callback on the publishing or transport
 thread; anything after the closing batch; the closing batch before a waiting batch; a batch delivered
-inside the callback that unsubscribed; a batch arriving after the subscriber object's destructor
-returned on another thread (it now waits, even for a subscription that unsubscribed itself).
-**Handled:** a callback slower than the data keeps batches queued in memory (your accepted cost); a
-timeout that passes while your callback runs closes when it returns (closing on time would need a
-second thread or a clock read per row on the transport's thread; nothing is lost).
+inside the callback that unsubscribed; an unsubscribe racing another one, or the destructor,
+returning before the last batches arrived; a row joining a batch whose timeout has already passed.
+**Handled:** a callback slower than the data keeps batches queued in memory (your accepted cost).
 
 ## Decisions for you
 1. **If your code destroys the subscriber object from inside one of its own batch callbacks, do the waiting batches and the closing batch still arrive?**
    (a) Yes, after that callback returns, as with an in-callback unsubscribe. You see every row, but batches arrive after the destructor returned, so your callback must outlive them. *Arch:* extends L9's exception from "Unsubscribe" to "Unsubscribe or destruction"; keeps L1 and L12.
    (b) No; they are discarded. You never hear of those rows. *Arch:* breaks L1 and the round purpose ("no lost row goes unreported").
    (c) The closing batch runs inside the destructor. Your callback is re-entered while running. *Arch:* breaks L12 (one at a time).
-   **Recommendation:** (a): it is the choice you made for the same conflict with Unsubscribe, it keeps L1 and L12, and it needs no extra code. **Default:** (a), built as designed. L9's text names only Unsubscribe today.
-2. **If your code unsubscribes a batched subscription from a thread that is delivering rows (e.g. a per-row callback), should Unsubscribe wait for that subscription's last batches?**
-   (a) Wait. On return nothing more arrives and you may free your state; the transport thread pauses meanwhile. *Arch:* holds L9; domain 7's note "the transport's thread never waits on a callback" is reworded to "batch assembly never makes it wait".
-   (b) Return at once; batches follow later. Freeing your state on return becomes unsafe. *Arch:* keeps that note literally; breaks L9.
-   **Recommendation:** (a), from L9 and the round purpose; your ruling's words were about rows queuing, not this call. **Default:** (a). Today this call runs the closing batch on the transport thread itself.
+   **Recommendation:** (a): it is the choice you made for the same conflict with Unsubscribe, and it keeps L1 and L12. **Default:** (a), built as designed. L9's text names only Unsubscribe today.
+2. **If your code unsubscribes a batched subscription (or destroys the subscriber) from a thread that is delivering rows, e.g. inside a per-row callback, should that call wait for the subscription's last batches?**
+   (a) Wait. On return nothing more arrives and you may free your state, but that thread holds the in-process transport's lock while waiting: if any of those batch callbacks calls Publish, Subscribe or Unsubscribe on that transport, both threads hang forever with no error. *Arch:* holds L9's main clause; contradicts the published rule that an Unsubscribe from inside a delivery does not wait, because waiting lets two handlers hang one another (interface spec §6, ruling 2026-09-04); the design's premise P1 fails.
+   (b) Return at once; the remaining batches, then the closing batch, still arrive in order on the subscription's own thread. No hang, but you may not free what those callbacks use until the closing batch has arrived. *Arch:* extends domain 3's in-delivery carve-out to L9 (L9's exception widens); keeps L1 and L12.
+   **Recommendation:** (b): the round purpose is that every batch arrives and no lost row goes unreported, and a hang delivers neither; §1 Intent leaves subscription lifetime to domain 3, whose rule (b) is. **Default:** (b). Fact: today's tree already hangs here for a timer-thread callback.
 
 ## Risks accepted / debt carried
 - Two subscriptions whose callbacks each unsubscribe the other wait forever (true today too; recorded).
   DEBT-6 is settled here, not carried.
 
 ## Numbers
-Declared net lines: +90 / −60 (production) · new public surface: 0 · design cycles used: 1/2
+Declared net lines: +92 / −64 (production; +6 more under Decision 2 (b)) · new public surface: 0 ·
+design cycles used: 2/2
 
 ---
 *As landed (<date>, appended by the PM at close, ≤5 lines):*
