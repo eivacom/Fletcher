@@ -100,8 +100,7 @@ bool Stop() {                              // idempotent; true = every delivery 
 
 **The rule: a batcher leaves `batchers_` only after its loop has ended.** No path removes an entry
 whose subscription is still delivering, so every waiter (a duplicate `Unsubscribe`, the destructor)
-can always find it. Today `Unsubscribe` erases first (cpp:391-395) and the destructor clears first
-(cpp:258-260); both orders go.
+can always find it (the erase-first and clear-first orders go: Files-to-delete).
 
 - `Unsubscribe(id)`: under `mu_`, **copy** the `shared_ptr` from `batchers_` (no erase), and move out
   every entry whose `Ended()` (a lock-free read of `ended_`) is true. Outside `mu_`, drop the ended
@@ -116,7 +115,7 @@ can always find it. Today `Unsubscribe` erases first (cpp:391-395) and the destr
   (`ended_` is set only after the callback returns) covers the whole of that in-callback call, so
   `subscriber_`, `mu_` and the maps outlive it.
 - The `batchers_` comment (hpp:171) becomes "batched subscriptions whose deliveries have not ended".
-  No member is added; the header changes in comments only.
+  §4 adds no member; Decision 2 (b) adds one private header member (Risks).
 
 ### 5. DEBT-6: the batcher owns the schema decision (C3, BC-3)
 
@@ -246,28 +245,26 @@ record each red on `9ab5d86` (rung 5 under `-L heavy`), then implement §1–§5
   The mechanism treats it like an in-callback `Unsubscribe` (no special case); the owner decides
   whether L9's exception is amended to name it. No test until ruled (it would be a new subject).
 - **Owner decision 2 (Brief), STOP-AND-ASK.** User code on a transport delivery thread (e.g. a
-  per-row callback) calls `Unsubscribe`/the destructor on a batched subscription. (a) Waiting, as
-  L9's main clause says, makes that thread, which holds the in-process provider's lock, wait for the
-  batch thread; any of that subscription's callbacks calling `Publish`/`Subscribe`/`Unsubscribe` on
-  the provider then hangs both, silently (P1 fires). (b) Not waiting is domain 3's published
-  carve-out: an `Unsubscribe` from inside a delivery does not wait, because waiting "lets two
-  handlers hang one another" (`pubsub-interface-spec.md:1015-1021`, ruling 2026-09-04); L9's
-  exception would widen to it. Fact, not authority: today's tree already hangs here when the
-  callback is a timer-thread `kTimeout`. **Recommended and default: (b)**, built as follows (under
-  (a), §3 stands as written): `Stop` gains a third case, "caller inside a delivery on this subscription's provider"
-  (`internal::InsideDeliveryOn(provider)`, BC-6's single site, reused; the provider pointer kept as
-  a private `const void*` token), returning false like the in-callback case: ≈ +6 lines, one
-  private member, and a rung-6 variant test. No domain 3 change either way.
+  per-row callback) calls `Unsubscribe`/the destructor on a batched subscription. (a) Wait: P1 fires,
+  a silent hang. (b) Return at once: domain 3's carve-out (`pubsub-interface-spec.md:1015-1021`,
+  ruling 2026-09-04), widening L9's exception. Fact, not authority: today's tree already hangs here
+  for a timer-thread `kTimeout` callback. **Recommended and default: (b).** `Stop` gains a third
+  case, "caller inside a delivery on this subscription's provider" (`internal::InsideDeliveryOn`,
+  BC-6's single site, reused; the provider pointer kept as a private `const void*` token),
+  returning false like the in-callback case: ≈ +6 lines, one private member, a rung-6 variant
+  test. Under (a), §3 stands as written. No domain 3 change either way.
 - **Residue, pre-existing, unchanged:** callbacks of two subscriptions that each `Unsubscribe` the
   other wait on each other forever (today's timer joins do the same). Outside the ladder; recorded
   under BC-5, not designed around.
-- **ABI:** no member added under (a); `RecordBatchBatcher` is cpp-private. **Coexistence window:**
+- **ABI:** under the default (b), `SubscriberArrow` gains one private member (the provider token;
+  `Subscriber` has no accessor), so its layout changes; none under (a). **Coexistence window:**
   none; nothing later deletes what this stage adds. **Size:** far under 250; no split.
 
 ## Files-to-touch
 
 - `pubsub-arrow/src/subscriber_arrow.cpp`: §1–§5.
-- `pubsub-arrow/include/fletcher/pubsub_arrow/subscriber_arrow.hpp`: comments only (§4, §7).
+- `pubsub-arrow/include/fletcher/pubsub_arrow/subscriber_arrow.hpp`: comments (§4, §7); under (b),
+  the private provider token, and hpp:147 (with README:93 and d7 L9) states "may not free on return".
 - `pubsub-arrow/README.md`: §7.
 - `pubsub-arrow/tests/test_pubsub_arrow.cpp`: rungs 3, 4, 6, three guards, ten re-anchors, the
   `BatchSink` comment (:481-482).
@@ -297,4 +294,5 @@ put-back; the deadline check adds 1). Decision 2 (b) would add ≈ +6. Tests ≈
 - Comments stating the retired behaviour: cpp:39-48 (rewritten), 185-188; test :545, :1223,
   :1355-1365, :1381-1382, :1397-1403, :1422-1423; `BatchSink` :481-482; fastdds :209-210,
   :221-222, :263, :276-277; benchmark :18; d7 §4 :233-236. The erase-before-stop in `Unsubscribe`
-  (cpp:391-395) and clear-before-stop in the destructor (cpp:258-260) → §4's rule. No test is deleted: audit 0a found no forbidden subject.
+  (cpp:391-395) and clear-before-stop in the destructor (cpp:258-260) → §4's rule. No test is
+  deleted: audit 0a found no forbidden subject.

@@ -814,7 +814,7 @@ Review: [D7F-1-design-review.md](D7F-1-design-review.md). No BLOCKERs; P1–P4 v
 ## Carried from D7F-2 code review to D7F-3
 - **DEBT-6 (S2):** "has the schema been decided" lives in three places (the once-flag, the `schema_decided` atomic, decoder presence), and `SetSchema` trusts its caller to call it once. A `decided_` flag set under the batcher's own lock would let `SetSchema` refuse a second decision. D7F-3 reworks the batcher's state and threading; settle it there. Source: `plans/reviews/D7F-2-codereview.md`.
 
-## D7F-3 — one batch thread, in order, nothing lost at close (NEEDS-REWORK, 2 BLOCKERs, cycle 1 of 2) — [review](D7F-3-design-review.md)
-- **DEBT-1:** The deadline residue's "why not forbidden?" rests on code precedent. Forbid it instead: `AddRow` calls `Close(kTimeout)` before `TryAppend` when `has_deadline_ && now >= deadline_`. Otherwise d7 L4/L5 record the residue and are not marked `[built]`.
-- **DEBT-2:** `cv_` is shared by the loop and every `Stop` waiter, so each notify on it (`Close`, `ArmTimer`, `ended_`) must be `notify_all`.
-- **DEBT-3:** `Files-to-touch` misses two items. In `arrow-bridge/benchmarks/bench_arrow_codec.cpp`, `received` (:511) must be declared before `sub` (:507), or the destructor's drain writes to a dead atomic; its comment at :18 is also stale. The fastdds comments at `test_roundtrip.cpp:209-210` and `:221-222` also need updating.
+## D7F-3 — one batch thread, in order, nothing lost at close (cycle 1 NEEDS-REWORK; cycle 2 APPROVE-WITH-DEBT(2)) — [review](D7F-3-design-review.md)
+- ~~DEBT-1..3 (deadline forbid, `notify_all`, benchmark and fastdds Files-to-touch)~~ Folded into design revision 2 (§2, §1, Files-to-touch).
+- **C2-1 (PM-facing, before the owner reads the brief):** Remove the destructor from Decision 2. Destroying over a provider inside its own delivery is already forbidden (§6 clause 5, ruling 2026-09-05; `sub:556-578`), and the program stops under either option. Scope (b)'s "No hang" to the subscription's own provider.
+- **C2-2 (must land with (b)):** The provider token becomes a private member of `subscriber_arrow.hpp`, because `Subscriber` has no accessor; fix the "comments only" and ABI lines. The third `Stop` case moves and detaches `thread_`. Publish the new "may not free on return" case at hpp:147, README:93 and d7 L9.
