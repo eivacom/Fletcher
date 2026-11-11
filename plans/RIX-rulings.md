@@ -182,3 +182,15 @@ and the caller may not free what those callbacks use until the closing batch arr
 no-wait-in-delivery rule (interface spec §7 clause 6, 2026-09-04) to batches.
 **Applies to:** domain 7 L9. Its exception widens to cover both cases, and the text must be amended to match
 (D7F-3). Also the header `Unsubscribe` doc, README:93. Destroying the subscriber from a row-delivery thread stays forbidden (2026-09-05).
+
+## 2026-11-11 — The D7F-3 ladder gains rungs 6(d) and 6(e)
+> Test plan 1: "Keep it, amend ladder (Recommended)"
+> Test plan 2: "Add as rung 6(e) (Recommended)"
+
+*(Chosen options, recorded as the labels the owner selected.)*
+
+**Rulings:** **both 2026-11-11 L9 rulings are proven by a test in D7F-3.** Rung 6(d) (an Unsubscribe
+from a row-delivery thread returns at once) stays and is added to the ladder and the design. A new rung 6(e)
+tests the destruction case: destroying the subscriber inside its own batch callback still delivers the
+queued batches and then the closing batch. Source: step-0b audit `plans/reviews/D7F-3-audit-0b.md`.
+**Applies to:** `plans/D7F-test-ladder.md` rung 6; the D7F-3 design's test table.
