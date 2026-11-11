@@ -813,3 +813,8 @@ Review: [D7F-1-design-review.md](D7F-1-design-review.md). No BLOCKERs; P1–P4 v
 
 ## Carried from D7F-2 code review to D7F-3
 - **DEBT-6 (S2):** "has the schema been decided" lives in three places (the once-flag, the `schema_decided` atomic, decoder presence), and `SetSchema` trusts its caller to call it once. A `decided_` flag set under the batcher's own lock would let `SetSchema` refuse a second decision. D7F-3 reworks the batcher's state and threading; settle it there. Source: `plans/reviews/D7F-2-codereview.md`.
+
+## D7F-3 — one batch thread, in order, nothing lost at close (NEEDS-REWORK, 2 BLOCKERs, cycle 1 of 2) — [review](D7F-3-design-review.md)
+- **DEBT-1:** The deadline residue's "why not forbidden?" rests on code precedent. Forbid it instead: `AddRow` calls `Close(kTimeout)` before `TryAppend` when `has_deadline_ && now >= deadline_`. Otherwise d7 L4/L5 record the residue and are not marked `[built]`.
+- **DEBT-2:** `cv_` is shared by the loop and every `Stop` waiter, so each notify on it (`Close`, `ArmTimer`, `ended_`) must be `notify_all`.
+- **DEBT-3:** `Files-to-touch` misses two items. In `arrow-bridge/benchmarks/bench_arrow_codec.cpp`, `received` (:511) must be declared before `sub` (:507), or the destructor's drain writes to a dead atomic; its comment at :18 is also stale. The fastdds comments at `test_roundtrip.cpp:209-210` and `:221-222` also need updating.
