@@ -167,3 +167,18 @@ batch is the last delivery, after anything already queued'."
 
 **Applies to:** domain 7, L9 (revised in place a second time, which clarifies the first revision
 and does not supersede it); D7F ladder, rung 6.
+
+## 2026-11-11 — Destroying the subscriber inside a batch callback, and unsubscribing from a row-delivery thread
+> Decision 1: "(a) Yes, after the callback (Recommended)"
+> Decision 2: "(b) Return at once (Recommended)"
+
+*(Chosen options, recorded as the labels the owner selected; the full option text is in `plans/D7F-3-brief.md`, Decisions 1 and 2.)*
+
+**Rulings:** (1) **destruction from inside the subscriber's own batch callback is treated like an in-callback
+`Unsubscribe`**: queued batches, then the closing batch, arrive after the callback returns, and the callback
+must outlive them. (2) **An `Unsubscribe` from a thread delivering rows on the subscription's own transport
+returns at once**; the remaining batches, then the closing batch, still arrive in order on the batch thread,
+and the caller may not free what those callbacks use until the closing batch arrives. This extends domain 3's
+no-wait-in-delivery rule (interface spec §7 clause 6, 2026-09-04) to batches.
+**Applies to:** domain 7 L9. Its exception widens to cover both cases, and the text must be amended to match
+(D7F-3). Also the header `Unsubscribe` doc, README:93. Destroying the subscriber from a row-delivery thread stays forbidden (2026-09-05).
