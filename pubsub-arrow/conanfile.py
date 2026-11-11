@@ -59,7 +59,9 @@ class FletcherPubsubArrowConan(ConanFile):
         cmake.configure()
         cmake.build()
         if self.options.run_tests:
-            cmake.test()
+            # Everything but the `heavy` label (domain 7 D11): those tests run on request with
+            # `ctest -L heavy`. CMake.ctest runs under the run environment, like cmake.test().
+            cmake.ctest(cli_args=["-LE", "heavy", "--output-on-failure"])
 
     def package(self):
         copy(self, "*.hpp",

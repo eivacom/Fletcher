@@ -18,8 +18,10 @@
 #include <fletcher/pubsub_arrow/publisher_arrow.hpp>
 #include <fletcher/pubsub_arrow/schema_import.hpp>
 #include <fletcher/pubsub_arrow/subscriber_arrow.hpp>
+#include <functional>
 #include <future>
 #include <mutex>
+#include <random>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -478,8 +480,9 @@ namespace {
 
 using BatchStatus = SubscriberArrow::BatchStatus;
 
-// Thread-safe sink for delivered batches (batches may arrive on the batcher's
-// timer thread for timeout flushes).
+// Thread-safe sink for delivered batches. Every batch arrives on the subscription's own batch
+// thread (D10), never on the publishing thread, so a test reads after sink.WaitFor, or after an
+// Unsubscribe / ~SubscriberArrow from outside the callback (L9).
 struct BatchSink {
     struct Delivery {
         int64_t num_rows;
@@ -542,7 +545,7 @@ TEST(SubscriberArrowBatchTest, FlushesAtRowLimit) {
 
     for (int i = 0; i < 3; ++i) pub.Publish(kTopic, MakeRow(i, "n"));
 
-    // The count trigger flushes synchronously on the publishing thread.
+    ASSERT_TRUE(sink.WaitFor(1, std::chrono::seconds(2)));
     std::lock_guard<std::mutex> lk(sink.mu);
     ASSERT_EQ(sink.deliveries.size(), 1u);
     EXPECT_EQ(sink.deliveries[0].num_rows, 3);
@@ -613,6 +616,7 @@ TEST(SubscriberArrowBatchTest, AttachmentsAlignWithRows) {
     pub.Publish(kTopic, MakeRow(1, "a"), sent);  // row 0 has an attachment
     pub.Publish(kTopic, MakeRow(2, "b"));        // row 1 has none
 
+    ASSERT_TRUE(sink.WaitFor(1, std::chrono::seconds(2)));
     std::lock_guard<std::mutex> lk(sink.mu);
     ASSERT_EQ(sink.deliveries.size(), 1u);
     ASSERT_EQ(sink.deliveries[0].num_rows, 2);
@@ -1121,6 +1125,7 @@ TEST(SubscriberArrowBatchTest, DictionaryColumnRefoldedToDictionaryArray) {
     pub.Publish(kTopic, {std::make_shared<arrow::StringScalar>("blue")});
     pub.Publish(kTopic, {std::make_shared<arrow::StringScalar>("red")});
 
+    ASSERT_TRUE(sink.WaitFor(1, std::chrono::seconds(2)));
     std::lock_guard<std::mutex> lk(sink.mu);
     ASSERT_EQ(sink.deliveries.size(), 1u);
     auto batch = sink.deliveries[0].batch;
@@ -1160,6 +1165,7 @@ TEST(SubscriberArrowBatchTest, DictionaryColumnPreservesNulls) {
     pub.Publish(kTopic, {arrow::MakeNullScalar(arrow::utf8())});
     pub.Publish(kTopic, {std::make_shared<arrow::StringScalar>("x")});
 
+    ASSERT_TRUE(sink.WaitFor(1, std::chrono::seconds(2)));
     std::lock_guard<std::mutex> lk(sink.mu);
     ASSERT_EQ(sink.deliveries.size(), 1u);
     auto col = sink.deliveries[0].batch->column(0);
@@ -1220,8 +1226,9 @@ TEST(SubscriberArrowBatchTest, CorruptRowIsCountedDroppedAndBatchStaysAligned) {
     pub.PublishDirect(kTopic,
                       [&](WriteBuffer& buf) { buf.Append(truncated.data(), truncated.size()); });
 
-    pub.Publish(kTopic, row_b, att_b);  // reaches max_rows -> synchronous flush
+    pub.Publish(kTopic, row_b, att_b);  // reaches max_rows: the window closes
 
+    ASSERT_TRUE(sink.WaitFor(1, std::chrono::seconds(2)));
     std::lock_guard<std::mutex> lk(sink.mu);
     ASSERT_EQ(sink.deliveries.size(), 1u);
     const auto& d = sink.deliveries[0];
@@ -1267,6 +1274,7 @@ TEST(SubscriberArrowBatchTest, FixedSizeListWithNamedItemArrivesNonNull) {
         std::make_shared<arrow::FixedSizeListScalar>(fb.Finish().ValueOrDie(), fsl_type);
     pub.Publish(kTopic, {fsl_scalar});
 
+    ASSERT_TRUE(sink.WaitFor(1, std::chrono::seconds(2)));
     std::lock_guard<std::mutex> lk(sink.mu);
     ASSERT_EQ(sink.deliveries.size(), 1u);
     auto batch = sink.deliveries[0].batch;
@@ -1331,6 +1339,7 @@ TEST(SubscriberArrowBatchTest, FinishFailureIsReportedNotFatal) {
         pub.Publish(kTopic, {std::make_shared<arrow::StringScalar>("v" + std::to_string(i))});
     }
 
+    ASSERT_TRUE(sink.WaitFor(1, std::chrono::seconds(2)));
     {
         std::lock_guard<std::mutex> lk(sink.mu);
         ASSERT_EQ(sink.deliveries.size(), 1u);
@@ -1352,55 +1361,51 @@ TEST(SubscriberArrowBatchTest, FinishFailureIsReportedNotFatal) {
     EXPECT_EQ(sink.deliveries[1].status.rows_dropped, 0);
 }
 
-// The last remaining batched-subscriber case: Unsubscribe called from INSIDE the batch callback,
-// itself invoked synchronously from Flush() on the publishing thread. A real
-// BatchCapacityExceeded needs a column that trips Arrow's ~2 GiB builder limit
-// (BatchDecoderTest.CapacityExceededLeavesBuildersUntouched in arrow-bridge/tests/
-// test_batch_decoder.cpp needs 300 rows of an 8 MiB column to force it) — unforceable here without
-// allocating gigabytes in a unit test, so this drives the identical reentrant-Unsubscribe-during-
-// Flush path through the ordinary row-limit flush instead (max_rows = 1), exercising the
-// `if (stopped_) return;` guard in the BatchCapacityExceeded handler (subscriber_arrow.cpp)
-// precisely so a mid-flush Unsubscribe doesn't touch a decoder Stop() already tore down; this
-// pins the observable half of that fix: no further delivery after Unsubscribe returns, and the
-// process does not crash.
+// Unsubscribe called from INSIDE a kRowLimit batch callback (L9, L11). max_rows = 1, so the first
+// row is a full window of its own and nothing is pending when the callback unsubscribes: there is
+// no closing batch to deliver, and nothing may follow. The callback signals once its Unsubscribe
+// has returned; only then are rows 2-3 published, and the count is read after ~SubscriberArrow,
+// which waits for every delivery the subscription still owes.
 TEST(SubscriberArrowBatchTest, UnsubscribeFromCallbackDuringRowLimitFlushStopsDeliveryCleanly) {
     auto mock = std::make_shared<MockProvider>();
     PublisherArrow pub(mock);
-    SubscriberArrow sub(mock);
     pub.CreateTopic(kTopic, TestSchema());
 
-    int delivery_count = 0;
-    uint64_t sub_id = 0;
+    std::atomic<int> delivery_count{0};
+    std::atomic<uint64_t> sub_id{0};
+    std::promise<void> unsubscribed;
+    std::future<void> unsubscribed_future = unsubscribed.get_future();
+    auto sub = std::make_unique<SubscriberArrow>(mock);
     SubscriberArrow::BatchOptions opt;
-    opt.max_rows = 1;  // every published row is its own row-limit flush
+    opt.max_rows = 1;  // every published row is a full window of its own
     opt.timeout = std::chrono::minutes(10);
-    auto result = sub.Subscribe(
+    auto result = sub->Subscribe(
         kTopic,
         [&](std::shared_ptr<arrow::RecordBatch>, std::vector<Attachments>, BatchStatus) {
-            ++delivery_count;
-            // Reentrant: this runs from inside RecordBatchBatcher::Flush(), on the publishing
-            // thread, with the batcher's own mutex released.
-            sub.Unsubscribe(sub_id);
+            if (++delivery_count != 1) return;  // counted; a second delivery fails below
+            sub->Unsubscribe(sub_id.load());
+            unsubscribed.set_value();
         },
         opt);
     sub_id = result.subscription_id;
 
-    pub.Publish(kTopic, MakeRow(1, "a"));  // triggers the row-limit flush -> the callback above
-    EXPECT_EQ(delivery_count, 1);
+    pub.Publish(kTopic, MakeRow(1, "a"));  // a full window -> the callback above
+    ASSERT_EQ(unsubscribed_future.wait_for(std::chrono::seconds(5)), std::future_status::ready);
 
     // No further delivery: the subscription is gone, and the process has not crashed getting here.
     pub.Publish(kTopic, MakeRow(2, "b"));
     pub.Publish(kTopic, MakeRow(3, "c"));
-    EXPECT_EQ(delivery_count, 1);
+    sub.reset();
+    EXPECT_EQ(delivery_count.load(), 1);
 }
 
-// Pins RecordBatchBatcher::Start's fix: a timeout flush runs the callback on the batcher's own
-// timer thread, so an Unsubscribe from inside it makes that same thread take Stop()'s self-detach
-// branch. Before the fix the timer thread's lambda held only a raw `this`, so the shared_ptr
-// Unsubscribe drops there was the last owner and destroyed the batcher while the timer thread was
-// still inside Flush()/TimerLoop() on it (a use-after-free that may or may not crash under a given
-// allocator). With the fix the timer thread owns a shared_ptr of its own, kept alive until
-// TimerLoop() itself returns, so the object outlives the thread's use of it.
+// Pins L11 (RecordBatchBatcher::Start's fix): the callback runs on the subscription's own batch
+// thread, so an Unsubscribe from inside it makes that same thread take Stop()'s self-detach
+// branch. Before the fix the thread's lambda held only a raw `this`, so the shared_ptr
+// Unsubscribe drops there was the last owner and destroyed the batcher while the thread was still
+// running inside it (a use-after-free that may or may not crash under a given allocator). With the
+// fix the thread owns a shared_ptr of its own, kept alive until its loop returns, so the object
+// outlives the thread's use of it.
 TEST(SubscriberArrowBatchTest, UnsubscribeFromInsideATimeoutFlushIsSafe) {
     auto mock = std::make_shared<MockProvider>();
     PublisherArrow pub(mock);
@@ -1419,15 +1424,18 @@ TEST(SubscriberArrowBatchTest, UnsubscribeFromInsideATimeoutFlushIsSafe) {
     auto result = sub.Subscribe(
         kTopic,
         [&](std::shared_ptr<arrow::RecordBatch>, std::vector<Attachments>, BatchStatus) {
-            // Stop()'s own kClosing flush (triggered by the Unsubscribe below) re-enters this
-            // callback once more; only the first delivery unsubscribes and signals.
-            if (unsubscribed.exchange(true)) return;
+            // The one window was taken by this kTimeout delivery, so nothing is pending and the
+            // Unsubscribe below owes no closing batch. A second delivery, nested in that
+            // Unsubscribe or after it, is a failure (L9, L12).
+            const bool second = unsubscribed.exchange(true);
+            EXPECT_FALSE(second) << "a second batch was delivered";
+            if (second) return;
             uint64_t id;
             {
                 std::lock_guard<std::mutex> lk(id_mu);
                 id = sub_id;
             }
-            sub.Unsubscribe(id);  // runs on the timer thread -- the path the fix protects
+            sub.Unsubscribe(id);  // runs on the batch thread -- the path the fix protects
             delivered.set_value();
         },
         opt);
@@ -1439,7 +1447,7 @@ TEST(SubscriberArrowBatchTest, UnsubscribeFromInsideATimeoutFlushIsSafe) {
     pub.Publish(kTopic, MakeRow(1, "a"));
 
     ASSERT_EQ(delivered_future.wait_for(std::chrono::seconds(5)), std::future_status::ready);
-    // sub goes out of scope here; without the fix the timer thread would already have used freed
+    // sub goes out of scope here; without the fix the batch thread would already have used freed
     // memory well before reaching this point.
 }
 
@@ -1474,6 +1482,7 @@ TEST(SubscriberArrowBatchTest, BatchesAreValidArrow) {
         pub.Publish(kTopic, row);
     }
 
+    ASSERT_TRUE(sink.WaitFor(1, std::chrono::seconds(2)));
     std::lock_guard<std::mutex> lk(sink.mu);
     ASSERT_EQ(sink.deliveries.size(), 1u);
     auto batch = sink.deliveries[0].batch;
@@ -1511,5 +1520,743 @@ TEST(SubscriberArrowBatchTest, ReuseAcrossWindows) {
         for (int64_t r = 0; r < col->length(); ++r) {
             EXPECT_EQ(col->Value(r), expected++);
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// D7F-3 -- one batch thread, in order, nothing lost at close (D10, L1, L4, L9, L11, L12)
+//
+// Every batch callback runs on the subscription's own batch thread: never inside Publish, never on
+// the thread that unsubscribes, one batch at a time, in window order. Closing from outside waits
+// for every queued window and then the kClosing batch; closing from inside a callback (or from a
+// thread delivering rows on the subscription's own transport) returns at once and those batches
+// follow on the batch thread. Observed from the user callback only: an in-flight count, a
+// per-thread nesting depth, and (reason, first x, rows, drops, thread) per delivery. Every wait is
+// bounded, so a red run fails rather than hangs. "Then nothing" is read after ~SubscriberArrow.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// How long a held callback waits for its release, and how long the test thread waits for any
+// event. Generous: on a correct tree each wait ends within about kLetItWait.
+constexpr auto kHold = std::chrono::milliseconds(2000);
+constexpr auto kAwait = std::chrono::milliseconds(3000);
+// How long a helper lets a closing call sit before releasing the callback it waits behind.
+constexpr auto kLetItWait = std::chrono::milliseconds(100);
+
+const std::vector<std::string> kOtherTopic = {"test", "other"};
+
+class Latch {
+   public:
+    void Open() {
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            open_ = true;
+        }
+        cv_.notify_all();
+    }
+    bool WaitFor(std::chrono::milliseconds timeout) {
+        std::unique_lock<std::mutex> lk(mu_);
+        return cv_.wait_for(lk, timeout, [&] { return open_; });
+    }
+    bool IsOpen() {
+        std::lock_guard<std::mutex> lk(mu_);
+        return open_;
+    }
+
+   private:
+    std::mutex mu_;
+    std::condition_variable cv_;
+    bool open_ = false;
+};
+
+thread_local int t_batch_callback_depth = 0;
+
+void RaiseTo(std::atomic<int>& peak, int value) {
+    int seen = peak.load();
+    while (value > seen && !peak.compare_exchange_weak(seen, value)) {
+    }
+}
+
+// The user callback's view of every delivery. `hook` runs inside the delivery, after it is
+// recorded; it is set before subscribing and never changed.
+struct DeliveryLog {
+    struct Rec {
+        BatchStatus::Reason reason;
+        int64_t num_rows;  // -1 for a null batch
+        int32_t first_x;   // -1 when the batch has no row
+        int32_t last_x;    // -1 when the batch has no row
+        int64_t dropped;
+        std::thread::id thread;
+    };
+
+    std::mutex mu;
+    std::condition_variable cv;
+    std::vector<Rec> recs;
+    size_t returned = 0;  // guarded by mu
+    std::atomic<int> in_flight{0};
+    std::atomic<int> max_in_flight{0};
+    std::atomic<int> max_depth{0};
+    std::function<void(size_t index, const Rec& rec)> hook;
+
+    SubscriberArrow::RecordBatchCallback callback() {
+        return [this](std::shared_ptr<arrow::RecordBatch> batch, std::vector<Attachments>,
+                      BatchStatus status) { OnDelivery(batch, status); };
+    }
+
+    void OnDelivery(const std::shared_ptr<arrow::RecordBatch>& batch, BatchStatus status) {
+        RaiseTo(max_in_flight, ++in_flight);
+        RaiseTo(max_depth, ++t_batch_callback_depth);
+        Rec rec{status.reason, batch ? batch->num_rows() : -1, -1, -1, status.rows_dropped,
+                std::this_thread::get_id()};
+        if (batch && batch->num_rows() > 0 && batch->num_columns() > 0 &&
+            batch->column(0)->type_id() == arrow::Type::INT32) {
+            const auto x = std::static_pointer_cast<arrow::Int32Array>(batch->column(0));
+            rec.first_x = x->Value(0);
+            rec.last_x = x->Value(x->length() - 1);
+        }
+        size_t index;
+        {
+            std::lock_guard<std::mutex> lk(mu);
+            index = recs.size();
+            recs.push_back(rec);
+        }
+        cv.notify_all();
+        if (hook) hook(index, rec);
+        --t_batch_callback_depth;
+        --in_flight;
+        {
+            std::lock_guard<std::mutex> lk(mu);
+            ++returned;
+        }
+        cv.notify_all();
+    }
+
+    size_t Count() {
+        std::lock_guard<std::mutex> lk(mu);
+        return recs.size();
+    }
+    bool WaitFor(size_t n, std::chrono::milliseconds timeout) {
+        std::unique_lock<std::mutex> lk(mu);
+        return cv.wait_for(lk, timeout, [&] { return recs.size() >= n; });
+    }
+    // Every callback recorded so far has returned, so none of this test's state is still in use
+    // on a thread the test does not own.
+    bool WaitAllReturned(std::chrono::milliseconds timeout) {
+        std::unique_lock<std::mutex> lk(mu);
+        return cv.wait_for(lk, timeout, [&] { return returned == recs.size(); });
+    }
+    std::vector<Rec> Snapshot() {
+        std::lock_guard<std::mutex> lk(mu);
+        return recs;
+    }
+};
+
+const char* ReasonName(BatchStatus::Reason r) {
+    switch (r) {
+        case BatchStatus::Reason::kRowLimit:
+            return "kRowLimit";
+        case BatchStatus::Reason::kTimeout:
+            return "kTimeout";
+        case BatchStatus::Reason::kClosing:
+            return "kClosing";
+    }
+    return "?";
+}
+
+struct Expected {
+    BatchStatus::Reason reason;
+    int32_t first_x;
+    int64_t num_rows;
+};
+
+// The deliveries are exactly `expected`, in that order, every one on the same thread, which is
+// none of `foreign` (the publishing, unsubscribing and destroying threads), and never two at once
+// or one inside another.
+void ExpectDeliveredInOrderOnOneBatchThread(DeliveryLog& log, const std::vector<Expected>& expected,
+                                            const std::vector<std::thread::id>& foreign) {
+    const auto recs = log.Snapshot();
+    EXPECT_LE(log.max_in_flight.load(), 1) << "two batch callbacks ran at once (L12)";
+    EXPECT_LE(log.max_depth.load(), 1) << "a batch was delivered inside a batch callback (L12)";
+    EXPECT_EQ(recs.size(), expected.size()) << "number of deliveries";
+    for (size_t i = 0; i < recs.size(); ++i) {
+        SCOPED_TRACE("delivery " + std::to_string(i) + " (" + ReasonName(recs[i].reason) +
+                     ", first x " + std::to_string(recs[i].first_x) + ")");
+        if (i < expected.size()) {
+            EXPECT_EQ(recs[i].reason, expected[i].reason);
+            EXPECT_EQ(recs[i].first_x, expected[i].first_x);
+            EXPECT_EQ(recs[i].num_rows, expected[i].num_rows);
+        }
+        EXPECT_EQ(recs[i].dropped, 0);
+        EXPECT_EQ(recs[i].thread, recs[0].thread) << "not the thread of the first delivery (L12)";
+        for (const auto& id : foreign) {
+            EXPECT_NE(recs[i].thread, id) << "delivered on a publishing or closing thread (D10)";
+        }
+    }
+}
+
+SubscriberArrow::BatchOptions RowLimitOptions(int64_t max_rows) {
+    SubscriberArrow::BatchOptions opt;
+    opt.max_rows = max_rows;
+    opt.timeout = std::chrono::minutes(10);  // only the count (or the close) closes a window
+    return opt;
+}
+
+}  // namespace
+
+// Rung 3 (D10, L12). max_rows = 2; a second thread publishes 6 rows. The first callback holds until
+// the publisher reports that every Publish returned, which a Publish that ran or waited on a
+// callback can never report.
+TEST(SubscriberArrowBatchTest, EveryCallbackRunsOnTheBatchThreadInWindowOrder) {
+    DeliveryLog log;
+    Latch entered, all_published;
+    std::atomic<bool> first_released_by_publisher{false};
+    log.hook = [&](size_t index, const DeliveryLog::Rec&) {
+        if (index != 0) return;
+        entered.Open();
+        first_released_by_publisher = all_published.WaitFor(std::chrono::milliseconds(500));
+    };
+
+    auto provider = std::make_shared<InProcessPubSubProvider>();
+    PublisherArrow pub(provider);
+    pub.CreateTopic(kTopic, TestSchema());
+    auto sub = std::make_unique<SubscriberArrow>(provider);
+    static_cast<void>(sub->Subscribe(kTopic, log.callback(), RowLimitOptions(2)));
+
+    std::thread::id publisher_id;
+    std::atomic<bool> entered_before_rest{false};
+    std::thread publisher([&] {
+        publisher_id = std::this_thread::get_id();
+        pub.Publish(kTopic, MakeRow(0, "n"));
+        pub.Publish(kTopic, MakeRow(1, "n"));  // the first full window
+        entered_before_rest = entered.WaitFor(kAwait);
+        for (int i = 2; i < 6; ++i) pub.Publish(kTopic, MakeRow(i, "n"));
+        all_published.Open();
+    });
+    publisher.join();
+
+    EXPECT_TRUE(log.WaitFor(3, kAwait));
+    EXPECT_TRUE(log.WaitAllReturned(kAwait));
+    sub.reset();
+
+    EXPECT_TRUE(entered_before_rest.load());
+    EXPECT_TRUE(first_released_by_publisher.load())
+        << "the publisher could not finish publishing while the first callback was held: "
+           "Publish ran or waited on a batch callback (D10)";
+    ExpectDeliveredInOrderOnOneBatchThread(log,
+                                           {{BatchStatus::Reason::kRowLimit, 0, 2},
+                                            {BatchStatus::Reason::kRowLimit, 2, 2},
+                                            {BatchStatus::Reason::kRowLimit, 4, 2}},
+                                           {publisher_id, std::this_thread::get_id()});
+}
+
+namespace {
+
+enum class OutsideClosing { kUnsubscribe, kDestructor, kRacingUnsubscribe };
+
+// Rung 4 (a), (b), (d). max_rows = 2. The first kRowLimit callback is held while a publisher queues
+// two more full windows (x = 2..5) and leaves one row pending (x = 6). The test thread then closes
+// from outside, and a helper releases the held callback kLetItWait later. The closing call returns
+// only after kRowLimit x3 and then kClosing(1), all on the batch thread; nothing comes after.
+void RunClosingFromAnotherThread(OutsideClosing closing) {
+    DeliveryLog log;
+    Latch entered, published, release;
+    std::atomic<bool> released_by_helper{false};
+    std::atomic<bool> first_returned{false};
+    log.hook = [&](size_t index, const DeliveryLog::Rec&) {
+        if (index != 0) return;
+        entered.Open();
+        released_by_helper = release.WaitFor(kHold);
+        first_returned = true;
+    };
+
+    auto provider = std::make_shared<InProcessPubSubProvider>();
+    PublisherArrow pub(provider);
+    pub.CreateTopic(kTopic, TestSchema());
+    auto sub = std::make_unique<SubscriberArrow>(provider);
+    const uint64_t id = sub->Subscribe(kTopic, log.callback(), RowLimitOptions(2)).subscription_id;
+
+    std::thread::id publisher_id;
+    std::atomic<bool> published_while_held{false};
+    std::thread publisher([&] {
+        publisher_id = std::this_thread::get_id();
+        pub.Publish(kTopic, MakeRow(0, "n"));
+        pub.Publish(kTopic, MakeRow(1, "n"));
+        static_cast<void>(entered.WaitFor(kAwait));
+        for (int i = 2; i < 7; ++i) pub.Publish(kTopic, MakeRow(i, "n"));
+        published_while_held = !first_returned.load();
+        published.Open();
+    });
+    EXPECT_TRUE(entered.WaitFor(kAwait));
+    EXPECT_TRUE(published.WaitFor(kAwait));
+
+    std::thread helper([&] {
+        std::this_thread::sleep_for(kLetItWait);
+        release.Open();
+    });
+    std::thread::id racer_id;
+    size_t at_racer_return = 0;
+    size_t at_return = 0;
+    if (closing == OutsideClosing::kUnsubscribe) {
+        sub->Unsubscribe(id);
+        at_return = log.Count();
+    } else if (closing == OutsideClosing::kDestructor) {
+        sub.reset();
+        at_return = log.Count();
+    } else {
+        // A second cancel of the same id while the first one waits. It waits for the same drain
+        // (owner ruling 2026-09-04, a racing cancel), so it too returns only after kClosing.
+        std::thread racer([&] {
+            racer_id = std::this_thread::get_id();
+            std::this_thread::sleep_for(kLetItWait / 3);
+            sub->Unsubscribe(id);
+            at_racer_return = log.Count();
+        });
+        sub->Unsubscribe(id);
+        at_return = log.Count();
+        racer.join();
+    }
+    helper.join();
+    publisher.join();
+    EXPECT_TRUE(log.WaitAllReturned(kAwait));
+    sub.reset();
+
+    EXPECT_TRUE(published_while_held.load())
+        << "rows 2-6 could not be published while the first callback was held (D10)";
+    EXPECT_TRUE(released_by_helper.load())
+        << "the first callback was not still held when the subscription was closed";
+    EXPECT_EQ(at_return, 4u) << "the closing call returned before every delivery was made (L9)";
+    if (closing == OutsideClosing::kRacingUnsubscribe) {
+        EXPECT_EQ(at_racer_return, 4u) << "the racing Unsubscribe returned before kClosing";
+    }
+    std::vector<std::thread::id> foreign = {publisher_id, std::this_thread::get_id()};
+    if (closing == OutsideClosing::kRacingUnsubscribe) foreign.push_back(racer_id);
+    ExpectDeliveredInOrderOnOneBatchThread(log,
+                                           {{BatchStatus::Reason::kRowLimit, 0, 2},
+                                            {BatchStatus::Reason::kRowLimit, 2, 2},
+                                            {BatchStatus::Reason::kRowLimit, 4, 2},
+                                            {BatchStatus::Reason::kClosing, 6, 1}},
+                                           foreign);
+}
+
+// Rung 4 (c). As rung 6 (c): the held kRowLimit callback unsubscribes from inside while a full
+// window (x = 2, 3) is queued and x = 4 is pending, and stays held. The test thread then destroys
+// the SubscriberArrow: the destructor returns only after the queued window and then kClosing.
+void RunDestructorAfterInCallbackUnsubscribe() {
+    DeliveryLog log;
+    Latch entered, published, unsubscribed, release;
+    std::atomic<uint64_t> id{0};
+    std::unique_ptr<SubscriberArrow> sub;
+    std::atomic<size_t> at_unsubscribe_return{0};
+    std::atomic<bool> released_by_helper{false};
+    std::atomic<bool> first_returned{false};
+    log.hook = [&](size_t index, const DeliveryLog::Rec&) {
+        if (index != 0) return;
+        entered.Open();
+        static_cast<void>(published.WaitFor(kHold));
+        sub->Unsubscribe(id.load());
+        at_unsubscribe_return = log.Count();
+        unsubscribed.Open();
+        released_by_helper = release.WaitFor(kHold);
+        first_returned = true;
+    };
+
+    auto provider = std::make_shared<InProcessPubSubProvider>();
+    PublisherArrow pub(provider);
+    pub.CreateTopic(kTopic, TestSchema());
+    sub = std::make_unique<SubscriberArrow>(provider);
+    id = sub->Subscribe(kTopic, log.callback(), RowLimitOptions(2)).subscription_id;
+
+    std::thread::id publisher_id;
+    std::atomic<bool> published_while_held{false};
+    std::thread publisher([&] {
+        publisher_id = std::this_thread::get_id();
+        pub.Publish(kTopic, MakeRow(0, "n"));
+        pub.Publish(kTopic, MakeRow(1, "n"));
+        static_cast<void>(entered.WaitFor(kAwait));
+        for (int i = 2; i < 5; ++i) pub.Publish(kTopic, MakeRow(i, "n"));
+        published_while_held = !first_returned.load();
+        published.Open();
+    });
+    EXPECT_TRUE(unsubscribed.WaitFor(2 * kAwait));
+
+    std::thread helper([&] {
+        std::this_thread::sleep_for(kLetItWait);
+        release.Open();
+    });
+    sub.reset();
+    const size_t at_return = log.Count();
+    helper.join();
+    publisher.join();
+    EXPECT_TRUE(log.WaitAllReturned(kAwait));
+
+    EXPECT_TRUE(published_while_held.load())
+        << "rows 2-4 could not be published while the first callback was held (D10)";
+    EXPECT_EQ(at_unsubscribe_return.load(), 1u)
+        << "the in-callback Unsubscribe delivered a batch before it returned";
+    EXPECT_TRUE(released_by_helper.load())
+        << "the first callback was not still held when the SubscriberArrow was destroyed";
+    EXPECT_EQ(at_return, 3u) << "~SubscriberArrow returned before every delivery was made (L9)";
+    ExpectDeliveredInOrderOnOneBatchThread(log,
+                                           {{BatchStatus::Reason::kRowLimit, 0, 2},
+                                            {BatchStatus::Reason::kRowLimit, 2, 2},
+                                            {BatchStatus::Reason::kClosing, 4, 1}},
+                                           {publisher_id, std::this_thread::get_id()});
+}
+
+}  // namespace
+
+// Rung 4 (L9, L12, L1): closing from outside goes through the same thread and the same order.
+TEST(SubscriberArrowBatchTest, ClosingFromAnotherThreadDeliversQueuedWindowsThenClosing) {
+    {
+        SCOPED_TRACE("(a) Unsubscribe from another thread");
+        RunClosingFromAnotherThread(OutsideClosing::kUnsubscribe);
+    }
+    {
+        SCOPED_TRACE("(b) ~SubscriberArrow from another thread");
+        RunClosingFromAnotherThread(OutsideClosing::kDestructor);
+    }
+    {
+        SCOPED_TRACE("(c) ~SubscriberArrow after an in-callback Unsubscribe, a window queued");
+        RunDestructorAfterInCallbackUnsubscribe();
+    }
+    {
+        SCOPED_TRACE("(d) a racing second Unsubscribe of the same id");
+        RunClosingFromAnotherThread(OutsideClosing::kRacingUnsubscribe);
+    }
+}
+
+namespace {
+
+enum class InsideClosing { kFromTimeout, kFromRowLimit, kWithQueuedWindow, kFromRowDelivery };
+
+// Rung 6. The first batch callback is held while a publisher thread sends rows after it; then the
+// subscription is closed from inside that callback (a-c), or from a thread delivering rows on the
+// subscription's own transport while that callback is held (d; owner ruling 2026-11-11 (2)). The
+// Unsubscribe returns at once with nothing delivered inside it; after the held callback returns,
+// the batch thread delivers any queued window, then kClosing, then nothing.
+void RunClosingFromInside(InsideClosing closing) {
+    DeliveryLog log;
+    Latch entered, published, release;
+    std::atomic<uint64_t> id{0};
+    std::unique_ptr<SubscriberArrow> sub;
+    std::atomic<bool> unsubscribe_returned_at_once{false};
+    std::atomic<size_t> at_unsubscribe_return{0};
+    std::atomic<bool> released_by_unsubscribe{false};
+    std::atomic<bool> first_returned{false};
+    const bool from_row_delivery = closing == InsideClosing::kFromRowDelivery;
+    log.hook = [&](size_t index, const DeliveryLog::Rec&) {
+        if (index != 0) return;
+        entered.Open();
+        if (from_row_delivery) {
+            // Held until the row-delivery thread's Unsubscribe has returned.
+            released_by_unsubscribe = release.WaitFor(kHold);
+        } else {
+            static_cast<void>(published.WaitFor(kHold));
+            sub->Unsubscribe(id.load());
+            at_unsubscribe_return = log.Count();
+            unsubscribe_returned_at_once = true;
+        }
+        first_returned = true;
+    };
+
+    auto provider = std::make_shared<InProcessPubSubProvider>();
+    PublisherArrow pub(provider);
+    pub.CreateTopic(kTopic, TestSchema());
+    pub.CreateTopic(kOtherTopic, TestSchema());
+    sub = std::make_unique<SubscriberArrow>(provider);
+    const bool timeout_first = closing == InsideClosing::kFromTimeout || from_row_delivery;
+    SubscriberArrow::BatchOptions opt = RowLimitOptions(2);
+    if (timeout_first) {
+        opt.max_rows = 100;  // never reached: the first window closes at its deadline
+        opt.timeout = std::chrono::milliseconds(200);
+    }
+    id = sub->Subscribe(kTopic, log.callback(), opt).subscription_id;
+
+    // (d): a per-row subscription on another topic of the same transport. Its callback runs on the
+    // publishing thread, inside the in-process delivery, and unsubscribes the batched one there.
+    if (from_row_delivery) {
+        static_cast<void>(sub->Subscribe(kOtherTopic, [&](ArrowRow, const Attachments&) {
+            sub->Unsubscribe(id.load());
+            at_unsubscribe_return = log.Count();
+            unsubscribe_returned_at_once = !first_returned.load();
+            release.Open();
+        }));
+    }
+
+    // Rows left pending (k < max_rows) after the held window; (c) first queues a full window.
+    const int more = closing == InsideClosing::kFromRowLimit ? 1 : 3;
+    std::thread::id publisher_id;
+    std::atomic<bool> published_while_held{false};
+    std::thread publisher([&] {
+        publisher_id = std::this_thread::get_id();
+        int32_t next = 0;
+        pub.Publish(kTopic, MakeRow(next++, "n"));
+        if (!timeout_first) pub.Publish(kTopic, MakeRow(next++, "n"));  // the first full window
+        static_cast<void>(entered.WaitFor(kAwait));
+        for (int i = 0; i < more; ++i) pub.Publish(kTopic, MakeRow(next++, "n"));
+        published_while_held = !first_returned.load();
+        published.Open();
+        if (from_row_delivery) pub.Publish(kOtherTopic, MakeRow(-1, "trigger"));
+    });
+    publisher.join();
+    EXPECT_TRUE(log.WaitFor(closing == InsideClosing::kWithQueuedWindow ? 3 : 2, kAwait));
+    EXPECT_TRUE(log.WaitAllReturned(kAwait));
+    sub.reset();
+
+    EXPECT_TRUE(published_while_held.load())
+        << "rows could not be published while the first callback was held (D10)";
+    EXPECT_TRUE(unsubscribe_returned_at_once.load())
+        << (from_row_delivery ? "the row-delivery thread's Unsubscribe waited for the held batch "
+                                "callback instead of returning at once"
+                              : "the in-callback Unsubscribe did not return");
+    EXPECT_EQ(at_unsubscribe_return.load(), 1u)
+        << "a batch was delivered before the Unsubscribe returned";
+    if (from_row_delivery) {
+        EXPECT_TRUE(released_by_unsubscribe.load())
+            << "the batch callback was released by its own timeout, not by the returned Unsubscribe";
+    }
+    std::vector<Expected> expected;
+    switch (closing) {
+        case InsideClosing::kFromTimeout:
+        case InsideClosing::kFromRowDelivery:
+            expected = {{BatchStatus::Reason::kTimeout, 0, 1},
+                        {BatchStatus::Reason::kClosing, 1, 3}};
+            break;
+        case InsideClosing::kFromRowLimit:
+            expected = {{BatchStatus::Reason::kRowLimit, 0, 2},
+                        {BatchStatus::Reason::kClosing, 2, 1}};
+            break;
+        case InsideClosing::kWithQueuedWindow:
+            expected = {{BatchStatus::Reason::kRowLimit, 0, 2},
+                        {BatchStatus::Reason::kRowLimit, 2, 2},
+                        {BatchStatus::Reason::kClosing, 4, 1}};
+            break;
+    }
+    std::vector<std::thread::id> foreign = {publisher_id, std::this_thread::get_id()};
+    ExpectDeliveredInOrderOnOneBatchThread(log, expected, foreign);
+}
+
+}  // namespace
+
+// Rung 6 (L9 as revised, L11, L12; owner rulings "Deliver after it returns", "Queued batch, then
+// closing", and 2026-11-11 (2) for case (d)).
+TEST(SubscriberArrowBatchTest, UnsubscribeFromInsideACallbackNeverDeliversNested) {
+    {
+        SCOPED_TRACE("(a) from a kTimeout callback, 3 rows pending");
+        RunClosingFromInside(InsideClosing::kFromTimeout);
+    }
+    {
+        SCOPED_TRACE("(b) from a kRowLimit callback, 1 row pending");
+        RunClosingFromInside(InsideClosing::kFromRowLimit);
+    }
+    {
+        SCOPED_TRACE("(c) from a kRowLimit callback, a full window queued and 1 row pending");
+        RunClosingFromInside(InsideClosing::kWithQueuedWindow);
+    }
+    {
+        SCOPED_TRACE("(d) from a thread delivering rows on the same transport, a callback held");
+        RunClosingFromInside(InsideClosing::kFromRowDelivery);
+    }
+}
+
+// Guard (green before and after; BC-5). A batch callback unsubscribes, which reaches the in-process
+// provider's Unsubscribe, while another thread is inside Publish holding that provider's mutex (a
+// per-row delivery on another topic that dwells). Both calls return; the batch callback ran once.
+TEST(SubscriberArrowBatchTest, InCallbackUnsubscribeWhilePublishingDoesNotDeadlock) {
+    DeliveryLog log;
+    Latch entered, row_delivery_inside, unsubscribed, published;
+    std::atomic<uint64_t> id{0};
+    std::unique_ptr<SubscriberArrow> sub;
+    std::atomic<bool> overlapped{false};
+    log.hook = [&](size_t index, const DeliveryLog::Rec&) {
+        if (index != 0) return;
+        entered.Open();
+        overlapped = row_delivery_inside.WaitFor(kHold);
+        sub->Unsubscribe(id.load());
+        unsubscribed.Open();
+    };
+
+    auto provider = std::make_shared<InProcessPubSubProvider>();
+    PublisherArrow pub(provider);
+    pub.CreateTopic(kTopic, TestSchema());
+    pub.CreateTopic(kOtherTopic, TestSchema());
+    sub = std::make_unique<SubscriberArrow>(provider);
+    SubscriberArrow::BatchOptions opt;
+    opt.max_rows = 100;
+    opt.timeout = std::chrono::milliseconds(50);
+    id = sub->Subscribe(kTopic, log.callback(), opt).subscription_id;
+    static_cast<void>(sub->Subscribe(kOtherTopic, [&](ArrowRow, const Attachments&) {
+        row_delivery_inside.Open();
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));  // holds the provider's mutex
+    }));
+
+    pub.Publish(kTopic, MakeRow(0, "n"));  // one row; its window closes at the deadline
+    EXPECT_TRUE(entered.WaitFor(kAwait));
+    std::thread publisher([&] {
+        pub.Publish(kOtherTopic, MakeRow(1, "dwell"));
+        published.Open();
+    });
+    EXPECT_TRUE(unsubscribed.WaitFor(kAwait)) << "the in-callback Unsubscribe did not return";
+    EXPECT_TRUE(published.WaitFor(kAwait)) << "the Publish did not return";
+    publisher.join();
+    EXPECT_TRUE(log.WaitAllReturned(kAwait));
+    sub.reset();
+
+    EXPECT_TRUE(overlapped.load());
+    const auto recs = log.Snapshot();
+    ASSERT_EQ(recs.size(), 1u);
+    EXPECT_EQ(recs[0].reason, BatchStatus::Reason::kTimeout);
+    EXPECT_EQ(recs[0].num_rows, 1);
+}
+
+// Guard (BC-1): fixed seeds; max_rows 1-3, timeout 1 ms; a publisher thread sends rows in bursts;
+// the subscription is closed from inside a callback or from outside at a seeded point. Every
+// callback runs on one thread that is not a publishing or closing thread, never two at once,
+// windows arrive in order (first x strictly increasing), and kClosing, if any, is last.
+TEST(SubscriberArrowBatchTest, DeliveryOrderStress) {
+    for (uint32_t seed = 1; seed <= 16; ++seed) {
+        std::mt19937 rng(seed);
+        const int64_t max_rows = 1 + static_cast<int64_t>(rng() % 3);
+        const int rows = 20 + static_cast<int>(rng() % 21);
+        const int close_at = static_cast<int>(rng() % static_cast<uint32_t>(rows));
+        const bool inside = rng() % 2 == 0;
+        std::vector<char> pause_after(static_cast<size_t>(rows));
+        for (auto& p : pause_after) p = rng() % 3 == 0 ? 1 : 0;
+        SCOPED_TRACE("seed " + std::to_string(seed) + ": max_rows " + std::to_string(max_rows) +
+                     ", " + std::to_string(rows) + " rows, closed " +
+                     (inside ? "inside" : "outside") + " at x " + std::to_string(close_at));
+
+        DeliveryLog log;
+        Latch reached, closed;
+        std::atomic<uint64_t> id{0};
+        std::unique_ptr<SubscriberArrow> sub;
+        std::atomic<bool> fired{false};
+        if (inside) {
+            log.hook = [&](size_t, const DeliveryLog::Rec& rec) {
+                if (rec.last_x < close_at || fired.exchange(true)) return;
+                sub->Unsubscribe(id.load());
+                closed.Open();
+            };
+        }
+
+        auto provider = std::make_shared<InProcessPubSubProvider>();
+        PublisherArrow pub(provider);
+        pub.CreateTopic(kTopic, TestSchema());
+        sub = std::make_unique<SubscriberArrow>(provider);
+        SubscriberArrow::BatchOptions opt;
+        opt.max_rows = max_rows;
+        opt.timeout = std::chrono::milliseconds(1);
+        id = sub->Subscribe(kTopic, log.callback(), opt).subscription_id;
+
+        std::thread::id publisher_id;
+        std::thread publisher([&] {
+            publisher_id = std::this_thread::get_id();
+            for (int x = 0; x < rows; ++x) {
+                pub.Publish(kTopic, MakeRow(x, "n"));
+                if (x == close_at) reached.Open();
+                if (pause_after[static_cast<size_t>(x)] != 0) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(3));
+                }
+            }
+        });
+        if (inside) {
+            EXPECT_TRUE(closed.WaitFor(kAwait)) << "no delivery reached x " << close_at;
+        } else {
+            EXPECT_TRUE(reached.WaitFor(kAwait));
+            sub->Unsubscribe(id.load());  // while the publisher keeps publishing
+        }
+        publisher.join();
+        EXPECT_TRUE(log.WaitAllReturned(kAwait));
+        sub.reset();
+
+        const auto recs = log.Snapshot();
+        EXPECT_LE(log.max_in_flight.load(), 1) << "two batch callbacks ran at once (L12)";
+        EXPECT_LE(log.max_depth.load(), 1) << "a batch was delivered inside a batch callback";
+        ASSERT_FALSE(recs.empty());
+        int32_t previous_first_x = -1;
+        for (size_t i = 0; i < recs.size(); ++i) {
+            SCOPED_TRACE("delivery " + std::to_string(i) + " (" + ReasonName(recs[i].reason) + ")");
+            EXPECT_EQ(recs[i].thread, recs[0].thread) << "a second callback thread (L12)";
+            EXPECT_NE(recs[i].thread, publisher_id) << "a callback on the publishing thread (D10)";
+            EXPECT_NE(recs[i].thread, std::this_thread::get_id())
+                << "a callback on the closing thread (D10)";
+            if (recs[i].first_x >= 0) {
+                EXPECT_GT(recs[i].first_x, previous_first_x) << "windows out of order (L12)";
+                previous_first_x = recs[i].first_x;
+            }
+            if (recs[i].reason == BatchStatus::Reason::kClosing) {
+                EXPECT_EQ(i, recs.size() - 1) << "a delivery after kClosing (L9)";
+            }
+        }
+    }
+}
+
+// Guard (BC-2; green before and after): fixed seeds; rows with no usable schema yet, then
+// well-formed and malformed rows; ended from outside, or from inside the first delivery after the
+// publisher returned from its last Publish. Rows received plus rows reported lost equal rows sent
+// (L1, L2). The over-budget row (L1 violation 2) is the heavy test's.
+TEST(SubscriberArrowBatchTest, RowsConservedAtEveryEnding) {
+    for (uint32_t seed = 1; seed <= 12; ++seed) {
+        std::mt19937 rng(seed);
+        const int64_t max_rows = 1 + static_cast<int64_t>(rng() % 4);
+        const int schema_less = static_cast<int>(rng() % 4);
+        const int rows = 10 + static_cast<int>(rng() % 21);
+        const bool inside = rng() % 2 == 0;
+        SCOPED_TRACE("seed " + std::to_string(seed) + ": max_rows " + std::to_string(max_rows) +
+                     ", " + std::to_string(schema_less) + " schema-less + " +
+                     std::to_string(rows) + " rows, ended " + (inside ? "inside" : "outside"));
+
+        DeliveryLog log;
+        Latch all_published, closed;
+        std::atomic<uint64_t> id{0};
+        std::unique_ptr<SubscriberArrow> sub;
+        std::atomic<bool> fired{false};
+        if (inside) {
+            log.hook = [&](size_t, const DeliveryLog::Rec&) {
+                if (!all_published.IsOpen() || fired.exchange(true)) return;
+                sub->Unsubscribe(id.load());
+                closed.Open();
+            };
+        }
+
+        auto mock = std::make_shared<MockProvider>();  // published from this thread only
+        PublisherArrow pub(mock);
+        sub = std::make_unique<SubscriberArrow>(mock);
+        SubscriberArrow::BatchOptions opt;
+        opt.max_rows = max_rows;
+        opt.timeout = std::chrono::milliseconds(5);
+        id = sub->Subscribe(kTopic, log.callback(), opt).subscription_id;
+
+        const auto malformed = [](WriteBuffer& buf) { buf.AppendByte(0x00); };
+        int64_t sent = 0;
+        for (int i = 0; i < schema_less; ++i, ++sent) pub.PublishDirect(kTopic, malformed);
+        pub.CreateTopic(kTopic, TestSchema());
+        for (int i = 0; i < rows; ++i, ++sent) {
+            if (rng() % 10 < 3) {
+                pub.PublishDirect(kTopic, malformed);
+            } else {
+                pub.Publish(kTopic, MakeRow(i, "n"));
+            }
+            if (rng() % 4 == 0) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        if (inside) {
+            // A last lost row leaves a window pending (a drop never fills one), so a delivery is
+            // owed after the last Publish has returned.
+            pub.PublishDirect(kTopic, malformed);
+            ++sent;
+            all_published.Open();
+            EXPECT_TRUE(closed.WaitFor(kAwait)) << "no delivery after the last Publish";
+        } else {
+            sub->Unsubscribe(id.load());
+        }
+        EXPECT_TRUE(log.WaitAllReturned(kAwait));
+        sub.reset();
+
+        int64_t accounted = 0;
+        for (const auto& r : log.Snapshot()) {
+            accounted += std::max<int64_t>(r.num_rows, 0) + r.dropped;
+        }
+        EXPECT_EQ(accounted, sent) << "rows received + rows reported lost != rows sent";
     }
 }

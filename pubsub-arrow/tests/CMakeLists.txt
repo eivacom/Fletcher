@@ -34,6 +34,32 @@ gtest_discover_tests(pubsub_arrow_tests DISCOVERY_MODE PRE_TEST
     PROPERTIES TIMEOUT 30)
 
 # ---------------------------------------------------------------------------
+# `heavy`: tests that allocate hundreds of MiB (owner ruling 2026-11-10, "Label it 'heavy'";
+# domain 7 D11). Their own executable, so a direct run of pubsub_arrow_tests stays light, and
+# their own label, which `conanfile.py` excludes from the default run (`ctest -LE heavy`). Run
+# them on request: `conan build . -o "&:run_tests=True" ...`, then, under
+# `build\generators\conanrun.bat`, `ctest --test-dir build -C Release -L heavy`.
+#
+# TIMEOUT 60 s, stated for the reason the light suite states its own (no default cap applies).
+# Measured on msvc-194 x86_64 Release, before D7F-3's production change: the control
+# `CraftedRowExceedsTheOffsetBudgetEvenAlone` 0.11 s, and the forcing row
+# `OverBudgetRowAroundInCallbackUnsubscribeIsCounted` 5.13 s, of which 5 s is its own bounded wait
+# for the closing batch that tree never delivers; the work itself (building and handing over one
+# ~256 MiB row) is ~0.1 s. Unlike the light suite's timer waits, that allocation and fill DOES
+# stretch on a slower or memory-starved runner, so 60 s is ~12x the slowest measured row and
+# ~500x its real work.
+# ---------------------------------------------------------------------------
+add_executable(pubsub_arrow_heavy_tests
+    test_pubsub_arrow_heavy.cpp)
+
+target_link_libraries(pubsub_arrow_heavy_tests PRIVATE
+    GTest::gtest_main
+    fletcher-pubsub-arrow)
+
+gtest_discover_tests(pubsub_arrow_heavy_tests DISCOVERY_MODE PRE_TEST
+    PROPERTIES LABELS heavy TIMEOUT 60)
+
+# ---------------------------------------------------------------------------
 # HARD-6 forcing test: compile-fails-on-discard of a [[nodiscard]] return.
 #
 # `discard_probe.cpp` intentionally discards every HARD-6 annotated public API
