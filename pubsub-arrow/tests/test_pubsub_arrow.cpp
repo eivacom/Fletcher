@@ -1538,9 +1538,12 @@ TEST(SubscriberArrowBatchTest, ReuseAcrossWindows) {
 namespace {
 
 // How long a held callback waits for its release, and how long the test thread waits for any
-// event. Generous: on a correct tree each wait ends within about kLetItWait.
-constexpr auto kHold = std::chrono::milliseconds(2000);
-constexpr auto kAwait = std::chrono::milliseconds(3000);
+// event. On a correct tree each wait ends within the 200 ms batch timer or kLetItWait. On a broken
+// one a test row runs at most about (3 x kAwait + kHold) per case, 5 cases at most, so even a red
+// row ends well inside the suite's 30 s ctest TIMEOUT. The seeded guards wait kSeedAwait per seed.
+constexpr auto kHold = std::chrono::milliseconds(1000);
+constexpr auto kAwait = std::chrono::milliseconds(1000);
+constexpr auto kSeedAwait = std::chrono::milliseconds(500);
 // How long a helper lets a closing call sit before releasing the callback it waits behind.
 constexpr auto kLetItWait = std::chrono::milliseconds(100);
 
@@ -1714,7 +1717,7 @@ TEST(SubscriberArrowBatchTest, EveryCallbackRunsOnTheBatchThreadInWindowOrder) {
     log.hook = [&](size_t index, const DeliveryLog::Rec&) {
         if (index != 0) return;
         entered.Open();
-        first_released_by_publisher = all_published.WaitFor(std::chrono::milliseconds(500));
+        first_released_by_publisher = all_published.WaitFor(kHold);
     };
 
     auto provider = std::make_shared<InProcessPubSubProvider>();
@@ -1878,7 +1881,7 @@ void RunDestructorAfterInCallbackUnsubscribe() {
         published_while_held = !first_returned.load();
         published.Open();
     });
-    EXPECT_TRUE(unsubscribed.WaitFor(2 * kAwait));
+    EXPECT_TRUE(unsubscribed.WaitFor(kAwait));
 
     std::thread helper([&] {
         std::this_thread::sleep_for(kLetItWait);
@@ -2188,13 +2191,13 @@ TEST(SubscriberArrowBatchTest, DeliveryOrderStress) {
             }
         });
         if (inside) {
-            EXPECT_TRUE(closed.WaitFor(kAwait)) << "no delivery reached x " << close_at;
+            EXPECT_TRUE(closed.WaitFor(kSeedAwait)) << "no delivery reached x " << close_at;
         } else {
-            EXPECT_TRUE(reached.WaitFor(kAwait));
+            EXPECT_TRUE(reached.WaitFor(kSeedAwait));
             sub->Unsubscribe(id.load());  // while the publisher keeps publishing
         }
         publisher.join();
-        EXPECT_TRUE(log.WaitAllReturned(kAwait));
+        EXPECT_TRUE(log.WaitAllReturned(kSeedAwait));
         sub.reset();
 
         const auto recs = log.Snapshot();
@@ -2273,11 +2276,11 @@ TEST(SubscriberArrowBatchTest, RowsConservedAtEveryEnding) {
             pub.PublishDirect(kTopic, malformed);
             ++sent;
             all_published.Open();
-            EXPECT_TRUE(closed.WaitFor(kAwait)) << "no delivery after the last Publish";
+            EXPECT_TRUE(closed.WaitFor(kSeedAwait)) << "no delivery after the last Publish";
         } else {
             sub->Unsubscribe(id.load());
         }
-        EXPECT_TRUE(log.WaitAllReturned(kAwait));
+        EXPECT_TRUE(log.WaitAllReturned(kSeedAwait));
         sub.reset();
 
         int64_t accounted = 0;
@@ -2286,4 +2289,40 @@ TEST(SubscriberArrowBatchTest, RowsConservedAtEveryEnding) {
         }
         EXPECT_EQ(accounted, sent) << "rows received + rows reported lost != rows sent";
     }
+}
+
+// Guard (code review 4b S1): a batched Subscribe that throws leaves no batch thread behind. Here
+// it is refused with kReentrantCall, made from inside a per-row delivery for a topic not yet
+// subscribed. The callback it was handed is released, so nothing it captured outlives the throw.
+TEST(SubscriberArrowBatchTest, FailedBatchedSubscribeReleasesItsCallback) {
+    auto provider = std::make_shared<InProcessPubSubProvider>();
+    PublisherArrow pub(provider);
+    pub.CreateTopic(kTopic, TestSchema());
+    pub.CreateTopic(kOtherTopic, TestSchema());
+    SubscriberArrow sub(provider);
+
+    std::weak_ptr<int> captured;
+    std::atomic<bool> refused{false};
+    static_cast<void>(sub.Subscribe(kTopic, [&](ArrowRow, const Attachments&) {
+        auto token = std::make_shared<int>(0);
+        captured = token;
+        try {
+            static_cast<void>(sub.Subscribe(
+                kOtherTopic,
+                [token](std::shared_ptr<arrow::RecordBatch>, std::vector<Attachments>,
+                        BatchStatus) {},
+                RowLimitOptions(2)));
+        } catch (const PubSubError& e) {
+            refused = e.status() == PubSubStatus::kReentrantCall;
+        }
+    }));
+    pub.Publish(kTopic, MakeRow(0, "n"));
+    ASSERT_TRUE(refused.load()) << "the re-entrant batched Subscribe was not refused";
+
+    const auto until = std::chrono::steady_clock::now() + kAwait;
+    while (!captured.expired() && std::chrono::steady_clock::now() < until) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    EXPECT_TRUE(captured.expired())
+        << "the failed Subscribe's batch thread still holds the callback it was given";
 }

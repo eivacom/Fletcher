@@ -211,10 +211,13 @@ class SubscriberArrow::RecordBatchBatcher {
                 // dropped whole.
                 DiscardPending(0);
             }
-            // A failed pre-size is not fatal: the next Append() just grows the builders.
-            try {
-                decoder_->Reserve(max_rows_);
-            } catch (...) {
+            // A failed pre-size is not fatal: the next Append() just grows the builders. No window
+            // follows the closing one, so it is not pre-sized.
+            if (reason != BatchStatus::Reason::kClosing) {
+                try {
+                    decoder_->Reserve(max_rows_);
+                } catch (...) {
+                }
             }
         }
         std::vector<Attachments> atts = std::move(atts_);
@@ -251,6 +254,16 @@ class SubscriberArrow::RecordBatchBatcher {
                 cv_.wait_until(lk, deadline_);
             }
         }
+        // Nothing calls the callback or decodes again. Release both here, before the loop reports
+        // its end, so the user's callback (and what it captured) is gone by the time any waiting
+        // closing call returns, rather than whenever a detached thread drops the last owner.
+        RecordBatchCallback cb = std::move(cb_);
+        cb_ = nullptr;
+        std::unique_ptr<BatchDecoder> decoder = std::move(decoder_);
+        lk.unlock();
+        cb = nullptr;
+        decoder.reset();
+        lk.lock();
         ended_ = true;
         lk.unlock();
         cv_.notify_all();
@@ -359,6 +372,14 @@ SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
                                                         options.timeout, provider_token_);
     batcher->Start(batcher);  // the batch thread co-owns; see Start()'s comment
 
+    // If subscribing throws, the batch thread is already running: close it, so that it ends and
+    // releases the callback, then let the exception go.
+    struct StopOnThrow {
+        RecordBatchBatcher* batcher;
+        ~StopOnThrow() {
+            if (batcher) static_cast<void>(batcher->Stop());
+        }
+    } stop_on_throw{batcher.get()};
     Subscriber::SubscribeResult result = subscriber_->Subscribe(
         segments,
         [this, key, batcher](uint64_t /*sub_id*/, const uint8_t* data, size_t len,
@@ -381,6 +402,7 @@ SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
             batcher->AddRow(data, len, att);
         },
         topic_options);
+    stop_on_throw.batcher = nullptr;
 
     {
         std::lock_guard lock(mu_);

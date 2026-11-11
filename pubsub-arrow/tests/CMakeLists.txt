@@ -21,19 +21,19 @@ include(GoogleTest)
 # in full are in `xrcedds-pubsub-provider/tests/CMakeLists.txt`, whose first Linux run spent
 # 2 h 04 m inside one hung test before the job was cancelled with no result at all.
 #
-# 30 s, chosen from this suite's own measured wall clock (re-measured at D7F-3, msvc-194 x86_64
-# Release): the slowest gtest rows are `SubscriberArrowBatchTest.DeliveryOrderStress` 2.34 s,
-# `RowsConservedAtEveryEnding` 1.08 s, `UnsubscribeFromInsideACallbackNeverDeliversNested`
-# 0.66 s, `EveryAssemblyStateReportsItsDropsAtEitherEnding` 0.61 s and
-# `ClosingFromAnotherThreadDeliversQueuedWindowsThenClosing` 0.49 s; the rest are under 0.5 s.
-# They are mostly WAITS, not work: 1-200 ms batch timers, 2-3 ms pauses between seeded bursts and
-# 100 ms helper delays, which are wall clock and do not stretch on a slower runner; what does
-# stretch is thread hand-off between publisher, batch and test threads. Every wait inside those
-# rows is itself bounded (2-3 s), so a red run fails well inside the cap. 30 s is ~13x the slowest
-# row, and it turns a future hang into a 30-second red instead of a cancelled job. (Before D7F-3's
-# production change the rung-6 row took 12.5 s, almost all of it bounded waits timing out.) The
-# NodiscardTest entry below is a compile invocation, not a gtest row, and gets its own longer cap
-# for that reason.
+# 30 s, chosen from this suite's own measured wall clock (re-measured at D7F-3 fix cycle 1,
+# msvc-194 x86_64 Release). Green: the slowest gtest rows are
+# `SubscriberArrowBatchTest.DeliveryOrderStress` 2.38 s, `RowsConservedAtEveryEnding` 1.07 s and
+# `UnsubscribeFromInsideACallbackNeverDeliversNested` 0.68 s; the rest are under 0.7 s. They are
+# mostly WAITS, not work (1-200 ms batch timers, 2-3 ms pauses between seeded bursts, 100 ms helper
+# delays), which are wall clock and do not stretch on a slower runner; what does stretch is the
+# thread hand-off between publisher, batch and test threads. A FAILING run must also end inside
+# the cap: every wait in the D7F-3 rows is bounded (1 s, or 0.5 s per seed in the seeded guards),
+# so a row's worst case is about 4 s per case and 20 s for the five-case rung-6 row. Measured
+# against the pre-D7F-3 production code (all D7F-3 rows red): rung 6 5.7 s, rung 4 4.5 s, the
+# stress guard 2.3 s. 30 s is ~13x the slowest green row and above every red row's bound, and it
+# turns a future hang into a 30-second red instead of a cancelled job. The NodiscardTest entry
+# below is a compile invocation, not a gtest row, and gets its own longer cap for that reason.
 gtest_discover_tests(pubsub_arrow_tests DISCOVERY_MODE PRE_TEST
     PROPERTIES TIMEOUT 30)
 

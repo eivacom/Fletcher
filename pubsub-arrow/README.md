@@ -97,11 +97,17 @@ A callback slower than the data lets finished batches queue up in memory.
 
 `Unsubscribe`, or destroying the `SubscriberArrow`, delivers every finished batch and then the
 partial one, with reason `kClosing`, before it returns; nothing is delivered after it. Two
-calls return at once instead: one made from inside the subscription's own batch callback
-(`Unsubscribe`, or destroying the `SubscriberArrow`), and an `Unsubscribe` made from a thread
-that is delivering rows on the subscription's own transport, such as a per-row callback. The
-remaining batches, then `kClosing`, still arrive in order after that call returns, so what
-those callbacks use may not be freed until the `kClosing` batch has arrived.
+cases do not wait for that subscription's batches: a call made from inside the subscription's
+own batch callback (`Unsubscribe`, or destroying the `SubscriberArrow`, which still waits for
+its other batched subscriptions), and an `Unsubscribe` made from a thread that is delivering
+rows on the subscription's own transport, such as a per-row callback. The remaining batches,
+then `kClosing`, still arrive in order after that call returns, so what those callbacks use may
+not be freed until the `kClosing` batch has arrived. Destroying the `SubscriberArrow` from a
+thread delivering rows on its transport stays forbidden.
+
+Any other close made inside a batch callback waits, so two can wait on each other forever: two
+subscriptions whose callbacks each `Unsubscribe` the other, or one callback destroying the
+`SubscriberArrow` while another subscription's callback unsubscribes the first.
 
 Rows are decoded straight into Arrow builders (`fletcher::BatchDecoder`, from
 `fletcher-arrow-bridge`) rather than through per-row scalars, so the batched

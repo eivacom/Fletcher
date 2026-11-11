@@ -812,9 +812,9 @@ Review: [D7F-1-design-review.md](D7F-1-design-review.md). No BLOCKERs; P1–P4 v
 - ~~**DEBT-3:** forcing test order assertions~~ Landed in `dbaa2b6` (tweaked `7170ca9`): `test_pubsub_arrow.cpp:877-894` (order within a delivery, the set {1,2,3} across deliveries).
 
 ## Carried from D7F-2 code review to D7F-3
-- **DEBT-6 (S2):** "has the schema been decided" lives in three places (the once-flag, the `schema_decided` atomic, decoder presence), and `SetSchema` trusts its caller to call it once. A `decided_` flag set under the batcher's own lock would let `SetSchema` refuse a second decision. D7F-3 reworks the batcher's state and threading; settle it there. Source: `plans/reviews/D7F-2-codereview.md`.
+- ~~**DEBT-6 (S2):** the schema decision in three places.~~ Landed in D7F-3 (`5b4e807`): the batcher's `decided_`, set under its `mu_`; `SetSchema` refuses a second decision.
 
 ## D7F-3 — one batch thread, in order, nothing lost at close (cycle 1 NEEDS-REWORK; cycle 2 APPROVE-WITH-DEBT(2)) — [review](D7F-3-design-review.md)
 - ~~DEBT-1..3 (deadline forbid, `notify_all`, benchmark and fastdds Files-to-touch)~~ Folded into design revision 2 (§2, §1, Files-to-touch).
 - **C2-1 (PM-facing, before the owner reads the brief):** Remove the destructor from Decision 2. Destroying over a provider inside its own delivery is already forbidden (§6 clause 5, ruling 2026-09-05; `sub:556-578`), and the program stops under either option. Scope (b)'s "No hang" to the subscription's own provider.
-- **C2-2 (must land with (b)):** The provider token becomes a private member of `subscriber_arrow.hpp`, because `Subscriber` has no accessor; fix the "comments only" and ABI lines. The third `Stop` case moves and detaches `thread_`. Publish the new "may not free on return" case at hpp:147, README:93 and d7 L9.
+- ~~**C2-2:** the provider token and the third `Stop` case.~~ Landed in D7F-3 (`5b4e807`): `SubscriberArrow::provider_token_` (private, hpp), `Stop`'s `InsideDeliveryOn(provider_)` case moves and detaches `thread_`; the "may not free" case is in the hpp `Unsubscribe` doc, the README and d7 L9.
