@@ -1,111 +1,112 @@
-# D7F-3 compliance review (step 4a), cycle 1
+# D7F-3 compliance review (step 4a)
 
-**Verdict: ISSUES(3, 1 blocking).** Diff `7080670..5b4e807` (phase A `5e35328`, rulings and 0b `cbe7f34`,
-phase B `5b4e807`). Judged against the design (rev 2 plus the 6(d)/6(e) rows), the brief, design
-review cycles 1-2, DEBT C2-1/C2-2, D-D7F-1..7, d7 as amended, the register and the runbook census.
+*Cycle 1 was compressed at cycle 2 to keep this file within the 120-line cap. Its findings are kept
+whole; the passed-checks list is shortened.*
 
-**Proof of read:** `plans/RIX-rulings.md` read top to bottom: **196 lines, 16 entries**. The last is
-"2026-11-11 — The D7F-3 ladder gains rungs 6(d) and 6(e)". No tier-1 collision: both 2026-11-11 L9
-rulings name L9 and widen its exception explicitly, and ruling (2) extends domain 3's 2026-09-04 rule
-while leaving 2026-09-05 standing.
+## Cycle 1
 
-## B1 (BLOCKING): rung 6(e) has no red-on-base record and never went through the step-0b audit
-The design's "Red-first order" requires every forcing test to be recorded red on the base before §1-§5
-land. The ladder ruling requires ruling (1) to be *proven* by 6(e). Leg (e) of
-`UnsubscribeFromInsideACallbackNeverDeliversNested` was written in the phase-B commit, together with
-the fix (`git diff 5e35328 5b4e807` shows that the test file gains only (e)). Phase A's red window and
-the 0b audit (at `5e35328`, scope "6(a-d)") cannot cover it. The TEST was already red on the base
-through (a), so its red says nothing about (e). The design row's red reason for (e) is still a claim,
-not evidence. No red record for (e) exists in `plans/`.
-**Acceptable fix (evidence only, no code):** run leg (e) alone against `7080670`'s `src/`, and record
-the failing assertions and their reason. Append a 0b addendum that audits 6(e), and have it note that
-"then nothing" can only be read up to the snapshot, because the batch thread is detached.
+**Verdict: ISSUES(3, 1 blocking).** Diff `7080670..5b4e807` (phase A `5e35328`, rulings and 0b
+`cbe7f34`, phase B `5b4e807`), checked against the design (rev 2 plus the 6(d)/6(e) rows), the brief,
+design review cycles 1-2, DEBT C2-1/C2-2, D-D7F-1..7, d7, the register and the runbook census.
+**Proof of read:** `plans/RIX-rulings.md` read top to bottom: **196 lines, 16 entries**; the last is
+"2026-11-11 — The D7F-3 ladder gains rungs 6(d) and 6(e)". No tier-1 collision: both 2026-11-11
+rulings name L9 and widen it explicitly, and 2026-09-05 still stands.
 
-## N1: L9, d7 §4 and the README overstate the destructor's in-callback exception; the header's destructor doc imports the wrong exception
-Ruling (1) treats destruction inside a subscription's own batch callback like an in-callback
-`Unsubscribe` *for that subscription*. The code does exactly that, per batcher `Stop`, and still waits
-for every *other* batched subscription of the same `SubscriberArrow`, under L9's main clause. Three
-texts say the destructor simply "returns at once": L9 ("... from inside the subscription's own batch
-callback ... the call returns at once"), d7 §4 ("where they return at once") and the README ("Two
-calls return at once instead", which then lists three). The hpp destructor doc is precise ("returns at
-once for that callback's subscription"). But it opens with "as `Unsubscribe` does (see there)", which
-pulls in the row-delivery-thread exception. Destroying from a row-delivery thread stays forbidden
+**B1 (BLOCKING): rung 6(e) had no red-on-base record and no step-0b audit.** The design's red-first
+order requires one, and the ladder ruling makes 6(e) the proof of ruling (1). Leg (e) was written in
+phase B, together with the fix. Phase A and the 0b audit (scope "6(a-d)") did not cover it, and the
+TEST's existing red on (a) says nothing about (e).
+*Fix:* run leg (e) alone against `7080670`'s `src/` and record the reasons it fails; audit 6(e) in a
+0b addendum.
+
+**N1: the destructor's in-callback exception was overstated.** L9, d7 §4 and the README said the
+destructor "returns at once". The code does not wait for that one subscription, but it still waits
+for the object's other batched subscriptions. The hpp destructor doc's "as `Unsubscribe` does (see
+there)" pulled in the row-delivery-thread exception, which is forbidden for the destructor
 (2026-09-05).
-**Acceptable fix (text only):** in L9, §4 and the README, write "does not wait for that subscription's
-batches". In the destructor doc, write "as an `Unsubscribe` from another thread does" and drop "(see
-there)". L9 is tier 1, so show the owner the final sentence at close. This stays within D12's scope.
+*Fix:* text only. Write "does not wait for that subscription's batches", and show the owner the
+final L9 text at close.
 
-## N2 (note; pre-existing; no D7F-3 change asked): destroying from a row-delivery thread is stopped only while domain 3 has a provider subscription to tear down
-C2-1 relies on "the program stops under either option": `~Subscriber` rethrows `kReentrantCall`
-(sub:556-578). That fires only for a topic still `provider_subscribed`. Suppose every batched
-subscription of X was already unsubscribed in-callback (provider teardown done, batcher still
-draining), and X is then destroyed from a delivery thread on the same provider. Then `Stop` takes the
-third case (it returns false and detaches), `~Subscriber` has nothing to unsubscribe, and
-`~SubscriberArrow` returns with batches still owed. The act is forbidden, yet it is neither stopped nor
-waited for. A lawful caller is covered, because the in-callback exception already obliges the callback
-to outlive those batches. **PM:** record this under BC-5's residue or as a domain 3 question.
+**N2 (note, pre-existing): a forbidden destruction from a row-delivery thread is not always
+stopped.** It is stopped only while domain 3 still has a provider subscription to tear down. If X's
+batched subscriptions were all unsubscribed in-callback, `~SubscriberArrow` returns with batches
+still owed. *Fix:* record it under BC-5's residue, as a domain 3 question.
 
-## Flagged by the implementer
-**d7 L11 "timer thread" is a stale term, not a change in the law's meaning.** Design §1: the loop
-replaces `TimerLoop` "on the same thread, started by Start". The thread is renamed, not replaced.
-L11's principle ("the batcher outlives every thread running inside it") is unchanged and still holds,
-through `Start`'s self capture. Its operational sentence is now incomplete but not contradicted:
-`Stop` also detaches when called from a row-delivery thread on the subscription's transport (C2-2
-(ii), ruling 2026-11-11 (2)), and L11 does not say "only". Not edited, as instructed.
-**Production size:** I measured +118/−78 code lines (cpp +117/−78, hpp +1/−0; comments and blanks
-excluded), net +40, against a declared +98/−64, net +34. That is far under the 250 ceiling. It is not
-a conformance defect; it goes in the brief's "As landed" (RECORD).
+**Flagged items.** In d7 L11, "timer thread" is a stale term: the same thread was renamed. The
+principle is unchanged. The detach sentence is incomplete (the row-delivery case) but not
+contradicted. Production code is +118/−78 against the declared +98/−64 (RECORD).
 
-## Checks that passed (rely on these in cycle 2)
-1. **Design shape.**
-   - §1: `Close` is the one closer and never releases `mu_`. `Loop` holds the one `cb_` call
-     (cpp:240), drains a FIFO `std::deque` and records `loop_id_`. `ended_` starts true and is reset
-     if thread creation throws. Every notify is `notify_all`.
-   - §2: `AddRow` runs in design order: door, deadline close, no-decoder count, `TryAppend` twice
-     around `Close(kRowLimit)`, then the count close.
-   - §3: `Stop` is as designed, plus the Decision 2 (b) case `InsideDeliveryOn(provider_)`, which
-     moves and detaches `thread_` (C2-2 ii).
-   - §4: copy, not erase; the `Ended()` sweep; erase only on `true`; the destructor snapshots without
-     clearing.
-   - §5: `decided_` is set under `mu_`, `SetSchema` refuses a second decision before doing anything
-     else, and `SchemaDecided()` reads lock-free.
-   - Two deviations with no effect: `TryAppend` returns `bool` (the design has an enum), and the sweep
-     skips `id` itself.
-2. **D-D7F-7.** One `cb_` site, one `dropped_` counter (written only where §2 and `DiscardPending`
-   place it), one closer (`Close`, called from `AddRow`, `Loop` and `Stop`). The retry block is gone.
-3. **D-D7F-2.** The transport thread takes `mu_` only to append, close and queue. It never waits on
-   `cv_`, joins, or runs a callback. `Stop` returns at once in both ruled cases (the subscription's own
-   batch thread, and a row-delivery thread on its own transport). There is no bound and no blocking
-   queue.
-4. **D-D7F-5.** No public declaration changed. The diff adds only comments and the private
-   `provider_token_` (DEBT C2-2; the design's ABI line discloses the layout change).
-5. **No domain 3 edit.** Nothing under `pubsub/`, `core/` or `docs/pubsub-interface-spec.md` changed.
-   `delivery_frame.hpp` is only included, and only `InsideDeliveryOn` (read-only) is called.
-6. **Texts and flips.**
-   - The hpp `Unsubscribe` doc and the README state ruling (2) and the earlier L9 rulings in behaviour
-     terms, including "may not free until kClosing" (C2-2 iii). D12 and D13 restate rulings (1) and
-     (2) faithfully.
-   - No other law's statement changed: L1 and L12 keep their text, and only their marks and bullets
-     moved.
-   - Each flip is backed by a test: L1 (heavy rung 5, `RowsConservedAtEveryEnding`); L9 (rung 4 a-d,
-     rung 6 a-e); L12 (rung 3, `DeliveryOrderStress`); BC-1 (`DeliveryOrderStress`); BC-2 (the
-     conservation guard plus the heavy test); BC-5 (rungs 4 and 6,
-     `InCallbackUnsubscribeWhilePublishingDoesNotDeadlock`).
-   - BC-3 was already `[built]` at the base. Only its decided-site text changed (DEBT-6), and
-     correctly.
-7. **What survived.** The `if (stopped_) return;` at cpp:89 is `AddRow`'s door, which §2 keeps and
-   which was present at the base. The guard inside the retry is gone. A grep of `pubsub-arrow/` finds
-   none of these: `ready_` (gone since D7F-2), `once_flag`/`call_once`, `schema_set`, `schema_decided`,
-   `TimerLoop`, `timer_`, `Flush`, erase-before-stop and clear-before-stop.
-8. **Corner ladder.** Every state the design forbids is unrepresentable as designed. The one door
-   (`SetSchema` after a decision) refuses, with no fallback. No refusal became a recovery path.
-9. **Tests.** The 10 re-anchors match the design's list, and `ReuseAcrossWindows` is untouched. Phase B
-   changed no phase-A assertion; it only added leg (e). D-D7F-4: the test carries the `heavy` label and
-   is excluded with `-LE heavy`, not disabled.
+**Passed:**
+- The design shape matches §1-§5 and the Decision 2 (b) `Stop` case (C2-2).
+- D-D7F-7: one `cb_` call, one `dropped_` counter, one closer (`Close`); the retry block is gone.
+- D-D7F-2: the transport thread appends, closes and queues only; there is no bound and no blocking
+  queue.
+- D-D7F-5: there are 0 public changes. The private `provider_token_` (C2-2) is the only new member.
+- No domain 3 edit.
+- Every L1, L9, L12, BC-1, BC-2 and BC-5 flip is backed by a test. BC-3 was already `[built]`.
+- The `if (stopped_) return;` that remains is `AddRow`'s door, which §2 keeps. `ready_`,
+  `once_flag`, `schema_set` and `schema_decided` are all gone.
+- The corner-case ladder holds. The 10 re-anchors match the design, and phase B weakened no phase-A
+  assertion.
 
-## RECORD
-- RECORD: the brief's "As landed": production +118/−78 code lines (net +40) against a declared +98/−64 (net +34).
-- RECORD: d7 L11 and §1 say "timer thread", and L1 violation 1 says "`TimerLoop` flushes". These are now the batch thread and `Loop`.
-- RECORD: the "Holds at" lines in d7 L1, L4, L9, L10 and L11, and reg BC-7 (`cpp:243-246`), cite pre-D7F-3 line numbers. For example, L9's `cpp:428-429` is now the `Ended()` sweep.
-- RECORD: ladder rung 6 still cites "`t.get_id() == this_thread` (cpp:143)" and "the `exchange` guard, which becomes dead". It became `EXPECT_FALSE`.
-- RECORD: reg BC-3's status column names only D7F-1 and D7F-2, though D7F-3 moved its decided-site. In design-debt, DEBT-6 and C2-2 are not yet marked as landed.
+**RECORD (cycle 1):**
+- The brief's "As landed" line.
+- d7 "timer thread" / `TimerLoop` terms.
+- Stale "Holds at" lines in L1, L4, L9, L10 and L11, and in BC-7.
+- Ladder rung 6's `cpp:143` and "exchange guard" text.
+- BC-3's status column.
+- The design-debt entries DEBT-6 and C2-2 not yet marked landed.
+
+## Cycle 2
+
+**Verdict: CONFORMS. No blocking finding.** Fix cycle 1 is `a06031b` (`git diff 7ce7266 HEAD`).
+**Proof of read:** the ledger is unchanged: 196 lines, 16 entries, same last heading.
+
+- **B1 is closed (evidence).** `plans/D7F-evidence.md` § "6(e) red on base" records the setup: leg
+  (e) alone, run on `7080670`'s `src`+`include` with the tests of `7ce7266`, red 3 out of 3. It lists
+  5 failed assertions: unsubscribe-return 3≠1, in-flight 2, depth 2, and `kRowLimit` delivered off the
+  batch thread and on the publishing thread. They match the design row's red reason, and the delivered
+  content was correct, so the red is about threading, not content. The audit half rests on the 0b
+  addendum now running in parallel (6(e) plus the new guard test). That is a close gate for the PM,
+  not a 4a finding.
+- **N1 is closed.** L9 now reads "does not wait for that subscription's batches … A destruction still
+  waits for the object's other batched subscriptions". d7 §4 and the README match. The hpp destructor
+  doc reads "as an `Unsubscribe` from another thread does", says it "still waits for every other",
+  and says destroying it from a row-delivery thread "stays forbidden". This is faithful to ruling (1)
+  and within D12's scope; L9 adds a consequence of its own main clause, not a new law. *PM:* show the
+  owner the final L9 text at close, as asked in cycle 1.
+- **N2 and S2 are recorded** in BC-5's residue, (2) and (1). The header and README now state the
+  mutual-wait residue in behaviour terms, consistent with the design's Risks.
+- **The renames changed no law's meaning.**
+  - L11 now says "batch thread" in both of its sentences: the same thread, the same detach rule.
+  - L1's change is in the violation-1 history bullet only (`Loop` and "batch thread"). L1's law
+    sentence is untouched.
+  - §1 Intent is a term change only.
+  - L12's history bullet keeps "timer thread", correctly, because it describes the old code.
+  - The only law statement whose meaning moved is L9, as ruled.
+- **The RECORD lines are applied.** I spot-checked the refreshed "Holds at" lines: L1, L4, L9, L11
+  and BC-7 point at the right code at HEAD. The other applied items:
+  - the ladder's rung 6 now cites `loop_id_`/`InsideDeliveryOn` and `EXPECT_FALSE`;
+  - BC-3 names D7F-3;
+  - DEBT-6 and C2-2 are struck as landed.
+  The brief's "As landed" line is left to the PM at close.
+- **S1 conforms.** The `StopOnThrow` guard is a local struct, so the public surface is unchanged. It
+  calls the existing `Stop`, so the closer is still `Close` and there is no new `cb_` call. On a
+  same-transport row-delivery thread, `Stop` returns at once and does not wait (D-D7F-2);
+  `FailedBatchedSubscribeReleasesItsCallback` exercises exactly that path, through domain 3's existing
+  `kReentrantCall` door.
+- **S3 conforms.**
+  - The end of `Loop` moves `cb_` and `decoder_` out under `mu_`, destroys them with `mu_` released,
+    and only then sets `ended_`. A waiting outside close therefore returns after the release.
+  - `AddRow` stops at its `stopped_` door, so it never touches the null decoder.
+  - `cb_` is still called at one site (cpp:243); line 260 is a move, not a call.
+  - Skipping `Reserve` on `kClosing` touches no law.
+- **No domain 3 edit.** `pubsub/`, `core/` and the interface spec are unchanged since `7080670`.
+- **Test bounds.** Fix cycle 1 shortened bounded waits (`kHold` and `kAwait` to 1 s, `kSeedAwait`
+  0.5 s); no assertion changed. The rung-3 wait is now 1 s, which the ladder's "≤ 500 ms" does not
+  match but the design's "≤ 500 ms–2 s" does. Red still means red.
+
+**RECORD (cycle 2):**
+- RECORD: production is now +136/−80 code lines (cpp +135/−80, hpp +1/−0), net +56, against the
+  declared +98/−64 (net +34). This is under the 250 ceiling and belongs in the brief's "As landed".
+- RECORD: ladder rung 3 says the wait is "≤ 500 ms"; the test now waits `kHold` (1 s).
