@@ -30,24 +30,17 @@ size asked for); a second place that judges the settings.
 ignored and the batch grows as rows arrive. A machine's failure cannot be forbidden from here.
 
 ## Decisions for you
-1. **Should room for a whole batch be set aside each time a batch starts, however large it is?**
-   (a) No: room for at most about 65,000 rows, and a bigger batch grows as rows arrive. Users: up to
-   65,536 rows nothing changes; above that, memory follows the rows received, with a little copying
-   while a big batch fills. Architecture: follows L15, so the number only decides when a batch
-   closes. · (b) Yes, as today, and a failure is ignored. Users: asking for 50 million rows takes
-   gigabytes at the start of every batch, even one that closes on its timeout with 3 rows.
-   Architecture: memory use is still dictated by the number asked for.
-   **Recommendation:** (a), because the purpose is "get what you asked for". **Default:** (a).
-2. **Asking for unlimited batches (huge size, no timeout) on a fast stream: when memory runs out,
-   that batch is lost and counted. Acceptable for now?** (a) Yes, disclosed in the header. Users:
-   any batch that outgrows memory is already lost this way today; the loss is reported, never
-   silent. Architecture: holds L1 and changes no law. · (b) No: book a later round that delivers
-   the batch early when memory runs short. Users: they get the rows. Architecture: a new reason
-   for a batch to close, which changes law L4.
-   **Recommendation:** (a), because the loss is visible and not new. **Default:** (a).
-   *Background (both): the decoder is pre-sized from `max_rows` in `SetSchema` and `Close`.*
+None.
+
+**Disclosed (decided by L10 and L15, not a choice):** room for a batch is set aside up front only
+up to about 65,536 rows. Up to that size nothing changes. Above it, memory follows the rows actually
+received, with a little copying while a big batch fills. Setting aside room for the full number, as
+today, could crash the delivery thread for some legal sizes (L10 forbids this). The number decides
+only when a batch closes (L15).
 
 ## Risks accepted / debt carried
+- A batch that outgrows memory before it closes is lost and counted, as it is today (L1, L10).
+  Note for a future round, not a decision: delivering such a batch early would change law L4.
 - Reported, not fixed: a good topic is also judged unreadable for life if building its decoder runs
   out of memory. That is a different cause from this stage's, and is raised with the PM separately.
 - A benchmark comment in the encoding domain describes the old sizing. It is not edited here.

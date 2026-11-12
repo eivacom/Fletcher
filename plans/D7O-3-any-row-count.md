@@ -28,7 +28,7 @@ memory Arrow is asked for at the start of every window, through `Reserve(max_row
 `cpp:240`). (a) is the defect the ruling names ("a failed pre-size never makes a decodable schema
 unusable"). (b) is the same defect one step earlier. Arrow's size arithmetic is unchecked:
 `TypedBufferBuilder::Resize` computes `new_capacity * sizeof(T)` (`bb:287`) and wraps for huge
-counts. So for the largest values, whether the pre-size fails or succeeds depends on signed overflow
+counts. So for the largest values, whether the pre-size fails or succeeds depends on wraparound
 inside another library. A subscriber asking for 50 million rows also has gigabytes set aside at the
 start of every window, even a window that closes on its timeout with 3 rows. Removing (a) alone
 would leave (b). Bounding the pre-size removes both. Owner Decision 1 (brief) confirms the visible
@@ -83,8 +83,8 @@ static constexpr int64_t kMaxPreSizeRows = 65536;
 - The largest values (rung 4): rows are delivered instead of reported lost.
 
 **Unchanged:**
-- BC-3's site. "Can rows be assembled?" is still decoder presence. That now means exactly
-  "decodable", which is what BC-3 claims.
+- BC-3's site. "Can rows be assembled?" is still decoder presence. That now means the
+  constructor's verdict alone, as BC-3 will say (one allocation residue remains: Risks).
 - L8's permanent cases (an undecodable or unimportable schema).
 - `BatchStatus`, its reasons, `RecordBatchCallback`, `Unsubscribe` and `BatchDecoder` (D-D7O-6).
 
@@ -139,8 +139,8 @@ Handled residue:
 2. **`Reserve` is only a hint**: `Append` grows the builders by itself. `cpp:236` says so, and the
    benchmarks measure growth beyond `Reserve(N)`. **STOP** if `Append` needs a prior `Reserve`.
 3. **Rung 4 is red on `f587e36`.** `Reserve(INT64_MAX)` on `TestSchema()` (int32 + utf8) is expected
-   to throw: the int32 byte count wraps negative at `bb:287`. The red run may therefore execute
-   signed overflow inside Arrow. That is the defect itself, as in D7O-2's premise 4. Record what is
+   to throw: the int32 byte count wraps to −4 at `bb:287` (`int64 × size_t`, an unsigned, defined
+   wrap), and Arrow refuses a negative size before touching the builder's capacity. Record what is
    observed, and count a crash as red. **STOP and report** if arm (a) or (b) passes on `f587e36`.
 4. **The Mock delivers synchronously** (`test:41`), so `AddRow` has run by the time `Publish`
    returns.
