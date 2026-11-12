@@ -41,8 +41,8 @@ switch would allow "no timeout, 5 seconds", which needs a second refusal or a si
 1. **May the domain's definition of "deadline" say that some windows have none?**
    (a) Amend it: "…for a timeout the clock can reach; otherwise none (L5)". Users: no change, and the
    document matches what they get. Architecture: agrees with L5; closes audit F1, as the round's
-   definition of done requires. · (b) Leave it. Users: no change, but the text claims every waiting
-   batch has a deadline, which is false. Architecture: contradicts L5; F1 stays open.
+   definition of done requires. · (b) Leave it. Users: no change, but the definition stays silent
+   on windows that have no deadline. Architecture: silent where L5 speaks; F1 and that DoD line stay open.
    **Recommendation:** (a), because L5 governs. **Default if you don't answer:** (b), with F1
    reported open at round close. *Background: d7 §2, "Deadline".*
 

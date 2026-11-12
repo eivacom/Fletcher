@@ -821,3 +821,7 @@ Review: [D7F-1-design-review.md](D7F-1-design-review.md). No BLOCKERs; P1–P4 v
 
 ## D7O-1 — nonsensical options are refused (APPROVE-WITH-DEBT(1), cycle 1 of 2) — [review](D7O-1-design-review.md)
 - ~~DEBT-1 (step 3): red run kept the refused arms live~~ Landed in `9abb0c7` (phase A); counter observed 1 on the red run, 0 → 1 on green (`plans/D7O-progress-log.md`, D7O-1).
+
+## D7O-2 — no timeout (APPROVE-WITH-DEBT(2), cycle 1 of 2) — [review](D7O-2-design-review.md)
+- **DEBT-1 (step 3):** the 10 ms control asserts only that some `kTimeout` arrives within 2 s, plus conservation after `Unsubscribe`. It never asserts which rows that batch holds (`last_flush_` is set at construction, so the content depends on timing).
+- **DEBT-2 (step 3):** BC-4: replace the stale `Flush` site with `Close` and add `ArmTimer`. Record rung 3's red as observed (likely row 6's `kTimeout`); it is still early, so do not stop. Optional: use `ratio_less` in the `static_assert`.
