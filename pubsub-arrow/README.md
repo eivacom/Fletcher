@@ -72,10 +72,9 @@ you unsubscribe.
 
 `BatchOptions::kNoTimeout` asks for no timeout at all: a batch then arrives only when it is full
 (or hits the offset budget), and whatever is left arrives, with reason `kClosing`, when you
-unsubscribe or destroy the `SubscriberArrow`. Rows lost for want of a usable schema (or because
-they are malformed) never count toward `max_rows`, so with no timeout they are reported only in
-that last batch. A timeout too long for the clock to reach means the same as `kNoTimeout`; a long
-timeout the clock can reach gives a deadline at its true time.
+unsubscribe or destroy the `SubscriberArrow`. When rows are lost, see the `Subscribe` doc in the
+header for when the loss is reported. A timeout too long for the clock to reach means the same as
+`kNoTimeout`; a long timeout the clock can reach gives a deadline at its true time.
 
 `max_rows` must be at least 1 and `timeout` at least 0. Anything else is
 refused: `Subscribe` throws `PubSubError(kInvalidArgument)` before anything is

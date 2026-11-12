@@ -6,7 +6,7 @@
 > L15's refusal is `[built]` (D7O-1, `9abb0c7`); the no-timeout and unrepresentable-timeout cases of
 > L4 and L5 are `[built]` (D7O-2); a huge `max_rows` stays `[designed-not-built]` until D7O-3.
 
-**Mode: survey, verified against the tree at `9a4780b`; the §3 "Holds at" citations were refreshed at D7F-3; every other `cpp:N` citation predates D7F-1 (`a2c8b97`), D7F-2 (`dbaa2b6`) and D7F-3, so treat those as approximate; D7O-1 shifted every `cpp:N` after line 34 down by about 9** (branch `feature/row-index`). The code is
+**Mode: survey, verified against the tree at `9a4780b`; the §3 "Holds at" citations were refreshed at D7F-3; every other `cpp:N` citation predates D7F-1 (`a2c8b97`), D7F-2 (`dbaa2b6`) and D7F-3, so treat those as approximate; D7O-1 shifted every `cpp:N` after line 34 down by about 9, and D7O-2 those after `ArmTimer` by about 12 more** (branch `feature/row-index`). The code is
 ground truth. Doc comments, READMEs and specs are claims checked against it. No spec exists for
 this domain; its rules live in code comments in
 [`subscriber_arrow.cpp`](../../pubsub-arrow/src/subscriber_arrow.cpp) (cited `cpp:N`) and
@@ -65,8 +65,7 @@ closing and is not delivered is counted in the `rows_dropped` of a later deliver
   `cpp:100-105` (over budget: close, retry, count), `cpp:170-177` (`DiscardPending`),
   `cpp:225-226` (`Close` hands the count to the queued batch).
 - **With no timeout (L5, D7O-2),** a window of only lost rows never counts toward `max_rows` (it
-  reads `decoder_->num_rows()`), so it is reported only in the `kClosing` batch; the header and README
-  say so.
+  reads `decoder_->num_rows()`), so it is reported only in the `kClosing` batch; the header says so, and the README points to it.
 - **Violation 1.** While no usable schema exists (none decided yet, or an import that threw, which
   decides the schema as unusable for good), the row is counted through `AddRow`'s no-decoder branch. Since `a2c8b97` (D7F-1) the closing flush
   reports it; since D7F-2 the batch thread reports it at each deadline too, because `Loop` flushes at
@@ -129,10 +128,10 @@ wrapped one.
 `[built]` for finite timeouts the clock can represent; `[built]` for no timeout and for the
 unrepresentable case (D14, D7O-2).
 - Holds at: `ArmTimer` (the deadline, or none when the timeout cannot be reached from the previous
-  flush: the sum is formed only when it can be represented), `cpp:200`, `cpp:285`.
+  flush: the sum is formed only when it can be represented), `cpp:200`, `cpp:102` and `cpp:271-276` (where the deadline is read).
 - Tests: no timeout (`BatchOptions::kNoTimeout`): `NoTimeoutWindowsCloseOnlyWhenFullOrAtClosing`;
   the unrepresentable case: `TimeoutTooLongForTheClockBehavesAsNoTimeout` (its 100-year arm is a
-  guard: a timeout the clock can reach keeps its deadline). `FlushesAtTimeout` checks only that a
+  guard: a long timeout the clock can reach is accepted and never fires early). `FlushesAtTimeout` checks only that a
   timeout flush happens, not when.
 - The header and README now state this rule (D7F-2; Findings a1).
 
@@ -249,7 +248,8 @@ answered (register BC-8); a binding passes the refusal through instead of answer
   `SubscriberArrow::Subscribe`, before the batch thread starts or anything is subscribed.
 - Tests: `OutOfRangeBatchOptionsAreRefusedAndLeaveNothingBehind` (rung 1: each out-of-range value
   refused, callback released, nothing subscribed or delivered); `InRangeBatchOptionsAreUsedAsGiven`
-  (`max_rows` 1 and a zero timeout accepted and used as given).
+  (`max_rows` 1 and a zero timeout accepted and used as given). D7O-2: `TimeoutTooLongForTheClockBehavesAsNoTimeout`
+  (`milliseconds::max()`, the clock's maximum and 100 years accepted, none firing early).
 
 **L14. The row index is always the caller's, never Fletcher's.** Batch assembly delivers each row's
 index exactly as the publisher supplied it. It never assigns, renumbers, reorders, fills or checks an

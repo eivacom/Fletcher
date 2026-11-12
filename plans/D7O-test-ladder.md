@@ -68,7 +68,7 @@ orders stage 2's red-first work so each rung's test is shown red on the pre-stag
 any arm that is green both ways as a guard.
 
 **Accumulation and deletion checks.** No rung depends on a construct a later rung creates. No rung
-builds what a later rung deletes: stage 1's range check is extended (not replaced) by stage 2 to
+builds what a later rung deletes: *(as landed, D7O-2: the range check needed no extension; `kNoTimeout` is non-negative and passes it as is)* stage 1's range check is extended (not replaced) by stage 2 to
 accept the no-timeout spelling; stage 1 deletes the clamp, which stage 3 needs gone.
 
 ## Tests other than rungs
