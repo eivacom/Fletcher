@@ -87,8 +87,8 @@ no-timeout text and F2 belong to stage 2.
   clamped" note is deleted. §(c)'s last bullet is marked resolved for the refusal. §4's sentence
   saying `Subscribe` refuses out-of-range options is kept.
 - `docs/domains/bounded-context-register.md` BC-8: the single site reads "`RecordBatchBatcher`'s
-  constructor, the first step of the batched `SubscriberArrow::Subscribe`, before anything is
-  subscribed". The C++ clamp copy is marked deleted (D7O-1). The status becomes "check `[built]`
+  constructor, reached only from the batched `SubscriberArrow::Subscribe`, before anything is
+  started or subscribed". The C++ clamp copy is marked deleted (D7O-1). The status becomes "check `[built]`
   (D7O-1); sweep owed by D7O-3".
 
 ## Corner cases forbidden

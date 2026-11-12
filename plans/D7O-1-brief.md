@@ -57,5 +57,4 @@ surface: 0 · design cycles used: 1/2
 
 ---
 *As landed (<date>, appended by the PM at close, ≤5 lines):*
-<delta vs the above — actual net lines, anything retired or added the brief did
-not predict, fix cycles used>.
+<delta vs the above — actual net lines, anything retired or added the brief did not predict, fix cycles used>.
