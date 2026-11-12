@@ -128,7 +128,7 @@ wrapped one.
 `[built]` for finite timeouts the clock can represent; `[built]` for no timeout and for the
 unrepresentable case (D14, D7O-2).
 - Holds at: `ArmTimer` (the deadline, or none when the timeout cannot be reached from the previous
-  flush: the sum is formed only when it can be represented), `cpp:200`, `cpp:102` and `cpp:271-276` (where the deadline is read).
+  flush: the sum is formed only when it can be represented), `cpp:222` (`Close` sets `last_flush_`, the anchor), `cpp:102` and `cpp:271-276` (where the deadline is read).
 - Tests: no timeout (`BatchOptions::kNoTimeout`): `NoTimeoutWindowsCloseOnlyWhenFullOrAtClosing`;
   the unrepresentable case: `TimeoutTooLongForTheClockBehavesAsNoTimeout` (its 100-year arm is a
   guard: a long timeout the clock can reach is accepted and never fires early). `FlushesAtTimeout` checks only that a

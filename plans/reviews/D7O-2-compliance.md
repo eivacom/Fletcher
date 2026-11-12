@@ -96,3 +96,25 @@ ruling. No tier-1 collision, no tier-2-vs-tier-1 conflict, and no principle-vs-d
 - The pre-stage red observations are not yet in the progress log or evidence: rung 3's two red arms,
   the guard green, the control green, rung 2's compile failure (premise 4, DEBT-2(b)). The PM
   captures them at close.
+
+## Cycle 2
+
+**Verdict: CONFORMS.** Diff `7a0cc64..6e5cd89`: docs and records only (cpp, hpp, tests untouched).
+- **B1 closed.** The false README sentence is deleted and reduced to a pointer (`README.md:75-76`) to
+  the header's `Subscribe` doc. That doc (`hpp:114-117`) scopes the rule correctly to "a window of
+  only lost rows". F2 and F5 are now disclosed through the pointer, and nothing in the README
+  misstates L1. d7 L1 ("the header says so, and the README points to it") matches the tree.
+- **N1 closed as booked.** `hpp:121` keeps "Any other timeout is used as given". D7O-3's tracker row
+  (`plans/D7O-plan.md`) now owes the restoration of "value", with its cause cited.
+- **RECORD corrections confirmed.**
+  - L5's 100-year wording now reads "accepted and never fires early".
+  - L15's Tests line cites rung 3.
+  - BC-4's Status has a D7O-2 entry.
+  - BC-8 points to `ArmTimer` for meaning.
+  - d7's Mode line notes the shift.
+  - Ladder :71 carries an as-landed note.
+  - The red-run evidence is deferred to the close progress log, as stated.
+
+RECORD:
+- d7 L5 "Holds at" `cpp:200` now lands inside `ArmTimer`, so it duplicates the `ArmTimer` citation.
+  L5's anchor to the previous flush (`last_flush_ = now` in `Close`, `cpp:222`) is not cited.

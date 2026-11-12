@@ -42,3 +42,28 @@ branch stays off `main` until D7O-3). 4b nits: sinks declared after `sub` in two
 first if a wait fails), `weak_ptr` expiry relying on a moved-from `std::function` being empty, a
 200 ms sleep that only serves the red run, a `std::cerr` line on every pass. 4a records: C# keeps
 its own check until the switch round (BC-8's binding clause unmarked).
+
+## D7O-2 — No timeout — 🟢 2026-11-12
+
+**Landed:** `7a0cc64`, fix `6e5cd89`. `BatchOptions::kNoTimeout` (= `milliseconds::max()`, INT64_MAX
+to a C caller): windows close only when full, on the offset budget or at closing; a window of only
+lost rows is reported in the `kClosing` batch. A timeout too long for the clock arms no deadline
+instead of an early, wrapped one (the `ArmTimer` overflow is gone). d7 §2 "Deadline" amended (owner
+ruling, Decision 1 (a)); L4/L5 `[built]`; BC-4 updated.
+**Steps:** 0a CLEAR · design `d60e8cd` · review APPROVE-WITH-DEBT(2) `53a37da` · Decision 1 ruled
+`920b3ec` · phase A red: rung 2 compile failure on `kNoTimeout` only; rung 3 `milliseconds::max()`
+and clock-max arms each got `kTimeout:1 rows` (row 6, the wrapped deadline), 3/3 runs, no crash;
+100-year arm green both ways (guard); 10 ms control green, and the forcing tests with 10 ms fail
+every arm · 0b CLEAR (one unmoored point: lost rows never count toward `max_rows` rests only on
+D-D7O-5/F2) · green 55/55 · 4a ISSUES(2, 1 blocking: README sentence) → fix 1 → cycle 2 PASS · 4b 0
+blocking, 3 nits.
+**Verification:** inner loop `conan create pubsub-arrow` run_tests 55/55 (implementer, PM-checked
+log); full suite: `ctest -L heavy` 2/2, pubsub-arrow-fastdds 4/4 (PM).
+**Numbers:** production ~+15/−6 vs declared +10/−2 (**close finding:** >50% over; `static_assert`
+message, `<ratio>`, a two-line `constexpr`); tests +277; design cycles 1; fix cycles 1; implementer
+launches 1 (resumed for phase B and the fix); owner touches 1.
+**Decided by PM:** header `hpp:121` narrowed to "any other timeout" stays; restoring "value" booked
+into D7O-3 (4a N1). README loss sentence reduced to a pointer rather than re-worded.
+**Logged, not gated (4b nits):** the timeout-to-clock conversion could be settled once in the
+constructor; a second `Observe()` after `End()` cannot fail (~1.4 s of sleep); no test combines no
+timeout with an offset-budget close (that path never touches the timer).

@@ -56,6 +56,5 @@ Declared net lines: +10 / −2 (production; tests about +170; documentation not 
 surface: 1 · design cycles used: 1/2
 
 ---
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
-<delta vs the above — actual net lines, anything retired or added the brief did
-not predict, fix cycles used>.
+*As landed (2026-11-12, `7a0cc64` + fix `6e5cd89`):*
+Production ~+15/−6 vs declared +10/−2 (`static_assert` message, `<ratio>`, a two-line `constexpr`; >50% over, owner note at round close); tests +277. Decision 1 ruled (a), §2 amended. Fix cycles 1 (README sentence reduced to a pointer). Header narrowed to "any other timeout"; D7O-3 restores "value".
