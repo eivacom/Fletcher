@@ -40,7 +40,9 @@ Status meanings:
 | 4 | **Transport providers** | FastDDS, XRCE, in-process: how each meets domain 3's contract, including the meaning of `max_payload_bytes` on `__schema` (owner ruling, 2026-11-10) | provider READMEs | `draft` |
 | 5 | **Gateway and browser client** | the WebSocket gateway, the TS client | wire spec (gateway frames), `gateway-client-ts` | `draft` |
 | 6 | **Protocol driver ABI** | loading providers across the ABI boundary | [protocol-driver-abi-spec.md](protocol-driver-abi-spec.md) | `draft` |
-| 7 | **Batch assembly** | turning a stream of rows into columnar batches: when windows close (row count, timeout, offset overflow), loss accounting, row-aligned side data (`RecordBatchBatcher`, [pubsub-arrow/src/subscriber_arrow.cpp](../pubsub-arrow/src/subscriber_arrow.cpp)) | [domains/d7-batch-assembly.md](domains/d7-batch-assembly.md) | **`specified`** 2026-11-10; L1 and L12 violated, fixed by the next round |
+| 7 | **Batch assembly** | turning a stream of rows into columnar batches: when windows close (row count, timeout, offset overflow), loss accounting, row-aligned side data (`RecordBatchBatcher`, [pubsub-arrow/src/subscriber_arrow.cpp](../pubsub-arrow/src/subscriber_arrow.cpp)) | [domains/d7-batch-assembly.md](domains/d7-batch-assembly.md) | **`specified`** 2026-11-10; L1 and L12 fixed by D7F; L4/L5 amended and L15 added 2026-11-12, built by D7O |
+| 9 | **C ABI shim** | the C ABI (`c-abi/`) that language bindings load, in two variants built from one source: the edge variant (no Arrow C++, ever: it must run on embedded devices) and a server-tier variant that adds domain 7's batched subscribe (owner rulings, 2026-11-12) | `c-abi/include/fletcher/abi/binding.h`; BIND decisions in [plans/BIND-csharp-bindings.md](../plans/BIND-csharp-bindings.md) | `anticipated`: created by the shim round, after D7O |
+| 10 | **C# binding** | the C# packages that load the shim (`Eiva.Fletcher`, `.Interop`, `.Model`). The C# gateway client stays with domain 5, generated C# with domain 1 (owner ruling 2026-11-12: each language binding is its own domain) | [plans/BIND-csharp-bindings.md](../plans/BIND-csharp-bindings.md) | `anticipated`: created by the C# switch round |
 | 8 | **Row bookkeeping** | per-row information that is not business data, starting with Surge's row index: its declaration at topic creation, its single writer, its delivery beside the batch | [plans/RIX-row-index.md](../plans/RIX-row-index.md) (plan, not a spec) | `draft`: not built. Created by round RIX |
 
 The numbers are labels, not a ranking. They differ from the first proposal: the application tier
@@ -52,6 +54,16 @@ The numbers are labels, not a ranking. They differ from the first proposal: the 
 2. **Domain 7 fix round:** L1's violations (drops never reported) and L12's (batches delivered
    concurrently and out of order).
 3. **RIX:** creates domain 8, and deletes the PR #104 trailing-field helpers.
+
+**Added 2026-11-12** (owner rulings, [plans/RIX-rulings.md](../plans/RIX-rulings.md)): C# moves onto
+domain 7's batcher, and its managed copy is deleted. The rounds, one domain each:
+
+4. **D7O** (domain 7): a batched subscription may have no timeout; out-of-range options are refused
+   (L4, L5, L15).
+5. **Shim round** (creates domain 9): the shim's server-tier variant exposes the batched subscribe.
+6. **C# switch round** (creates domain 10): C#'s `SubscriberArrow` runs on it; the managed batcher is
+   deleted after its tests are checked for cases domain 7's suite lacks. C#'s batched subscribe does
+   not ship to `main` (PR #129) before this lands.
 
 Deferred: protoc's refusal of `fletcher.` metadata keys (domain 1 code, d2-row-encoding Q3a), until
 domain 1 is specified (owner ruling, 2026-11-10).
@@ -66,8 +78,10 @@ domain 1 is specified (owner ruling, 2026-11-10).
   `proto_message`, `field_number`, `metadata_from_option` keys) stay with domain 1 (confirmed
   2026-11-10). Domain 3 transports all of them and compares their bytes, without owning what any
   key means.
-- **Language bindings are unmapped.** The C# binding (`Eiva.Fletcher`, used by the Monorepo
-  SurgeIngester) lives outside this repo. Rust has only generated accessors.
+- **Language bindings are only named.** Domains 9 and 10 are `anticipated` (2026-11-12). The C#
+  binding now lives in this repo (`dotnet/`, merged at `ff5be3e`). Rust has only generated
+  accessors. The C# gateway client batches on its own (register BC-9), unassigned until domain 5 is
+  specified.
 - **Shared kernel not assessed.** `core/internal/delivery_frame.hpp` is used by both `Subscriber`
   and the providers (PDA-DEC-AG1). It sits in domain 3 here, but this has not been checked.
 - **Verified:** boundaries by the owner on 2026-11-10; capability assignments by reading the code

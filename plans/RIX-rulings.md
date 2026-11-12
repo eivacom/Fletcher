@@ -194,3 +194,92 @@ from a row-delivery thread returns at once) stays and is added to the ladder and
 tests the destruction case: destroying the subscriber inside its own batch callback still delivers the
 queued batches and then the closing batch. Source: step-0b audit `plans/reviews/D7F-3-audit-0b.md`.
 **Applies to:** `plans/D7F-test-ladder.md` rung 6; the D7F-3 design's test table.
+
+## 2026-11-12 — C# moves onto the C++ batcher: one shim, two variants
+> "Arrow C++ should never be in the native library, because it needs to be able to run on embedded
+> devices. But the batcher isn't at all supposed to be delivered with the "embedded" part of
+> Fletcher, so can't the batcher just be attached only to the part that has Arrow C++? I don't know
+> if the C# batcher works with the embedded subset of Fletcher today, but being able to do so is not
+> a requirement"
+> "Let's build one shim in two variants, and no, don't do the interim fixes to the C# batcher"
+> Earlier the same session, on whether C# keeps its own batcher: "Well, we shoulod only have one and
+> it should be the C++ one, but which one is most mature? I don't want to just delete the C# batcher
+> if it contains functionality that should be ported over to the C++ one first"
+
+**Rulings:** (1) **There is one batch assembler, C++'s** (domain 7). C#'s managed `Batcher` in
+`dotnet/src/Fletcher/SubscriberArrow.cs` is deleted once C# runs on it. (2) **The C ABI shim is built
+in two variants from one source**: the edge variant exactly as today, never carrying Arrow C++ (it
+must run on embedded devices); a server-tier variant that adds `pubsub-arrow`'s batched subscribe.
+C# on desktop loads the server variant. A second, separately loaded native library was rejected.
+(3) **No interim fixes to the C# batcher.**
+**Applies to:** the domain map (planned order of work); the rounds D7O, then the shim round, then
+the C# switch round.
+
+## 2026-11-12 — A batched subscription may have no timeout
+> "Add 'never' to C++ (Recommended)"
+
+*(Chosen option.)* Its text: "Domain 7 gains a no-deadline option (an owner ruling amending L4/L5,
+plus a small change to C++'s BatchOptions). C# keeps its current behaviour. Since a round may touch
+only one domain, this becomes a small domain-7 round that runs first."
+**Applies to:** domain 7 L4, L5 (amended 2026-11-12), §4; round D7O.
+
+## 2026-11-12 — Batch options out of range are refused, never clamped
+> "Refuse both (Recommended)"
+
+*(Chosen option.)* Its text: "C++'s batched Subscribe refuses a negative timeout and max_rows < 1
+with an invalid-argument error, one rule in domain 7; the shim passes the refusal through and C#
+throws as it does today. Visible change: C++ callers passing such values get an error, and C#
+callers passing MaxRows < 1 now get an exception instead of 1."
+**Applies to:** domain 7 §1 (the "Refuses: validating `BatchOptions`" item is withdrawn), new law
+L15, Q5 (resolved); register BC-8; round D7O.
+
+## 2026-11-12 — The shim is a domain of its own; C#'s extras stay out of domain 7
+> Domain boundary: "Shim only"
+> Scope: "Keep them out (Recommended)"
+
+**Rulings:** (1) **The new domain is the C ABI shim alone, both variants.** Each language binding
+over it (C#, later Rust) is a domain of its own. (2) **BC-2's per-row gap and BC-7 are not
+prerequisites of the C# switch** and stay registered and deferred: C#'s per-row `Subscribe` is a
+batched one with `MaxRows = 1` (D-BIND-59), and a managed handler's exception is caught, and counted,
+in C#'s own trampoline (`HandlerFaulted`, `AbsorbedCallbackFailures`).
+**Applies to:** the domain map; register BC-2, BC-7.
+
+## 2026-11-12 — Earlier answers the same day: the C# batcher until it is removed (recorded late)
+> Which domain owns the C# batcher: "New bindings domain"
+> D-BIND-64: "There shoulnd't be a separate C# batch handler - so until it's removed, do as little as
+> possible to maintain it while still keeping it compliant"
+> Late schema in C#: "Follow domain 7 (Recommended)"
+
+*(Recorded 2026-11-12 by round-designer, after a session crash lost them before they were written.
+The questions' text is in that session's transcript; summarised here.)*
+**Rulings:** (1) C#'s batcher was placed in a new bindings domain, not domain 7; the boundary was
+then narrowed to the shim alone (entry above, "Shim only"), with each language binding its own
+domain. (2) **D-BIND-64** (C# batch handlers concurrent and out of order "as in C++", nested closing
+batch on an in-handler Unsubscribe) is no longer true of C++ since D7F; until the C# batcher is
+removed it is maintained minimally but kept compliant. **Revised 2026-11-12** (entry below): no interim
+fixes; C# does not ship to `main` before the switch. (3) **A C# subscription whose first row
+arrives before its schema follows domain 7** (L8, L13): losses reported, assembly once the schema
+arrives; not undecodable for life.
+**Applies to:** D-BIND-64 and D-BIND-25 in `plans/BIND-csharp-bindings.md` (to be amended by the C#
+switch round); ⚠ see the collision recorded next.
+
+## 2026-11-12 — Collision resolved: no interim fixes, and C# does not ship first
+> "No fixes; don't ship it first (Recommended)"
+
+*(Chosen option.)* Its text: "Revise the earlier answer: the C# batcher stays as it is,
+non-compliant, and that is acceptable only because C#'s batched subscribe does not ship to main (PR
+#129) before the switch lands. If shipping becomes urgent, this question comes back."
+**Resolution:** **revision in place** of the earlier ruling (2) above ("keeping it compliant"). The
+later "no interim fixes" stands. **Condition:** PR #129 does not merge to `main` with the managed
+batcher in it; if that changes, this ruling is re-opened, not assumed.
+**Applies to:** the C# switch round's ordering; PR #129.
+
+## 2026-11-12 — D7O hand-over: huge timeouts, and a huge max_rows
+> LC-1: "Keep it (Recommended)"
+> Ladder Q1: "Fix in D7O (Recommended)"
+
+**Rulings:** (1) **L5's sentence "a timeout too long for the clock to represent means no deadline,
+never an early or wrapped one" is confirmed** as law (it was authored by round-designer, audit LC-1).
+(2) **A `max_rows` larger than any window will reach is used as given and fixed in D7O** (stage
+D7O-3): a failed pre-size never makes a decodable schema unusable.
+**Applies to:** domain 7 L5, L15, L8; D7O ladder rungs 3 and 4.

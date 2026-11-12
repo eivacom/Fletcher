@@ -1,7 +1,9 @@
 # Domain 7: Batch assembly
 
 > **Specified.** The owner confirmed these laws on 2026-11-10 ([RIX-rulings.md](../../plans/RIX-rulings.md), "Yes on all accounts"). A change to a law needs
-> an owner ruling, recorded in a decision of record.
+> an owner ruling, recorded in a decision of record. **Amended 2026-11-12** (D14, D15): L4 and L5
+> gain the no-timeout case, L15 is new, and §1 no longer lists validating `BatchOptions` as refused;
+> those parts are `[designed-not-built]` until round D7O.
 
 **Mode: survey, verified against the tree at `9a4780b`; the §3 "Holds at" citations were refreshed at D7F-3; every other `cpp:N` citation predates D7F-1 (`a2c8b97`), D7F-2 (`dbaa2b6`) and D7F-3, so treat those as approximate** (branch `feature/row-index`). The code is
 ground truth. Doc comments, READMEs and specs are claims checked against it. No spec exists for
@@ -16,7 +18,8 @@ this domain; its rules live in code comments in
 **Owns:** turning a subscription's stream of rows into a sequence of columnar batches. That means:
 deciding when a window closes (row count, timeout, 32-bit offset budget, close); accounting for every
 row that arrives (delivered or dropped); keeping row-aligned side data (attachments) parallel to the
-batch; reporting why each batch was delivered; and owning the batch thread and its teardown.
+batch; reporting why each batch was delivered; owning the batch thread and its teardown; and deciding
+whether a subscription's `BatchOptions` are acceptable (L15, since 2026-11-12).
 
 **Refuses:**
 - **Decoding.** How a wire row becomes builder contents, which schemas can be decoded, and the
@@ -27,8 +30,8 @@ batch; reporting why each batch was delivered; and owning the batch thread and i
   delivery threading belong to domain 3. This domain relies on them (see §6).
 - **Retry, back-pressure, persistence.** A lost row is counted and never recovered. A slow callback
   is not throttled. No code exists for any of these.
-- **Validating `BatchOptions`.** Out-of-range values are clamped silently, never refused
-  (`cpp:32`, `cpp:176`).
+- ~~**Validating `BatchOptions`.** Out-of-range values are clamped silently, never refused.~~
+  Withdrawn 2026-11-12 (D15): validating them is this domain's, by L15.
 
 ## 2. Ubiquitous language
 
@@ -99,12 +102,14 @@ to batch row `i`. A dropped row takes its attachment with it.
 - Tests: `AttachmentsAlignWithRows`, `DroppedRowReportedAndAttachmentDiscarded`,
   `CorruptRowIsCountedDroppedAndBatchStaysAligned`.
 
-**L4. A window is bounded.** It closes at the first of four events: `max_rows` rows, the deadline,
-the offset budget, or closing. The batch's reason names which, except that the offset budget is
-reported as `kRowLimit`. A row that meets the budget opens the next window rather than being lost.
-`[built]`
+**L4. A window is bounded.** It closes at the first of four events: `max_rows` rows, the deadline
+(only for a subscription that has a timeout; L5), the offset budget, or closing. The batch's reason
+names which, except that the offset budget is reported as `kRowLimit`. A row that meets the budget
+opens the next window rather than being lost.
+`[built]`; the no-timeout case `[designed-not-built]` (D14, round D7O)
 - Holds at: `cpp:108` (count), `cpp:92-94` and `cpp:251-252` (deadline), `cpp:100-105` (budget:
-  close, then retry once), `cpp:122` (closing). `max_rows < 1` is clamped to 1 (`cpp:36`).
+  close, then retry once), `cpp:122` (closing). Until D7O, `max_rows < 1` is clamped to 1
+  (`cpp:36`), which L15 forbids.
 - Tests: `FlushesAtRowLimit`, `FlushesAtTimeout`, `ClosingFlushOnUnsubscribe`. The offset-budget
   early flush: `OverBudgetRowAroundInCallbackUnsubscribeIsCounted` (`heavy`, D7F-3), whose first
   batch is `kRowLimit` with one row under a large `max_rows`; the decoder half:
@@ -112,8 +117,13 @@ reported as `kRowLimit`. A row that meets the budget opens the next window rathe
 
 **L5. Timeout cadence is anchored to the previous flush, not to the first event.** A continuous
 stream flushes every `timeout`. A stream idle for longer than `timeout` is delivered on the next
-event, after a 1 ms floor.
-`[built]`
+event, after a 1 ms floor. **A subscription may have no timeout:** its windows have no deadline and
+close only on row count, the offset budget or closing (D14). **A deadline is never earlier than its
+timeout says:** a timeout too long for the clock to represent means no deadline, never an early or
+wrapped one.
+`[built]` for finite timeouts the clock can represent; no timeout, and the unrepresentable case,
+`[designed-not-built]` (D14, round D7O). Until D7O, `last_flush_ + timeout_` (`cpp:187`) overflows
+for a timeout near `milliseconds::max()`.
 - Holds at: `cpp:184-191` (`ArmTimer`), `cpp:200`, `cpp:285`.
 - Test: no test. `FlushesAtTimeout` checks only that a timeout flush happens, not when.
 - The header and README now state this rule (D7F-2; Findings a1).
@@ -219,6 +229,16 @@ A `Stop` issued from the batch thread detaches the thread instead of joining it.
   arrives. `PubSubArrowFastDdsTest.SubscribeBeforePublishDeliversWithSchema` in
   `integration-tests/pubsub-arrow-fastdds` uses the per-row overload.
 
+**L15. Out-of-range batch options are refused, never adjusted.** A batched `Subscribe` whose
+`max_rows` is below 1 or whose timeout is negative is refused with an invalid-argument error before
+anything is subscribed: no thread, no provider subscription, no delivery. Every value it accepts is
+used as given. This domain is the one place the question "are these options acceptable?" is
+answered (register BC-8); a binding passes the refusal through instead of answering it again.
+`[designed-not-built]` (D15, round D7O)
+- Source: owner ruling, 2026-11-12, "Refuse both" ([RIX-rulings.md](../../plans/RIX-rulings.md)).
+- Today: `max_rows < 1` is clamped (`cpp:36`) and a negative timeout behaves as the 1 ms floor
+  (`cpp:187`). Test: owed by D7O.
+
 **L14. The row index is always the caller's, never Fletcher's.** Batch assembly delivers each row's
 index exactly as the publisher supplied it. It never assigns, renumbers, reorders, fills or checks an
 index. Keeping indexes compact (no gaps) and in sequence is the caller's responsibility, and Fletcher
@@ -236,7 +256,9 @@ makes no claim about it.
 ## 4. The interface
 
 Surface (`hpp:72-144`):
-- `BatchOptions{max_rows = 8000, timeout = 1 min}`.
+- `BatchOptions{max_rows = 8000, timeout = 1 min}`. From D7O it can also say "no timeout" (D14),
+  and a batched `Subscribe` refuses out-of-range options (L15); how "no timeout" is spelled is D7O's
+  design.
 - `BatchStatus{reason, rows_dropped}`.
 - `RecordBatchCallback(batch, attachments, status)`.
 - `Subscribe(segments, RecordBatchCallback, BatchOptions, TopicOptions = {})`, plus a convenience
@@ -273,6 +295,9 @@ Surface (`hpp:72-144`):
 | D11 | The test for L1's second violation (~256 MiB row) carries the `heavy` label and is not in the default run. | Owner ruling, 2026-11-10, "Label it 'heavy'" ([RIX-rulings.md](../../plans/RIX-rulings.md)). |
 | D12 | Destroying the `SubscriberArrow` inside its own batch callback is treated like an in-callback `Unsubscribe`: queued batches, then `kClosing`, arrive after the callback returns, and the callback must outlive them (L9). | Owner ruling, 2026-11-11, Decision 1 (a) ([RIX-rulings.md](../../plans/RIX-rulings.md)). Applied by D7F-3. |
 | D13 | An `Unsubscribe` from a thread delivering rows on the subscription's own transport returns at once; the remaining batches, then `kClosing`, still arrive in order on the batch thread, and the caller may not free what those callbacks use until `kClosing` has arrived (L9). | Owner ruling, 2026-11-11, Decision 2 (b) ([RIX-rulings.md](../../plans/RIX-rulings.md)). Applied by D7F-3. |
+| D14 | A batched subscription may have no timeout: windows close only on row count, budget or closing. | Owner ruling, 2026-11-12, "Add 'never' to C++" ([RIX-rulings.md](../../plans/RIX-rulings.md)). Applied by round D7O. |
+| D15 | Out-of-range `BatchOptions` (`max_rows < 1`, negative timeout) are refused with an invalid-argument error, never clamped (L15). Resolves Q5. | Owner ruling, 2026-11-12, "Refuse both" ([RIX-rulings.md](../../plans/RIX-rulings.md)). Applied by round D7O. |
+| D16 | There is one batch assembler, this domain's. C#'s managed batcher is deleted once C# reaches this one through the shim's server-tier variant. | Owner rulings, 2026-11-12 ([RIX-rulings.md](../../plans/RIX-rulings.md)). |
 
 ## 6. Relationships
 
@@ -304,7 +329,7 @@ Surface (`hpp:72-144`):
 | Q2 | Resolved: L12 is a law (2026-11-10), fixed by D7F-3 with a single batch thread (D10). | — |
 | Q3 | Resolved 2026-11-10 (D9): the header was amended; a `Finish` failure keeps delivering a null batch. Applied in `a2c8b97`. | — |
 | Q4 | Should the offset-budget flush get its own reason (such as `kCapacity`), rather than sharing `kRowLimit`? Adding one is a public enum change. | owner |
-| Q5 | Should `BatchOptions` refuse `max_rows < 1` and `timeout <= 0` instead of clamping them silently? | owner |
+| Q5 | Resolved 2026-11-12 (D15, L15): `max_rows < 1` and a negative timeout are refused. A zero timeout is accepted (the 1 ms floor applies). | — |
 | Q6 | Where is "decision A" (test line 673) recorded? | owner or PM |
 | Q7 | Should the batched path cache an `arrow::Schema` instead of building an unused `Codec`? This touches the domain 2 boundary. | domain 2 and domain 7 |
 
@@ -378,4 +403,4 @@ Surface (`hpp:72-144`):
 - The closing flush from `~SubscriberArrow` (L9): tested since D7F-1 (the two `*AtDestruction` tests).
 - A callback that throws (L10).
 - ~~Overlapping or reordered callbacks (L12).~~ Tested by D7F-3.
-- Clamping of `max_rows` and `timeout` (§1).
+- Clamping of `max_rows` and `timeout` (§1): replaced by refusal (L15); D7O owes the test.
