@@ -44,7 +44,7 @@ whether a subscription's `BatchOptions` are acceptable (L15, since 2026-11-12).
 | **Flush reason** | `BatchStatus::Reason`: `kRowLimit`, `kTimeout` or `kClosing` (`hpp:80-84`). |
 | **Batch** | The `arrow::RecordBatch` a flush delivers. It may have zero rows, or be null (L6, L7). |
 | **Dropped row** | A row that reached the batcher and is not in any batch. It is counted in `rows_dropped` ("rows lost since the previous flush", `hpp:86`). |
-| **Deadline** | When a pending window times out: `max(now + 1 ms, last_flush + timeout)`, for a timeout the clock can reach; otherwise none (L5) (`ArmTimer`). |
+| **Deadline** | When a pending window times out: `max(now + 1 ms, last_flush + timeout)`, for a timeout the clock can reach; otherwise none (L5) (`ArmTimer`). Amended by owner ruling 2026-11-12, "(a) Amend it" (D7O-2 Decision 1; [RIX-rulings.md](../../plans/RIX-rulings.md)). |
 | **Offset budget** | Arrow's 32-bit builder limit, which `BatchDecoder` signals with `BatchCapacityExceeded` (`batch_decoder.hpp:16-21`). |
 | **Closing** | `Stop()`: the final flush. Any later row is ignored (`cpp:80`, `cpp:130-149`). |
 
@@ -134,6 +134,10 @@ unrepresentable case (D14, D7O-2).
   guard: a long timeout the clock can reach is accepted and never fires early). `FlushesAtTimeout` checks only that a
   timeout flush happens, not when.
 - The header and README now state this rule (D7F-2; Findings a1).
+- Source of the "never earlier" sentence: owner ruling 2026-11-12, "Keep it" (D17).
+- A timeout of nearly 300 years can give a deadline in one window and none in a later one (the sum
+  stops being representable as `last_flush` advances); accepted as used as given, and no user can
+  tell the two apart. (D7O close, 2026-11-12, from `plans/D7O-2-brief.md` Handled.)
 
 **L6. Loss gets a delivery, and idleness does not.** A window that contains only drops is still
 delivered: a zero-row batch, or a null batch if there is no decoder. A window with nothing pending
@@ -249,8 +253,13 @@ anything is subscribed: no thread, no provider subscription, no delivery. Every 
 used as given. This domain is the one place the question "are these options acceptable?" is
 answered (register BC-8); a binding passes the refusal through instead of answering it again.
 `[built]` for the refusal (D15, D7O-1); the "used as given" clause is `[built]` for timeouts
-(D7O-2) and for `max_rows` (D7O-3)
+(D7O-2) and for `max_rows` (D7O-3); the binding clause ("a binding passes the refusal through") is
+`[designed-not-built]`, owned by the C# switch round: C# still answers the question itself (register
+BC-8 copies). (D7O close, 2026-11-12, from `plans/reviews/D7O-1-compliance.md` RECORD.)
 - Source: owner ruling, 2026-11-12, "Refuse both" ([RIX-rulings.md](../../plans/RIX-rulings.md)).
+- A call both out of range and re-entrant (made where subscribing is not allowed) gets
+  `kInvalidArgument`, not `kReentrantCall`: the options are checked first. Both refusals leave
+  nothing behind. (D7O close, 2026-11-12, from `plans/D7O-1-brief.md` Decisions.)
 - Holds at: `RecordBatchBatcher`'s constructor (`cpp:35-48`), reached only from the batched
   `SubscriberArrow::Subscribe`, before the batch thread starts or anything is subscribed. D7O-3:
   `max_rows_` is stored and compared unchanged; the one pre-size helper (`PreSize`, bounded at
@@ -283,7 +292,9 @@ makes no claim about it.
 Surface (`hpp:72-144`):
 - `BatchOptions{max_rows = 8000, timeout = 1 min}`, and `BatchOptions::kNoTimeout`
   (`milliseconds::max()`) for no timeout (D14, D7O-2). A batched `Subscribe` refuses out-of-range
-  options (L15).
+  options (L15). Across a C ABI, `kNoTimeout` is INT64_MAX as an `int64_t` count of milliseconds,
+  passed untranslated (D-D7O-1); C#'s "infinite" (−1 ms) is refused here, so a binding translates
+  it (§6). (D7O close, 2026-11-12, from `plans/D7O-2-no-timeout.md`.)
 - `BatchStatus{reason, rows_dropped}`.
 - `RecordBatchCallback(batch, attachments, status)`.
 - `Subscribe(segments, RecordBatchCallback, BatchOptions, TopicOptions = {})`, plus a convenience
@@ -322,7 +333,8 @@ Surface (`hpp:72-144`):
 | D13 | An `Unsubscribe` from a thread delivering rows on the subscription's own transport returns at once; the remaining batches, then `kClosing`, still arrive in order on the batch thread, and the caller may not free what those callbacks use until `kClosing` has arrived (L9). | Owner ruling, 2026-11-11, Decision 2 (b) ([RIX-rulings.md](../../plans/RIX-rulings.md)). Applied by D7F-3. |
 | D14 | A batched subscription may have no timeout: windows close only on row count, budget or closing. | Owner ruling, 2026-11-12, "Add 'never' to C++" ([RIX-rulings.md](../../plans/RIX-rulings.md)). Applied by round D7O. |
 | D15 | Out-of-range `BatchOptions` (`max_rows < 1`, negative timeout) are refused with an invalid-argument error, never clamped (L15). Resolves Q5. | Owner ruling, 2026-11-12, "Refuse both" ([RIX-rulings.md](../../plans/RIX-rulings.md)). Applied by round D7O. |
-| D16 | There is one batch assembler, this domain's. C#'s managed batcher is deleted once C# reaches this one through the shim's server-tier variant. | Owner rulings, 2026-11-12 ([RIX-rulings.md](../../plans/RIX-rulings.md)). |
+| D16 | There is one batch assembler, this domain's. C#'s managed batcher is deleted once C# reaches this one through the shim's server-tier variant. | Owner rulings, 2026-11-12 ([RIX-rulings.md](../../plans/RIX-rulings.md)). Explicitly supersedes the batcher half of D-BIND-25 ("Arrow tier managed … batch-first", [BIND-csharp-bindings.md](../../plans/BIND-csharp-bindings.md)); the owner was shown D-BIND-25 when ruling. Annotating D-BIND-25 is owed by the C# switch round. (D7O close, 2026-11-12, from `plans/D7O-pre-round-audit.md` R-2.) |
+| D17 | L5's "a deadline is never earlier than its timeout says: a timeout too long for the clock to represent means no deadline, never an early or wrapped one" is law (it was authored by round-designer, audit LC-1). | Owner ruling, 2026-11-12, "Keep it" (LC-1) ([RIX-rulings.md](../../plans/RIX-rulings.md)). Built by D7O-2. |
 
 ## 6. Relationships
 
@@ -345,6 +357,13 @@ Surface (`hpp:72-144`):
 
   That stage will touch L2 (a third bucket in the count) and L3 (a second row-aligned array). The
   only law written for it here is L14, which comes from an owner ruling.
+- **Domain 9 (C ABI shim), anticipated.** Its server-tier variant carries `kNoTimeout` as INT64_MAX
+  milliseconds untranslated; a narrower shim field maps its own maximum onto `kNoTimeout`. (D7O
+  close, 2026-11-12, from `plans/D7O-2-no-timeout.md` premise 3.)
+- **Domain 10 (C# binding), anticipated.** Its switch round translates C#'s `InfiniteTimeSpan`
+  (−1 ms, refused by L15) to `kNoTimeout`, and drops `BatchOptions.MaxTimeout`'s ~49.7-day cap or
+  brings it to the owner (register BC-8): either way a visible C# change. (D7O close, 2026-11-12,
+  from `plans/D7O-2-brief.md` Risks and `plans/D7O-pre-round-audit.md` R-6.)
 
 ## 7. Open questions
 
@@ -358,6 +377,7 @@ Surface (`hpp:72-144`):
 | Q6 | Where is "decision A" (test line 673) recorded? | owner or PM |
 | Q7 | Should the batched path cache an `arrow::Schema` instead of building an unused `Codec`? This touches the domain 2 boundary. | domain 2 and domain 7 |
 | Q8 | Should a `BatchDecoder` constructor that fails on allocation be told apart from one that rejects the schema? Today both leave no decoder for life (L8, Findings (d)). Telling them apart needs an allocation outcome in domain 2's exception contract (`batch_decoder.hpp:28-41`). | domain 2 and domain 7 |
+| Q9 | Should a window that outgrows memory (a huge `max_rows`, no timeout, a fast stream) close early, as a fifth closing event (a change to L4), instead of being lost and counted (L1, L10) as today? Pre-existing for every batch size; D7O-3 made it easier to ask for. Raised 2026-11-12 (D7O close, from `plans/D7O-3-any-row-count.md` and `plans/D7O-3-brief.md` Risks). | owner |
 
 ## 8. How to extend this domain
 
@@ -433,6 +453,13 @@ Surface (`hpp:72-144`):
 - ~~Clamping of `max_rows` and `timeout` (§1): replaced by refusal (L15).~~ Resolved for the refusal
   by D7O-1 (tests under L15); huge timeouts by D7O-2 (tests under L5); a huge `max_rows` by D7O-3
   (tests under L15 and L8).
+- Untested residues (D7O close, 2026-11-12, from `plans/D7O-progress-log.md` D7O-2 and D7O-3,
+  `plans/reviews/D7O-3-codereview.md` cycle 2 and N2, `plans/reviews/D7O-2-codereview.md` N3):
+  (a) a `Finish()` that throws right after a failed pre-size (a dictionary encode of zero rows)
+  leaves later columns un-reset; (b) if `Close`'s `Finish()` fails and `DiscardPending`'s own
+  `Finish()` fails too, `PreSize` runs on a builder still holding rows (pre-existing, unchanged by
+  D7O-3); (c) no timeout combined with an offset-budget close is never exercised (that path never
+  touches the timer).
 
 **(d) Reported at D7O-3, not fixed**
 1. **A constructor that fails on allocation makes a good schema unusable for life.** `SetSchema`'s

@@ -135,6 +135,7 @@ problems.
 (`subscriber_arrow.hpp:106-111`) and README (`:94-98`). This resolves the collision between "2. Fix
 both" and the confirmation of L9 and L12 in "Yes on all accounts": the ruling revises L9 and
 supersedes neither of them.
+*Ingested (D7O close, 2026-11-12): verified already in d7 — D8 and L9's "Revised 2026-11-10" note (Question 1); D9, L7 and Findings (a)2 (Question 2).*
 
 ## 2026-11-10 — Callbacks on Fletcher's batch thread; the 256 MiB test is labelled heavy
 > Question 1: "Always Fletcher's batch thread (Recommended)"
@@ -153,6 +154,7 @@ supersedes neither of them.
 
 **Applies to:** domain 7 (§4, which thread calls the callback; L12's mechanism); round D7F's
 ladder and the 10 batched tests to re-anchor; the test labels in `pubsub-arrow/tests`.
+*Ingested (D7O close, 2026-11-12): verified already in d7 — D10, §4 "Who calls, and on which thread", L12 (Question 1); D11 and L1's Tests (Question 2).*
 
 ## 2026-11-10 — Queued windows are delivered before the closing batch
 > "Queued batch, then closing (Recommended)"
@@ -167,6 +169,7 @@ batch is the last delivery, after anything already queued'."
 
 **Applies to:** domain 7, L9 (revised in place a second time, which clarifies the first revision
 and does not supersede it); D7F ladder, rung 6.
+*Ingested (D7O close, 2026-11-12): verified already in d7 — L9's "Clarified 2026-11-10" note and law text; D10.*
 
 ## 2026-11-11 — Destroying the subscriber inside a batch callback, and unsubscribing from a row-delivery thread
 > Decision 1: "(a) Yes, after the callback (Recommended)"
@@ -182,6 +185,7 @@ and the caller may not free what those callbacks use until the closing batch arr
 no-wait-in-delivery rule (interface spec §7 clause 6, 2026-09-04) to batches.
 **Applies to:** domain 7 L9. Its exception widens to cover both cases, and the text must be amended to match
 (D7F-3). Also the header `Unsubscribe` doc, README:93. Destroying the subscriber from a row-delivery thread stays forbidden (2026-09-05).
+*Ingested (D7O close, 2026-11-12): verified already in d7 — D12 (Decision 1), D13 (Decision 2), L9's law text and "Widened 2026-11-11" note; register BC-6.*
 
 ## 2026-11-11 — The D7F-3 ladder gains rungs 6(d) and 6(e)
 > Test plan 1: "Keep it, amend ladder (Recommended)"
@@ -194,6 +198,7 @@ from a row-delivery thread returns at once) stays and is added to the ladder and
 tests the destruction case: destroying the subscriber inside its own batch callback still delivers the
 queued batches and then the closing batch. Source: step-0b audit `plans/reviews/D7F-3-audit-0b.md`.
 **Applies to:** `plans/D7F-test-ladder.md` rung 6; the D7F-3 design's test table.
+*Ingested (D7O close, 2026-11-12): verified already in d7 L9 Tests (`UnsubscribeFromInsideACallbackNeverDeliversNested`, cases (d) and (e)); a test-plan ruling, no law or decision needed.*
 
 ## 2026-11-12 — C# moves onto the C++ batcher: one shim, two variants
 > "Arrow C++ should never be in the native library, because it needs to be able to run on embedded
@@ -214,6 +219,7 @@ C# on desktop loads the server variant. A second, separately loaded native libra
 (3) **No interim fixes to the C# batcher.**
 **Applies to:** the domain map (planned order of work); the rounds D7O, then the shim round, then
 the C# switch round.
+*Ingested (D7O close, 2026-11-12): (1) d7 D16, register BC-9; (2) domain-map row 9 and planned order 5–6. Not ingested: (3) "no interim fixes" — its domain (10) is only `anticipated`; named in domain-map "Where this map is incomplete".*
 
 ## 2026-11-12 — A batched subscription may have no timeout
 > "Add 'never' to C++ (Recommended)"
@@ -222,6 +228,7 @@ the C# switch round.
 plus a small change to C++'s BatchOptions). C# keeps its current behaviour. Since a round may touch
 only one domain, this becomes a small domain-7 round that runs first."
 **Applies to:** domain 7 L4, L5 (amended 2026-11-12), §4; round D7O.
+*Ingested (D7O close, 2026-11-12): verified already in d7 D14, L4, L5, §4. Not ingested: "C# keeps its current behaviour" — domain 10 is only `anticipated`; named in domain-map "Where this map is incomplete".*
 
 ## 2026-11-12 — Batch options out of range are refused, never clamped
 > "Refuse both (Recommended)"
@@ -232,6 +239,7 @@ throws as it does today. Visible change: C++ callers passing such values get an 
 callers passing MaxRows < 1 now get an exception instead of 1."
 **Applies to:** domain 7 §1 (the "Refuses: validating `BatchOptions`" item is withdrawn), new law
 L15, Q5 (resolved); register BC-8; round D7O.
+*Ingested (D7O close, 2026-11-12): verified already in d7 D15, L15, §1, Q5; register BC-8. Not ingested: the C# `MaxRows < 1` consequence — domain 10 is only `anticipated`; named in domain-map "Where this map is incomplete".*
 
 ## 2026-11-12 — The shim is a domain of its own; C#'s extras stay out of domain 7
 > Domain boundary: "Shim only"
@@ -243,6 +251,7 @@ prerequisites of the C# switch** and stay registered and deferred: C#'s per-row 
 batched one with `MaxRows = 1` (D-BIND-59), and a managed handler's exception is caught, and counted,
 in C#'s own trampoline (`HandlerFaulted`, `AbsorbedCallbackFailures`).
 **Applies to:** the domain map; register BC-2, BC-7.
+*Ingested (D7O close, 2026-11-12): (1) domain-map rows 9 and 10 (verified); (2) register BC-2 and BC-7 status, "not a prerequisite of the C# switch".*
 
 ## 2026-11-12 — Earlier answers the same day: the C# batcher until it is removed (recorded late)
 > Which domain owns the C# batcher: "New bindings domain"
@@ -262,6 +271,7 @@ arrives before its schema follows domain 7** (L8, L13): losses reported, assembl
 arrives; not undecodable for life.
 **Applies to:** D-BIND-64 and D-BIND-25 in `plans/BIND-csharp-bindings.md` (to be amended by the C#
 switch round); ⚠ see the collision recorded next.
+*Ingested (D7O close, 2026-11-12): (1) domain-map row 10 (verified); (2) as revised by the entry below, register BC-9 status (D-BIND-64 to be annotated by the C# switch round). Not ingested: (3) a C# late schema follows domain 7 — domain 10 is only `anticipated`; named in domain-map "Where this map is incomplete".*
 
 ## 2026-11-12 — Collision resolved: no interim fixes, and C# does not ship first
 > "No fixes; don't ship it first (Recommended)"
@@ -273,6 +283,7 @@ non-compliant, and that is acceptable only because C#'s batched subscribe does n
 later "no interim fixes" stands. **Condition:** PR #129 does not merge to `main` with the managed
 batcher in it; if that changes, this ruling is re-opened, not assumed.
 **Applies to:** the C# switch round's ordering; PR #129.
+*Ingested (D7O close, 2026-11-12): domain-map planned order item 6 (the re-open condition); register BC-9 status (verified).*
 
 ## 2026-11-12 — D7O hand-over: huge timeouts, and a huge max_rows
 > LC-1: "Keep it (Recommended)"
@@ -283,6 +294,7 @@ never an early or wrapped one" is confirmed** as law (it was authored by round-d
 (2) **A `max_rows` larger than any window will reach is used as given and fixed in D7O** (stage
 D7O-3): a failed pre-size never makes a decodable schema unusable.
 **Applies to:** domain 7 L5, L15, L8; D7O ladder rungs 3 and 4.
+*Ingested (D7O close, 2026-11-12): (1) d7 D17, cited from L5; (2) verified already in d7 L8 (D7O-3 note) and L15.*
 
 ## 2026-11-12 — D7O-2: the deadline definition says some windows have none
 > "(a) Amend it (Recommended)"
@@ -293,6 +305,7 @@ Architecture: agrees with law L5; closes audit finding F1, as the round's defini
 requires."
 **Ruling:** **d7 §2's "Deadline" definition is amended** to the wording above, by D7O-2.
 **Applies to:** `docs/domains/d7-batch-assembly.md` §2; audit F1 (`plans/D7O-pre-round-audit.md`).
+*Ingested (D7O close, 2026-11-12): d7 §2 "Deadline" row (wording verified, ruling cited).*
 
 ## 2026-11-12 — D7O close: line overruns accepted
 > "Accept, as explained"
@@ -303,6 +316,7 @@ and assertion messages plus one review-found safety fix, all well under the ceil
 change."
 **Ruling:** **D7O-1, D7O-2 and D7O-3's >50% production-line overruns are accepted**; no process change.
 **Applies to:** the D7O close findings in `plans/D7O-progress-log.md`.
+*Not ingested: a process ruling about round D7O's own records, not a fact of any domain; it stands in `plans/D7O-progress-log.md`.*
 
 ## 2026-11-12 — D7O round close: sweep the missed rounds too
 > "Archive them too (Recommended)"
@@ -315,3 +329,4 @@ citing docs re-pointed. (2) `GIR-locked-decisions.md`, `PDA-DEC-rulings.md` and
 deleted, ledgers stay intact.
 **Applies to:** round-close step 3; `plans/` afterwards holds only RIX, PDA-ABI, RIR, the BIND plan
 and locked decisions, this shared ledger and `reviews/design-debt.md`.
+*Not ingested: a round-close procedure ruling (archiving), not a fact of any domain.*

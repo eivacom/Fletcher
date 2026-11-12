@@ -41,7 +41,7 @@ Status meanings:
 | 5 | **Gateway and browser client** | the WebSocket gateway, the TS client | wire spec (gateway frames), `gateway-client-ts` | `draft` |
 | 6 | **Protocol driver ABI** | loading providers across the ABI boundary | [protocol-driver-abi-spec.md](protocol-driver-abi-spec.md) | `draft` |
 | 7 | **Batch assembly** | turning a stream of rows into columnar batches: when windows close (row count, timeout, offset overflow), loss accounting, row-aligned side data (`RecordBatchBatcher`, [pubsub-arrow/src/subscriber_arrow.cpp](../pubsub-arrow/src/subscriber_arrow.cpp)) | [domains/d7-batch-assembly.md](domains/d7-batch-assembly.md) | **`specified`** 2026-11-10; L1 and L12 fixed by D7F; L4/L5 amended and L15 added 2026-11-12, built by D7O |
-| 9 | **C ABI shim** | the C ABI (`c-abi/`) that language bindings load, in two variants built from one source: the edge variant (no Arrow C++, ever: it must run on embedded devices) and a server-tier variant that adds domain 7's batched subscribe (owner rulings, 2026-11-12) | `c-abi/include/fletcher/abi/binding.h`; BIND decisions in [plans/BIND-csharp-bindings.md](../plans/BIND-csharp-bindings.md) | `anticipated`: created by the shim round, after D7O |
+| 9 | **C ABI shim** | the C ABI (`c-abi/`) that language bindings load, in two variants built from one source: the edge variant (no Arrow C++, ever: it must run on embedded devices) and a server-tier variant that adds domain 7's batched subscribe (owner rulings, 2026-11-12) | `c-abi/include/fletcher/abi/binding.h`; BIND decisions in [plans/BIND-csharp-bindings.md](../plans/BIND-csharp-bindings.md). The two-variant shim partially supersedes BIND Decision 6 (a shim without Arrow C++): the server variant carries Arrow C++, a cost the owner was told when ruling; the shim round annotates Decision 6 (D7O close, 2026-11-12, from `plans/D7O-pre-round-audit.md` R-4) | `anticipated`: created by the shim round, after D7O |
 | 10 | **C# binding** | the C# packages that load the shim (`Eiva.Fletcher`, `.Interop`, `.Model`). The C# gateway client stays with domain 5, generated C# with domain 1 (owner ruling 2026-11-12: each language binding is its own domain) | [plans/BIND-csharp-bindings.md](../plans/BIND-csharp-bindings.md) | `anticipated`: created by the C# switch round |
 | 8 | **Row bookkeeping** | per-row information that is not business data, starting with Surge's row index: its declaration at topic creation, its single writer, its delivery beside the batch | [plans/RIX-row-index.md](../plans/RIX-row-index.md) (plan, not a spec) | `draft`: not built. Created by round RIX |
 
@@ -63,7 +63,8 @@ domain 7's batcher, and its managed copy is deleted. The rounds, one domain each
 5. **Shim round** (creates domain 9): the shim's server-tier variant exposes the batched subscribe.
 6. **C# switch round** (creates domain 10): C#'s `SubscriberArrow` runs on it; the managed batcher is
    deleted after its tests are checked for cases domain 7's suite lacks. C#'s batched subscribe does
-   not ship to `main` (PR #129) before this lands.
+   not ship to `main` (PR #129) before this lands. If shipping becomes urgent, the question returns
+   to the owner; it is re-opened, not assumed (ruling 2026-11-12, "No fixes; don't ship it first").
 
 Deferred: protoc's refusal of `fletcher.` metadata keys (domain 1 code, d2-row-encoding Q3a), until
 domain 1 is specified (owner ruling, 2026-11-10).
@@ -82,6 +83,10 @@ domain 1 is specified (owner ruling, 2026-11-10).
   binding now lives in this repo (`dotnet/`, merged at `ff5be3e`). Rust has only generated
   accessors. The C# gateway client batches on its own (register BC-9), unassigned until domain 5 is
   specified.
+- **Rulings awaiting domains 9 and 10.** These 2026-11-12 rulings stay in the ledger until those
+  domains have documents: no interim fixes to the C# batcher; "C# keeps its current behaviour" (no
+  timeout); C# `MaxRows < 1` throwing after the switch ("Refuse both"); a C# late schema follows
+  domain 7. (D7O close, 2026-11-12.)
 - **Shared kernel not assessed.** `core/internal/delivery_frame.hpp` is used by both `Subscriber`
   and the providers (PDA-DEC-AG1). It sits in domain 3 here, but this has not been checked.
 - **Verified:** boundaries by the owner on 2026-11-10; capability assignments by reading the code

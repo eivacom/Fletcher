@@ -281,6 +281,12 @@ domain 3's byte comparison.
   `DeserializeEnvelope` refuses it (`env:133`). The spec layout makes `ATT_COUNT` mandatory.
 - A7. `Codec::EncodeRow` encodes a null into a non-nullable field without complaint (`codec:633-636`).
   The wire spec's nullability rules are not enforced by this domain.
+- A8. `arrow-bridge/benchmarks/bench_arrow_codec.cpp:388-390` describes `Reserve(max_rows_)` in
+  `RecordBatchBatcher::Flush`. Stale since D7F renamed `Flush` to `Close`; since D7O-3 the pre-size
+  is `min(max_rows_, 65 536)` rows. Still literally true for the benchmark's N ≤ 8000. Related: domain
+  7's pre-size bound is in rows, not bytes, so a very wide fixed-size column can still make it large;
+  a byte-based bound would need `Reserve` by bytes here. (D7O close, 2026-11-12, from
+  `plans/D7O-3-any-row-count.md` Risks; domain 7 Findings (d)2.)
 - L-1. "Payload" means field bytes in the wire spec but the envelope body in `max_payload_bytes`.
   L-2. One concept has three names: attachment, side data, sidecar data (plus key/label).
 
