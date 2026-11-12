@@ -293,3 +293,13 @@ Architecture: agrees with law L5; closes audit finding F1, as the round's defini
 requires."
 **Ruling:** **d7 §2's "Deadline" definition is amended** to the wording above, by D7O-2.
 **Applies to:** `docs/domains/d7-batch-assembly.md` §2; audit F1 (`plans/D7O-pre-round-audit.md`).
+
+## 2026-11-12 — D7O close: line overruns accepted
+> "Accept, as explained"
+> Round close: "Run round close (Recommended)"
+
+*(Chosen options.)* Text of the first: "Record that the overruns are accepted: the causes are comments
+and assertion messages plus one review-found safety fix, all well under the ceiling. No process
+change."
+**Ruling:** **D7O-1, D7O-2 and D7O-3's >50% production-line overruns are accepted**; no process change.
+**Applies to:** the D7O close findings in `plans/D7O-progress-log.md`.
