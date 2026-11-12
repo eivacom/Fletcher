@@ -215,12 +215,19 @@ class SubscriberArrow::RecordBatchBatcher {
 
     // Room set aside for the next window: a hint, never a limit or a verdict. Bounded, so the number
     // a subscriber asks for never sizes an allocation (L15: max_rows decides only when a window
-    // closes). A failure is ignored: the next Append() grows the builders. Caller holds mu_ and
-    // has a decoder.
+    // closes). A failure is ignored: the next Append() grows the builders. A failed Reserve can
+    // leave a builder part-grown (Arrow records its capacity before the validity bitmap is
+    // allocated), which a later Append would write through; so a failure resets every builder
+    // with a Finish(), as DiscardPending does. The decoder holds no rows at either call site, so
+    // nothing is lost. Caller holds mu_ and has a decoder.
     void PreSize() {
         try {
             decoder_->Reserve(std::min(max_rows_, kMaxPreSizeRows));
         } catch (...) {
+            try {
+                (void)decoder_->Finish();
+            } catch (...) {
+            }
         }
     }
 
@@ -298,8 +305,8 @@ class SubscriberArrow::RecordBatchBatcher {
     }
 
     RecordBatchCallback cb_;
-    int64_t max_rows_;
-    std::chrono::milliseconds timeout_;
+    const int64_t max_rows_;
+    const std::chrono::milliseconds timeout_;
     const void* provider_;  // identity token only, never dereferenced
 
     // Every notify on cv_ is notify_all: the loop and any number of Stop() callers wait on it.

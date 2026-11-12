@@ -823,11 +823,11 @@ Review: [D7F-1-design-review.md](D7F-1-design-review.md). No BLOCKERs; P1–P4 v
 - ~~DEBT-1 (step 3): red run kept the refused arms live~~ Landed in `9abb0c7` (phase A); counter observed 1 on the red run, 0 → 1 on green (`plans/D7O-progress-log.md`, D7O-1).
 
 ## D7O-2 — no timeout (APPROVE-WITH-DEBT(2), cycle 1 of 2) — [review](D7O-2-design-review.md)
-- **DEBT-1 (step 3):** the 10 ms control asserts only that some `kTimeout` arrives within 2 s, plus conservation after `Unsubscribe`. It never asserts which rows that batch holds (`last_flush_` is set at construction, so the content depends on timing).
-- **DEBT-2 (step 3):** BC-4: replace the stale `Flush` site with `Close` and add `ArmTimer`. Record rung 3's red as observed (likely row 6's `kTimeout`); it is still early, so do not stop. Optional: use `ratio_less` in the `static_assert`.
+- ~~DEBT-1 (step 3): control asserts only that some `kTimeout` arrives~~ Landed in `7a0cc64` (`ShortTimeoutControlSeesTheDeadlineInEveryBody`).
+- ~~DEBT-2 (step 3): BC-4 site, rung-3 red record~~ Landed in `7a0cc64` (BC-4) and `plans/D7O-progress-log.md` (red record); `ratio_less` not taken.
 
 ## D7O-3 — any row count (APPROVE-WITH-DEBT(4), cycle 1 of 2) — [review](D7O-3-design-review.md)
-- **DEBT-1 (PM, before the owner reads the brief):** Decision 1 (b) breaks L10: an unbounded pre-size that wraps (2^62 int32 rows) half-succeeds, and the first `Append` writes through an unallocated bitmap. Strike (b), making Decision 1 a disclosure, or state the break in (b).
-- **DEBT-2 (PM):** Decision 2 is already law (L1, L10, §1 Refuses, L4's closed list). Make it a one-line disclosure in "Risks accepted"; (b) is an L4 proposal for d7 §7.
-- **DEBT-3 (step 3, tests):** add a test of the verdict/hint split: a `fixed_size_binary(2^31−1)` schema, `max_rows` ≥ the bound, one malformed row → a non-null zero-row `kClosing` batch.
-- **DEBT-4 (step 3, docs):** BC-3 "Registered gap" + d7 Findings for a failed constructor allocation (`cpp:83`); BC-8 clause that `PreSize`'s `min` is a hint, not a copy; premise 1's bitmap residue goes in the domain 2 note.
+- ~~DEBT-1 (PM): Decision 1 (b) breaks L10~~ Folded into the brief as a disclosure, `957a514`.
+- ~~DEBT-2 (PM): Decision 2 is already law~~ Folded into the brief's Risks accepted, `957a514`.
+- ~~DEBT-3 (step 3): verdict/pre-size split test~~ Landed in `c18e95e` (`AFailedPreSizeDoesNotMakeTheSchemaUnusable`).
+- ~~DEBT-4 (step 3, docs): BC-3 gap, d7 Findings, BC-8 hint clause, bitmap residue~~ Landed in `c18e95e` (d7 Q8 and Findings (d); register BC-3, BC-8).

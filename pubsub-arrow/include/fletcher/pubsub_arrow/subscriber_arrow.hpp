@@ -78,7 +78,7 @@ class SubscriberArrow {
         /// Flush at this many rows. At least 1; below 1 is refused (never clamped). Any larger
         /// value is used as given, however large. Room for a window is set aside up front only up
         /// to 65 536 rows; past that it follows the rows received. A window that outgrows memory
-        /// before it closes is lost whole and counted in `rows_dropped`.
+        /// before it closes is lost and counted in `rows_dropped`.
         int64_t max_rows = 8000;
         /// ...or after this long. 0 or more; negative is refused. A zero timeout delivers no
         /// sooner than 1 ms after the window's first row or drop. `kNoTimeout` means no timeout:

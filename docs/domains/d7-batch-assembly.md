@@ -446,5 +446,6 @@ Surface (`hpp:72-144`):
    the benchmark's N of 8000 or less. Also: a failed `Reserve` can leave a builder with its data
    buffer grown and its validity bitmap not (Arrow records the capacity before the bitmap
    allocation fails). Under the 65 536-row bound only memory exhaustion between two small
-   allocations reaches it, as in every `Append`'s own growth, so `Reserve`'s failure is treated as
-   leaving the decoder usable, but `BatchDecoder`'s contract does not say so.
+   allocations reaches it. `PreSize` answers it by resetting every builder with a `Finish()` (as
+   `DiscardPending` does after a failed `Append`), so the decoder is usable; `BatchDecoder`'s contract
+   does not say so. The partial failure cannot be forced from the public path, so it is untested.
