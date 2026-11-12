@@ -18,6 +18,7 @@
 #include <fletcher/pubsub_arrow/schema_import.hpp>
 #include <mutex>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #include <utility>
 
@@ -33,9 +34,17 @@ class SubscriberArrow::RecordBatchBatcher {
     RecordBatchBatcher(RecordBatchCallback cb, int64_t max_rows, std::chrono::milliseconds timeout,
                        const void* provider)
         : cb_(std::move(cb)),
-          max_rows_(max_rows < 1 ? 1 : max_rows),
+          max_rows_(max_rows),
           timeout_(timeout),
-          provider_(provider) {}
+          provider_(provider) {
+        // L15 / BC-8: the one answer to "are these options acceptable?". Refused, never adjusted.
+        if (max_rows_ < 1 || timeout_ < std::chrono::milliseconds::zero()) {
+            throw PubSubError(PubSubStatus::kInvalidArgument,
+                              "batch options out of range: max_rows must be >= 1 (got " +
+                                  std::to_string(max_rows_) + ") and timeout must be >= 0 ms (got " +
+                                  std::to_string(timeout_.count()) + " ms)");
+        }
+    }
 
     ~RecordBatchBatcher() { static_cast<void>(Stop()); }
 

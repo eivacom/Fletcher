@@ -108,8 +108,7 @@ names which, except that the offset budget is reported as `kRowLimit`. A row tha
 opens the next window rather than being lost.
 `[built]`; the no-timeout case `[designed-not-built]` (D14, round D7O)
 - Holds at: `cpp:108` (count), `cpp:92-94` and `cpp:251-252` (deadline), `cpp:100-105` (budget:
-  close, then retry once), `cpp:122` (closing). Until D7O, `max_rows < 1` is clamped to 1
-  (`cpp:36`), which L15 forbids.
+  close, then retry once), `cpp:122` (closing).
 - Tests: `FlushesAtRowLimit`, `FlushesAtTimeout`, `ClosingFlushOnUnsubscribe`. The offset-budget
   early flush: `OverBudgetRowAroundInCallbackUnsubscribeIsCounted` (`heavy`, D7F-3), whose first
   batch is `kRowLimit` with one row under a large `max_rows`; the decoder half:
@@ -234,10 +233,14 @@ A `Stop` issued from the batch thread detaches the thread instead of joining it.
 anything is subscribed: no thread, no provider subscription, no delivery. Every value it accepts is
 used as given. This domain is the one place the question "are these options acceptable?" is
 answered (register BC-8); a binding passes the refusal through instead of answering it again.
-`[designed-not-built]` (D15, round D7O)
+`[built]` for the refusal (D15, D7O-1); the "used as given" clause stays `[designed-not-built]` for
+huge values until D7O-2 and D7O-3
 - Source: owner ruling, 2026-11-12, "Refuse both" ([RIX-rulings.md](../../plans/RIX-rulings.md)).
-- Today: `max_rows < 1` is clamped (`cpp:36`) and a negative timeout behaves as the 1 ms floor
-  (`cpp:187`). Test: owed by D7O.
+- Holds at: `RecordBatchBatcher`'s constructor (`cpp:33-45`), reached only from the batched
+  `SubscriberArrow::Subscribe`, before the batch thread starts or anything is subscribed.
+- Tests: `OutOfRangeBatchOptionsAreRefusedAndLeaveNothingBehind` (rungs 1-2: each out-of-range value
+  refused, callback released, nothing subscribed or delivered); `InRangeBatchOptionsAreUsedAsGiven`
+  (`max_rows` 1 and a zero timeout accepted and used as given).
 
 **L14. The row index is always the caller's, never Fletcher's.** Batch assembly delivers each row's
 index exactly as the publisher supplied it. It never assigns, renumbers, reorders, fills or checks an
@@ -403,4 +406,5 @@ Surface (`hpp:72-144`):
 - The closing flush from `~SubscriberArrow` (L9): tested since D7F-1 (the two `*AtDestruction` tests).
 - A callback that throws (L10).
 - ~~Overlapping or reordered callbacks (L12).~~ Tested by D7F-3.
-- Clamping of `max_rows` and `timeout` (§1): replaced by refusal (L15); D7O owes the test.
+- ~~Clamping of `max_rows` and `timeout` (§1): replaced by refusal (L15).~~ Resolved for the refusal
+  by D7O-1 (tests under L15); huge values are D7O-2 and D7O-3.

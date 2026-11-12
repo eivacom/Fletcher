@@ -75,8 +75,11 @@ class SubscriberArrow {
 
     /// Tuning for the batched (RecordBatch) Subscribe overload.
     struct BatchOptions {
-        int64_t max_rows = 8000;                                      // flush at this many rows
-        std::chrono::milliseconds timeout = std::chrono::minutes(1);  // ...or after this long
+        /// Flush at this many rows. At least 1; below 1 is refused (never clamped).
+        int64_t max_rows = 8000;
+        /// ...or after this long. 0 or more; negative is refused. A zero timeout delivers no
+        /// sooner than 1 ms after the window's first row or drop.
+        std::chrono::milliseconds timeout = std::chrono::minutes(1);
     };
 
     /// Describes why a batch was delivered and whether any rows were lost.
@@ -101,6 +104,10 @@ class SubscriberArrow {
     /// never sooner than 1 ms after the window's first row or drop — whichever comes first. This
     /// holds whether or not a usable schema has arrived: a window of lost rows is reported at its
     /// deadline too. A partial batch is flushed on Unsubscribe with reason kClosing.
+    ///
+    /// Throws `PubSubError(kInvalidArgument)` when `options.max_rows < 1` or `options.timeout` is
+    /// negative, before anything is subscribed: no thread is started, the callback is released,
+    /// and nothing is ever delivered. Any other value is used as given.
     ///
     /// `callback` runs on a thread the subscription owns, one batch at a time, in window order;
     /// never inside `Publish` or on the transport's delivery thread, so publishing never waits on

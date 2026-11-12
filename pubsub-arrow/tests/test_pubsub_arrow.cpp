@@ -9,6 +9,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
+#include <deque>
 #include <fletcher/arrow_bridge/codec.hpp>
 #include <fletcher/core/write_buffer.hpp>
 #include <fletcher/pubsub/in_process_provider.hpp>
@@ -20,6 +21,9 @@
 #include <fletcher/pubsub_arrow/subscriber_arrow.hpp>
 #include <functional>
 #include <future>
+#include <iostream>
+#include <limits>
+#include <memory>
 #include <mutex>
 #include <random>
 #include <string>
@@ -2329,4 +2333,165 @@ TEST(SubscriberArrowBatchTest, FailedBatchedSubscribeReleasesItsCallback) {
     }
     EXPECT_TRUE(captured.expired())
         << "the failed Subscribe's batch thread still holds the callback it was given";
+}
+
+// ---------------------------------------------------------------------------
+// D7O-1 (L15, BC-8): batch options out of range are refused, never adjusted
+// ---------------------------------------------------------------------------
+
+// Rung 1 + 2. Every out-of-range arm is refused with kInvalidArgument, and what it was handed is
+// released before the exception reaches the caller (no polling: the weak_ptr is read straight after
+// the catch). Nothing reaches the provider and nothing is ever delivered; a valid Subscribe on the
+// same topic afterwards still works, which is what makes "nothing delivered" mean something.
+TEST(SubscriberArrowBatchTest, OutOfRangeBatchOptionsAreRefusedAndLeaveNothingBehind) {
+    struct Arm {
+        const char* name;
+        int64_t max_rows;
+        std::chrono::milliseconds timeout;
+    };
+    const std::chrono::milliseconds kDefaultTimeout = SubscriberArrow::BatchOptions{}.timeout;
+    const std::vector<Arm> arms = {
+        {"max_rows 0", 0, kDefaultTimeout},
+        {"max_rows -1", -1, kDefaultTimeout},
+        {"max_rows INT64_MIN", std::numeric_limits<int64_t>::min(), kDefaultTimeout},
+        {"timeout -1 ms", 8000, std::chrono::milliseconds(-1)},
+        {"timeout milliseconds::min()", 8000, std::chrono::milliseconds::min()},
+        {"both out of range", 0, std::chrono::milliseconds(-1)},
+    };
+
+    std::deque<BatchSink> sinks;  // declared first: outlives the subscriber on every path
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
+    pub.CreateTopic(kTopic, TestSchema());
+    ASSERT_EQ(mock->subscribe_with_options_count, 0);
+
+    for (const Arm& arm : arms) {
+        SCOPED_TRACE(arm.name);
+        sinks.emplace_back();
+        BatchSink& sink = sinks.back();
+
+        // The token lives only inside the callback: nothing here keeps it alive past the call.
+        std::weak_ptr<int> token;
+        SubscriberArrow::RecordBatchCallback cb;
+        {
+            auto strong = std::make_shared<int>(0);
+            token = strong;
+            auto inner = sink.callback();
+            cb = [strong, inner](std::shared_ptr<arrow::RecordBatch> batch,
+                                 std::vector<Attachments> att, BatchStatus status) {
+                inner(std::move(batch), std::move(att), status);
+            };
+        }
+
+        SubscriberArrow::BatchOptions opt;
+        opt.max_rows = arm.max_rows;
+        opt.timeout = arm.timeout;
+        bool refused = false;
+        bool accepted = false;
+        uint64_t accepted_id = 0;
+        try {
+            const auto result = sub.Subscribe(kTopic, std::move(cb), opt);
+            ADD_FAILURE() << "the out-of-range options were accepted";
+            accepted = true;
+            accepted_id = result.subscription_id;
+        } catch (const PubSubError& e) {
+            refused = true;
+            EXPECT_EQ(e.status(), PubSubStatus::kInvalidArgument);
+        }
+        EXPECT_TRUE(refused);
+        // Straight after the call, no waiting: a refused Subscribe has already let the callback go.
+        // (cb itself was moved from, so only the batcher could still hold it.)
+        EXPECT_TRUE(token.expired()) << "a callback is still held after the call returned";
+        // Only the milliseconds::min() arm reaches signed overflow on the old tree (the deadline
+        // sum at the first row), so only it is closed before the Publish. The other arms stay live
+        // through the observation window below.
+        if (accepted && arm.timeout == std::chrono::milliseconds::min()) {
+            sub.Unsubscribe(accepted_id);
+        }
+    }
+
+    // Nothing was subscribed at the provider.
+    std::cerr << "[ D7O-1 ] observed subscribe_with_options_count after the refusals = "
+              << mock->subscribe_with_options_count << "\n";
+    EXPECT_EQ(mock->subscribe_with_options_count, 0);
+
+    pub.Publish(kTopic, MakeRow(1, "a"));
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));  // one-sided observation window
+    for (size_t i = 0; i < sinks.size(); ++i) {
+        std::lock_guard<std::mutex> lk(sinks[i].mu);
+        EXPECT_TRUE(sinks[i].deliveries.empty())
+            << "arm " << arms[i].name << " received " << sinks[i].deliveries.size()
+            << " deliveries";
+    }
+
+    // Positive control: the topic is alive, and a valid Subscribe reaches the provider.
+    BatchSink good;
+    const auto good_result = sub.Subscribe(kTopic, good.callback(), RowLimitOptions(1));
+    EXPECT_EQ(mock->subscribe_with_options_count, 1);
+    pub.Publish(kTopic, MakeRow(2, "b"));
+    ASSERT_TRUE(good.WaitFor(1, std::chrono::seconds(2)));
+    {
+        std::lock_guard<std::mutex> lk(good.mu);
+        ASSERT_GE(good.deliveries.size(), 1u);
+        EXPECT_EQ(good.deliveries[0].num_rows, 1);
+        EXPECT_EQ(good.deliveries[0].status.reason, BatchStatus::Reason::kRowLimit);
+    }
+    sub.Unsubscribe(good_result.subscription_id);
+}
+
+// Guard (green both ways): the new check accepts both lower bounds and the batcher still gets them
+// unchanged. A check written `<= 0`, or `max_rows < 2`, turns this red.
+TEST(SubscriberArrowBatchTest, InRangeBatchOptionsAreUsedAsGiven) {
+    // Row-count arm: max_rows 1 closes a window on every row.
+    {
+        auto mock = std::make_shared<MockProvider>();
+        PublisherArrow pub(mock);
+        SubscriberArrow sub(mock);
+        pub.CreateTopic(kTopic, TestSchema());
+        BatchSink sink;
+        static_cast<void>(sub.Subscribe(kTopic, sink.callback(), RowLimitOptions(1)));
+        for (int i = 0; i < 3; ++i) pub.Publish(kTopic, MakeRow(i, "n"));
+        ASSERT_TRUE(sink.WaitFor(3, std::chrono::seconds(2)));
+        std::lock_guard<std::mutex> lk(sink.mu);
+        ASSERT_GE(sink.deliveries.size(), 3u);
+        for (size_t i = 0; i < 3; ++i) {
+            EXPECT_EQ(sink.deliveries[i].num_rows, 1) << "batch " << i;
+            EXPECT_EQ(sink.deliveries[i].status.reason, BatchStatus::Reason::kRowLimit);
+            EXPECT_EQ(sink.deliveries[i].status.rows_dropped, 0);
+        }
+    }
+    // Zero-timeout arm: accepted, and the window still waits at least the 1 ms floor.
+    {
+        auto mock = std::make_shared<MockProvider>();
+        PublisherArrow pub(mock);
+        SubscriberArrow sub(mock);
+        pub.CreateTopic(kTopic, TestSchema());
+        std::mutex mu;
+        std::condition_variable cv;
+        std::vector<std::chrono::steady_clock::time_point> arrived;
+        std::vector<BatchStatus> statuses;
+        std::vector<int64_t> rows;
+        SubscriberArrow::BatchOptions opt;
+        opt.max_rows = 8000;
+        opt.timeout = std::chrono::milliseconds(0);
+        static_cast<void>(sub.Subscribe(
+            kTopic,
+            [&](std::shared_ptr<arrow::RecordBatch> batch, std::vector<Attachments>,
+                BatchStatus status) {
+                std::lock_guard<std::mutex> lk(mu);
+                arrived.push_back(std::chrono::steady_clock::now());
+                statuses.push_back(status);
+                rows.push_back(batch ? batch->num_rows() : -1);
+                cv.notify_all();
+            },
+            opt));
+        const auto t0 = std::chrono::steady_clock::now();
+        pub.Publish(kTopic, MakeRow(1, "a"));
+        std::unique_lock<std::mutex> lk(mu);
+        ASSERT_TRUE(cv.wait_for(lk, std::chrono::seconds(2), [&] { return !arrived.empty(); }));
+        EXPECT_EQ(rows[0], 1);
+        EXPECT_EQ(statuses[0].reason, BatchStatus::Reason::kTimeout);
+        EXPECT_GE(arrived[0] - t0, std::chrono::milliseconds(1));
+    }
 }

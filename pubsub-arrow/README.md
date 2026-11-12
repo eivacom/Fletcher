@@ -70,6 +70,12 @@ never sooner than 1 ms after the window's first row — whichever comes first
 arrived: rows lost for want of one are reported at the deadline, not only when
 you unsubscribe.
 
+`max_rows` must be at least 1 and `timeout` at least 0. Anything else is
+refused: `Subscribe` throws `PubSubError(kInvalidArgument)` before anything is
+subscribed, so no thread is started and your callback is released. A zero
+timeout is accepted and delivers no sooner than 1 ms after the window's first
+row.
+
 ```cpp
 fletcher::SubscriberArrow sub(provider);
 
