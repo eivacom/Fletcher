@@ -3,9 +3,9 @@
 > **Specified.** The owner confirmed these laws on 2026-11-10 ([RIX-rulings.md](../../plans/RIX-rulings.md), "Yes on all accounts"). A change to a law needs
 > an owner ruling, recorded in a decision of record. **Amended 2026-11-12** (D14, D15): L4 and L5
 > gain the no-timeout case, L15 is new, and §1 no longer lists validating `BatchOptions` as refused;
-> those parts are `[designed-not-built]` until round D7O.
+> L15's refusal is `[built]` (D7O-1, `9abb0c7`); the rest is `[designed-not-built]` until D7O-2 and D7O-3.
 
-**Mode: survey, verified against the tree at `9a4780b`; the §3 "Holds at" citations were refreshed at D7F-3; every other `cpp:N` citation predates D7F-1 (`a2c8b97`), D7F-2 (`dbaa2b6`) and D7F-3, so treat those as approximate** (branch `feature/row-index`). The code is
+**Mode: survey, verified against the tree at `9a4780b`; the §3 "Holds at" citations were refreshed at D7F-3; every other `cpp:N` citation predates D7F-1 (`a2c8b97`), D7F-2 (`dbaa2b6`) and D7F-3, so treat those as approximate; D7O-1 shifted every `cpp:N` after line 34 down by about 9** (branch `feature/row-index`). The code is
 ground truth. Doc comments, READMEs and specs are claims checked against it. No spec exists for
 this domain; its rules live in code comments in
 [`subscriber_arrow.cpp`](../../pubsub-arrow/src/subscriber_arrow.cpp) (cited `cpp:N`) and
@@ -236,9 +236,9 @@ answered (register BC-8); a binding passes the refusal through instead of answer
 `[built]` for the refusal (D15, D7O-1); the "used as given" clause stays `[designed-not-built]` for
 huge values until D7O-2 and D7O-3
 - Source: owner ruling, 2026-11-12, "Refuse both" ([RIX-rulings.md](../../plans/RIX-rulings.md)).
-- Holds at: `RecordBatchBatcher`'s constructor (`cpp:33-45`), reached only from the batched
+- Holds at: `RecordBatchBatcher`'s constructor (`cpp:34-47`), reached only from the batched
   `SubscriberArrow::Subscribe`, before the batch thread starts or anything is subscribed.
-- Tests: `OutOfRangeBatchOptionsAreRefusedAndLeaveNothingBehind` (rungs 1-2: each out-of-range value
+- Tests: `OutOfRangeBatchOptionsAreRefusedAndLeaveNothingBehind` (rung 1: each out-of-range value
   refused, callback released, nothing subscribed or delivered); `InRangeBatchOptionsAreUsedAsGiven`
   (`max_rows` 1 and a zero timeout accepted and used as given).
 

@@ -56,5 +56,5 @@ Declared net lines: +6 / −1 (production; tests about +110; documentation not c
 surface: 0 · design cycles used: 1/2
 
 ---
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
-<delta vs the above — actual net lines, anything retired or added the brief did not predict, fix cycles used>.
+*As landed (2026-11-12, `9abb0c7`):* production +11/−2 vs declared +6/−1 (an include and a message naming both values; >50% over declared adds, owner note owed at round close); tests +165. Nothing retired or added beyond the design. Design cycles 1, fix cycles 0, implementer launches 1.
+Recorded, not fixed: the header's "any other value is used as given" is untrue for `INT64_MAX` rows and `milliseconds::max()` until D7O-2/3; acceptable because the branch does not reach `main` before D7O-3 (4a N1).
