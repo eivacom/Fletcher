@@ -303,3 +303,15 @@ and assertion messages plus one review-found safety fix, all well under the ceil
 change."
 **Ruling:** **D7O-1, D7O-2 and D7O-3's >50% production-line overruns are accepted**; no process change.
 **Applies to:** the D7O close findings in `plans/D7O-progress-log.md`.
+
+## 2026-11-12 — D7O round close: sweep the missed rounds too
+> "Archive them too (Recommended)"
+> "Archive, re-point links (Recommended)"
+
+**Rulings:** (1) **D7O's close also archives the closed rounds whose files were never archived** —
+D7F, RBA, PDA-decouple and the GIR leftovers — each under its own `docs/archive/<round>/`, with
+citing docs re-pointed. (2) `GIR-locked-decisions.md`, `PDA-DEC-rulings.md` and
+`BIND-progress-log.md` are archived with their rounds and their citations re-pointed; nothing is
+deleted, ledgers stay intact.
+**Applies to:** round-close step 3; `plans/` afterwards holds only RIX, PDA-ABI, RIR, the BIND plan
+and locked decisions, this shared ledger and `reviews/design-debt.md`.
