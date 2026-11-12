@@ -47,3 +47,26 @@ so this loses nothing and puts every builder back at capacity 0.
 
 ## RECORD
 - RECORD: `docs/domains/d7-batch-assembly.md` (d)2 says a failed `Reserve` is reached "as in every `Append`'s own growth". After an `Append` failure, `DiscardPending`'s `Finish()` resets the builders. After a `PreSize` failure nothing does (see S1).
+
+## Cycle 2
+
+Diff `c18e95e..57aa4bb` (+ records `1434325`). Counts: blocking 0 · should-fix 0 · nit 1. S1 closed.
+
+**S1 fix, checked.** `PreSize`'s catch now runs `Finish()`, and that is safe on a part-grown builder.
+In Arrow 23, `FinishInternal` (numeric, boolean, binary, fixed-size binary, list, struct) finishes
+`null_bitmap_builder_` with length 0. A `BufferBuilder` with no buffer has a null `buffer_`; it takes
+the `AllocateResizableBuffer(0)` branch, which returns the pool's zero-size area. `UnsafeAdvance(0)`
+moves nothing, and `ZeroPadding` is skipped because the size is 0. So nothing writes through the null
+bitmap. Each builder then ends with `capacity_ = length_ = 0` (or `Reset()`). The grown data buffer
+goes to the discarded batch and is freed. Both call sites hold zero rows (fresh decoder, or right
+after a successful `Finish` or `DiscardPending`), so nothing is lost and `impl_->rows` stays 0. The
+residue the records already note is real and no worse than before: `BatchDecoder::Finish` interleaves
+each column's `Finish` with that column's `DictionaryEncode`/`Cast`. A throw there leaves later
+columns un-reset, so S1's state survives only if a dictionary encode of zero rows fails right after
+the failed pre-size.
+
+**Regressions: none.** `const max_rows_`/`timeout_`: the batcher is non-copyable, non-assignable and
+never assigned; this is correct. The header wording "lost" fits. The records rewrite of (d)2 matches
+the tree.
+
+- N4 (low) Optional: `PreSize`'s catch and `DiscardPending` now repeat the same "`Finish()`, swallow" pattern. A private `ResetBuilders()` holding the try/`Finish`/catch would make both sites one line each. Cosmetic only.

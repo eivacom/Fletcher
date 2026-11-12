@@ -67,3 +67,28 @@ into D7O-3 (4a N1). README loss sentence reduced to a pointer rather than re-wor
 **Logged, not gated (4b nits):** the timeout-to-clock conversion could be settled once in the
 constructor; a second `Observe()` after `End()` cannot fail (~1.4 s of sleep); no test combines no
 timeout with an offset-budget close (that path never touches the timer).
+
+## D7O-3 — Any row count is used as given — 🟢 2026-11-12
+
+**Landed:** `c18e95e`, fix `57aa4bb`, records `1434325`. Only the `BatchDecoder` constructor decides a
+schema is unusable; the decoder pre-size is bounded at min(`max_rows`, 65,536), and a failed
+pre-size resets the builders and decides nothing. `max_rows` and the timeout are stored `const` and
+used as given. BC-8 sweep (42 cells) built. Header restores "Any other value is used as given" and
+discloses the bounded pre-size and the memory-loss residue.
+**Steps:** 0a CLEAR · design `00dacb8` · review APPROVE-WITH-DEBT(4) — both brief Decisions were
+already answered by law (Decision 1's option (b) broke L10), so they became disclosures and no owner
+question was asked (`957a514`) · phase A red: (a) null `kTimeout` dropped 3, (b) null `kClosing`
+dropped 3, DEBT-3 cell null batch (`Reserve` OOM), sweep exactly the 5 accepted INT64_MAX cells; (c)
+guard green · 0b CLEAR · green 58/58 · 4a CONFORMS ISSUES(2, 0 blocking) · 4b 0 blocking, S1
+should-fix taken → fix 1 → 4b cycle 2 clean.
+**Verification:** inner loop 58/58 (PM run, and implementer after the fix, log
+`scratchpad/d7o3_fix1_conan.log`); heavy 2/2, pubsub-arrow-fastdds 4/4 (PM, before and after the fix).
+**Numbers:** production +35/−18 vs declared +16/−10 (**close finding**: >50% over, mostly comments);
+tests +414 vs ~+190 estimated; design cycles 1; fix cycles 1; implementer launches 1 (resumed for
+phase B and the fix); owner touches 0.
+**Found and recorded, not fixed (open):** a memory failure while *constructing* the decoder still
+makes a good schema unusable for life (d7 Q8, Findings (d), BC-3 registered gap). A `Finish()` that
+throws right after a failed pre-size leaves later columns un-reset (untested residue).
+**Logged, not gated:** 4b N1 (guard does not prove the pre-size failed; ASan would abort), N3 (arm
+(c)'s 131,074 publishes could move to the heavy file), N4 (a `ResetBuilders()` helper); 4a N1/N2
+taken. Domain 2 note: `bench_arrow_codec.cpp:388-390` comment stale since D7F (not edited).

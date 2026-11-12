@@ -49,5 +49,5 @@ only when a batch closes (L15).
 Declared net lines: +16 / −10 (production; tests ~+190) · new public surface: 0 · design cycles: 1/2
 
 ---
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
-<delta vs the above — actual net lines, anything retired or added the brief did not predict, fix cycles used>.
+*As landed (2026-11-12, `c18e95e` + fix `57aa4bb`):*
+Production +35/−18 vs declared +16/−10 (comments mostly; code-only +14/−13 before the fix; >50% over, owner note at round close); tests +414. Fix cycles 1: a failed pre-size now resets the builders (4b S1, an L10 hazard the design missed); options `const`; header "lost whole" → "lost". Added beyond the design: d7 Q8 and Findings (d), BC-3 registered gap (decoder-construction allocation failure, open). Decisions 1–2 became disclosures before the owner read the brief.
