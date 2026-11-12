@@ -31,7 +31,7 @@ unusable"). (b) is the same defect one step earlier. Arrow's size arithmetic is 
 counts. So for the largest values, whether the pre-size fails or succeeds depends on wraparound
 inside another library. A subscriber asking for 50 million rows also has gigabytes set aside at the
 start of every window, even a window that closes on its timeout with 3 rows. Removing (a) alone
-would leave (b). Bounding the pre-size removes both. Owner Decision 1 (brief) confirms the visible
+would leave (b). Bounding the pre-size removes both. *(Record, PM: brief Decisions 1 and 2 became disclosures at `957a514` after the design review's DEBT-1/2; read "Decision 1/2" below as those disclosures.)* Owner Decision 1 (brief) confirms the visible
 consequence.
 
 **SetSchema: one verdict, then a hint.** Sketch (the exact shape is the implementer's):

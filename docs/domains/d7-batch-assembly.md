@@ -6,7 +6,7 @@
 > L15's refusal is `[built]` (D7O-1, `9abb0c7`); the no-timeout and unrepresentable-timeout cases of
 > L4 and L5 are `[built]` (D7O-2); a huge `max_rows` is `[built]` (D7O-3).
 
-**Mode: survey, verified against the tree at `9a4780b`; the §3 "Holds at" citations were refreshed at D7F-3; every other `cpp:N` citation predates D7F-1 (`a2c8b97`), D7F-2 (`dbaa2b6`) and D7F-3, so treat those as approximate; D7O-1 shifted every `cpp:N` after line 34 down by about 9, and D7O-2 those after `ArmTimer` by about 12 more** (branch `feature/row-index`). The code is
+**Mode: survey, verified against the tree at `9a4780b`; the §3 "Holds at" citations were refreshed at D7F-3; every other `cpp:N` citation predates D7F-1 (`a2c8b97`), D7F-2 (`dbaa2b6`) and D7F-3, so treat those as approximate; D7O-1 shifted every `cpp:N` after line 34 down by about 9, and D7O-2 those after `ArmTimer` by about 12 more; D7O-3 rewrote `SetSchema` and added `PreSize`, so later lines moved again** (branch `feature/row-index`). The code is
 ground truth. Doc comments, READMEs and specs are claims checked against it. No spec exists for
 this domain; its rules live in code comments in
 [`subscriber_arrow.cpp`](../../pubsub-arrow/src/subscriber_arrow.cpp) (cited `cpp:N`) and
@@ -156,13 +156,13 @@ delivers nothing. With no timeout, such a window waits for closing (L1).
 **L8. An undecodable schema is permanent for the subscription.** Once a schema has been rejected,
 every later row is dropped, and there is no recovery.
 `[built]`
-- Holds at: `cpp:65-77` (`SetSchema` refuses a second decision, `cpp:67`), called from the
+- Holds at: `cpp:77-88` (`SetSchema` refuses a second decision, `cpp:79`), called from the
   subscription's lambda at `cpp:391-398`. Stated at `hpp:106-109`.
   Since D7F-2 an import failure is decided once too: a row whose schema `ImportArrowSchema` throws on
   fixes the subscription's schema as null for life, the same door and the same permanent result as a
   schema `BatchDecoder` rejects. A schema that is merely absent, or nothing to import (a released
   handle), decides nothing.
-- D7O-3: the `BatchDecoder` constructor alone decides. The room set aside up front for a window
+- D7O-3: for an imported schema, the `BatchDecoder` constructor decides; a failed pre-size decides nothing. The room set aside up front for a window
   (`PreSize`, `RecordBatchBatcher`) is a hint: it runs after the constructor, outside the verdict, and
   a failure is ignored. `SetSchema` has no path that discards a decoder once it exists (ruling
   2026-11-12, "Fix in D7O"). One residue is open: a constructor that fails on allocation, not on
@@ -251,7 +251,7 @@ answered (register BC-8); a binding passes the refusal through instead of answer
 `[built]` for the refusal (D15, D7O-1); the "used as given" clause is `[built]` for timeouts
 (D7O-2) and for `max_rows` (D7O-3)
 - Source: owner ruling, 2026-11-12, "Refuse both" ([RIX-rulings.md](../../plans/RIX-rulings.md)).
-- Holds at: `RecordBatchBatcher`'s constructor (`cpp:34-47`), reached only from the batched
+- Holds at: `RecordBatchBatcher`'s constructor (`cpp:35-48`), reached only from the batched
   `SubscriberArrow::Subscribe`, before the batch thread starts or anything is subscribed. D7O-3:
   `max_rows_` is stored and compared unchanged; the one pre-size helper (`PreSize`, bounded at
   `kMaxPreSizeRows`, 65 536 rows) sizes a buffer only, never a window, and its failure is ignored.
