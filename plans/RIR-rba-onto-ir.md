@@ -4,7 +4,7 @@ Dedicated follow-up round that reconciles the RecordBatch-accessor (RBA) emitter
 with the recursive language-neutral IR built in GIR. **Stub only** — flesh out
 into a full round (tracker + locked decisions + config) at kickoff, the way
 GIR/HARD were. Recorded now so the reconciliation deferred by
-[GIR-locked-decisions.md](GIR-locked-decisions.md) #3 has a concrete home and
+[../docs/archive/GIR/GIR-locked-decisions.md](../docs/archive/GIR/GIR-locked-decisions.md) #3 has a concrete home and
 does not float.
 
 ## Why this exists

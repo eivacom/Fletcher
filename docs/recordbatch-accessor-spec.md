@@ -3,8 +3,8 @@
 Status: **proposed** (round **RBA**). This is the authoritative spec for the
 generated RecordBatch-accessor feature. On any contradiction with the plan or a
 per-item design, **this document wins**. Locked-decision digest:
-[plans/RBA-locked-decisions.md](../plans/RBA-locked-decisions.md). Plan + tracker:
-[plans/RBA-recordbatch-accessor.md](../plans/RBA-recordbatch-accessor.md).
+[docs/archive/RBA/RBA-locked-decisions.md](archive/RBA/RBA-locked-decisions.md). Plan + tracker:
+[docs/archive/RBA/RBA-recordbatch-accessor.md](archive/RBA/RBA-recordbatch-accessor.md).
 
 ---
 

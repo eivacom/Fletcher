@@ -194,13 +194,13 @@ Fletcher, not by users.** `[designed-not-built; violated on pio:158-260 until RI
 ## 5. Decisions of record
 
 - **2026-09-06, same message, same bytes; stated attachment order.** Authorises moving wire bytes
-  for attachment ordering only ([PDA-DEC-rulings](../../plans/PDA-DEC-rulings.md):741). → L11.
+  for attachment ordering only ([PDA-DEC-rulings](../archive/PDA-decouple/PDA-DEC-rulings.md):741). → L11.
 - **2026-09-06, zero-byte key refused when attached** (PDA-DEC-rulings:759) and **on arrival too**,
   without an exception in a transport frame (PDA-DEC-rulings:816). → L13.
 - **2026-08-31, zero-copy is required for rows and attachments** (PDA-DEC-rulings:39). → L15.
 - **Wire format does not change** (round-scoped): PDA-decouple locked decision 13
-  ([PDA-decouple-locked-decisions](../../plans/PDA-decouple-locked-decisions.md):107), PDA-ABI 14,
-  GIR 2 with the `Encode()==EncodeRow()` oracle ([GIR-locked-decisions](../../plans/GIR-locked-decisions.md):17). → L2.
+  ([PDA-decouple-locked-decisions](../archive/PDA-decouple/PDA-decouple-locked-decisions.md):107), PDA-ABI 14,
+  GIR 2 with the `Encode()==EncodeRow()` oracle ([GIR-locked-decisions](../archive/GIR/GIR-locked-decisions.md):17). → L2.
 - **2026-11-10 (RIX):** index not data model; option A, no wire-format change; domain 2 owns the
   meaning of reserved keys; row-index metadata keys are domain 2's; 8-byte writer hash
   ([RIX-rulings](../../plans/RIX-rulings.md)). → L17-L20.
@@ -286,7 +286,7 @@ domain 3's byte comparison.
   is `min(max_rows_, 65 536)` rows. Still literally true for the benchmark's N ≤ 8000. Related: domain
   7's pre-size bound is in rows, not bytes, so a very wide fixed-size column can still make it large;
   a byte-based bound would need `Reserve` by bytes here. (D7O close, 2026-11-12, from
-  `plans/D7O-3-any-row-count.md` Risks; domain 7 Findings (d)2.)
+  `docs/archive/D7O/D7O-3-any-row-count.md` Risks; domain 7 Findings (d)2.)
 - L-1. "Payload" means field bytes in the wire spec but the envelope body in `max_payload_bytes`.
   L-2. One concept has three names: attachment, side data, sidecar data (plus key/label).
 

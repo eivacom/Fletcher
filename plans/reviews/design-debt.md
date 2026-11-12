@@ -5,7 +5,7 @@ in the per-item review file; this register is the index, not a copy.
 
 ## PDA-DEC-1 — conformance suite (APPROVE-WITH-DEBT(6), cycle 2 of 2)
 
-Review: [PDA-DEC-1-design-review.md](PDA-DEC-1-design-review.md).
+Review: [../../docs/archive/PDA-decouple/reviews/PDA-DEC-1-design-review.md](../../docs/archive/PDA-decouple/reviews/PDA-DEC-1-design-review.md).
 Cycle-1 DEBT-1..11 were folded into the design revision (`154a1a2`) and are closed.
 Cycle-2 items below are open and owed by the implementer.
 
@@ -15,12 +15,12 @@ Cycle-2 items below are open and owed by the implementer.
 | DEBT-C2-2 | Key *retention* by provider but leave *schema_mode* per subject, or the promised PDA-DEC-3 handoff collides with rung-1 item 3. | ditto |
 | DEBT-C2-3 | State that clause 12 observes overlap and cannot force it. | ditto |
 | DEBT-C2-4 | Reuse the conflict comparison already shipping above the seam (`pubsub/src/publisher.cpp:46-78`); note the gateway cannot regress, because `Publisher` never forwards a conflicting or identical re-declaration to the provider. | ditto |
-| DEBT-C2-5 | Two `Files-to-touch` entries owed, both one line. (`plans/PDA-decouple-interface.md` is already updated by the PM at `ea5287b`.) | ditto |
+| DEBT-C2-5 | Two `Files-to-touch` entries owed, both one line. (`docs/archive/PDA-decouple/PDA-decouple-interface.md` is already updated by the PM at `ea5287b`.) | ditto |
 | DEBT-C2-6 | Informational, nothing owed — the sparse-checkout gotcha was mis-targeted in the design. | ditto |
 
 ## PDA-DEC-2 — copy-accounting oracle (APPROVE-WITH-DEBT(7), cycle 1 of 2)
 
-Review: [PDA-DEC-2-design-review.md](PDA-DEC-2-design-review.md). All seven open
+Review: [../../docs/archive/PDA-decouple/reviews/PDA-DEC-2-design-review.md](../../docs/archive/PDA-decouple/reviews/PDA-DEC-2-design-review.md). All seven open
 and owed by the implementer. No BLOCKERs; premise **P1** (`WriteBuffer::Data()` is
 PDA-DEC-2's to add) is answered YES in the review — do not stop-and-ask on it.
 
@@ -36,7 +36,7 @@ PDA-DEC-2's to add) is answered YES in the review — do not stop-and-ask on it.
 
 ## PDA-DEC-3 — crossing vocabulary (NEEDS-REWORK, 4 BLOCKERs, cycle 1 of 2)
 
-Review: [PDA-DEC-3-design-review.md](PDA-DEC-3-design-review.md). The nine items
+Review: [../../docs/archive/PDA-decouple/reviews/PDA-DEC-3-design-review.md](../../docs/archive/PDA-decouple/reviews/PDA-DEC-3-design-review.md). The nine items
 below are DEBT and do **not** loop the design; the four BLOCKERs are in the review.
 Two rulings the implementer may rely on without re-asking: premise **P2** is
 answered YES (§3.3 does *not* require reshaping `SharedSchema`), and the Fast DDS
@@ -75,7 +75,7 @@ the implementer.
 
 ## PDA-DEC-4 — provider registry (APPROVE-WITH-DEBT(10), cycle 1 of 2)
 
-Review: [PDA-DEC-4-design-review.md](PDA-DEC-4-design-review.md). No BLOCKERs. Two
+Review: [../../docs/archive/PDA-decouple/reviews/PDA-DEC-4-design-review.md](../../docs/archive/PDA-decouple/reviews/PDA-DEC-4-design-review.md). No BLOCKERs. Two
 rulings the implementer may rely on **without stop-and-asking**: premise **P2** is
 answered — §4 clause 2 is satisfied under *both* readings, because `SetPathResolver`
 lands and is exercised in this item, so PDA-ABI adds no registry method (review §A);
@@ -98,7 +98,7 @@ item as the expected exception.
 
 ## PDA-DEC-5 — InProcess as a built-in (APPROVE-WITH-DEBT(5), cycle 1 of 2)
 
-Review: [PDA-DEC-5-design-review.md](PDA-DEC-5-design-review.md). No BLOCKERs.
+Review: [../../docs/archive/PDA-decouple/reviews/PDA-DEC-5-design-review.md](../../docs/archive/PDA-decouple/reviews/PDA-DEC-5-design-review.md). No BLOCKERs.
 Two rulings the implementer may rely on **without stop-and-asking**: premise
 **P1 does not fire** — `TranslateSeamFailure` rethrows a `PubSubError`
 untouched (`core/status.hpp:136`) and `Registry.AFactoryThatFailsIsReportedAsA
@@ -119,7 +119,7 @@ in `in_process_provider.cpp` (review §B).
 
 ## PDA-DEC-6 — Fast DDS by document (NEEDS-REWORK, 3 BLOCKERs, cycle 1 of 2)
 
-Review: [PDA-DEC-6-design-review.md](PDA-DEC-6-design-review.md). The eleven items
+Review: [../../docs/archive/PDA-decouple/reviews/PDA-DEC-6-design-review.md](../../docs/archive/PDA-decouple/reviews/PDA-DEC-6-design-review.md). The eleven items
 below are DEBT and do **not** loop the design; the three BLOCKERs are in the review.
 Two rulings the implementer may rely on without re-asking: **P1's API half is
 verified** — `get_participant_qos_from_xml` / `get_datawriter_qos_from_xml` /
@@ -165,7 +165,7 @@ domains. The five items below are open and owed by the implementer.
 
 ## PDA-DEC-7 — XRCE by document (NEEDS-REWORK, 1 BLOCKER, cycle 1 of 2)
 
-Review: [PDA-DEC-7-design-review.md](PDA-DEC-7-design-review.md). The nine items below
+Review: [../../docs/archive/PDA-decouple/reviews/PDA-DEC-7-design-review.md](../../docs/archive/PDA-decouple/reviews/PDA-DEC-7-design-review.md). The nine items below
 are DEBT and do **not** loop the design; the single BLOCKER (B1 — four of six document
 keys have no guard that an accepted value lands anywhere) is in the review.
 
@@ -237,7 +237,7 @@ README — not in the design doc.**
 
 ## PDA-DEC-8 — multi-instance proof (NEEDS-REWORK, 3 BLOCKERs, cycle 1 of 2)
 
-Review: [PDA-DEC-8-design-review.md](PDA-DEC-8-design-review.md). The six items
+Review: [../../docs/archive/PDA-decouple/reviews/PDA-DEC-8-design-review.md](../../docs/archive/PDA-decouple/reviews/PDA-DEC-8-design-review.md). The six items
 below are DEBT and do **not** loop the design; the three BLOCKERs are in the review
 (B1 unequal payload bounds make the two instances undiscoverable on any domain, so
 M1 cannot redden and the positive control cannot cross; B2 an oversized row is not
@@ -343,7 +343,7 @@ sentences already there and must not grow the file.
 
 ## PDA-DEC-9 — seam spec, taxonomy, handoff (NEEDS-REWORK, 6 BLOCKERs, cycle 1 of 2)
 
-Review: [PDA-DEC-9-design-review.md](PDA-DEC-9-design-review.md). The eight items below are
+Review: [../../docs/archive/PDA-decouple/reviews/PDA-DEC-9-design-review.md](../../docs/archive/PDA-decouple/reviews/PDA-DEC-9-design-review.md). The eight items below are
 DEBT and do **not** loop the design; the six BLOCKERs are in the review (B1 the totality
 `static_assert` cannot fail on an append, so the item's one new guard does not do what it
 claims; B2 "ships with the package" is false — `package()` copies only `*.hpp`/`*.cmake`;
@@ -385,7 +385,7 @@ Conan cache on both platforms (`ci.core.yml:55,107`); the P2 precedent is exactl
 
 ## PDA-DEC-9 — cycle 2 (APPROVE-WITH-DEBT(10), no BLOCKERs stand)
 
-Review: [PDA-DEC-9-design-review.md](PDA-DEC-9-design-review.md) §Cycle 2. All six cycle-1
+Review: [../../docs/archive/PDA-decouple/reviews/PDA-DEC-9-design-review.md](../../docs/archive/PDA-decouple/reviews/PDA-DEC-9-design-review.md) §Cycle 2. All six cycle-1
 BLOCKERs are closed and all eight cycle-1 DEBT items are folded into the design. The ten items
 below do **not** loop the design; **C3-1 and C3-2 are the two an implementer must not skip.**
 
@@ -418,7 +418,7 @@ suite names.
 
 ## PDA-DEC-A4 — §7 clause 6 at the caller tier (NEEDS-REWORK, 2 BLOCKERs, cycle 1 of 2)
 
-Review: [PDA-DEC-A4-design-review.md](PDA-DEC-A4-design-review.md). The five items
+Review: [../../docs/archive/PDA-decouple/reviews/PDA-DEC-A4-design-review.md](../../docs/archive/PDA-decouple/reviews/PDA-DEC-A4-design-review.md). The five items
 below are DEBT and do **not** loop the design; the two BLOCKERs and the ruled
 STOP-AND-ASK (idempotence needs its own owner authorisation) are in the review.
 
@@ -447,7 +447,7 @@ the review's cycle-2 section.
 
 ## PDA-DEC-A5 — topic name integrity (NEEDS-REWORK, 2 BLOCKERs, cycle 1 of 2)
 
-Review: [PDA-DEC-A5-design-review.md](PDA-DEC-A5-design-review.md). The three items
+Review: [../../docs/archive/PDA-decouple/reviews/PDA-DEC-A5-design-review.md](../../docs/archive/PDA-decouple/reviews/PDA-DEC-A5-design-review.md). The three items
 below are DEBT and do **not** loop the design; the two BLOCKERs (both in the
 evidence, not the mechanism) are in the review. Claims 2, 3 and 4 were ruled in the
 design's favour and the PM carries nothing to the owner.
@@ -479,7 +479,7 @@ beyond 2026-09-03 except for the `__` rule itself.
 
 ## PDA-DEC-A1 — a row composed *in* the delivered window (APPROVE-WITH-DEBT(5), cycle 1 of 2)
 
-Review: [PDA-DEC-A1-design-review.md](PDA-DEC-A1-design-review.md). **No BLOCKERs**; the
+Review: [../../docs/archive/PDA-decouple/reviews/PDA-DEC-A1-design-review.md](../../docs/archive/PDA-decouple/reviews/PDA-DEC-A1-design-review.md). **No BLOCKERs**; the
 five below are DEBT and do **not** loop the design. Things the implementer may rely on
 without re-deriving them: **P1 is verified TRUE for all three in-tree subclasses** with the
 arithmetic (`write_buffer.hpp:164-175`, `copy_accounting.cpp:83-95`, `write_buffer.hpp:198-200`
@@ -503,7 +503,7 @@ verified.
 
 ## PDA-DEC-AG1 — the misbehaving callback (NEEDS-REWORK, 3 BLOCKERs, cycle 1 of 2)
 
-Review: [PDA-DEC-AG1-design-review.md](PDA-DEC-AG1-design-review.md). The eight below
+Review: [../../docs/archive/PDA-decouple/reviews/PDA-DEC-AG1-design-review.md](../../docs/archive/PDA-decouple/reviews/PDA-DEC-AG1-design-review.md). The eight below
 are DEBT and do **not** loop the design; the three BLOCKERs are in the review.
 
 Things the implementer may rely on **without re-deriving them**, all verified against the
@@ -661,7 +661,7 @@ call never enters the rollback path at all.
 
 ## PDA-DEC-AG2 — the two crossing types with no form (NEEDS-REWORK, 3 BLOCKERs, cycle 1 of 2)
 
-Review: [PDA-DEC-AG2-design-review.md](PDA-DEC-AG2-design-review.md). All seven open and owed by
+Review: [../../docs/archive/PDA-decouple/reviews/PDA-DEC-AG2-design-review.md](../../docs/archive/PDA-decouple/reviews/PDA-DEC-AG2-design-review.md). All seven open and owed by
 the implementer. The three BLOCKERs are **not** here — they are in the review and must be
 discharged in the design revision.
 
@@ -677,7 +677,7 @@ discharged in the design revision.
 
 ### Cycle 2 (NEEDS-REWORK, 1 BLOCKER) — revision 3
 
-Review: [PDA-DEC-AG2-design-review-c2.md](PDA-DEC-AG2-design-review-c2.md). The single
+Review: [../../docs/archive/PDA-decouple/reviews/PDA-DEC-AG2-design-review-c2.md](../../docs/archive/PDA-decouple/reviews/PDA-DEC-AG2-design-review-c2.md). The single
 BLOCKER (C2-B1, A7's forcing test is green at base) is **not** here — it is in the review.
 
 **Discharged in revision 3, closed:** AG2-DEBT-1 (`Clear()` added, surface still 1),
@@ -794,7 +794,7 @@ first has a measured deployment figure.
 
 ## D7F-1 — loss before a usable schema, reported at close (APPROVE-WITH-DEBT(2), cycle 1 of 2)
 
-Review: [D7F-1-design-review.md](D7F-1-design-review.md). No BLOCKERs; P1–P4 verified, rely on them.
+Review: [../../docs/archive/D7F/reviews/D7F-1-design-review.md](../../docs/archive/D7F/reviews/D7F-1-design-review.md). No BLOCKERs; P1–P4 verified, rely on them.
 
 | Id | Owed | Where |
 |----|------|-------|
@@ -806,27 +806,27 @@ Review: [D7F-1-design-review.md](D7F-1-design-review.md). No BLOCKERs; P1–P4 v
 - ~~**DEBT-4 (S2):** drops-then-good-rows test~~ Landed in `dbaa2b6`: `test_pubsub_arrow.cpp:902-939` (forcing, with the `:877-894` helper) and `:1076` (leg).
 - ~~**DEBT-5 (record):** header timeout sentence~~ Landed in `dbaa2b6`: `subscriber_arrow.hpp:95-99` and `README.md:66-70`.
 
-## D7F-2 — loss before a usable schema, reported at each deadline (APPROVE-WITH-DEBT(3), cycle 1 of 2) — [review](D7F-2-design-review.md)
-- ~~**DEBT-1 (must land):** only a throw decides "unusable"~~ Landed in `dbaa2b6`: `subscriber_arrow.cpp:341` and `:380`; P3 corrected in `plans/D7F-2-schema-loss-at-deadline.md:176` (`7170ca9`).
+## D7F-2 — loss before a usable schema, reported at each deadline (APPROVE-WITH-DEBT(3), cycle 1 of 2) — [review](../../docs/archive/D7F/reviews/D7F-2-design-review.md)
+- ~~**DEBT-1 (must land):** only a throw decides "unusable"~~ Landed in `dbaa2b6`: `subscriber_arrow.cpp:341` and `:380`; P3 corrected in `docs/archive/D7F/D7F-2-schema-loss-at-deadline.md:176` (`7170ca9`).
 - ~~**DEBT-2:** BC-3 row, d7 L8 placement, `max_rows` sentence~~ Landed in `dbaa2b6`: `bounded-context-register.md:17` (a), `d7-batch-assembly.md:138-142` (b), `subscriber_arrow.hpp:95-99` and `README.md:66-70` (c, sentence dropped).
 - ~~**DEBT-3:** forcing test order assertions~~ Landed in `dbaa2b6` (tweaked `7170ca9`): `test_pubsub_arrow.cpp:877-894` (order within a delivery, the set {1,2,3} across deliveries).
 
 ## Carried from D7F-2 code review to D7F-3
 - ~~**DEBT-6 (S2):** the schema decision in three places.~~ Landed in D7F-3 (`5b4e807`): the batcher's `decided_`, set under its `mu_`; `SetSchema` refuses a second decision.
 
-## D7F-3 — one batch thread, in order, nothing lost at close (cycle 1 NEEDS-REWORK; cycle 2 APPROVE-WITH-DEBT(2)) — [review](D7F-3-design-review.md)
+## D7F-3 — one batch thread, in order, nothing lost at close (cycle 1 NEEDS-REWORK; cycle 2 APPROVE-WITH-DEBT(2)) — [review](../../docs/archive/D7F/reviews/D7F-3-design-review.md)
 - ~~DEBT-1..3 (deadline forbid, `notify_all`, benchmark and fastdds Files-to-touch)~~ Folded into design revision 2 (§2, §1, Files-to-touch).
 - **C2-1 (PM-facing, before the owner reads the brief):** Remove the destructor from Decision 2. Destroying over a provider inside its own delivery is already forbidden (§6 clause 5, ruling 2026-09-05; `sub:556-578`), and the program stops under either option. Scope (b)'s "No hang" to the subscription's own provider.
 - ~~**C2-2:** the provider token and the third `Stop` case.~~ Landed in D7F-3 (`5b4e807`): `SubscriberArrow::provider_token_` (private, hpp), `Stop`'s `InsideDeliveryOn(provider_)` case moves and detaches `thread_`; the "may not free" case is in the hpp `Unsubscribe` doc, the README and d7 L9.
 
-## D7O-1 — nonsensical options are refused (APPROVE-WITH-DEBT(1), cycle 1 of 2) — [review](D7O-1-design-review.md)
-- ~~DEBT-1 (step 3): red run kept the refused arms live~~ Landed in `9abb0c7` (phase A); counter observed 1 on the red run, 0 → 1 on green (`plans/D7O-progress-log.md`, D7O-1).
+## D7O-1 — nonsensical options are refused (APPROVE-WITH-DEBT(1), cycle 1 of 2) — [review](../../docs/archive/D7O/reviews/D7O-1-design-review.md)
+- ~~DEBT-1 (step 3): red run kept the refused arms live~~ Landed in `9abb0c7` (phase A); counter observed 1 on the red run, 0 → 1 on green (`docs/archive/D7O/D7O-progress-log.md`, D7O-1).
 
-## D7O-2 — no timeout (APPROVE-WITH-DEBT(2), cycle 1 of 2) — [review](D7O-2-design-review.md)
+## D7O-2 — no timeout (APPROVE-WITH-DEBT(2), cycle 1 of 2) — [review](../../docs/archive/D7O/reviews/D7O-2-design-review.md)
 - ~~DEBT-1 (step 3): control asserts only that some `kTimeout` arrives~~ Landed in `7a0cc64` (`ShortTimeoutControlSeesTheDeadlineInEveryBody`).
-- ~~DEBT-2 (step 3): BC-4 site, rung-3 red record~~ Landed in `7a0cc64` (BC-4) and `plans/D7O-progress-log.md` (red record); `ratio_less` not taken.
+- ~~DEBT-2 (step 3): BC-4 site, rung-3 red record~~ Landed in `7a0cc64` (BC-4) and `docs/archive/D7O/D7O-progress-log.md` (red record); `ratio_less` not taken.
 
-## D7O-3 — any row count (APPROVE-WITH-DEBT(4), cycle 1 of 2) — [review](D7O-3-design-review.md)
+## D7O-3 — any row count (APPROVE-WITH-DEBT(4), cycle 1 of 2) — [review](../../docs/archive/D7O/reviews/D7O-3-design-review.md)
 - ~~DEBT-1 (PM): Decision 1 (b) breaks L10~~ Folded into the brief as a disclosure, `957a514`.
 - ~~DEBT-2 (PM): Decision 2 is already law~~ Folded into the brief's Risks accepted, `957a514`.
 - ~~DEBT-3 (step 3): verdict/pre-size split test~~ Landed in `c18e95e` (`AFailedPreSizeDoesNotMakeTheSchemaUnusable`).

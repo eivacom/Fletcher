@@ -6,8 +6,8 @@ between Fletcher and a protocol. On any contradiction with the plan or a per-ite
 **this document wins**. **§12 states what "frozen" binds, who may act on each class, and how
 each handoff condition was actually verified** — read it before proposing any change here.
 Locked-decision digest:
-[plans/PDA-decouple-locked-decisions.md](../plans/PDA-decouple-locked-decisions.md).
-Plan + tracker: [plans/PDA-decouple-interface.md](../plans/PDA-decouple-interface.md).
+[docs/archive/PDA-decouple/PDA-decouple-locked-decisions.md](archive/PDA-decouple/PDA-decouple-locked-decisions.md).
+Plan + tracker: [docs/archive/PDA-decouple/PDA-decouple-interface.md](archive/PDA-decouple/PDA-decouple-interface.md).
 
 **This document is also the meeting point for two later rounds that do not
 otherwise touch each other** — see §1.
@@ -1069,7 +1069,7 @@ modernization merge shipped a receive-side data-sharing defect that lost
 `TRANSIENT_LOCAL` samples for cross-process late joiners, and the provider's
 entire 70-test suite was green throughout, because every test ran in one process
 (see `fastdds-pubsub-provider/README.md` and
-[plans/PDA-decouple-progress-log.md](../plans/PDA-decouple-progress-log.md)).
+[docs/archive/PDA-decouple/PDA-decouple-progress-log.md](archive/PDA-decouple/PDA-decouple-progress-log.md)).
 
 So the suite must have a **cross-process subject** for the DDS providers. A
 conformance suite that cannot observe the transport would certify the seam on
@@ -1086,7 +1086,7 @@ mix and count of data-sharing endpoints per participant, which needs a subscribi
 peer this harness does not have. The evidence table lives in
 `integration-tests/pubsub-conformance/README.md`, the defect is owned by
 **PDA-ABI-7**, and the owner ruled on 2026-09-01 that the suite ships with the
-blind spot documented (`plans/PDA-DEC-rulings.md`). **Do not read a green
+blind spot documented (`docs/archive/PDA-decouple/PDA-DEC-rulings.md`). **Do not read a green
 conformance run as evidence about that defect class.**
 
 ---

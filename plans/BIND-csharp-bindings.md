@@ -21,7 +21,7 @@ C++ → C# interface reference with the class diagrams.
 frozen**; a shape that cannot be mirrored is a stop-and-ask against it) ·
 [docs/wire-format-specification.md](../docs/wire-format-specification.md) (wire
 behaviour) · [docs/recordbatch-accessor-spec.md](../docs/recordbatch-accessor-spec.md)
-(accessor tier) · [GIR-locked-decisions.md](GIR-locked-decisions.md) (the generator
+(accessor tier) · [../docs/archive/GIR/GIR-locked-decisions.md](../docs/archive/GIR/GIR-locked-decisions.md) (the generator
 IR — merged). PDA-ABI ([PDA-ABI-protocol-driver-abi.md](PDA-ABI-protocol-driver-abi.md))
 is a **sibling** round below the seam, not an oracle: neither round depends on the
 other (seam §1).
@@ -3225,7 +3225,7 @@ runs, since BIND-T and BIND-10 land in between.
    reconnected, and a closed connection ends every subscription (D-BIND-190).
 8. **Archive the rest of the round** (D-BIND-194's second step, D-BIND-198), once every tag is
    green and its record is written here: this tracker, `BIND-locked-decisions.md` and
-   `BIND-progress-log.md` move to `docs/archive/BIND/`, and the links into them are updated
+   `../docs/archive/BIND/BIND-progress-log.md` move to `docs/archive/BIND/`, and the links into them are updated
    (`c-abi/include/fletcher/abi/binding.h:86`, `c-abi/benchmarks/README.md:5`,
    `integration-tests/gateway-dotnet-end-to-end/README.md:10`, and whatever cites them by then).
    In the same commit the test-matrix check retires: `scripts/check_test_matrix.py`,
@@ -3538,7 +3538,7 @@ bindings should not follow C++, every codec takes C++'s spelling (`readings[].x`
   (`plans/reviews/BIND-…`) now names its new one, except two sentences that describe the plan at
   its old path (D-BIND-198 and the review's Q3). Checked: no broken relative link in the moved
   files or this tracker, the decisions and the progress log, before or after (0 and 0). This
-  tracker, `BIND-locked-decisions.md` and `BIND-progress-log.md` stay until runbook step 8.
+  tracker, `BIND-locked-decisions.md` and `../docs/archive/BIND/BIND-progress-log.md` stay until runbook step 8.
 - **10-6 archive committed 2026-10-30** (`5a2a107`).
 - **BIND-10 CLOSED 2026-10-30, on CI at `5a2a107`** (`ci.pr` 41062852098, 61/61 on the first
   attempt; `ci.format-check-cpp`, `-cs`, `-ts`, `ci.license-headers`, `ci.action-lint`,
@@ -3643,7 +3643,7 @@ Three actions remain besides, none an engineering one:
 ## Definition of done (round)
 
 - BIND-0 … BIND-10 and BIND-T green, reviewed, logged in
-  `plans/BIND-progress-log.md`, pushed.
+  `docs/archive/BIND/BIND-progress-log.md`, pushed.
 - **One wire format**: byte identity between the nanoarrow codec and `arrow-bridge`
   across the full scenario corpus; no managed code writes wire bytes except
   `GatewayClient`.

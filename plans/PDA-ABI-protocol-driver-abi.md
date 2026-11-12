@@ -183,7 +183,7 @@ demonstrably *better* than the interface rather than merely equivalent, and it i
 also the only one touching Fast DDS internals, so it is the natural descope
 candidate; descoping is the user's call.
 **Start from PDA-DEC-1's evidence, not from scratch** (owner ruling 2026-09-01,
-`plans/PDA-DEC-rulings.md`). PDA-DEC-1 tried and failed to reproduce the defect in
+`docs/archive/PDA-decouple/PDA-DEC-rulings.md`). PDA-DEC-1 tried and failed to reproduce the defect in
 a purpose-built cross-process conformance harness, and its README carries the
 evidence table: two hypotheses refuted by measurement — the single-writer/
 single-reader harness shape (refuted by the `gateway-fastdds-ts` control, which

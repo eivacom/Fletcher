@@ -6,7 +6,7 @@ architect / architect-reviewer / compliance steps must honour. Full rationale:
 [BIND-native-transport.md](../docs/archive/BIND/BIND-native-transport.md).
 
 **Upstream oracles that win on any conflict:**
-[GIR-locked-decisions.md](GIR-locked-decisions.md) (the generator IR — merged) and
+[../docs/archive/GIR/GIR-locked-decisions.md](../docs/archive/GIR/GIR-locked-decisions.md) (the generator IR — merged) and
 `docs/protocol-driver-abi-spec.md` + `plans/PDA-locked-decisions.md`
 (the driver ABI — **in flight on `feature/protocol-driver-abi`**; both paths
 resolve once PDA merges, so they are deliberately not links yet). A proposed deviation from anything here is

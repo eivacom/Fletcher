@@ -11,7 +11,7 @@ for the seam — which wins over the ABI spec on anything about the interface.
 
 Gated on **PDA-decouple** closing; its Definition of Done is this round's entry
 condition. Round history, and the reasoning behind the PDA split, are in
-[PDA-decouple-progress-log.md](PDA-decouple-progress-log.md).
+[../docs/archive/PDA-decouple/PDA-decouple-progress-log.md](../docs/archive/PDA-decouple/PDA-decouple-progress-log.md).
 
 This round is **not** gated on BIND-C#/BIND-Rust, and BIND is not gated on it.
 
