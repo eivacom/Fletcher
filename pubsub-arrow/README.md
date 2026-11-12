@@ -70,6 +70,13 @@ never sooner than 1 ms after the window's first row — whichever comes first
 arrived: rows lost for want of one are reported at the deadline, not only when
 you unsubscribe.
 
+`BatchOptions::kNoTimeout` asks for no timeout at all: a batch then arrives only when it is full
+(or hits the offset budget), and whatever is left arrives, with reason `kClosing`, when you
+unsubscribe or destroy the `SubscriberArrow`. Rows lost for want of a usable schema (or because
+they are malformed) never count toward `max_rows`, so with no timeout they are reported only in
+that last batch. A timeout too long for the clock to reach means the same as `kNoTimeout`; a long
+timeout the clock can reach gives a deadline at its true time.
+
 `max_rows` must be at least 1 and `timeout` at least 0. Anything else is
 refused: `Subscribe` throws `PubSubError(kInvalidArgument)` before anything is
 subscribed, so no thread is started and your callback is released. A zero
@@ -89,6 +96,9 @@ sub.Subscribe(
         process(batch);
     },
     {.max_rows = 4096, .timeout = std::chrono::seconds(5)});  // or omit for defaults
+
+// No timeout: batches of 4096 rows, plus the remainder when you unsubscribe.
+//   {.max_rows = 4096, .timeout = fletcher::SubscriberArrow::BatchOptions::kNoTimeout}
 ```
 
 The callback's third argument, `BatchStatus`, says **why** the batch was

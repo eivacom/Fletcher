@@ -78,8 +78,14 @@ class SubscriberArrow {
         /// Flush at this many rows. At least 1; below 1 is refused (never clamped).
         int64_t max_rows = 8000;
         /// ...or after this long. 0 or more; negative is refused. A zero timeout delivers no
-        /// sooner than 1 ms after the window's first row or drop.
+        /// sooner than 1 ms after the window's first row or drop. `kNoTimeout` means no timeout:
+        /// a window then closes only when full, on the offset budget, or at Unsubscribe or
+        /// destruction, never on a clock. Any timeout too long for the clock to reach means the
+        /// same; a long timeout the clock can reach gives a deadline at its true time.
         std::chrono::milliseconds timeout = std::chrono::minutes(1);
+        /// No timeout: windows close only at max_rows, on the offset budget, or at closing;
+        /// never on a clock.
+        static constexpr std::chrono::milliseconds kNoTimeout = std::chrono::milliseconds::max();
     };
 
     /// Describes why a batch was delivered and whether any rows were lost.
@@ -105,9 +111,14 @@ class SubscriberArrow {
     /// holds whether or not a usable schema has arrived: a window of lost rows is reported at its
     /// deadline too. A partial batch is flushed on Unsubscribe with reason kClosing.
     ///
+    /// With `BatchOptions::kNoTimeout` there is no deadline: a window closes only when full, on the
+    /// offset budget, or at Unsubscribe or destruction. A window of only lost rows (no usable
+    /// schema, an unusable schema, malformed rows) never counts toward `max_rows`, so it is then
+    /// reported only in the kClosing batch.
+    ///
     /// Throws `PubSubError(kInvalidArgument)` when `options.max_rows < 1` or `options.timeout` is
     /// negative, before anything is subscribed: no thread is started, the callback is released,
-    /// and nothing is ever delivered. Any other value is used as given.
+    /// and nothing is ever delivered. Any other timeout is used as given.
     ///
     /// `callback` runs on a thread the subscription owns, one batch at a time, in window order;
     /// never inside `Publish` or on the transport's delivery thread, so publishing never waits on

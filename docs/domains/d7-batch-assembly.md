@@ -3,7 +3,8 @@
 > **Specified.** The owner confirmed these laws on 2026-11-10 ([RIX-rulings.md](../../plans/RIX-rulings.md), "Yes on all accounts"). A change to a law needs
 > an owner ruling, recorded in a decision of record. **Amended 2026-11-12** (D14, D15): L4 and L5
 > gain the no-timeout case, L15 is new, and §1 no longer lists validating `BatchOptions` as refused;
-> L15's refusal is `[built]` (D7O-1, `9abb0c7`); the rest is `[designed-not-built]` until D7O-2 and D7O-3.
+> L15's refusal is `[built]` (D7O-1, `9abb0c7`); the no-timeout and unrepresentable-timeout cases of
+> L4 and L5 are `[built]` (D7O-2); a huge `max_rows` stays `[designed-not-built]` until D7O-3.
 
 **Mode: survey, verified against the tree at `9a4780b`; the §3 "Holds at" citations were refreshed at D7F-3; every other `cpp:N` citation predates D7F-1 (`a2c8b97`), D7F-2 (`dbaa2b6`) and D7F-3, so treat those as approximate; D7O-1 shifted every `cpp:N` after line 34 down by about 9** (branch `feature/row-index`). The code is
 ground truth. Doc comments, READMEs and specs are claims checked against it. No spec exists for
@@ -43,7 +44,7 @@ whether a subscription's `BatchOptions` are acceptable (L15, since 2026-11-12).
 | **Flush reason** | `BatchStatus::Reason`: `kRowLimit`, `kTimeout` or `kClosing` (`hpp:80-84`). |
 | **Batch** | The `arrow::RecordBatch` a flush delivers. It may have zero rows, or be null (L6, L7). |
 | **Dropped row** | A row that reached the batcher and is not in any batch. It is counted in `rows_dropped` ("rows lost since the previous flush", `hpp:86`). |
-| **Deadline** | When a pending window times out: `max(now + 1 ms, last_flush + timeout)` (`cpp:176`). |
+| **Deadline** | When a pending window times out: `max(now + 1 ms, last_flush + timeout)`, for a timeout the clock can reach; otherwise none (L5) (`ArmTimer`). |
 | **Offset budget** | Arrow's 32-bit builder limit, which `BatchDecoder` signals with `BatchCapacityExceeded` (`batch_decoder.hpp:16-21`). |
 | **Closing** | `Stop()`: the final flush. Any later row is ignored (`cpp:80`, `cpp:130-149`). |
 
@@ -63,6 +64,9 @@ closing and is not delivered is counted in the `rows_dropped` of a later deliver
 - Holds at: `cpp:95-99` (no decoder), `cpp:149-163` (`TryAppend`: malformed, internal),
   `cpp:100-105` (over budget: close, retry, count), `cpp:170-177` (`DiscardPending`),
   `cpp:225-226` (`Close` hands the count to the queued batch).
+- **With no timeout (L5, D7O-2),** a window of only lost rows never counts toward `max_rows` (it
+  reads `decoder_->num_rows()`), so it is reported only in the `kClosing` batch; the header and README
+  say so.
 - **Violation 1.** While no usable schema exists (none decided yet, or an import that threw, which
   decides the schema as unusable for good), the row is counted through `AddRow`'s no-decoder branch. Since `a2c8b97` (D7F-1) the closing flush
   reports it; since D7F-2 the batch thread reports it at each deadline too, because `Loop` flushes at
@@ -106,10 +110,12 @@ to batch row `i`. A dropped row takes its attachment with it.
 (only for a subscription that has a timeout; L5), the offset budget, or closing. The batch's reason
 names which, except that the offset budget is reported as `kRowLimit`. A row that meets the budget
 opens the next window rather than being lost.
-`[built]`; the no-timeout case `[designed-not-built]` (D14, round D7O)
-- Holds at: `cpp:108` (count), `cpp:92-94` and `cpp:251-252` (deadline), `cpp:100-105` (budget:
-  close, then retry once), `cpp:122` (closing).
-- Tests: `FlushesAtRowLimit`, `FlushesAtTimeout`, `ClosingFlushOnUnsubscribe`. The offset-budget
+`[built]`; the no-timeout case `[built]` (D14, D7O-2)
+- Holds at: `cpp:108` (count), `cpp:92-94` and `cpp:251-252` (deadline), `ArmTimer` (no deadline
+  when there is no timeout), `cpp:100-105` (budget: close, then retry once), `cpp:122` (closing).
+- Tests: `FlushesAtRowLimit`, `FlushesAtTimeout`, `ClosingFlushOnUnsubscribe`;
+  no timeout: `NoTimeoutWindowsCloseOnlyWhenFullOrAtClosing` (with the control
+  `ShortTimeoutControlSeesTheDeadlineInEveryBody`). The offset-budget
   early flush: `OverBudgetRowAroundInCallbackUnsubscribeIsCounted` (`heavy`, D7F-3), whose first
   batch is `kRowLimit` with one row under a large `max_rows`; the decoder half:
   `BatchDecoderTest.CapacityExceededLeavesBuildersUntouched`.
@@ -120,16 +126,19 @@ event, after a 1 ms floor. **A subscription may have no timeout:** its windows h
 close only on row count, the offset budget or closing (D14). **A deadline is never earlier than its
 timeout says:** a timeout too long for the clock to represent means no deadline, never an early or
 wrapped one.
-`[built]` for finite timeouts the clock can represent; no timeout, and the unrepresentable case,
-`[designed-not-built]` (D14, round D7O). Until D7O, `last_flush_ + timeout_` (`cpp:187`) overflows
-for a timeout near `milliseconds::max()`.
-- Holds at: `cpp:184-191` (`ArmTimer`), `cpp:200`, `cpp:285`.
-- Test: no test. `FlushesAtTimeout` checks only that a timeout flush happens, not when.
+`[built]` for finite timeouts the clock can represent; `[built]` for no timeout and for the
+unrepresentable case (D14, D7O-2).
+- Holds at: `ArmTimer` (the deadline, or none when the timeout cannot be reached from the previous
+  flush: the sum is formed only when it can be represented), `cpp:200`, `cpp:285`.
+- Tests: no timeout (`BatchOptions::kNoTimeout`): `NoTimeoutWindowsCloseOnlyWhenFullOrAtClosing`;
+  the unrepresentable case: `TimeoutTooLongForTheClockBehavesAsNoTimeout` (its 100-year arm is a
+  guard: a timeout the clock can reach keeps its deadline). `FlushesAtTimeout` checks only that a
+  timeout flush happens, not when.
 - The header and README now state this rule (D7F-2; Findings a1).
 
 **L6. Loss gets a delivery, and idleness does not.** A window that contains only drops is still
 delivered: a zero-row batch, or a null batch if there is no decoder. A window with nothing pending
-delivers nothing.
+delivers nothing. With no timeout, such a window waits for closing (L1).
 `[built]`
 - Holds at: `cpp:201`, `cpp:145`, `cpp:204-213`.
 - Tests: `OnlyDroppedRowsStillDeliversEmptyBatch`; the idle case: `NoUsableSchemaIdleSubscriptionDeliversNothingAtClose` (D7F-1);
@@ -233,8 +242,8 @@ A `Stop` issued from the batch thread detaches the thread instead of joining it.
 anything is subscribed: no thread, no provider subscription, no delivery. Every value it accepts is
 used as given. This domain is the one place the question "are these options acceptable?" is
 answered (register BC-8); a binding passes the refusal through instead of answering it again.
-`[built]` for the refusal (D15, D7O-1); the "used as given" clause stays `[designed-not-built]` for
-huge values until D7O-2 and D7O-3
+`[built]` for the refusal (D15, D7O-1); the "used as given" clause is `[built]` for timeouts
+(D7O-2) and stays `[designed-not-built]` for a huge `max_rows` until D7O-3
 - Source: owner ruling, 2026-11-12, "Refuse both" ([RIX-rulings.md](../../plans/RIX-rulings.md)).
 - Holds at: `RecordBatchBatcher`'s constructor (`cpp:34-47`), reached only from the batched
   `SubscriberArrow::Subscribe`, before the batch thread starts or anything is subscribed.
@@ -259,9 +268,9 @@ makes no claim about it.
 ## 4. The interface
 
 Surface (`hpp:72-144`):
-- `BatchOptions{max_rows = 8000, timeout = 1 min}`. From D7O it can also say "no timeout" (D14),
-  and a batched `Subscribe` refuses out-of-range options (L15); how "no timeout" is spelled is D7O's
-  design.
+- `BatchOptions{max_rows = 8000, timeout = 1 min}`, and `BatchOptions::kNoTimeout`
+  (`milliseconds::max()`) for no timeout (D14, D7O-2). A batched `Subscribe` refuses out-of-range
+  options (L15).
 - `BatchStatus{reason, rows_dropped}`.
 - `RecordBatchCallback(batch, attachments, status)`.
 - `Subscribe(segments, RecordBatchCallback, BatchOptions, TopicOptions = {})`, plus a convenience
@@ -399,7 +408,8 @@ Surface (`hpp:72-144`):
 
 **(c) Behaviour with no test**
 - ~~The early flush on the offset budget, at the batcher level (L4).~~ Tested by D7F-3 (`heavy`).
-- Timeout anchoring and the 1 ms floor (L5).
+- Timeout anchoring and the 1 ms floor (L5). (No timeout and the unrepresentable timeout: tested by
+  D7O-2.)
 - No delivery for an idle window (L6).
 - ~~The uncounted row after the budget retry (L1, violation 2).~~ Tested by D7F-3 (`heavy`).
   Pre-schema drops are tested at close (D7F-1) and at the deadline (D7F-2).
@@ -407,4 +417,4 @@ Surface (`hpp:72-144`):
 - A callback that throws (L10).
 - ~~Overlapping or reordered callbacks (L12).~~ Tested by D7F-3.
 - ~~Clamping of `max_rows` and `timeout` (§1): replaced by refusal (L15).~~ Resolved for the refusal
-  by D7O-1 (tests under L15); huge values are D7O-2 and D7O-3.
+  by D7O-1 (tests under L15); huge timeouts by D7O-2 (tests under L5); a huge `max_rows` is D7O-3.

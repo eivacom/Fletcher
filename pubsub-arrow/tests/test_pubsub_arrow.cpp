@@ -25,6 +25,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <random>
 #include <string>
 #include <thread>
@@ -2493,5 +2494,281 @@ TEST(SubscriberArrowBatchTest, InRangeBatchOptionsAreUsedAsGiven) {
         EXPECT_EQ(rows[0], 1);
         EXPECT_EQ(statuses[0].reason, BatchStatus::Reason::kTimeout);
         EXPECT_GE(arrived[0] - t0, std::chrono::milliseconds(1));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// D7O-2 (L4, L5, L1, L6, L9): no timeout, and a timeout too long for the clock
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// The observation window is 200 ms and one-sided: a test that sees nothing in it proves nothing
+// by itself, which is why ShortTimeoutControlSeesTheDeadlineInEveryBody runs the same bodies on a
+// 10 ms timeout and must see a delivery.
+constexpr std::chrono::milliseconds kObservationWindow{200};
+
+enum class Body {
+    kSevenRowsMaxThree,  // (a) declared schema, max_rows 3, 7 Publish (rows 0-6)
+    kNeverDeclaredFive,  // (b) topic never declared, max_rows 2, 5 PublishDirect rows
+    kMalformedFive,      // (c) declared schema, max_rows 2, 5 malformed rows
+};
+
+enum class NoTimeoutEnding { kUnsubscribe, kDestroy };
+
+// One run of one body: subscribes with `timeout`, publishes the body's rows, and holds the
+// subscription until End(). The caller declares its BatchSink first, so the sink outlives the
+// subscriber on every path (4b nit). The Mock delivers synchronously, so every row has reached
+// the batcher's AddRow when the constructor returns.
+class BodyRun {
+   public:
+    BodyRun(Body body, std::chrono::milliseconds timeout, BatchSink& sink)
+        : mock_(std::make_shared<MockProvider>()), pub_(mock_) {
+        sub_.emplace(mock_);
+        if (body != Body::kNeverDeclaredFive) pub_.CreateTopic(kTopic, TestSchema());
+        SubscriberArrow::BatchOptions opt;
+        opt.max_rows = body == Body::kSevenRowsMaxThree ? 3 : 2;
+        opt.timeout = timeout;
+        id_ = sub_->Subscribe(kTopic, sink.callback(), opt).subscription_id;
+        const auto malformed = [](WriteBuffer& buf) { buf.AppendByte(0x00); };
+        switch (body) {
+            case Body::kSevenRowsMaxThree:
+                for (int i = 0; i < 7; ++i) pub_.Publish(kTopic, MakeRow(i, "n"));
+                break;
+            case Body::kNeverDeclaredFive:
+            case Body::kMalformedFive:
+                for (int i = 0; i < 5; ++i) pub_.PublishDirect(kTopic, malformed);
+                break;
+        }
+    }
+
+    // Ends the subscription from outside any callback: everything owed is delivered before this
+    // returns (L9).
+    void End(NoTimeoutEnding ending) {
+        if (ending == NoTimeoutEnding::kUnsubscribe) {
+            sub_->Unsubscribe(id_);
+        } else {
+            sub_.reset();
+        }
+    }
+
+   private:
+    std::shared_ptr<MockProvider> mock_;
+    PublisherArrow pub_;
+    std::optional<SubscriberArrow> sub_;
+    uint64_t id_ = 0;
+};
+
+void Observe() { std::this_thread::sleep_for(kObservationWindow); }
+
+size_t Count(BatchSink& sink) {
+    std::lock_guard<std::mutex> lk(sink.mu);
+    return sink.deliveries.size();
+}
+
+// "kRowLimit:3 rows, kTimeout:1 rows (dropped 0)": what was delivered, for a failure message.
+std::string Describe(BatchSink& sink) {
+    std::lock_guard<std::mutex> lk(sink.mu);
+    std::string out;
+    for (const auto& d : sink.deliveries) {
+        const char* reason = d.status.reason == BatchStatus::Reason::kRowLimit  ? "kRowLimit"
+                             : d.status.reason == BatchStatus::Reason::kTimeout ? "kTimeout"
+                                                                                : "kClosing";
+        out += std::string(out.empty() ? "" : ", ") + reason + ":" + std::to_string(d.num_rows) +
+               " rows (dropped " + std::to_string(d.status.rows_dropped) + ")";
+    }
+    return out;
+}
+
+int32_t XAt(const BatchSink::Delivery& d, int64_t row) {
+    return std::static_pointer_cast<arrow::Int32Array>(d.batch->column(0))->Value(row);
+}
+
+// Rung 2 / rung 3 assertions for body (a): two kRowLimit batches (rows 0-2, 3-5) and then
+// nothing for a whole observation window; the ending delivers exactly one more, kClosing, row 6;
+// and nothing follows it (L9).
+void ExpectBodyAClosesOnlyWhenFullOrAtClosing(std::chrono::milliseconds timeout,
+                                               NoTimeoutEnding ending) {
+    BatchSink sink;
+    BodyRun run(Body::kSevenRowsMaxThree, timeout, sink);
+
+    ASSERT_TRUE(sink.WaitFor(2, std::chrono::seconds(2)));
+    Observe();
+    ASSERT_EQ(Count(sink), 2u) << "a batch arrived that was neither full nor the closing one: "
+                               << Describe(sink);
+    {
+        std::lock_guard<std::mutex> lk(sink.mu);
+        for (size_t i = 0; i < 2; ++i) {
+            SCOPED_TRACE(i);
+            const auto& d = sink.deliveries[i];
+            EXPECT_EQ(d.status.reason, BatchStatus::Reason::kRowLimit);
+            EXPECT_EQ(d.status.rows_dropped, 0);
+            ASSERT_EQ(d.num_rows, 3);
+            for (int64_t r = 0; r < 3; ++r) {
+                EXPECT_EQ(XAt(d, r), static_cast<int32_t>(3 * i + r));
+            }
+        }
+    }
+
+    run.End(ending);
+    ASSERT_EQ(Count(sink), 3u);
+    {
+        std::lock_guard<std::mutex> lk(sink.mu);
+        const auto& d = sink.deliveries[2];
+        EXPECT_EQ(d.status.reason, BatchStatus::Reason::kClosing);
+        EXPECT_EQ(d.status.rows_dropped, 0);
+        ASSERT_EQ(d.num_rows, 1);
+        EXPECT_EQ(XAt(d, 0), 6);
+    }
+    Observe();
+    EXPECT_EQ(Count(sink), 3u) << "something was delivered after the closing batch (L9)";
+}
+
+// Rung 2 assertions for bodies (b) and (c), where every row is lost: nothing for a whole
+// observation window (lost rows never count toward max_rows, so only the ending can close the
+// window), then exactly one batch from the ending, reason kClosing, carrying all five losses (L1,
+// L6, L7). (b) has no usable schema, so its batch is null with no attachments; (c) has one, so its
+// batch has zero rows.
+void ExpectOnlyTheEndingReportsTheLostRows(Body body, std::chrono::milliseconds timeout,
+                                           NoTimeoutEnding ending) {
+    BatchSink sink;
+    BodyRun run(body, timeout, sink);
+
+    Observe();
+    ASSERT_EQ(Count(sink), 0u) << "a batch arrived before the ending: " << Describe(sink);
+
+    run.End(ending);
+    ASSERT_EQ(Count(sink), 1u) << Describe(sink);
+    {
+        std::lock_guard<std::mutex> lk(sink.mu);
+        const auto& d = sink.deliveries[0];
+        EXPECT_EQ(d.status.reason, BatchStatus::Reason::kClosing);
+        EXPECT_EQ(d.status.rows_dropped, 5);
+        if (body == Body::kNeverDeclaredFive) {
+            EXPECT_EQ(d.batch, nullptr);
+            EXPECT_TRUE(d.attachments.empty());
+        } else {
+            ASSERT_NE(d.batch, nullptr);
+            EXPECT_EQ(d.num_rows, 0);
+        }
+    }
+    Observe();
+    EXPECT_EQ(Count(sink), 1u) << "something was delivered after the closing batch (L9)";
+}
+
+// Waits until a kTimeout delivery has arrived. Returns false after 2 s.
+bool WaitForTimeoutDelivery(BatchSink& sink) {
+    std::unique_lock<std::mutex> lk(sink.mu);
+    return sink.cv.wait_for(lk, std::chrono::seconds(2), [&] {
+        for (const auto& d : sink.deliveries) {
+            if (d.status.reason == BatchStatus::Reason::kTimeout) return true;
+        }
+        return false;
+    });
+}
+
+}  // namespace
+
+// Rung 2 (L4, L5, L1, L6, L7, L9). kNoTimeout: a window closes only when full, on the offset
+// budget, or at the ending; never on a clock. Subscribe must also accept the value (BC-8).
+//  (a) full windows arrive at once, nothing else within the observation window, and the ending
+//      (Unsubscribe, or the destructor) delivers the one remaining row as kClosing;
+//  (b) and (c): rows that were all lost wait for the ending and are reported there.
+// Red on `9cd04de`: it does not compile, because kNoTimeout does not exist. That these assertions
+// can fail behaviourally is shown by ShortTimeoutControlSeesTheDeadlineInEveryBody (same bodies,
+// 10 ms) and by the first two arms of TimeoutTooLongForTheClockBehavesAsNoTimeout.
+TEST(SubscriberArrowBatchTest, NoTimeoutWindowsCloseOnlyWhenFullOrAtClosing) {
+    constexpr auto kNever = SubscriberArrow::BatchOptions::kNoTimeout;
+    {
+        SCOPED_TRACE("(a) ended by Unsubscribe");
+        ExpectBodyAClosesOnlyWhenFullOrAtClosing(kNever, NoTimeoutEnding::kUnsubscribe);
+    }
+    {
+        SCOPED_TRACE("(a) ended by ~SubscriberArrow");
+        ExpectBodyAClosesOnlyWhenFullOrAtClosing(kNever, NoTimeoutEnding::kDestroy);
+    }
+    {
+        SCOPED_TRACE("(b) never declared, ended by Unsubscribe");
+        ExpectOnlyTheEndingReportsTheLostRows(Body::kNeverDeclaredFive, kNever,
+                                              NoTimeoutEnding::kUnsubscribe);
+    }
+    {
+        SCOPED_TRACE("(c) malformed rows, ended by Unsubscribe");
+        ExpectOnlyTheEndingReportsTheLostRows(Body::kMalformedFive, kNever,
+                                              NoTimeoutEnding::kUnsubscribe);
+    }
+}
+
+// Rung 3 (L5). A timeout too long for the clock means no deadline, never an early or a wrapped
+// one. Body (a), ended by Unsubscribe, with the assertions of rung 2's (a) arm. Two arms are red
+// on `9cd04de` (the deadline sum overflows); the 100-year arm is a declared GUARD, green both
+// ways: its sum is representable, so its deadline is real and lies centuries away. It forbids a
+// "fix" that refuses huge values, or one that misjudges where the clock's reach ends.
+TEST(SubscriberArrowBatchTest, TimeoutTooLongForTheClockBehavesAsNoTimeout) {
+    {
+        // The literal, not kNoTimeout: converting INT64_MAX ms to nanoseconds wraps to -1 ms.
+        SCOPED_TRACE("milliseconds::max()");
+        ExpectBodyAClosesOnlyWhenFullOrAtClosing(std::chrono::milliseconds::max(),
+                                                 NoTimeoutEnding::kUnsubscribe);
+    }
+    {
+        // Converts exactly, but last_flush_ + timeout_ overflows to a deadline in the past.
+        SCOPED_TRACE("the clock's own maximum, in milliseconds");
+        ExpectBodyAClosesOnlyWhenFullOrAtClosing(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::duration::max()),
+            NoTimeoutEnding::kUnsubscribe);
+    }
+    {
+        // GUARD arm: 100 years (3 155 760 000 000 ms) is representable; green before and after.
+        SCOPED_TRACE("100 years (guard)");
+        ExpectBodyAClosesOnlyWhenFullOrAtClosing(std::chrono::milliseconds(3'155'760'000'000LL),
+                                                 NoTimeoutEnding::kUnsubscribe);
+    }
+}
+
+// Control (green both ways, declared). Bodies (a), (b) and (c) with a 10 ms timeout: each gets a
+// kTimeout delivery within 2 s, so the observation window and the helper do see a deadline that
+// exists, and rung 2's "nothing within the window" is not true by construction. After Unsubscribe
+// every row is accounted for. (DEBT-1: which rows the kTimeout batch holds depends on timing, so
+// only its existence and what it can be made of are asserted: a lost-rows batch for (b) and (c),
+// a batch with at least one row for (a).)
+TEST(SubscriberArrowBatchTest, ShortTimeoutControlSeesTheDeadlineInEveryBody) {
+    struct Arm {
+        const char* name;
+        Body body;
+    };
+    for (const Arm& arm : {Arm{"(a) seven rows, max_rows 3", Body::kSevenRowsMaxThree},
+                           Arm{"(b) never declared", Body::kNeverDeclaredFive},
+                           Arm{"(c) malformed rows", Body::kMalformedFive}}) {
+        SCOPED_TRACE(arm.name);
+        BatchSink sink;
+        BodyRun run(arm.body, std::chrono::milliseconds(10), sink);
+
+        ASSERT_TRUE(WaitForTimeoutDelivery(sink)) << "no kTimeout delivery within 2 s";
+        run.End(NoTimeoutEnding::kUnsubscribe);
+
+        std::lock_guard<std::mutex> lk(sink.mu);
+        int64_t rows = 0;
+        int64_t dropped = 0;
+        bool timeout_batch_has_content = false;
+        for (const auto& d : sink.deliveries) {
+            rows += d.num_rows > 0 ? d.num_rows : 0;
+            dropped += d.status.rows_dropped;
+            if (d.status.reason != BatchStatus::Reason::kTimeout) continue;
+            if (arm.body == Body::kSevenRowsMaxThree) {
+                timeout_batch_has_content |= d.num_rows >= 1;
+            } else {
+                timeout_batch_has_content |= d.status.rows_dropped >= 1;
+            }
+        }
+        EXPECT_TRUE(timeout_batch_has_content);
+        if (arm.body == Body::kSevenRowsMaxThree) {
+            EXPECT_EQ(rows, 7);
+            EXPECT_EQ(dropped, 0);
+        } else {
+            EXPECT_EQ(rows, 0);
+            EXPECT_EQ(dropped, 5);
+        }
     }
 }

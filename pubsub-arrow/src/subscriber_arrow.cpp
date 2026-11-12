@@ -17,6 +17,7 @@
 #include <fletcher/pubsub/owned_schema.hpp>
 #include <fletcher/pubsub_arrow/schema_import.hpp>
 #include <mutex>
+#include <ratio>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -190,13 +191,25 @@ class SubscriberArrow::RecordBatchBatcher {
     // every `timeout_` (measured 65 ms per window at 30 Hz with a 33 ms timeout before — the window
     // plus the stream's own inter-arrival gap), and a stream that has been idle longer than a
     // window is delivered right away instead of waiting another one.
+    //
+    // L5: a deadline is never earlier than its timeout says. A timeout the clock cannot reach from
+    // the previous flush (kNoTimeout is the longest there is) arms no deadline: the window then
+    // closes only when full, on the offset budget, or at closing (L4). The sum is formed only when
+    // it can be represented, so it never overflows.
     void ArmTimer() {
-        if (!has_deadline_ && HasPending()) {
-            const auto now = std::chrono::steady_clock::now();
-            deadline_ = std::max(now + kMinWindow, last_flush_ + timeout_);
-            has_deadline_ = true;
-            cv_.notify_all();
-        }
+        if (has_deadline_ || !HasPending()) return;
+        using Clock = std::chrono::steady_clock;
+        static_assert(std::ratio_less_equal_v<Clock::period, std::milli>,
+                      "the clock must be at least millisecond-fine");
+        constexpr auto kReach =
+            std::chrono::duration_cast<std::chrono::milliseconds>(Clock::duration::max());
+        if (timeout_ > kReach) return;  // the conversion to the clock's unit would overflow
+        const auto window = std::chrono::duration_cast<Clock::duration>(timeout_);
+        // The sum would overflow too:
+        if (last_flush_.time_since_epoch() > Clock::duration::max() - window) return;
+        deadline_ = std::max(Clock::now() + kMinWindow, last_flush_ + window);
+        has_deadline_ = true;
+        cv_.notify_all();
     }
 
     // The one window closer (row limit, deadline, budget, closing). Caller holds mu_, which is
