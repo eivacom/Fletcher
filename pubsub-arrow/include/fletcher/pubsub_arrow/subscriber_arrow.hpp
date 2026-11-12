@@ -75,7 +75,10 @@ class SubscriberArrow {
 
     /// Tuning for the batched (RecordBatch) Subscribe overload.
     struct BatchOptions {
-        /// Flush at this many rows. At least 1; below 1 is refused (never clamped).
+        /// Flush at this many rows. At least 1; below 1 is refused (never clamped). Any larger
+        /// value is used as given, however large. Room for a window is set aside up front only up
+        /// to 65 536 rows; past that it follows the rows received. A window that outgrows memory
+        /// before it closes is lost whole and counted in `rows_dropped`.
         int64_t max_rows = 8000;
         /// ...or after this long. 0 or more; negative is refused. A zero timeout delivers no
         /// sooner than 1 ms after the window's first row or drop. `kNoTimeout` means no timeout:
@@ -118,7 +121,7 @@ class SubscriberArrow {
     ///
     /// Throws `PubSubError(kInvalidArgument)` when `options.max_rows < 1` or `options.timeout` is
     /// negative, before anything is subscribed: no thread is started, the callback is released,
-    /// and nothing is ever delivered. Any other timeout is used as given.
+    /// and nothing is ever delivered. Any other value is used as given.
     ///
     /// `callback` runs on a thread the subscription owns, one batch at a time, in window order;
     /// never inside `Publish` or on the transport's delivery thread, so publishing never waits on

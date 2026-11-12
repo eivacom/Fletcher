@@ -76,7 +76,8 @@ unsubscribe or destroy the `SubscriberArrow`. When rows are lost, see the `Subsc
 header for when the loss is reported. A timeout too long for the clock to reach means the same as
 `kNoTimeout`; a long timeout the clock can reach gives a deadline at its true time.
 
-`max_rows` must be at least 1 and `timeout` at least 0. Anything else is
+`max_rows` must be at least 1 and `timeout` at least 0. Any `max_rows` of 1 or more is used as
+given. A value out of range is
 refused: `Subscribe` throws `PubSubError(kInvalidArgument)` before anything is
 subscribed, so no thread is started and your callback is released. A zero
 timeout is accepted and delivers no sooner than 1 ms after the window's first

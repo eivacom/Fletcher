@@ -4,7 +4,7 @@
 > an owner ruling, recorded in a decision of record. **Amended 2026-11-12** (D14, D15): L4 and L5
 > gain the no-timeout case, L15 is new, and §1 no longer lists validating `BatchOptions` as refused;
 > L15's refusal is `[built]` (D7O-1, `9abb0c7`); the no-timeout and unrepresentable-timeout cases of
-> L4 and L5 are `[built]` (D7O-2); a huge `max_rows` stays `[designed-not-built]` until D7O-3.
+> L4 and L5 are `[built]` (D7O-2); a huge `max_rows` is `[built]` (D7O-3).
 
 **Mode: survey, verified against the tree at `9a4780b`; the §3 "Holds at" citations were refreshed at D7F-3; every other `cpp:N` citation predates D7F-1 (`a2c8b97`), D7F-2 (`dbaa2b6`) and D7F-3, so treat those as approximate; D7O-1 shifted every `cpp:N` after line 34 down by about 9, and D7O-2 those after `ArmTimer` by about 12 more** (branch `feature/row-index`). The code is
 ground truth. Doc comments, READMEs and specs are claims checked against it. No spec exists for
@@ -162,6 +162,11 @@ every later row is dropped, and there is no recovery.
   fixes the subscription's schema as null for life, the same door and the same permanent result as a
   schema `BatchDecoder` rejects. A schema that is merely absent, or nothing to import (a released
   handle), decides nothing.
+- D7O-3: the `BatchDecoder` constructor alone decides. The room set aside up front for a window
+  (`PreSize`, `RecordBatchBatcher`) is a hint: it runs after the constructor, outside the verdict, and
+  a failure is ignored. `SetSchema` has no path that discards a decoder once it exists (ruling
+  2026-11-12, "Fix in D7O"). One residue is open: a constructor that fails on allocation, not on
+  rejection, still decides "no decoder" for life (Findings (d), Q8).
 - Tests: `NestedDictionarySchemaReportsEveryRowDropped` and the undecodable-schema cells of
   `EveryAssemblyStateReportsItsDropsAtEitherEnding`, which cover one window each. An import failure
   is forced by that guard's unimportable-schema cells: `Publisher::CreateTopic` accepts a schema
@@ -171,6 +176,8 @@ every later row is dropped, and there is no recovery.
   first row's `kTimeout` report, sends the second row, waits for its own `kTimeout` report, and
   gets two null batches with `rows_dropped` 1 and 1. The close cell sends both rows before
   `Unsubscribe` and gets one null `kClosing` batch at the end, with `rows_dropped` 2.
+  D7O-3: `AFailedPreSizeDoesNotMakeTheSchemaUnusable` (a decodable schema whose pre-size fails still
+  has a decoder: a non-null zero-row `kClosing` batch) and `MaxRowsLargerThanAnyWindowIsUsedAsGiven`.
 
 **L9. Closing is final and reported.** The pending window is delivered once, as `kClosing`. After
 `Unsubscribe` or `~SubscriberArrow` returns, no further batch is delivered. **The exceptions:**
@@ -242,14 +249,20 @@ anything is subscribed: no thread, no provider subscription, no delivery. Every 
 used as given. This domain is the one place the question "are these options acceptable?" is
 answered (register BC-8); a binding passes the refusal through instead of answering it again.
 `[built]` for the refusal (D15, D7O-1); the "used as given" clause is `[built]` for timeouts
-(D7O-2) and stays `[designed-not-built]` for a huge `max_rows` until D7O-3
+(D7O-2) and for `max_rows` (D7O-3)
 - Source: owner ruling, 2026-11-12, "Refuse both" ([RIX-rulings.md](../../plans/RIX-rulings.md)).
 - Holds at: `RecordBatchBatcher`'s constructor (`cpp:34-47`), reached only from the batched
-  `SubscriberArrow::Subscribe`, before the batch thread starts or anything is subscribed.
+  `SubscriberArrow::Subscribe`, before the batch thread starts or anything is subscribed. D7O-3:
+  `max_rows_` is stored and compared unchanged; the one pre-size helper (`PreSize`, bounded at
+  `kMaxPreSizeRows`, 65 536 rows) sizes a buffer only, never a window, and its failure is ignored.
 - Tests: `OutOfRangeBatchOptionsAreRefusedAndLeaveNothingBehind` (rung 1: each out-of-range value
   refused, callback released, nothing subscribed or delivered); `InRangeBatchOptionsAreUsedAsGiven`
   (`max_rows` 1 and a zero timeout accepted and used as given). D7O-2: `TimeoutTooLongForTheClockBehavesAsNoTimeout`
-  (`milliseconds::max()`, the clock's maximum and 100 years accepted, none firing early).
+  (`milliseconds::max()`, the clock's maximum and 100 years accepted, none firing early). D7O-3:
+  `MaxRowsLargerThanAnyWindowIsUsedAsGiven` (`INT64_MAX` rows delivered, on a deadline and at
+  closing; 2^17 + 1 rows fills to exactly that number) and the BC-8 sweep
+  `EveryBatchOptionIsRefusedExactlyWhenOutOfRange` (42 cells, refused exactly when `max_rows < 1` or
+  the timeout is negative; every accepted cell delivers its row).
 
 **L14. The row index is always the caller's, never Fletcher's.** Batch assembly delivers each row's
 index exactly as the publisher supplied it. It never assigns, renumbers, reorders, fills or checks an
@@ -344,6 +357,7 @@ Surface (`hpp:72-144`):
 | Q5 | Resolved 2026-11-12 (D15, L15): `max_rows < 1` and a negative timeout are refused. A zero timeout is accepted (the 1 ms floor applies). | — |
 | Q6 | Where is "decision A" (test line 673) recorded? | owner or PM |
 | Q7 | Should the batched path cache an `arrow::Schema` instead of building an unused `Codec`? This touches the domain 2 boundary. | domain 2 and domain 7 |
+| Q8 | Should a `BatchDecoder` constructor that fails on allocation be told apart from one that rejects the schema? Today both leave no decoder for life (L8, Findings (d)). Telling them apart needs an allocation outcome in domain 2's exception contract (`batch_decoder.hpp:28-41`). | domain 2 and domain 7 |
 
 ## 8. How to extend this domain
 
@@ -417,4 +431,20 @@ Surface (`hpp:72-144`):
 - A callback that throws (L10).
 - ~~Overlapping or reordered callbacks (L12).~~ Tested by D7F-3.
 - ~~Clamping of `max_rows` and `timeout` (§1): replaced by refusal (L15).~~ Resolved for the refusal
-  by D7O-1 (tests under L15); huge timeouts by D7O-2 (tests under L5); a huge `max_rows` is D7O-3.
+  by D7O-1 (tests under L15); huge timeouts by D7O-2 (tests under L5); a huge `max_rows` by D7O-3
+  (tests under L15 and L8).
+
+**(d) Reported at D7O-3, not fixed**
+1. **A constructor that fails on allocation makes a good schema unusable for life.** `SetSchema`'s
+   `catch` around `std::make_unique<BatchDecoder>` treats every constructor failure as a rejection
+   (L8). A failure to allocate while building the decoder is not a rejection, but decides "no
+   decoder" the same way. Fixing it needs domain 2's exception contract to name an allocation
+   outcome (`batch_decoder.hpp:28-41` names none). Open question Q8; register BC-3 (Registered gap).
+2. **For domain 2, noted not edited:** `arrow-bridge/benchmarks/bench_arrow_codec.cpp:388-390`
+   describes `Reserve(max_rows_)` in `RecordBatchBatcher::Flush`. It has been stale since D7F renamed
+   `Flush` to `Close`, and the pre-size is now `min(max_rows_, 65 536)`; it stays literally true for
+   the benchmark's N of 8000 or less. Also: a failed `Reserve` can leave a builder with its data
+   buffer grown and its validity bitmap not (Arrow records the capacity before the bitmap
+   allocation fails). Under the 65 536-row bound only memory exhaustion between two small
+   allocations reaches it, as in every `Append`'s own growth, so `Reserve`'s failure is treated as
+   leaving the decoder usable, but `BatchDecoder`'s contract does not say so.

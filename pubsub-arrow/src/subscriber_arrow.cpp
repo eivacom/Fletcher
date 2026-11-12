@@ -71,19 +71,20 @@ class SubscriberArrow::RecordBatchBatcher {
     // Decides the schema, once (L8): the first decision wins and any later call is refused.
     // Until a usable schema is set, and for a null one (the delivered schema could not be
     // imported) or one the decoder cannot build (see BatchDecoder), decoder_ stays null: every row
-    // is then counted dropped and reported with a null batch, so the loss is visible.
+    // is then counted dropped and reported with a null batch, so the loss is visible. The decoder
+    // constructor's verdict is the only one: the pre-size that follows is a hint and decides
+    // nothing, and nothing here discards a decoder once it exists (L8).
     void SetSchema(std::shared_ptr<arrow::Schema> schema) {
         std::lock_guard<std::mutex> lk(mu_);
         if (decided_ || stopped_) return;  // closed: no decoder is built again
         decided_ = true;
-        if (schema) {
-            try {
-                decoder_ = std::make_unique<BatchDecoder>(schema);
-                decoder_->Reserve(max_rows_);
-            } catch (...) {
-                decoder_.reset();
-            }
+        if (!schema) return;
+        try {
+            decoder_ = std::make_unique<BatchDecoder>(std::move(schema));
+        } catch (...) {
+            return;
         }
+        PreSize();
     }
 
     bool SchemaDecided() const { return decided_.load(); }
@@ -212,6 +213,17 @@ class SubscriberArrow::RecordBatchBatcher {
         cv_.notify_all();
     }
 
+    // Room set aside for the next window: a hint, never a limit or a verdict. Bounded, so the number
+    // a subscriber asks for never sizes an allocation (L15: max_rows decides only when a window
+    // closes). A failure is ignored: the next Append() grows the builders. Caller holds mu_ and
+    // has a decoder.
+    void PreSize() {
+        try {
+            decoder_->Reserve(std::min(max_rows_, kMaxPreSizeRows));
+        } catch (...) {
+        }
+    }
+
     // The one window closer (row limit, deadline, budget, closing). Caller holds mu_, which is
     // never released here. A window with only dropped rows still yields a zero-row batch (or a
     // null one when there is no decoder: no usable schema has arrived, or the schema was
@@ -233,14 +245,8 @@ class SubscriberArrow::RecordBatchBatcher {
                 // dropped whole.
                 DiscardPending(0);
             }
-            // A failed pre-size is not fatal: the next Append() just grows the builders. No window
-            // follows the closing one, so it is not pre-sized.
-            if (reason != BatchStatus::Reason::kClosing) {
-                try {
-                    decoder_->Reserve(max_rows_);
-                } catch (...) {
-                }
-            }
+            // No window follows the closing one, so it is not pre-sized.
+            if (reason != BatchStatus::Reason::kClosing) PreSize();
         }
         std::vector<Attachments> atts = std::move(atts_);
         atts_.clear();
@@ -306,6 +312,10 @@ class SubscriberArrow::RecordBatchBatcher {
     std::chrono::steady_clock::time_point deadline_;
     std::chrono::steady_clock::time_point last_flush_{std::chrono::steady_clock::now()};
     static constexpr std::chrono::milliseconds kMinWindow{1};
+    // The most rows a window's room is set aside for up front. 2^16 times the widest fixed element
+    // Arrow allows (2^31 - 1 bytes) stays below 2^47, so Arrow's unchecked size arithmetic cannot
+    // wrap for any schema. A hint only: max_rows_ is never bounded by it.
+    static constexpr int64_t kMaxPreSizeRows = 65536;
     bool has_deadline_ = false;
     bool stopped_ = false;
     std::atomic<bool> decided_{false};

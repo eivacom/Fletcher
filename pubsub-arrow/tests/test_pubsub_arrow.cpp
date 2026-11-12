@@ -2772,3 +2772,417 @@ TEST(SubscriberArrowBatchTest, ShortTimeoutControlSeesTheDeadlineInEveryBody) {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// D7O-3 (L15, L8, BC-8): any row count is used as given
+// ---------------------------------------------------------------------------
+
+namespace {
+
+constexpr int64_t kInt64Max = std::numeric_limits<int64_t>::max();
+constexpr auto kNoTimeoutValue = SubscriberArrow::BatchOptions::kNoTimeout;
+
+struct Totals {
+    int64_t rows = 0;     // sum of num_rows over non-null batches
+    int64_t dropped = 0;  // sum of rows_dropped
+    size_t nulls = 0;     // null batches
+};
+
+Totals Sum(BatchSink& sink) {
+    std::lock_guard<std::mutex> lk(sink.mu);
+    Totals t;
+    for (const auto& d : sink.deliveries) {
+        if (d.batch) {
+            t.rows += d.num_rows;
+        } else {
+            ++t.nulls;
+        }
+        t.dropped += d.status.rows_dropped;
+    }
+    return t;
+}
+
+// Waits (up to `timeout`) until `n` rows are accounted for, delivered or counted lost. A row that is
+// reported lost counts, so a run that loses its rows fails on its assertions at once instead of
+// waiting out the clock; a run that delivers them all leaves exactly as the plain wait would.
+bool WaitForAccounted(BatchSink& sink, int64_t n, std::chrono::milliseconds timeout) {
+    std::unique_lock<std::mutex> lk(sink.mu);
+    return sink.cv.wait_for(lk, timeout, [&] {
+        int64_t accounted = 0;
+        for (const auto& d : sink.deliveries) {
+            accounted += (d.batch ? d.num_rows : 0) + d.status.rows_dropped;
+        }
+        return accounted >= n;
+    });
+}
+
+// The x column, read across the deliveries in order, is first, first + 1, ...: no row lost, none
+// repeated, none reordered. Null batches are skipped (the callers' own checks report them).
+void ExpectXsRunFrom(BatchSink& sink, int32_t first) {
+    std::lock_guard<std::mutex> lk(sink.mu);
+    int32_t expected = first;
+    for (const auto& d : sink.deliveries) {
+        if (!d.batch) continue;
+        for (int64_t r = 0; r < d.num_rows; ++r) {
+            ASSERT_EQ(XAt(d, r), expected) << "row " << (expected - first) << " out of place";
+            ++expected;
+        }
+    }
+}
+
+// (a) A huge max_rows with a finite timeout: the rows arrive on the deadline.
+void ExpectHugeMaxRowsWithTimeoutDelivers() {
+    BatchSink sink;  // declared first: outlives the subscriber on every path
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
+    pub.CreateTopic(kTopic, TestSchema());
+
+    SubscriberArrow::BatchOptions opt;
+    opt.max_rows = kInt64Max;
+    opt.timeout = std::chrono::milliseconds(10);
+    const uint64_t id = sub.Subscribe(kTopic, sink.callback(), opt).subscription_id;
+    for (int i = 0; i < 3; ++i) pub.Publish(kTopic, MakeRow(i, "n"));
+
+    EXPECT_TRUE(WaitForAccounted(sink, 3, std::chrono::seconds(2)))
+        << "not every row was accounted for: " << Describe(sink);
+    sub.Unsubscribe(id);
+
+    const Totals t = Sum(sink);
+    EXPECT_EQ(t.nulls, 0u) << "a null batch was delivered: " << Describe(sink);
+    EXPECT_EQ(t.dropped, 0) << Describe(sink);
+    EXPECT_EQ(t.rows, 3) << Describe(sink);
+    const std::string seen = Describe(sink);  // locks the sink itself: never inside the guard below
+    {
+        std::lock_guard<std::mutex> lk(sink.mu);
+        bool saw_timeout = false;
+        for (const auto& d : sink.deliveries) {
+            EXPECT_TRUE(d.status.reason == BatchStatus::Reason::kTimeout ||
+                        d.status.reason == BatchStatus::Reason::kClosing);
+            saw_timeout |= d.status.reason == BatchStatus::Reason::kTimeout;
+        }
+        EXPECT_TRUE(saw_timeout) << "the rows were not delivered on a deadline: " << seen;
+    }
+    ExpectXsRunFrom(sink, 0);
+}
+
+// (b) A huge max_rows and no timeout: nothing closes the window but the ending, which delivers
+// the three rows.
+void ExpectHugeMaxRowsWithNoTimeoutDeliversAtClosing() {
+    BatchSink sink;
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
+    pub.CreateTopic(kTopic, TestSchema());
+
+    SubscriberArrow::BatchOptions opt;
+    opt.max_rows = kInt64Max;
+    opt.timeout = kNoTimeoutValue;
+    const uint64_t id = sub.Subscribe(kTopic, sink.callback(), opt).subscription_id;
+    for (int i = 0; i < 3; ++i) pub.Publish(kTopic, MakeRow(i, "n"));
+
+    Observe();
+    ASSERT_EQ(Count(sink), 0u) << "a batch arrived before the ending: " << Describe(sink);
+
+    sub.Unsubscribe(id);
+    ASSERT_EQ(Count(sink), 1u) << Describe(sink);
+    const std::string seen = Describe(sink);
+    {
+        std::lock_guard<std::mutex> lk(sink.mu);
+        const auto& d = sink.deliveries[0];
+        EXPECT_EQ(d.status.reason, BatchStatus::Reason::kClosing);
+        EXPECT_EQ(d.status.rows_dropped, 0);
+        ASSERT_NE(d.batch, nullptr) << "the rows were reported lost: " << seen;
+        EXPECT_EQ(d.num_rows, 3);
+    }
+    ExpectXsRunFrom(sink, 0);
+}
+
+// (c) GUARD: a max_rows above the pre-size bound (kMaxPreSizeRows, 65 536 rows, the design's
+// number) still fills a window to exactly the number asked for. A fix that clamped max_rows to the
+// bound, or let the bound close a window, closes at 65 536 rows and fails here.
+void ExpectMaxRowsAboveThePreSizeBoundFillsExactly() {
+    constexpr int64_t kAboveTheBound = (int64_t{1} << 17) + 1;  // 131 073
+    BatchSink sink;
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
+    pub.CreateTopic(kTopic, TestSchema());
+
+    SubscriberArrow::BatchOptions opt;
+    opt.max_rows = kAboveTheBound;
+    opt.timeout = kNoTimeoutValue;
+    const uint64_t id = sub.Subscribe(kTopic, sink.callback(), opt).subscription_id;
+    for (int64_t i = 0; i < kAboveTheBound + 1; ++i) {
+        pub.Publish(kTopic, MakeRow(static_cast<int32_t>(i), "n"));
+    }
+
+    ASSERT_TRUE(sink.WaitFor(1, std::chrono::seconds(10))) << "no batch arrived";
+    ASSERT_EQ(Count(sink), 1u) << "a window closed before max_rows: " << Describe(sink);
+    {
+        std::lock_guard<std::mutex> lk(sink.mu);
+        const auto& d = sink.deliveries[0];
+        EXPECT_EQ(d.status.reason, BatchStatus::Reason::kRowLimit);
+        EXPECT_EQ(d.status.rows_dropped, 0);
+        ASSERT_NE(d.batch, nullptr);
+        ASSERT_EQ(d.num_rows, kAboveTheBound);
+        EXPECT_EQ(XAt(d, 0), 0);
+        EXPECT_EQ(XAt(d, kAboveTheBound - 1), static_cast<int32_t>(kAboveTheBound - 1));
+    }
+
+    sub.Unsubscribe(id);
+    ASSERT_EQ(Count(sink), 2u) << Describe(sink);
+    {
+        std::lock_guard<std::mutex> lk(sink.mu);
+        const auto& d = sink.deliveries[1];
+        EXPECT_EQ(d.status.reason, BatchStatus::Reason::kClosing);
+        EXPECT_EQ(d.status.rows_dropped, 0);
+        ASSERT_NE(d.batch, nullptr);
+        ASSERT_EQ(d.num_rows, 1);
+        EXPECT_EQ(XAt(d, 0), static_cast<int32_t>(kAboveTheBound));
+    }
+}
+
+}  // namespace
+
+// Rung 4 (L15, L8; ruling 2026-11-12 "Fix in D7O"). A max_rows larger than any window will reach is
+// used as given: the batcher's up-front sizing never makes a decodable schema unusable and never
+// lets the number size an allocation.
+//  (a) INT64_MAX rows, 10 ms timeout: the 3 rows arrive on a deadline, none lost.
+//  (b) INT64_MAX rows, no timeout: nothing within an observation window, then Unsubscribe
+//      delivers the 3 rows as the closing batch.
+//  (c) GUARD, green both ways: 2^17 + 1 rows (above the pre-size bound) fills to exactly that
+//      number, then the closing batch holds the one row after it.
+// Red on `957a514` for (a) and (b): the pre-size of INT64_MAX rows fails in SetSchema, the decoder
+// is discarded, and every row is reported lost in a null batch (rows_dropped 3). Arm (a) is (b)'s
+// control: the same body with a finite timeout does get a timed delivery.
+TEST(SubscriberArrowBatchTest, MaxRowsLargerThanAnyWindowIsUsedAsGiven) {
+    {
+        SCOPED_TRACE("(a) INT64_MAX rows, 10 ms timeout");
+        ExpectHugeMaxRowsWithTimeoutDelivers();
+    }
+    {
+        SCOPED_TRACE("(b) INT64_MAX rows, no timeout");
+        ExpectHugeMaxRowsWithNoTimeoutDeliversAtClosing();
+    }
+    {
+        SCOPED_TRACE("(c) 2^17 + 1 rows, guard");
+        ExpectMaxRowsAboveThePreSizeBoundFillsExactly();
+    }
+}
+
+// GUARD (DEBT-3 of the design review). The verdict on a schema is the decoder constructor's alone;
+// the up-front sizing is a hint. A schema whose rows are as wide as Arrow allows
+// (fixed_size_binary of 2^31 - 1 bytes) is decodable, but room for even 65 536 of its rows cannot
+// be set aside. The batcher must still hold a decoder: the one malformed row is counted lost in a
+// non-null, zero-row closing batch, not in a null one (which is what "no usable schema" reports).
+// max_rows is at the pre-size bound or above, so the up-front sizing fails fast on the old tree and
+// the new one alike. Red on `957a514`: a null kClosing batch.
+TEST(SubscriberArrowBatchTest, AFailedPreSizeDoesNotMakeTheSchemaUnusable) {
+    constexpr int64_t kAtLeastTheBound = 100'000;
+    BatchSink sink;
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
+    auto widest = arrow::schema({arrow::field("w", arrow::fixed_size_binary(INT32_MAX))});
+    pub.CreateTopic(kTopic, widest);
+
+    SubscriberArrow::BatchOptions opt;
+    opt.max_rows = kAtLeastTheBound;
+    opt.timeout = kNoTimeoutValue;
+    const uint64_t id = sub.Subscribe(kTopic, sink.callback(), opt).subscription_id;
+    pub.PublishDirect(kTopic, [](WriteBuffer& buf) { buf.AppendByte(0x00); });
+
+    sub.Unsubscribe(id);
+    ASSERT_EQ(Count(sink), 1u) << Describe(sink);
+    std::lock_guard<std::mutex> lk(sink.mu);
+    const auto& d = sink.deliveries[0];
+    EXPECT_EQ(d.status.reason, BatchStatus::Reason::kClosing);
+    EXPECT_EQ(d.status.rows_dropped, 1);
+    ASSERT_NE(d.batch, nullptr) << "the schema was judged unusable";
+    EXPECT_EQ(d.num_rows, 0);
+}
+
+namespace {
+
+// A sink that stamps every delivery, for the sweep's L5 floor check.
+struct TimedSink {
+    struct Stamped {
+        BatchStatus status;
+        int64_t rows;
+        bool null;
+        std::chrono::steady_clock::time_point at;
+    };
+    std::mutex mu;
+    std::condition_variable cv;
+    std::vector<Stamped> got;
+
+    SubscriberArrow::RecordBatchCallback callback() {
+        return [this](std::shared_ptr<arrow::RecordBatch> batch, std::vector<Attachments>,
+                      BatchStatus status) {
+            std::lock_guard<std::mutex> lk(mu);
+            got.push_back({status, batch ? batch->num_rows() : 0, !batch,
+                           std::chrono::steady_clock::now()});
+            cv.notify_all();
+        };
+    }
+    bool WaitForAny(std::chrono::milliseconds timeout) {
+        std::unique_lock<std::mutex> lk(mu);
+        return cv.wait_for(lk, timeout, [&] { return !got.empty(); });
+    }
+};
+
+struct SweepCell {
+    std::shared_ptr<MockProvider> mock = std::make_shared<MockProvider>();
+    PublisherArrow pub{mock};
+    SubscriberArrow sub{mock};
+};
+
+}  // namespace
+
+// Rung "tests other than rungs": the BC-8 sweep (GUARD). The grid is max_rows x timeout, 6 x 7 = 42
+// cells (milliseconds::max() is kNoTimeout, one column). The oracle is L15 written literally:
+// a cell is refused exactly when max_rows < 1 || timeout < 0.
+//  - Refused (27): kInvalidArgument, the callback released before the exception reaches the caller,
+//    nothing reached the provider, and nothing is ever delivered (one observation window, one
+//    Publish per refused cell).
+//  - Accepted (15): no throw, the provider saw one subscription, and one row published then the
+//    subscription ended is delivered whole: sum rows 1, sum dropped 0, no null batch (L15 "used as
+//    given"); max_rows 1 closes on the row limit; a timeout of 100 years or more never fires; a
+//    timeout that fires does so at least 1 ms after the row arrived (L5 floor).
+// Declared overlap with rung 4: the 5 accepted INT64_MAX cells are red on `957a514` for rung 4's
+// reason (a null batch, rows_dropped 1). Every other cell is green both ways.
+TEST(SubscriberArrowBatchTest, EveryBatchOptionIsRefusedExactlyWhenOutOfRange) {
+    using ms = std::chrono::milliseconds;
+    struct Rows {
+        const char* name;
+        int64_t value;
+    };
+    struct Timeout {
+        const char* name;
+        ms value;
+    };
+    const Rows row_counts[] = {{"INT64_MIN", std::numeric_limits<int64_t>::min()},
+                               {"-1", -1},
+                               {"0", 0},
+                               {"1", 1},
+                               {"2", 2},
+                               {"INT64_MAX", kInt64Max}};
+    const Timeout timeouts[] = {
+        {"milliseconds::min()", ms::min()},
+        {"-1 ms", ms(-1)},
+        {"0", ms(0)},
+        {"1 ms", ms(1)},
+        {"kNoTimeout (milliseconds::max())", kNoTimeoutValue},
+        {"100 years", ms(3'155'760'000'000LL)},
+        {"the clock's own maximum, in ms",
+         std::chrono::duration_cast<ms>(std::chrono::steady_clock::duration::max())},
+    };
+    constexpr ms kHundredYears(3'155'760'000'000LL);
+
+    std::deque<BatchSink> refused_sinks;  // declared first: outlive every subscriber
+    std::deque<SweepCell> refused_cells;
+    int cells = 0;
+    int refused = 0;
+    int accepted = 0;
+
+    for (const Rows& r : row_counts) {
+        for (const Timeout& t : timeouts) {
+            ++cells;
+            SCOPED_TRACE(std::string("max_rows ") + r.name + ", timeout " + t.name);
+            const bool expect_refused = r.value < 1 || t.value < ms(0);
+
+            SubscriberArrow::BatchOptions opt;
+            opt.max_rows = r.value;
+            opt.timeout = t.value;
+
+            if (expect_refused) {
+                ++refused;
+                refused_sinks.emplace_back();
+                refused_cells.emplace_back();
+                BatchSink& sink = refused_sinks.back();
+                SweepCell& cell = refused_cells.back();
+                cell.pub.CreateTopic(kTopic, TestSchema());
+
+                std::weak_ptr<int> token;
+                SubscriberArrow::RecordBatchCallback cb;
+                {
+                    auto strong = std::make_shared<int>(0);
+                    token = strong;
+                    auto inner = sink.callback();
+                    cb = [strong, inner](std::shared_ptr<arrow::RecordBatch> batch,
+                                         std::vector<Attachments> att, BatchStatus status) {
+                        inner(std::move(batch), std::move(att), status);
+                    };
+                }
+                bool threw = false;
+                try {
+                    const auto result = cell.sub.Subscribe(kTopic, std::move(cb), opt);
+                    ADD_FAILURE() << "out-of-range options were accepted";
+                    cell.sub.Unsubscribe(result.subscription_id);
+                } catch (const PubSubError& e) {
+                    threw = true;
+                    EXPECT_EQ(e.status(), PubSubStatus::kInvalidArgument);
+                }
+                EXPECT_TRUE(threw);
+                EXPECT_TRUE(token.expired()) << "a callback is still held after the call returned";
+                EXPECT_EQ(cell.mock->subscribe_with_options_count, 0);
+                cell.pub.Publish(kTopic, MakeRow(7, "n"));
+                continue;
+            }
+
+            ++accepted;
+            TimedSink sink;  // declared before the cell, so it outlives the subscriber
+            SweepCell cell;
+            cell.pub.CreateTopic(kTopic, TestSchema());
+            uint64_t id = 0;
+            try {
+                id = cell.sub.Subscribe(kTopic, sink.callback(), opt).subscription_id;
+            } catch (const PubSubError& e) {
+                ADD_FAILURE() << "in-range options were refused: " << e.what();
+                continue;
+            }
+            EXPECT_EQ(cell.mock->subscribe_with_options_count, 1);
+
+            const auto t0 = std::chrono::steady_clock::now();
+            cell.pub.Publish(kTopic, MakeRow(7, "n"));
+            // Where a window closes within the test's reach, wait for it, so the timer and the row
+            // limit are exercised rather than pre-empted by the Unsubscribe.
+            if (r.value == 1 || t.value <= ms(1)) {
+                EXPECT_TRUE(sink.WaitForAny(std::chrono::seconds(2)));
+            }
+            cell.sub.Unsubscribe(id);
+
+            std::lock_guard<std::mutex> lk(sink.mu);
+            int64_t rows = 0;
+            int64_t dropped = 0;
+            for (const auto& g : sink.got) {
+                EXPECT_FALSE(g.null) << "a null batch: the row was reported lost";
+                rows += g.rows;
+                dropped += g.status.rows_dropped;
+                if (g.status.reason == BatchStatus::Reason::kTimeout) {
+                    EXPECT_LT(t.value, kHundredYears)
+                        << "a window closed on a deadline too far to reach";
+                    EXPECT_GE(g.at - t0, ms(1)) << "a deadline passed before the 1 ms floor (L5)";
+                }
+            }
+            EXPECT_EQ(rows, 1);
+            EXPECT_EQ(dropped, 0);
+            if (r.value == 1 && !sink.got.empty()) {
+                EXPECT_EQ(sink.got[0].status.reason, BatchStatus::Reason::kRowLimit);
+            }
+        }
+    }
+    EXPECT_EQ(cells, 42);
+    EXPECT_EQ(refused, 27);
+    EXPECT_EQ(accepted, 15);
+
+    // The refused cells received nothing.
+    Observe();
+    for (size_t i = 0; i < refused_sinks.size(); ++i) {
+        std::lock_guard<std::mutex> lk(refused_sinks[i].mu);
+        EXPECT_TRUE(refused_sinks[i].deliveries.empty())
+            << "refused cell " << i << " received " << refused_sinks[i].deliveries.size()
+            << " deliveries";
+    }
+}
