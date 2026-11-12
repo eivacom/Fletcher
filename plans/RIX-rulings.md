@@ -283,3 +283,13 @@ never an early or wrapped one" is confirmed** as law (it was authored by round-d
 (2) **A `max_rows` larger than any window will reach is used as given and fixed in D7O** (stage
 D7O-3): a failed pre-size never makes a decodable schema unusable.
 **Applies to:** domain 7 L5, L15, L8; D7O ladder rungs 3 and 4.
+
+## 2026-11-12 — D7O-2: the deadline definition says some windows have none
+> "(a) Amend it (Recommended)"
+
+*(Chosen option, D7O-2 Stage Brief Decision 1.)* Its text: "Text becomes '…for a timeout the clock
+can reach; otherwise none (L5)'. Users: no change, and the document matches what they get.
+Architecture: agrees with law L5; closes audit finding F1, as the round's definition of done
+requires."
+**Ruling:** **d7 §2's "Deadline" definition is amended** to the wording above, by D7O-2.
+**Applies to:** `docs/domains/d7-batch-assembly.md` §2; audit F1 (`plans/D7O-pre-round-audit.md`).
