@@ -145,13 +145,18 @@ set_tests_properties(BindingAbi.CompilesAsC99AndIsSelfContained PROPERTIES
 # synchronous, so every row is work, never a wait.
 if(FLETCHER_BUILD_PROBE_SHIM)
     add_executable(c_abi_probe_tests
-        test_probe_shim.cpp)
+        test_probe_shim.cpp
+        test_binding_abi.cpp)
     target_link_libraries(c_abi_probe_tests PRIVATE
         GTest::gtest_main
         fletcher-c-abi-probe
         arrow::arrow)
     set_target_properties(c_abi_probe_tests PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY $<TARGET_FILE_DIR:fletcher-c-abi-probe>)
+    # `test_binding_abi.cpp` is compiled into this executable as well (D9S-1: the
+    # variant is asked of the probe shim too), so its rows exist in both suites.
+    # The prefix keeps the ctest names unique.
     gtest_discover_tests(c_abi_probe_tests DISCOVERY_MODE PRE_TEST
+        TEST_PREFIX "probe."
         PROPERTIES TIMEOUT 30)
 endif()

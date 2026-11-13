@@ -41,7 +41,8 @@ containment.
 
 - **Edge variant** (exists; today's shim): as today, plus only the variant query and named
   not-supported answers from the batched entry points (L12, D23), and the ABI version bump both
-  builds share (L6, D27) `[designed-not-built]`. Never
+  builds share (L6, D27). The query and the bump are `[built]` (D9S-1); the refusals are
+  `[designed-not-built]`. Never
   carries Arrow C++, because "it needs to be able to run on embedded devices" (owner, 2026-11-12).
   Ships in the base package, `Eiva.Fletcher.Interop` (D22).
 - **Server-tier variant** `[designed-not-built]`: the edge surface plus `pubsub-arrow`'s batched
@@ -82,9 +83,9 @@ containment.
 | **Variant** | One of the two builds of the shim from one source. Today there is one (edge); the test-only probe shim (`CMakeLists.txt:164-211`) is a third artifact from the same sources, not a variant. |
 | **Edge variant** | Today's shim: no Arrow C++, codec on nanoarrow. Shipped in the base package. |
 | **Server(-tier) variant** | `[designed-not-built]` The edge surface plus the batched subscribe; links Arrow C++ through `pubsub-arrow`. Shipped in a package of its own (D22). |
-| **Variant query** | `[designed-not-built]` The entry point both builds export that answers which build was loaded (L16, D23). |
+| **Variant query** | `[built]` for the edge and probe shims (D9S-1; the server half is D9S-2). `fl_binding_variant`: the entry point both builds export that answers which build was loaded (L16, D23). |
 | **Base package / server package** | `Eiva.Fletcher.Interop`, carrying the edge variant, and the separate .NET package carrying the server variant; each holds a full shim (D22). |
-| **Entry point** | An exported `fl_*` function. 47 today (`h`, `grep -c FL_ABI_EXPORT`). |
+| **Entry point** | An exported `fl_*` function. 48 today (`h`, `grep -c FL_ABI_EXPORT`). |
 | **Handle** | An opaque `fl_*` struct pointer the caller holds and cannot read (`handles.hpp:6-11`). |
 | **Owner handle** | The `owner` of an `fl_blob` or `fl_schema`: a refcounted block reached only through retain/release (`h:398-512`, `handles.hpp:43-59`). |
 | **Borrowed / Owned / OUT** | The header's three ownership words (`h:29-42`). Unqualified pointers are borrowed. |
@@ -234,10 +235,11 @@ exported only once it is implemented, never stubbed to answer `FL_NOT_SUPPORTED`
 `[built]` for the handshake; the append-only and every-change-bumps rules `[built as a property; no test]`
 - Holds at: `h:44-90`, `h:163-172`, `binding_version.c:10`; the C# side at
   `dotnet/src/Fletcher.Interop/NativeLoader.cs:253` (`VerifyAbiVersion`). D-BIND-42, -43, -46, -52,
-  -57, -68 each bumped the minor (now 0.7; D-BIND-52 added by audit F6, D31).
+  -57, -68 each bumped the minor (0.7; D-BIND-52 added by audit F6, D31); D9S-1 made it 0.8.
 - **Both builds share one ABI version, and both bump** (D27, 2026-11-13; resolves Q8 and audit
-  LC-1) `[designed-not-built]`. The variant query and the batched entry points are appended to the
-  one header, so the edge build's minor moves with the server build's. The builds are told apart by
+  LC-1) `[built]` for the bump to 0.8 and the query (D9S-1, with the C# loader's one line);
+  `[designed-not-built]` for the batched entry points. The variant query and the batched entry
+  points are appended to the one header, so the edge build's minor moves with the server build's. The builds are told apart by
   the variant query (L16), never by the version.
 - **Named scope exception** (D27, audit OQ-1): the C# loader's expected minor,
   `HeaderVersionMinor` in `dotnet/src/Fletcher.Interop/NativeLoader.cs` (line 34 at `0fab68e`), is
@@ -364,7 +366,8 @@ both" ("the shim passes the refusal through"). `subscriber_arrow.cpp:39-46` thro
 query, callable before anything else and from any thread, as `fl_binding_abi_version` is. A caller
 that asks never has to learn its build from a missing symbol; one that does not ask gets L12's named
 refusal, never a crash.
-`[designed-not-built]`. Source: ruling 2026-11-13, "Wrong build: Clear 'not supported'" ("the program
+`[built]` for the edge shim and the probe shim (D9S-1; `fl_binding_variant`, `fl_variant`; the server
+half is D9S-2). Source: ruling 2026-11-13, "Wrong build: Clear 'not supported'" ("the program
 can ask the shim which build it has … via a query that both builds export"; D23). Today
 `fl_binding_abi_version` cannot tell two builds of one version apart. The query's name, its answer's
 type, and whether it changes the ABI version (Q8) are the shim round's design.
@@ -394,8 +397,9 @@ census C5 and A37 / F12. Without it, a throw from the thunk is swallowed by doma
 
 ## 4. The interface
 
-Surface, `h` sections in order (ABI 0.7, 47 entry points, every one implemented):
-- **Version** (`h:158-172`): `fl_binding_abi_version`, callable first, from any thread.
+Surface, `h` sections in order (ABI 0.8, 48 entry points, every one implemented):
+- **Version** (`h:158-172`): `fl_binding_abi_version` and `fl_binding_variant` (with `fl_variant`,
+  edge = 1, server = 2), each callable first, from any thread.
 - **Status and errors** (`h:174-316`): `fl_status` (0-10), `fl_origin`, `fl_error`, `fl_error_dispose`.
 - **Strings, topics, marker** (`h:318-394`): `fl_str`, `fl_topic`, `fl_string_list_*`, `fl_single_copy_marker`.
 - **Shared ownership** (`h:396-512`): `fl_blob_create/retain/release`, `fl_schema_retain/release/copy`.
@@ -412,8 +416,9 @@ Surface, `h` sections in order (ABI 0.7, 47 entry points, every one implemented)
   (`subscriber_arrow.hpp:77-160`) and its unsubscribe. Its C shape is the shim round's design, within
   L12-L18. The batch callback's array and schema are borrowed for the call; a binding keeps them by
   moving them (L14, D26).
-- **Both builds** `[designed-not-built]`: the variant query (L16). The edge build exports the batched
-  entry points too, answering a named not-supported refusal (L12).
+- **Both builds**: the variant query (L16) `[built]` for edge and probe (D9S-1; its single site is
+  `binding_version.c`, BC-10). The edge build exports the batched entry points too, answering a
+  named not-supported refusal (L12) `[designed-not-built]`.
 
 **Who calls, and on which thread:**
 - Any entry point from any thread; `fl_codec` and `fl_rows` are immutable and shared without locks

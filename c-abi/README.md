@@ -13,7 +13,7 @@ sees a C++ type.
 ```
 c-abi/
   include/fletcher/abi/binding.h   the ABI: pure C99, versioned, append-only within a major
-  src/binding_version.c            fl_binding_abi_version()
+  src/binding_version.c            fl_binding_abi_version(), fl_binding_variant()
   src/binding.cpp                  every other entry point: registry, publisher, subscriber,
                                    arrival, attachments, blobs, schemas, the codec surface
   src/nanoarrow_codec.*            the Arrow-array codec behind fl_codec_* / fl_rows_*
@@ -98,7 +98,7 @@ built with it cannot pass for the release one. Its suite is `c_abi_probe_tests`.
 
 ## The surface
 
-[`binding.h`](include/fletcher/abi/binding.h) is **ABI 0.7: 47 entry points**, every one
+[`binding.h`](include/fletcher/abi/binding.h) is **ABI 0.8: 48 entry points**, every one
 implemented, in the header's sections: the version handshake; status and `fl_error`; strings,
 topics and the single-copy marker; blobs and schemas as shared owner handles; the schema arrival
 with its five outcomes; attachments (a builder, and a sealed set read by position); the write
@@ -107,6 +107,11 @@ window a caller lends the encoder; the provider, publisher and subscriber, with 
 channel: of the built-ins, all but `fastdds`); and the codec. Every declaration says which part of the seam specification it comes from, and restates
 the rule rather than pointing at it, so a binding author never has to read the C++ tree. Status
 numbers are the seam's own and are never renumbered.
+
+**The build.** `fl_binding_variant()` answers which build of the shim is loaded: `FL_VARIANT_EDGE`
+(1) today, `FL_VARIANT_SERVER` (2) once the server build exists. Like the version it is callable
+first and from any thread, and it still answers in a shim that refuses every other call. Both the
+shipped shim and the test-only probe shim answer edge.
 
 **Versioning.** `fl_binding_abi_version()` answers for the shim actually loaded, packed as
 `(major << 16) | minor`. Within a major the header is append-only, and from 1.0 a declaration is
@@ -204,8 +209,8 @@ things in its own idiom:
 2. **Handshake before anything else.** Call `fl_binding_abi_version()` and refuse a shim whose major,
    or before 1.0 whose minor, differs from the `FL_BINDING_ABI_VERSION` the binding was built
    against, with a message saying which two. Both builds share one version (d9 D27), so the
-   version does not say which build was loaded: once the variant query lands (d9 L16, designed,
-   not built), a binding that needs the batched subscribe asks it, and the edge build answers a
+   version does not say which build was loaded: a binding that needs the batched subscribe asks
+   `fl_binding_variant()` (d9 L16), and the edge build will answer a
    batched call with `FL_NOT_SUPPORTED` ("this provider or this build cannot do this"), never a
    missing symbol (d9 L12).
 3. **Bring your own Arrow.** The header only forward-declares `ArrowSchema` and `ArrowArray`; the
@@ -223,4 +228,5 @@ things in its own idiom:
    nor install a path resolver (D-BIND-24), and a path selector answers `FL_NOT_SUPPORTED`.
 
 [`test_package/`](test_package/) is the smallest consumer: a C program that links the package,
-calls `fl_binding_abi_version()` and compares it with the header's.
+calls `fl_binding_abi_version()` and compares it with the header's, then asks and prints
+`fl_binding_variant()` and fails on a build it does not know.

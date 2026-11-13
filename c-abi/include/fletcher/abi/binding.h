@@ -161,7 +161,7 @@ extern "C" {
  * fl_binding_abi_version() at load time; `Eiva.Fletcher.Interop` does exactly
  * that in its static constructor. */
 #define FL_BINDING_ABI_VERSION_MAJOR 0
-#define FL_BINDING_ABI_VERSION_MINOR 7
+#define FL_BINDING_ABI_VERSION_MINOR 8
 #define FL_BINDING_ABI_VERSION                                   \
     ((uint32_t)(((uint32_t)FL_BINDING_ABI_VERSION_MAJOR << 16) | \
                 (uint32_t)FL_BINDING_ABI_VERSION_MINOR))
@@ -170,6 +170,21 @@ extern "C" {
  *
  * Callable before anything else and from any thread; it touches no state. */
 FL_ABI_EXPORT uint32_t fl_binding_abi_version(void);
+
+/* Which build of the shim is loaded (d9 L16). One vocabulary for every build;
+ * values are only ever appended, and 0 is never a build. */
+typedef enum fl_variant {
+    FL_VARIANT_EDGE = 1,   /* the embedded-capable build: no Arrow C++ */
+    FL_VARIANT_SERVER = 2, /* the server build, which adds batched subscribe */
+} fl_variant;
+
+/* The build of the loaded shim.
+ *
+ * Callable first, before anything else, and from any thread, like
+ * fl_binding_abi_version(); it touches no state, has no error path, and still
+ * answers in a shim that refuses every other call because a second copy is
+ * loaded. Both builds share one ABI version, so this is how they are told apart. */
+FL_ABI_EXPORT fl_variant fl_binding_variant(void);
 
 /* ══ Status ════════════════════════════════════════════════════════════════ */
 
