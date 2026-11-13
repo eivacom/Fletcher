@@ -330,3 +330,28 @@ deleted, ledgers stay intact.
 **Applies to:** round-close step 3; `plans/` afterwards holds only RIX, PDA-ABI, RIR, the BIND plan
 and locked decisions, this shared ledger and `reviews/design-debt.md`.
 *Not ingested: a round-close procedure ruling (archiving), not a fact of any domain.*
+
+## 2026-11-13 — Domain 9 (C ABI shim): packaging, wrong build, codec owner, laws confirmed
+> Packaging: "Separate server package"
+> Wrong build: "Clear 'not supported' (Recommended)"
+> Codec owner: "Domain 2 (Recommended)"
+> Laws: "Confirm, adjusted by answers"
+
+*(Chosen options.)* Texts: **Packaging** — "Users: apps that only publish/subscribe per row stay small;
+apps wanting batches add a second package. Architecture: keeps D-BIND-157 for the base package;
+revises D-BIND-13 and -17 (two packages each carrying a full shim, of which only one may load per
+process, L5/L17)." **Wrong build** — "Users: the program can ask the shim which build it has, and a
+batched subscribe on the edge build fails with a named 'not supported' error rather than a
+missing-symbol crash. Architecture: L16 … via a query that both builds export; … the query would be
+added to the edge too." **Codec owner** — "domain 2 already owns 'how a row is encoded' and its laws
+(byte-identity across codecs) then cover every codec in one place; domain 9 only hosts it."
+**Laws** — "Confirm L1–L17 as drafted in docs/domains/d9-c-abi-shim.md, amended only where your
+answers above change them … Domain 9 becomes 'specified' and stage design can start."
+**Rulings:** (1) **the server variant ships in its own .NET package**; D-BIND-157's ceiling stays on
+the base package; **D-BIND-13 and D-BIND-17 are revised** (two packages, each a full shim; one shim per
+process still holds). (2) **Both builds export a variant query; the batched entry points on the edge
+build answer a named not-supported status** (L12 amended: the edge surface gains only that query and
+those refusals). (3) **The shim's row codec is domain 2's**; domain 9 hosts it (d9 L10 moves to
+domain 2). (4) **Domain 9's laws L1–L17 are confirmed** as amended by (1)–(3); domain 9 is `specified`.
+**Applies to:** `docs/domains/d9-c-abi-shim.md`, `docs/domains/d2-row-encoding.md`,
+`docs/domain-map.md` rows 2 and 9; BIND D-BIND-13, -17, -157, Decision 6 (annotations owed).
