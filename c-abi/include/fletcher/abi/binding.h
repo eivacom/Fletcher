@@ -857,11 +857,19 @@ FL_ABI_EXPORT fl_status fl_subscriber_create(fl_provider* provider, fl_subscribe
 
 /* Destroy a subscriber.
  *
- * DESTRUCTION REQUIRES QUIESCENCE, and from inside a delivery on this same
+ * DESTRUCTION REQUIRES QUIESCENCE, and from inside a ROW delivery on this same
  * subscriber it is not merely refused - the seam's answer is process
  * termination, by design, because the alternative is to leak the transport
  * subscription silently. A binding must refuse this call in its own code, with
- * its own exception, before it can reach the shim (D-BIND-18). */
+ * its own exception, before it can reach the shim (D-BIND-18).
+ *
+ * BATCHED SUBSCRIPTIONS (server build; fl_subscriber_subscribe_batches). Outside a
+ * batch callback this BLOCKS until running batch callbacks finish, and each
+ * subscription's CLOSING batch is delivered, on another thread, before it
+ * returns: do not hold across it a lock a batch callback takes. From INSIDE a
+ * batch callback it returns without waiting for that subscription; the queued
+ * batches, then CLOSING, arrive afterwards, so `on_batch` and `ctx` must stay
+ * valid until CLOSING has arrived. */
 FL_ABI_EXPORT void fl_subscriber_destroy(fl_subscriber* subscriber);
 
 /* Delivery: raw encoded row bytes, the topic's schema, and any attachments.
@@ -1028,8 +1036,9 @@ typedef void (*fl_batch_fn)(void* ctx, const fl_batch* batch);
  *
  * IDS. A batched id has bit 63 set and a row id never does (a counter starting at 1
  * would need 2^63 subscriptions to reach it), so the two can never be confused.
- * fl_subscriber_unsubscribe is unchanged: it treats a batched id as unknown, a
- * no-op. The callback is not given an id, because a batch may arrive before this
+ * fl_subscriber_unsubscribe is unchanged: it treats a batched id as unknown and
+ * answers FL_OK without stopping its batches or releasing `ctx`; only
+ * fl_subscriber_destroy ends a batched subscription for now. The callback is not given an id, because a batch may arrive before this
  * call returns: correlate by `ctx`.
  *
  * THREADS. `on_batch` runs on domain 7's batch thread, one batch at a time, in
