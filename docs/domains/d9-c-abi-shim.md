@@ -269,17 +269,23 @@ D-BIND-157). Since D9S-2 `scripts/check_shim_exports.sh` compares both builds' `
 
 **L8. The edge variant links no Arrow C++.** Its codec is nanoarrow; Arrow C++ and `arrow-bridge`
 may appear only in test binaries.
-`[built as a property; no code owner]`: nothing structural forbids it.
+`[built]` (D9S-3; Windows, by hand, for the graph half and the name scan of the edge DLL; the Linux
+`nm -C` half and CI are unrun until the owner's draft PR runs them): the check by name now has a code
+owner.
 - Holds at: `conanfile.py:58-83` (Arrow and `arrow-bridge` are required only under `run_tests`,
   and `run_tests` is deleted from the package ID), `CMakeLists.txt:154-162` (the shim's links),
   `nanoarrow_codec.hpp:20-24`, `tests/CMakeLists.txt:6-15`.
-- **How it is enforced today:** a size ceiling in CI, 12 MiB on win-x64 and 20 MiB on linux-x64
-  (`ci.c-abi.yml:81-110`, `:164-196`), whose error message names this mistake (D-BIND-1a rider ii).
-  It is a proxy: it catches Arrow C++ by its megabytes, not by name. D-BIND-148's DLL allow-list
-  would catch a shared Arrow, not a static one. No test asks "is any Arrow C++ symbol in the edge
-  shim?"
-- Tests: no test. Once a server variant links Arrow C++ from the same `CMakeLists.txt`, the edge
-  build needs a check of its own (Q4; register BC-11).
+- **How it is enforced:** `scripts/check_edge_arrow_free.sh` (`ci.c-abi.yml`, both legs, before the
+  size ceilings so a large Arrow link is named) fails by name if the edge configuration's Conan host
+  graph holds `arrow`, `fletcher-arrow-bridge` or `fletcher-pubsub-arrow`, or if the edge shim
+  carries an Arrow name (`nm -C` on Linux; on Windows only the class and import names the DLL itself
+  carries, a Release DLL having no symbol table). Two controls run every time and must each go red
+  naming Arrow (the `run_tests=True` graph; a `c_abi_tests` binary). The size ceilings stay as the
+  coarse check (L12): 12 MiB on win-x64 and 20 MiB on linux-x64, whose message names this mistake
+  (D-BIND-1a rider ii). D-BIND-148's DLL allow-list would catch a shared Arrow, not a static one.
+- Tests: the CI step "The edge build carries no Arrow C++ (d9 L8)" (D9S-3, ladder rung 3), with its
+  controls. Windows parity with Linux's full symbol table would need a link map or PDB, a later-round
+  question (not needed given Linux and the graph).
 
 **L9. A row is written once, into the transport's window.** No encode entry point returns bytes;
 values cross as Arrow arrays, never as per-field C arguments; a bound array serves many publishes.
@@ -525,7 +531,7 @@ in its own .NET package (D22); the NuGet-level name stays domain 10's (Q5a).
 | Q1 | Resolved 2026-11-13 (D23, L16): a variant query both builds export. Its name and answer type are the shim round's design. | — |
 | Q2 | Resolved 2026-11-13 (D24): domain 2 owns `NanoarrowCodec`; former L10 is d2 L2 and L8. | — |
 | Q3 | Resolved 2026-11-13 (D23, L12): one surface; the edge build exports the batched entry points and refuses them by name. Residue resolved 2026-11-13 (D28, audit LC-2): "named" is `FL_NOT_SUPPORTED` plus a message; its meaning widens to "this provider or this build cannot do this"; no new number. | — |
-| Q4 | How is "the edge variant links no Arrow C++" enforced once the server variant links it from the same build? The size ceiling is a proxy; a symbol or dependency-graph check would be structural (register BC-11). The variant switch must stay in the package ID (audit F13), and CI must pick the edge artefact by package ID, not by file name (audit F8; T3, T5, T19). **CI by package identity built in the workflows but never run in CI in D9S-2** (`scripts/locate_shim.sh`); the structural Arrow check is D9S-3. | shim round |
+| Q4 | How is "the edge variant links no Arrow C++" enforced once the server variant links it from the same build? The size ceiling is a proxy; a symbol or dependency-graph check would be structural (register BC-11). The variant switch must stay in the package ID (audit F13), and CI must pick the edge artefact by package ID, not by file name (audit F8; T3, T5, T19). **CI by package identity built in the workflows but never run in CI in D9S-2** (`scripts/locate_shim.sh`); the structural Arrow check is built in D9S-3 (`scripts/check_edge_arrow_free.sh`, graph and name scan, both legs; **resolved: Windows, by hand; the Linux `nm -C` half and CI unrun until the owner's draft PR runs them**). | shim round |
 | Q5 | Resolved 2026-11-13 (D22): the server variant ships in its own .NET package; D-BIND-157 stays on the base package; D-BIND-13 and -17 revised. | — |
 | Q5a | Packaging residue the ruling does not settle: do the two packages' native files have distinct names (so both can sit in one app's output), does the server package depend on the base one, how does a binding choose which to load, and does the server package get a size ceiling of its own? **The shim-side half is resolved (owner ruling 2026-11-13, D9S-2 Decision 1): the server build's file is `fletcher-c-abi-server`.** **Registered 2026-11-13 as domain-10 questions in §6**, together with R-9 (D-BIND-148 / -149 for the server shim). | domain 10 (C# switch round), with the shim round for the native file name |
 | Q6 | How do a batch's row-aligned attachments, `BatchStatus` and a null batch cross? Per-row `fl_attachments` handles, a flattened form, or a C Data column? | shim round, then owner if it widens the seam's vocabulary |
@@ -590,7 +596,8 @@ in its own .NET package (D22); the NuGet-level name stays domain 10's (Q5a).
 - That the C `fl_status` numbers equal `PubSubStatus` (L2); a `static_assert` per enumerator would do it.
 - That a failed call leaves OUT parameters untouched (L3).
 - The append-only rule within a major (L6).
-- That the edge shim contains no Arrow C++ (L8): only the size ceiling.
+- ~~That the edge shim contains no Arrow C++ (L8): only the size ceiling.~~ Checked by name since
+  D9S-3 (`scripts/check_edge_arrow_free.sh`; Windows, by hand; Linux and CI unrun).
 - The Windows half of the export-table property: violated, accepted (L7).
 
 **(d) Tier-1 collisions for the owner** (between a BIND decision, a 2026-11-12 ruling and the code).

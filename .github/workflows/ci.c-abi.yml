@@ -30,6 +30,7 @@ on:
 # strip checks are about the EDGE build: scripts/locate_shim.sh picks it by the
 # package's recorded options, and the edge create passes no `variant`, so a default
 # other than edge fails that lookup. The server shim's size is printed, never enforced.
+# The edge build is also checked for Arrow C++ by name (D9S-3, d9 L8), before its size.
 jobs:
   build-windows:
     runs-on: windows-2022
@@ -91,6 +92,17 @@ jobs:
         shell: bash
         working-directory: c-abi
         run: conan create . --build=missing -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release -o "&:run_tests=True" -o "&:with_probe_shim=True"
+
+      # d9 L8, BC-11: the edge build carries no Arrow C++, checked by NAME, and before
+      # the size ceiling below so that a large Arrow link is named, not just "too big".
+      # The edge graph and the names in the edge shim are read, and two controls (the
+      # test graph, a test binary) must each go red naming Arrow, on every run.
+      - name: The edge build carries no Arrow C++ (d9 L8)
+        shell: bash
+        run: |
+          set -euo pipefail
+          EDGE=$(bash scripts/locate_shim.sh fletcher-c-abi variant=edge with_probe_shim=True)
+          bash scripts/check_edge_arrow_free.sh c-abi .conan-profiles/Windows-msvc194-x86_64-Release "$EDGE"
 
       # The per-RID size of the shim is a release-facing number (the NuGet
       # package carries one of these per RID), so it is measured on every run
@@ -205,6 +217,13 @@ jobs:
               # The EDGE shim, by its package identity and never by file name or as
               # "the first match" (D9S-2): the server package is in this cache too.
               SHIM=$(bash /workspace/scripts/locate_shim.sh fletcher-c-abi variant=edge with_probe_shim=True)
+
+              # d9 L8, BC-11: the edge build carries no Arrow C++, checked by NAME and
+              # before the size ceiling below, so a large Arrow link is named and not
+              # just too big. Graph and nm -C on the unstripped shim, plus two controls
+              # that must each go red naming Arrow. It runs here because the Conan cache
+              # does not outlive this container.
+              bash /workspace/scripts/check_edge_arrow_free.sh /workspace/c-abi "$PROFILE" "$SHIM"
 
               # The per-RID size is a release-facing number (the NuGet package
               # carries one shim per RID), so it is measured on every run.

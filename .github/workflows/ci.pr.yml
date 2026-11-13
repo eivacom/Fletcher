@@ -143,6 +143,7 @@ jobs:
               - '.github/workflows/ci.pr.yml'
               - 'scripts/locate_shim.sh'
               - 'scripts/check_shim_exports.sh'
+              - 'scripts/check_edge_arrow_free.sh'
               - '.github/workflows/ci.c-abi.yml'
               - '.github/workflows/ci.setup-devcontainer-image.yml'
               - '.github/actions/conan-install/**'
