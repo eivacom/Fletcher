@@ -1,9 +1,11 @@
 # Domain 9: The C ABI shim
 
-> **Draft, not specified.** No law below is confirmed. The owner confirms them before any stage of
-> the shim round is designed (round-designer Gate 2, shape 2: "creates a new domain"). Laws marked
-> **PROPOSED (owner confirmation owed)** describe the server-tier variant, which does not exist yet.
-> The surveyed laws describe what the code does today; confirming them makes them law.
+> **Specified.** The owner confirmed these laws on 2026-11-13 ([RIX-rulings.md](../../plans/RIX-rulings.md),
+> "Laws: Confirm, adjusted by answers"), as amended by the same day's three rulings: the server
+> variant ships in its own .NET package (D22), both builds answer a variant query and the edge build
+> refuses a batched subscribe by name (D23; L12, L16), and the shim's row codec is domain 2's (D24;
+> L10 moved). A change to a law needs an owner ruling, recorded in a decision of record. L12-L17
+> describe the server-tier variant and stay `[designed-not-built]` until the shim round builds them.
 
 **Mode: survey for everything that exists, verified against the tree at `180b2d7`** (branch
 `feature/shim-server-variant`). The code is ground truth. `binding.h`'s comments, `c-abi/README.md`,
@@ -21,14 +23,23 @@ in `c-abi/tests/`, named `Suite.Case`.
 variants built from one source** (owner rulings, 2026-11-12). That means: the C spelling of each
 seam value (blob, schema, arrival, attachments, write window, topic, status); the handles, and who
 releases each; turning every C++ failure into a status plus message at one containment site; the
-ABI version and its compatibility rule; the export table; the one-copy-per-process check; hosting
-the binding-tier codec (`NanoarrowCodec`) behind `fl_codec_*`; the built-in provider registry the
-shim carries; and **which variant a build is**, and what each variant may link.
+ABI version and its compatibility rule; the export table; the one-copy-per-process check; the
+built-in provider registry the shim carries; and **which variant a build is**, how a caller asks,
+and what each variant may link.
 
-- **Edge variant** (exists; today's shim): exactly as today. Never carries Arrow C++, because "it
-  needs to be able to run on embedded devices" (owner, 2026-11-12).
+**Hosts, owned by domain 2:** the binding-tier row codec, `NanoarrowCodec`
+(`c-abi/src/nanoarrow_codec.*`), behind `fl_codec_*`, `fl_rows_*`, `fl_encode_row` and
+`fl_decode_rows*` (ruling 2026-11-13, "Codec owner: Domain 2"). What bytes it writes and accepts is
+domain 2's law (d2 L2, L8); this domain owns only the entry points, their handles and their
+containment.
+
+- **Edge variant** (exists; today's shim): as today, plus only the variant query and named
+  not-supported answers from the batched entry points (L12, D23) `[designed-not-built]`. Never
+  carries Arrow C++, because "it needs to be able to run on embedded devices" (owner, 2026-11-12).
+  Ships in the base package, `Eiva.Fletcher.Interop` (D22).
 - **Server-tier variant** `[designed-not-built]`: the edge surface plus `pubsub-arrow`'s batched
-  subscribe (domain 7). C# on desktop loads it (domain 10, next round).
+  subscribe (domain 7). Ships in its own .NET package, a full shim (D22). C# on desktop loads it
+  (domain 10, next round).
 
 **Refuses:**
 - **Answering the seam's questions again.** Topic validation, options checks, re-entrancy,
@@ -40,9 +51,10 @@ shim carries; and **which variant a build is**, and what each variant may link.
   window closes.
 - **Validating batch options** (register BC-8). Domain 7's L15 is the one answer; the server
   variant passes the refusal through and does not check `max_rows` or the timeout itself.
-- **Decoding policy beyond its codec.** Which schemas a batch can be assembled from, and the
-  dictionary re-fold, are domain 2's (`BatchDecoder`). The shim's codec decodes a dictionary as its
-  value type and stops there (`nanoarrow_codec.hpp:163-179`, D-BIND-39).
+- **Encoding and decoding rules.** What bytes a row becomes, which bytes are refused, which schemas
+  a batch can be assembled from and the dictionary re-fold are all domain 2's, including for the
+  codec this domain hosts (D24). That codec decodes a dictionary as its value type and stops there
+  (`nanoarrow_codec.hpp:163-179`, D-BIND-39).
 - **Arrow C++ in the edge variant, ever.** (2026-11-12; earlier D-BIND-1a rider ii / BIND Decision 6.)
 - **Provider registration and path resolution** from a binding (D-BIND-24): no
   `fl_registry_register`, no resolver (`h:740-749`). A path selector answers `FL_NOT_SUPPORTED`
@@ -59,8 +71,10 @@ shim carries; and **which variant a build is**, and what each variant may link.
 |---|---|
 | **Shim** | The shared library `fletcher-c-abi` (`CMakeLists.txt:80-83`): the only Fletcher component built as a shared library; statically links pub/sub, the two DDS providers and nanoarrow. |
 | **Variant** | One of the two builds of the shim from one source. Today there is one (edge); the test-only probe shim (`CMakeLists.txt:164-211`) is a third artifact from the same sources, not a variant. |
-| **Edge variant** | Today's shim: no Arrow C++, codec on nanoarrow. |
-| **Server(-tier) variant** | `[designed-not-built]` The edge surface plus the batched subscribe; links Arrow C++ through `pubsub-arrow`. |
+| **Edge variant** | Today's shim: no Arrow C++, codec on nanoarrow. Shipped in the base package. |
+| **Server(-tier) variant** | `[designed-not-built]` The edge surface plus the batched subscribe; links Arrow C++ through `pubsub-arrow`. Shipped in a package of its own (D22). |
+| **Variant query** | `[designed-not-built]` The entry point both builds export that answers which build was loaded (L16, D23). |
+| **Base package / server package** | `Eiva.Fletcher.Interop`, carrying the edge variant, and the separate .NET package carrying the server variant; each holds a full shim (D22). |
 | **Entry point** | An exported `fl_*` function. 47 today (`h`, `grep -c FL_ABI_EXPORT`). |
 | **Handle** | An opaque `fl_*` struct pointer the caller holds and cannot read (`handles.hpp:6-11`). |
 | **Owner handle** | The `owner` of an `fl_blob` or `fl_schema`: a refcounted block reached only through retain/release (`h:398-512`, `handles.hpp:43-59`). |
@@ -179,6 +193,11 @@ links Fletcher and hosts a binding) is ruled out by fact, not by check (D-BIND-1
   forked state is not reachable through it. The header says "REFUSES TO INITIALISE" (`h:382-385`),
   which reads as both.
 - Void entry points and `fl_binding_abi_version` still answer in a poisoned shim.
+- **Two packages, one process** (D22, 2026-11-13): an application may reference both the base and
+  the server package, so two full shims can reach one application's output. The law still holds:
+  only one may load per process, and a second loaded is refused by this check (L17). How the two
+  files coexist on disk, and which one a binding loads, is the shim and C# switch rounds' design
+  (Q5a).
 - Tests: `SingleCopy.TheMarkerIsExportedAndIdentifiesTheShim`, `.TheShimItselfIsFound`,
   `.ASecondMarkerExportIsFound` (a decoy module), `.TheAnswerFollowsTheProcess`,
   `.AHealthyProcessIsNotPoisoned`, `Containment.APoisonedShimRefusesWithoutRunningTheCall`,
@@ -232,18 +251,8 @@ values cross as Arrow arrays, never as per-field C arguments; a bound array serv
   `ProbeFixture.TheFusedPublishAppendsThePayloadFromTheCallersBuffer`,
   `.AStagedRowPushedThroughARawPublishIsACopy` (the negative control), `.ALoanedAttachmentIsDeliveredByAddress`.
 
-**L10. The shim's codec writes the bytes domain 2's codec writes.** One wire format, two drivers
-(D-BIND-39): `NanoarrowCodec` may not differ from `arrow-bridge`'s `Codec` by one byte.
-`[built]` for encode; decode parity with domain 2 `[built as a property; no test]`
-- Holds at: `nanoarrow_codec.hpp:6-31`; the corpus `tests/codec_corpus.hpp`.
-- Decode is tested as the inverse of the shim's own encode, not against domain 2's decoders. Which
-  bytes are *refused* as malformed is not compared between `NanoarrowCodec` and `BatchDecoder`. In
-  the server variant both will decode rows in one binary (Findings b3).
-- **Unsure whose law this is.** The rule is domain 2's (the wire format); the second driver lives
-  here (Q2).
-- Tests: `NanoarrowCodec.ByteIdenticalToArrowBridge`, `.DecodeIsTheInverseOfEncode`,
-  `.ASlicedBatchEncodesEachRowAsTheWholeBatchDoes`; the `binding-abi-conformance` lane (an
-  `Apache.Arrow` export reaches the codec as Arrow C++'s does).
+**L10. Moved to domain 2** (ruling 2026-11-13, "Codec owner: Domain 2"; D24). The hosted codec's
+byte identity is now [d2 L2](d2-row-encoding.md) (encode) and d2 L8 (decode agreement).
 
 **L11. The shim adds no thread, and holds no lock across a caller's callback.** A callback runs on
 the thread the layer below chooses: a delivery on the transport's thread, one at a time per
@@ -257,20 +266,31 @@ thread. Everything a callback is handed is borrowed for that call.
   `.AttachmentsReachTheHandlerAndARetainedBlobOutlivesTheDelivery`, `.ASchemaWatchIsRefusedFromInsideADelivery`,
   `BindingEntryPoints.ManyThreadsShareOneCodecAndOneBoundBatch`.
 
-**The server-tier variant. PROPOSED (owner confirmation owed); none of it is built.** L12 and L13
-follow from the 2026-11-12 ruling's text. L14 to L17 are round-designer's reading of the rulings,
-domain 7's laws and the register.
+**The server-tier variant.** Confirmed 2026-11-13 (D25); none of it is built yet.
 
-**L12. One source, two variants; the edge variant is unchanged by the other.** Both are built from
-the same sources; the edge variant's surface, links, size check and behaviour stay exactly as today.
-`[designed-not-built]`. Source: 2026-11-12, "one shim in two variants"; "the edge variant exactly
-as today". Precedent: the probe shim is a second artifact from the same object library and entry
-points (`CMakeLists.txt:164-211`, `conanfile.py:30-34`, D-BIND-62).
+**L12. One source, two variants; the edge variant gains only the variant query and named refusals.**
+Both builds come from the same sources and declare one surface. The edge build exports every entry
+point the server build does: the variant query answers truthfully, and each batched entry point
+refuses with a named not-supported error, having done nothing. Nothing else in the edge build
+changes: no other entry point, no link (L8), no size check, no behaviour.
+`[designed-not-built]`. Source: 2026-11-12, "one shim in two variants", "the edge variant exactly as
+today"; amended 2026-11-13, "Wrong build: Clear 'not supported'" ("the edge surface gains only that
+query and those refusals"; D23). Precedent: the probe shim is a second artifact from the same object
+library and entry points (`CMakeLists.txt:164-211`, `conanfile.py:30-34`, D-BIND-62).
+- **Read as exported, not merely declared.** The ruling says "a batched subscribe on the edge build
+  fails with a named 'not supported' error rather than a missing-symbol crash"; a missing-symbol
+  crash is what an unexported entry point gives a P/Invoke caller (L6), so the batched entry points
+  exist on the edge build. That refusal is not a stub in D-BIND-31's sense: `FL_NOT_SUPPORTED` is the
+  status `h:75-77` reserves for "this build cannot do the thing".
+- **Ambiguous in the ruling:** "named" is read as the existing `FL_NOT_SUPPORTED` with a message
+  naming the edge build and the server package. A new status number would be a seam stop-and-ask
+  (`h:185-186`), which the ruling does not mention. Confirm at the shim round's design.
 
 **L13. The server variant only adds.** It adds entry points; it never removes an edge entry point,
 changes one's signature, or changes what one does. A caller written against the edge surface
-behaves identically on the server variant.
-`[designed-not-built]`. Source: as L12. Open: whether the edge header declares the additions (Q3).
+behaves identically on the server variant. The only entry points whose answers differ between the
+builds are the variant query and the batched ones (L12).
+`[designed-not-built]`. Source: as L12.
 
 **L14. A batch crosses as an Arrow C Data Interface array and schema the receiver owns.** The
 receiver releases it the Arrow way; the shim keeps nothing of it. A window's loss count and reason
@@ -292,15 +312,20 @@ both" ("the shim passes the refusal through"). `subscriber_arrow.cpp:39-46` thro
 (`containment.cpp:62-66`); a `std::invalid_argument` at a seam origin would become `FL_INTERNAL`
 (`containment.cpp:76-82`), so the pass-through depends on domain 7 keeping that type.
 
-**L16. A caller can tell which variant it loaded before it calls a server entry point.**
-`[designed-not-built]`. Source: round-designer, from L6's handshake: today `fl_binding_abi_version`
-cannot distinguish two builds of one version, and a P/Invoke caller would learn of a missing entry
-point only by `EntryPointNotFoundException` at first call. **Unsure** whether the owner wants this as
-a law or leaves it to each binding; the mechanism is open (Q1).
+**L16. A caller can ask the loaded shim which variant it is.** Both builds export one variant
+query, callable before anything else and from any thread, as `fl_binding_abi_version` is. A caller
+that asks never has to learn its build from a missing symbol; one that does not ask gets L12's named
+refusal, never a crash.
+`[designed-not-built]`. Source: ruling 2026-11-13, "Wrong build: Clear 'not supported'" ("the program
+can ask the shim which build it has … via a query that both builds export"; D23). Today
+`fl_binding_abi_version` cannot tell two builds of one version apart. The query's name, its answer's
+type, and whether it changes the ABI version (Q8) are the shim round's design.
 
-**L17. One shim per process holds across variants.** A process loads the edge variant or the server
-variant, never both; both export the marker, so L5's check refuses the later one.
-`[designed-not-built]`. Source: the 2026-11-12 rejection of a second native library, D-BIND-17.
+**L17. One shim per process holds across variants and packages.** A process loads the edge variant
+or the server variant, never both, even when the application references both the base and the
+server package. Both builds export the marker, so L5's check refuses the later one.
+`[designed-not-built]`. Source: the 2026-11-12 rejection of a second native library; D-BIND-17 as
+revised 2026-11-13 ("two packages, each a full shim; one shim per process still holds"; D22).
 
 ## 4. The interface
 
@@ -321,6 +346,8 @@ Surface, `h` sections in order (ABI 0.7, 47 entry points, every one implemented)
   `SubscriberArrow::Subscribe(segments, RecordBatchCallback, BatchOptions, TopicOptions)`
   (`subscriber_arrow.hpp:77-160`) and its unsubscribe. Its C shape is the shim round's design, within
   L12-L17.
+- **Both builds** `[designed-not-built]`: the variant query (L16). The edge build exports the batched
+  entry points too, answering a named not-supported refusal (L12).
 
 **Who calls, and on which thread:**
 - Any entry point from any thread; `fl_codec` and `fl_rows` are immutable and shared without locks
@@ -334,8 +361,9 @@ Surface, `h` sections in order (ABI 0.7, 47 entry points, every one implemented)
 
 **Builds** (`conanfile.py:30-46`): the shipped shim; `with_probe_shim` adds the test-only
 `fletcher-c-abi-probe` (in the package ID, so it cannot pass for a release); `run_tests` adds the
-gtest suites and the test-only Arrow C++ oracle (not in the package ID). The server variant's build
-switch, package and file name are open (Q1, Q5).
+gtest suites and the test-only Arrow C++ oracle (not in the package ID). The server variant ships
+in its own .NET package (D22); its build switch and native file name are the shim round's design
+(Q5a).
 
 ## 5. Decisions of record
 
@@ -348,8 +376,8 @@ switch, package and file name are open (Q1, Q5).
 | D5 | Everything a delivery receives is borrowed; one callback at a time per subscription; no thread affinity. | D-BIND-2a |
 | D6 | The shim statically links and registers `inprocess`, `fastdds`, `xrce`; a path selector is `kNotSupported`; a binding never registers a provider or resolver. | D-BIND-3 (amended 2026-09-11), D-BIND-24 |
 | D7 | Zero-copy for rows and attachments, proven by a copy oracle; the oracle runs through a test-only probe shim. | D-BIND-4, D-BIND-58, -61, -62 |
-| D8 | Native assets live in one package, `Eiva.Fletcher.Interop`. | D-BIND-13 |
-| D9 | Exactly one copy of Fletcher per process, checked at load. | D-BIND-17 (2026-09-11, Q11) |
+| D8 | Native assets live in one package, `Eiva.Fletcher.Interop`. **Revised 2026-11-13 (D22):** two packages carry native assets, each a full shim. Annotating D-BIND-13 is owed. | D-BIND-13 |
+| D9 | Exactly one copy of Fletcher per process, checked at load. **Revised 2026-11-13 (D22):** two packages each ship a shim; still only one may load per process (L5, L17). Annotating D-BIND-17 is owed. | D-BIND-17 (2026-09-11, Q11) |
 | D10 | Errors: one numbered type per side, number and message always cross in a caller-owned `fl_error`; one containment site per direction; outcomes are values. | D-BIND-1c, D-BIND-19, D-BIND-54 |
 | D11 | A callback's `fl_error` message is borrowed to the shim; the shim copies and frees nothing. | D-BIND-32 |
 | D12 | Timeouts: `INT64_MAX` is the unbounded form, negative refused; byte bounds, never characters. | D-BIND-20; for batches D-D7O-1 |
@@ -358,10 +386,14 @@ switch, package and file name are open (Q1, Q5).
 | D15 | The shim's codec carries the proto mapping; dictionaries encode and decode as their value type. | D-BIND-39, D-BIND-36 |
 | D16 | Bound rows publish only to a topic this publisher declared, with the same wire layout. | D-BIND-60, -65, -67 |
 | D17 | ABI 0.7 adds `fl_decode_rows_framed`, which serves C#'s managed batcher. | D-BIND-68 |
-| D18 | The MSVC runtime stays dynamic; the Windows shim's DLL imports are an exact allow-list; a 12 MB packed ceiling on `Eiva.Fletcher.Interop`, Windows exports accepted. | D-BIND-38, -155, -148, -157 |
+| D18 | The MSVC runtime stays dynamic; the Windows shim's DLL imports are an exact allow-list; a 12 MB packed ceiling on `Eiva.Fletcher.Interop`, Windows exports accepted. **2026-11-13 (D22):** the 12 MB ceiling stays on the base package; the server package's ceiling is not ruled. | D-BIND-38, -155, -148, -157 |
 | D19 | **The shim is built in two variants from one source**: edge (exactly as today, no Arrow C++, embedded devices) and server tier (adds the batched subscribe). C# on desktop loads the server variant. A second native library is rejected. | Owner ruling 2026-11-12, "one shim, two variants" |
 | D20 | **The domain is the C ABI shim alone, both variants;** each language binding is its own domain. | Owner ruling 2026-11-12, "Shim only" |
 | D21 | One batch assembler, domain 7's; the shim passes domain 7's refusal through. | Owner rulings 2026-11-12 (d7 D16, "Refuse both") |
+| D22 | **The server variant ships in its own .NET package.** Apps that publish and subscribe per row stay small; apps that want batches add the second package. D-BIND-157's ceiling stays on the base package. D-BIND-13 and D-BIND-17 are revised: two packages, each a full shim; one shim per process still holds (L5, L17). | Owner ruling 2026-11-13, "Packaging: Separate server package" ([RIX-rulings.md](../../plans/RIX-rulings.md)) |
+| D23 | **Both builds export a variant query; the batched entry points on the edge build answer a named not-supported status**, never a missing symbol. The edge surface gains only that query and those refusals (L12, L16). | Owner ruling 2026-11-13, "Wrong build: Clear 'not supported'" |
+| D24 | **The shim's row codec is domain 2's;** domain 9 hosts it. Former L10 moves to domain 2 (d2 L2, L8). Resolves Q2. | Owner ruling 2026-11-13, "Codec owner: Domain 2" |
+| D25 | **Domain 9's laws L1-L17 are confirmed** as amended by D22-D24; domain 9 is `specified` and stage design may start. | Owner ruling 2026-11-13, "Laws: Confirm, adjusted by answers" |
 
 ## 6. Relationships
 
@@ -371,8 +403,9 @@ switch, package and file name are open (Q1, Q5).
   destroy inside a delivery are domain 3's answers.
 - **Domain 6 (driver ABI).** The mirror image below the seam; no shared header (D4). The path selector
   waits for PDA-ABI's resolver seat.
-- **Domain 2 (row encoding).** The shim hosts a second driver of domain 2's wire format, bound to it by
-  byte identity (L10). Domain 2's `BatchDecoder` will run inside the server variant (via domain 7).
+- **Domain 2 (row encoding).** Owns `NanoarrowCodec`, which this domain hosts (D24): what it writes
+  and refuses is domain 2's law (d2 L2, L8). This domain owns its entry points, handles and
+  containment. Domain 2's `BatchDecoder` will also run inside the server variant (via domain 7).
 - **Domain 4 (transports).** Three providers are linked into the shim as built-ins; their limits
   (XRCE's `domain_id` ≤ 65535, no schema channel outside `fastdds`) reach callers unchanged.
 - **Domain 7 (batch assembly).** The server variant exposes it (L15). Obligations from d7 §4 and §6:
@@ -389,15 +422,16 @@ switch, package and file name are open (Q1, Q5).
 
 | # | Question | Owner |
 |---|---|---|
-| Q1 | **How does a caller tell which variant it loaded?** Options include a distinct file name, a variant query entry point (added to the edge variant too, which changes its surface), or the presence of a symbol. L16 is proposed; the mechanism is not. | owner |
-| Q2 | **Who owns `NanoarrowCodec`?** It implements domain 2's wire format, lives in this domain's artifact, and is the edge variant's only codec. Is L10 domain 9's law or domain 2's? | owner |
-| Q3 | Does the edge variant's header **declare** the server entry points (unexported, a "link error" by L6, a run-time error through P/Invoke), not declare them (two headers, or a `#if`), or **export them answering `FL_NOT_SUPPORTED`**, the status `h:75-77` reserves for "this build cannot do the thing"? The last changes the edge surface, against "exactly as today". | owner |
+| Q1 | Resolved 2026-11-13 (D23, L16): a variant query both builds export. Its name and answer type are the shim round's design. | — |
+| Q2 | Resolved 2026-11-13 (D24): domain 2 owns `NanoarrowCodec`; former L10 is d2 L2 and L8. | — |
+| Q3 | Resolved 2026-11-13 (D23, L12): one surface; the edge build exports the batched entry points and refuses them by name. Residue: whether "named" is `FL_NOT_SUPPORTED` plus a message (read so here) or a new status number (a seam stop-and-ask). | shim round, owner if a new number |
 | Q4 | How is "the edge variant links no Arrow C++" enforced once the server variant links it from the same build? The size ceiling is a proxy; a symbol or dependency-graph check would be structural. | shim round |
-| Q5 | **Packaging.** Does the server variant ship in `Eiva.Fletcher.Interop` beside the edge one, in its own package, or replace it in Interop? Each option meets a BIND decision (Findings e). | owner |
+| Q5 | Resolved 2026-11-13 (D22): the server variant ships in its own .NET package; D-BIND-157 stays on the base package; D-BIND-13 and -17 revised. | — |
+| Q5a | Packaging residue the ruling does not settle: do the two packages' native files have distinct names (so both can sit in one app's output), does the server package depend on the base one, how does a binding choose which to load, and does the server package get a size ceiling of its own? | shim round, with the C# switch round (domain 10) |
 | Q6 | How do a batch's row-aligned attachments, `BatchStatus` and a null batch cross? Per-row `fl_attachments` handles, a flattened form, or a C Data column? | shim round, then owner if it widens the seam's vocabulary |
 | Q7 | How are `kNoTimeout` and L15's refusal expressed in the C signature: an `int64_t timeout_ms` with `INT64_MAX` as no timeout (as `fl_schema_arrival_wait` does), and `FL_INVALID_ARGUMENT` with domain 7's message? D-D7O-1 says a plain value; confirm the field width. | shim round |
-| Q8 | Does the server variant **version** separately? One `FL_BINDING_ABI_VERSION` for both, or a minor bump when the server additions land (L6 says every change bumps; the edge surface does not change)? | owner |
-| Q9 | After the C# switch, `fl_decode_rows_framed` exists only for the deleted managed batcher. Does it stay (L13: the edge surface is unchanged) or go (a 0.x minor may remove it)? | owner, with domain 10 |
+| Q8 | Does the server variant **version** separately? One `FL_BINDING_ABI_VERSION` for both, or a minor bump when the query and batched entry points land? Since D23 the edge surface changes too, so L6 says both builds bump. | owner |
+| Q9 | After the C# switch, `fl_decode_rows_framed` exists only for the deleted managed batcher. Does it stay (L13: the edge surface is unchanged) or go (a 0.x minor may remove it)? Also carries Findings (d)6. | C# switch round (domain 10) |
 | Q10 | Which consumer loads the edge variant once C# desktop moves? "Embedded devices" has no RID today (D-BIND-27: `win-x64`, `linux-x64`; `linux-arm64` first addition). | owner |
 | Q11 | A batched dictionary column arrives re-folded (domain 2's `BatchDecoder`), while `fl_decode_rows` returns its value type (D-BIND-39, D-BIND-59). Is that difference intended for a server-variant caller? | domain 2, with domain 10 |
 
@@ -411,8 +445,9 @@ switch, package and file name are open (Q1, Q5).
 3. **State ownership in the header's three words,** name the one release function, and make the
    handle tolerate any release order (L3).
 4. **Bump and record.** Append to the header, bump the minor, record the ruling; never stub (L6).
-5. **Variant discipline** (proposed): an addition that needs Arrow C++ goes in the server variant only,
-   and the edge variant's build, links and size check are re-run unchanged (L8, L12, L13).
+5. **Variant discipline:** an addition that needs Arrow C++ is implemented in the server variant only;
+   the edge build exports it as a named not-supported refusal (L12), and its links and size check are
+   re-run unchanged (L8, L13). A change to the codec's bytes is domain 2's (D24).
 6. **Record the change.** Write any change to a law here before writing the code, with its build state.
 
 ## Findings (reported, not fixed)
@@ -436,12 +471,13 @@ switch, package and file name are open (Q1, Q5).
 
 **(b) Rules answered in two places**
 1. **Encoding the wire format:** `NanoarrowCodec` and `arrow-bridge`'s `Codec`, held together by byte
-   identity (L10, D-BIND-39). Accepted by decision; recorded.
+   identity (D-BIND-39). Accepted by decision; since 2026-11-13 both are domain 2's (d2 L2; D24).
 2. **"May these rows be published on this topic?"** `RequireRowsMatchTopic` (`cpp:182-222`) and C++
    `PublisherArrow`'s per-topic codec. Same answer by design (D-BIND-67), two sites, no test that
    compares them.
 3. **"Are these bytes a valid row?"** `NanoarrowCodec::DecodeRows`/`DecodeRowsFramed` and domain 2's
    `BatchDecoder`. Today in different binaries; in the server variant, in one. No parity test.
+   Domain 2's question since 2026-11-13 (d2 L8).
 4. **Range checks on a timeout:** `SchemaArrival::Wait` refuses a negative; the shim forwards it
    (`cpp:941-946`). Not a second answer, recorded so the server variant follows the same pattern
    (L15).
@@ -454,21 +490,26 @@ switch, package and file name are open (Q1, Q5).
 - That the edge shim contains no Arrow C++ (L8): only the size ceiling.
 - The Windows half of the export-table property: violated, accepted (L7).
 
-**(d) Tier-1 collisions for the owner** (between a BIND decision, a 2026-11-12 ruling and the code;
-listed, not resolved)
+**(d) Tier-1 collisions for the owner** (between a BIND decision, a 2026-11-12 ruling and the code).
+Items 2-4 resolved by the 2026-11-13 packaging ruling (D22); item 6 handed to the C# switch round.
 1. **BIND Decision 6 / D-BIND-1a rider ii vs "one shim, two variants".** Known and accepted as a
    partial supersession (R-4); the annotation is owed by the shim round.
 2. **D-BIND-157 (12 MB packed ceiling on `Eiva.Fletcher.Interop`) vs C# desktop loading a server
    variant that carries Arrow C++.** If the server variant ships in Interop, the ceiling (and CI's
    12 MiB / 20 MiB shim ceilings, whose message says they exist to catch Arrow C++) will trip; the
-   2026-11-12 ruling records the Arrow C++ cost, not the ceiling.
+   2026-11-12 ruling records the Arrow C++ cost, not the ceiling. **Resolved 2026-11-13 (D22):** the
+   server variant ships in its own package; the ceiling stays on the base package.
 3. **D-BIND-13 (native assets in ONE package) vs a server variant in its own package.** Shipping it
    separately breaks D-BIND-13 ("Adding native assets to a second package → STOP-AND-ASK").
+   **Resolved 2026-11-13 (D22):** D-BIND-13 revised; annotation owed.
 4. **D-BIND-17 ("no other binary the package ships carries Fletcher code") vs one package carrying
    both variants per RID.** Shipping both in Interop means two Fletcher binaries in one package.
-   Items 2-4 together mean every packaging choice meets one locked decision (Q5).
+   Items 2-4 together meant every packaging choice met one locked decision. **Resolved 2026-11-13
+   (D22):** D-BIND-17 revised to two packages each carrying a full shim, one loaded per process
+   (L5, L17); annotation owed.
 5. **D-BIND-1a rider i ("a .NET process is never the microcontroller", so the edge/server split "may
    not need mirroring in C#") vs the variant split now being mirrored in what C# loads.** Probably
    compatible (desktop C# loads server); listed because the rider argued the opposite direction.
 6. **D-BIND-25's managed Arrow tier and D-BIND-68's `fl_decode_rows_framed`** exist for the batcher the
    2026-11-12 ruling deletes (d7 D16 records D-BIND-25's supersession; D-BIND-68 is not mentioned).
+   **Owned by the C# switch round (domain 10)**, with Q9.
