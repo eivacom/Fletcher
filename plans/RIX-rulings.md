@@ -391,3 +391,15 @@ its reason kept; one site in the shim (register BC-12); domain 7 untouched. (2) 
 corrections listed in `plans/D9S-pre-round-audit.md` are approved** and applied before the round.
 **Applies to:** d9 (a new law or an L14 clause), register BC-12, the audit's F-rows.
 *Ingested (D9S pre-round, 2026-11-13): (1) d9 law L18 (a new law, not an L14 clause: its own question, site and test), D30, §2 "Hand-over", register BC-12; (2) d9 D31 and the F-rows: d9 (F1, F3, F4, F6, F7, F9, F15), BIND annotations (F17–F19), `binding.h` comments (F10, F22, F23), `c-abi/README.md` (F24–F26), these ledger notes (F27); register BC-10 to BC-15 and notes on BC-5, BC-8, BC-9.*
+
+## 2026-11-13 — D9S-2: the server build is its own file
+> "(a) Its own name (Recommended)"
+
+*(Chosen option, D9S-2 Stage Brief Decision 1.)* Its text: "Users: both files can sit in one
+folder, an operator can tell from the file which build is deployed, and a process that loads both
+refuses the second by name. Architecture: serves one-shim-per-process (L17), the two-package ruling
+(D22) and 'C# loads the server build only if it references the server package' (D29); the C# round
+must teach C# the new name or rename it when packing."
+**Ruling:** **the server build's native file has its own name** (`fletcher-c-abi-server`); the C#
+switch round teaches C# that name or renames it when packing (domain 10).
+**Applies to:** d9 Q5a (the shim-side half resolved); D9S-2 design; D9S-7 (both in one process).
