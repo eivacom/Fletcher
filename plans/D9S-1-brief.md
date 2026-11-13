@@ -42,5 +42,5 @@ Declared net lines: **+85 / −21**, counted as the raw diff will count them: pr
 Touched production: 28 lines (about 10 non-comment) in 3 files. New public surface: 2 (one type, one function). Design cycles used: 1/2.
 
 ---
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
-<delta vs the above — actual net lines, anything retired or added the brief did not predict, fix cycles used>.
+*As landed (2026-11-13, `fcb7be6`):*
+Production +23/−2 (19 touched non-comment lines, 3 files; light lane held) vs declared +25/−3; tests +80/−1, docs +28/−17. Fix cycles 0. Nothing retired. 4b nits n1 (variant answers in a refused shim, untested) and n3 (CI export check names only the version query) booked into D9S-2.

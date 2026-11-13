@@ -13,7 +13,7 @@
 > batch the shim cannot hand over is reported (D30; new law L18); the audit's tier-2 corrections
 > (D31). Audit: [D9S-pre-round-audit.md](../../plans/D9S-pre-round-audit.md).
 
-**Mode: survey for everything that exists, verified against the tree at `180b2d7`** (branch
+**Mode: survey for everything that exists, verified against the tree at `180b2d7`; D9S-1 (`fcb7be6`) added 15 header lines, so `h:N` citations after `h:172` are about 15 low** (branch
 `feature/shim-server-variant`). The code is ground truth. `binding.h`'s comments, `c-abi/README.md`,
 the BIND plan ([BIND-csharp-bindings.md](../../plans/BIND-csharp-bindings.md)) and its digest
 ([BIND-locked-decisions.md](../../plans/BIND-locked-decisions.md)) are claims checked against it.
