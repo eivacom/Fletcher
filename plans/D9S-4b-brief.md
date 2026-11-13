@@ -51,6 +51,5 @@ None. I checked every stop trigger and none fires:
 - New public surface: 0. Design cycles used: 1/2.
 
 ---
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
-<delta vs the above — actual net lines, anything retired or added the brief did
-not predict, fix cycles used>.
+*As landed — 4b, 2026-11-13:*
+Production: 12 non-comment lines touched (+11/−1) in 2 files, against a declared ~+12/−1; light lane held. Tests: the forcing test, plus one NULL-list assertion added to 4a's no-batch test (0b note). d9 L14's attachments clause is `[built]` (Windows). BC-13 gained no clause, because its text never names attachments; the brief's prediction was wrong. The record fix corrected d9 L14's stale `fl_decode_rows` pointer. Cycles: design 0 (brief only), fix 0, implementer launches 1 (resumed once).

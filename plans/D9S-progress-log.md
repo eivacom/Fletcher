@@ -124,3 +124,24 @@ scope). Record: d9 L8 / design said `run_tests` leaves the package ID — false 
 - Suite agent: `locate_shim.sh` refuses when the cache holds several recipe revisions, and a stale shim in the `bin` folder could have produced a silent false green.
 
 **Owner, 2026-11-13 (words-per-stage tripwire, about 7,300 vs 6,520):** "Tighter caps (Recommended)". The design cap is now 150 and the review cap 60 for the remaining full-loop stages; config and ledger updated.
+
+## D9S-4b — Each batch row carries its own attachments to the C caller — 🟢 2026-11-13 (light lane)
+
+**Landed:** `b09fc64`, with the record fix in `6b7b29c`. `fl_batch` gains `attachments`, appended at the end of the struct. It holds `num_rows` sets, none of them NULL, with an empty set for a row that has no attachments. The list itself is NULL exactly when the batch has 0 rows. The thunk moves domain 7's per-row vector into a deque of `fl_attachments`, borrowed for the duration of the callback. The shim adds no check of its own (L15).
+
+**Steps:**
+- 0a CLEAR.
+- Brief `023152b`, with no owner decisions.
+- Phase A: red, at compile time and at runtime.
+- 0b CLEAR. Its note 2 was taken: 4a's no-batch test now asserts a NULL list.
+- Phase B: green.
+- Code review 4b: 0 blocking, 2 nits (reserve the pointer list; an out-of-memory leak shared with the row path).
+
+**Verification:** c-abi server 105/105 and edge+probe 114/114. Conformance 11/11 on edge and on a renamed copy of the server shim. pubsub-arrow-fastdds 4/4. CI and Linux unrun.
+
+**Numbers:** 12 touched non-comment production lines in 2 files, against a declared ~13. Design cycles 0, fix cycles 0, implementer launches 1. Owner touches 0.
+
+**Recorded:**
+- BC-13 gained no attachments clause, because its text never named attachments; the brief's line was wrong.
+- d9 L14's stale `h:1061-1066` pointer was corrected to `h:1180-1183`.
+- The suite agent's `--help` misuse created a stray directory, which it removed.

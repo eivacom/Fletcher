@@ -10,3 +10,5 @@
 | 2026-11-13 | D9S-3 | `check_edge_arrow_free` | 115b1e5 |
 | D9S-4a | `Batches.EachClosedWindowCrossesAsAnImportableBatchInWindowOrder`, `.AWindowThatCouldNotBeBuiltArrivesAsNoBatchWithItsRowsCounted`, `.TheBuildAnswersABatchedSubscribeAsItAnswersTheQuery` green on server; edge answers with a refusal; BC-9 scan + control | server 104/104, edge+probe 114/114 at `e57e7af` (implementer, PM ran the forcing tests) | binding-abi-conformance edge 11/11; server shim 11/11 **only when staged under the edge file name** (the binding loads by name: Q5a / D9S-7), 1/11 under its own name; pubsub-arrow-fastdds 4/4; **CI and Linux unrun** | `e766c3e`, `8383095`, `e57e7af` |
 | 2026-11-13 | D9S-4 | `EachClosedWindowCrossesAsAnImportableBatchInWindowOrder` | e57e7af |
+| D9S-4b | `Batches.EachBatchRowCarriesItsOwnAttachments` (red: runtime, NULL list; green) + NULL-list assertion in the 4a no-batch test | server 105/105, edge+probe 114/114 at `b09fc64` | binding-abi-conformance edge 11/11, server shim renamed 11/11; pubsub-arrow-fastdds 4/4; **CI and Linux unrun** | `b09fc64` |
+| 2026-11-13 | D9S-4b | `EachBatchRowCarriesItsOwnAttachments` | 6b7b29c |
