@@ -429,3 +429,15 @@ exemption logic."
 **Ruling:** **with tests off, the edge build's graph may hold no Arrow package at all, test-only or
 not**; Arrow reaches test binaries only through dependencies added when tests are built.
 **Applies to:** register BC-11, ladder rung 3, d9 L8's "How it is enforced"; `check_edge_arrow_free.sh` unchanged.
+
+## 2026-11-13 — D9S-4: position-independent code for pubsub-arrow and arrow-bridge
+> "Allow the build option (Recommended)"
+
+*(Chosen option; D9S-4 design review B3.)* Its text: "Users: none — no behaviour or API change; the
+server build links on Linux. Architecture: one-domain scope is bent by a named, build-only exception in
+domain 7's and domain 2's recipes (an fPIC option copied from 'pubsub'); their code and laws are
+untouched. Serves the round purpose (batches through the shim on Linux)."
+**Ruling:** **D9S-4 may add an `fPIC` option (default on; deleted on Windows) to
+`pubsub-arrow/conanfile.py` and `arrow-bridge/conanfile.py`**, exactly as `pubsub` has it — a named
+scope exception; no other edit to domains 7 or 2.
+**Applies to:** D9S-4 design branch (a); D-D9S-8's out-of-scope list (this one exception).

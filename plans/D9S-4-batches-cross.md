@@ -4,38 +4,38 @@ Round D9S, item D9S-4, ladder rung 4 (`plans/D9S-test-ladder.md`). Tree `8854773
 Authority read: d9 §1, §3 (L1-L4, L8, L11-L18), §4, §5, §7 (Q6, Q7, Q11, Q12); d7 §3 (L1, L3-L7, L9,
 L12, L15), §4, §6; `subscriber_arrow.hpp`; register BC-8 to BC-15; `plans/D9S-locked-decisions.md`;
 `plans/reviews/D9S-4-audit-0a.md` (CLEAR). **Rulings ledger:** `plans/RIX-rulings.md` read top to
-bottom: **431 lines**, last heading **"2026-11-13 — D9S-3: a test-only
-Arrow dependency of the edge build is refused too"** (l.421). No tier-1 disagreement found.
+bottom: **431 lines**, last heading **"2026-11-13 — D9S-3: a test-only Arrow dependency of the edge
+build is refused too"** (l.421). No tier-1 disagreement. **Cycle 2** answers review B1-B3
+(`plans/reviews/D9S-4-design-review.md`). DEBT-1 and DEBT-2 stand for the implementer.
 
 ## Summary
 
-On the server build, a new entry point, `fl_subscriber_subscribe_batches`, forwards to domain 7's
+On the server build, `fl_subscriber_subscribe_batches` forwards to domain 7's
 `SubscriberArrow::Subscribe(segments, RecordBatchCallback, BatchOptions, TopicOptions)` with the
-options as given. A thunk then hands each window to the C caller as one `fl_batch`. The `fl_batch`
-holds an Arrow C Data array and schema, borrowed for the call and kept only by Arrow's move. It also
-holds the reason, the loss count and one `fl_attachments` per row. A window domain 7 could not build
-arrives with no array and no schema. On the edge build and the probe shim, the same entry point
-answers `FL_NOT_SUPPORTED` at the door, having done nothing. `pubsub-arrow` is required and linked
-only under `variant=server`.
+options as given, and returns an id tagged as batched. A thunk hands each window to the caller as
+one `fl_batch`. It holds an Arrow C Data array and schema, borrowed for the call and kept only by
+Arrow's move, plus the reason and the loss count; 4b adds one `fl_attachments` per row. A window
+domain 7 could not build arrives with no array and no schema. The edge build and the probe shim
+answer `FL_NOT_SUPPORTED` at the door. `pubsub-arrow` is linked only under `variant=server`.
+**Split now:** 4a carries everything except attachments, and 4b appends them (Risks).
 
 ## Design
 
 ### The C surface (binding.h; ABI stays 0.8, D27: the minor was bumped once, in D9S-1)
 
 ```c
-typedef enum fl_batch_reason {            /* domain 7's BatchStatus::Reason; 0 is never a reason */
-    FL_BATCH_ROW_LIMIT = 1,               /* max_rows reached, or the offset budget (d7 L4)     */
-    FL_BATCH_TIMEOUT   = 2,               /* the window's deadline passed (d7 L5)               */
-    FL_BATCH_CLOSING   = 3,               /* the subscription is closing (d7 L9)                */
-} fl_batch_reason;
+/* domain 7's BatchStatus::Reason, as fl_batch.reason values; 0 is never a reason (review B2) */
+#define FL_BATCH_ROW_LIMIT 1              /* max_rows reached, or the offset budget (d7 L4)     */
+#define FL_BATCH_TIMEOUT   2              /* the window's deadline passed (d7 L5)               */
+#define FL_BATCH_CLOSING   3              /* the subscription is closing (d7 L9)                */
 
 typedef struct fl_batch {                 /* written by the shim, read through a pointer        */
-    fl_batch_reason reason;
+    int32_t reason;                       /* an FL_BATCH_* value, int32_t as fl_error's fields  */
     int64_t rows_dropped;                 /* d7 BatchStatus::rows_dropped, as given             */
     int64_t num_rows;                     /* rows in `array`; 0 when there is no array          */
     struct ArrowArray*  array;            /* NULL: no batch could be built (d7 L7)              */
     struct ArrowSchema* schema;           /* NULL exactly when array is NULL                    */
-    const fl_attachments* const* attachments; /* num_rows entries, none NULL; NULL if 0 rows    */
+    /* 4b appends: const fl_attachments* const* attachments; (num_rows entries, none NULL)     */
 } fl_batch;
 
 typedef void (*fl_batch_fn)(void* ctx, const fl_batch* batch);
@@ -50,52 +50,48 @@ The header comments state, in the header's own words:
 - **Ownership (L14, D26, BC-13).** Everything `fl_batch` points to is borrowed for the call. A
   binding keeps the batch only by Arrow's move: it copies each struct and sets the source's
   `release` to NULL. Whatever still has a non-NULL `release` when the callback returns, the shim
-  releases then, exactly once. An attachment's blob is kept by `fl_blob_retain`, as on the row path.
-- **Threads (L15, d7 L12, D10).** `on_batch` runs on domain 7's batch thread for this subscription,
-  one batch at a time, in window order, never inside `Publish`. A batch may arrive before the
-  subscribe returns. The callback must not throw (as `fl_delivery_fn`).
-- **Options (L15, BC-8, BC-14, Q7).** `max_rows` and `timeout_ms` go to domain 7 as given;
-  `INT64_MAX` ms is `kNoTimeout`. An out-of-range value is domain 7's `FL_INVALID_ARGUMENT`, with its
-  message, before anything is subscribed. The shim checks neither value.
-- **Build (L12, D28, Q12).** On the edge build: `FL_NOT_SUPPORTED`, whatever the arguments, origin
-  `FL_ORIGIN_SEAM`, with a message naming the edge build and the server build's file
-  `fletcher-c-abi-server`. OUT parameters are untouched and the callback is never stored.
-- Otherwise the row subscribe's rules: NULL `options` is all-empty, outputs are written only on
-  success, and the caller disposes the arrival.
+  releases then, exactly once. (4b: an attachment's blob is kept by `fl_blob_retain`, as on the row path.)
+- **Ids (B1).** A batched id has bit 63 set and a row id never does: a counter starting at 1 would
+  need 2^63 subscriptions to reach it. Stage 5's close refuses an untagged id.
+  `fl_subscriber_unsubscribe` is unchanged; it treats a tagged id as unknown, a no-op (L13).
+- **Same topic, one provider (seam §7 clause 4: one callback per topic per instance).** Batched
+  subscriptions run on a second `Subscriber`, so a row subscription and a batched one to the same
+  topic through one provider collide, as two subscriber handles do today. On `inprocess` the later
+  silently replaces the earlier: the earlier stops receiving, and its arrival answers
+  `FL_SUBSCRIPTION_ENDED`. On `fastdds` the later is refused with `FL_INVALID_ARGUMENT` ("already
+  subscribed"). Batched subscriptions to one topic share one provider subscription, as row ones do.
+- **Threads (L15, d7 L12).** Domain 7's batch thread, one batch at a time, in window order. A batch
+  may arrive before the subscribe returns, and the callback must not throw.
+- **Options (L15, BC-8, BC-14).** Passed as given, with `INT64_MAX` = `kNoTimeout`. An out-of-range
+  value gets domain 7's `FL_INVALID_ARGUMENT` and message; the shim checks neither.
+- **Build (L12, D28).** The edge build answers `FL_NOT_SUPPORTED` whatever the arguments, with
+  `FL_ORIGIN_SEAM` and a message naming the edge build and `fletcher-c-abi-server`. Its OUTs are
+  untouched and nothing is stored. Everything else follows the row subscribe's rules.
 
-**Q6 resolved (no new seam vocabulary):** the reason gets a C spelling, as each seam value does
-(d9 §1), and loss crosses as `int64_t`. "No batch could be built" is `array == schema == NULL`, a
-different case from a zero-row batch (`array != NULL`, `num_rows == 0`; d7 L6, L7). Attachments
-reuse `fl_attachments`, one per batch row, row-aligned (d7 L3). A row with none gets an empty set,
-never a NULL entry, so a binding keeps the one reader it has for the row path.
-
-**Q7 resolved:** `int64_t` for both options. `std::chrono::milliseconds(timeout_ms)` is exact
-(64-bit rep on MSVC and libstdc++), so `INT64_MAX` is `milliseconds::max()` = `kNoTimeout`,
-untranslated. The precedent is `fl_schema_arrival_wait` (`binding.cpp:941-959`).
-
-**Q12, edge-refusal half, resolved:** `FL_ORIGIN_SEAM`, the origin every refusal the shim makes
-itself already carries (null arguments, `RequireOut`, `RequireRowsMatchTopic`). Bindings switch on
-origin only for `(FL_INVALID_ARGUMENT, FL_ORIGIN_CODEC)` (D-BIND-54), so no new enumerator is
-needed. The `FL_ORIGIN_SEAM` comment widens to "…or the shim's own refusal of an argument or of a
-call this build cannot serve". The hand-over half of Q12 belongs to D9S-6.
-
-**L18's field is designed here and lands in D9S-6,** which appends `const fl_error* failure` to
-`fl_batch` (NULL unless the hand-over failed). Appending it with its producer means no field ever
-exists without one. The shim writes the struct and a binding reads it through a pointer, so the
-append changes no signature (L6, within the one 0.8 bump).
+**Q6 resolved (no new seam vocabulary).** The reason is named `int32_t` values (d9 §1), as
+`fl_error` stores its enums (`binding.h:319-324`; C leaves an enum's width open), and loss is
+`int64_t`. "No batch could be built" is `array == schema == NULL`, which differs from a zero-row
+batch (`array != NULL`, `num_rows == 0`; d7 L6, L7). In 4b, attachments reuse `fl_attachments`:
+one per row, aligned with the rows (d7 L3), with an empty set rather than a NULL entry.
+**Q7 resolved:** both options are `int64_t`. `milliseconds(timeout_ms)` is exact (64-bit rep), so
+`INT64_MAX` is `kNoTimeout`, untranslated, as in `fl_schema_arrival_wait` (`binding.cpp:941-959`).
+**Q12, edge-refusal half, resolved:** the refusal carries `FL_ORIGIN_SEAM`, as every refusal the
+shim makes itself does. D-BIND-54 switches only on `(INVALID_ARGUMENT, CODEC)`. The comment on
+`FL_ORIGIN_SEAM` widens to "…or the shim's own refusal of an argument or of a call this build
+cannot serve". The hand-over half belongs to D9S-6.
+**L18's field is designed here and lands in D9S-6.** D9S-6 appends `const fl_error* failure` (NULL
+unless the hand-over failed) with its producer. The shim writes the struct and a binding reads it
+through a pointer, so appending changes no signature (L6, within the 0.8 bump).
 
 ### One door, two backends (BC-10: the refusal reads the one constant)
 
-- **The entry point lives in `binding.cpp`** (shared by all three artefacts), as one
-  `Contain(err, FL_ORIGIN_SEAM, …)`:
-  1. First statement: `if (fl_binding_variant() != FL_VARIANT_SERVER) throw
-     PubSubError(kNotSupported, …)`. The refusal asks BC-10's single site; there is no `#if`.
-  2. `RequireOut` on both outputs, then a null `subscriber` or `on_batch` → `kInvalidArgument`, as
-     the row subscribe does.
-  3. Allocate the arrival **before** the subscription goes live (the row path's ordering,
-     `binding.cpp:825-832`), so only noexcept steps follow `Subscribe`.
-  4. `internal::SubscribeBatches(*subscriber, segments, max_rows, timeout_ms, topic options,
-     on_batch, ctx)` returns `{id, arrival}`; write the outputs.
+- **The entry point is in `binding.cpp`** (all three artefacts), one `Contain(err, FL_ORIGIN_SEAM, …)`:
+  1. First statement: `if (fl_binding_variant() != FL_VARIANT_SERVER) throw kNotSupported`. It reads
+     BC-10's single site; there is no `#if`.
+  2. `RequireOut` on both outputs, and a null `subscriber` or `on_batch` → `kInvalidArgument`.
+  3. The arrival is allocated before the subscription goes live (`binding.cpp:825-832`).
+  4. `internal::SubscribeBatches(…)` returns `{id, arrival}`. Write the outputs with
+     `*out_id = id | kBatchedIdTag` (bit 63; a file-local constant, reused by stage 5's close; B1).
 - **`internal::SubscribeBatches`** is declared in `handles.hpp` and defined in two backend TUs.
   `c-abi/CMakeLists.txt` picks which one in the **same `if (FLETCHER_SHIM_VARIANT …)` block** that
   already sets the per-target constant (`CMakeLists.txt:124-129`):
@@ -104,11 +100,10 @@ append changes no signature (L6, within the one 0.8 bump).
     calls `SubscriberArrow::Subscribe(segments, thunk, BatchOptions{max_rows,
     milliseconds(timeout_ms)}, topic_options)` and returns `{subscription_id, schema}`. The lock
     covers only the get-or-create, never the `Subscribe` call or a callback (L11).
-  - `src/batches_edge.cpp` (edge, and the probe target). The entry point refuses before it can
-    call this, so it is unreachable. It throws `kInternal` ("this artefact was built without the
-    batch assembler"), which reports a mis-build and never answers whether this build can batch.
-  - **Each backend `static_assert`s the per-target constant** (`FLETCHER_C_ABI_VARIANT ==
-    FL_VARIANT_SERVER` or `== FL_VARIANT_EDGE`). A backend linked into the wrong artefact therefore
+  - `src/batches_edge.cpp` (edge and probe) is unreachable, because the door refuses first. It
+    throws `kInternal` ("built without the batch assembler"): a mis-build report, never an answer
+    to "can this build batch".
+  - **Each backend `static_assert`s the per-target constant**, so a backend in the wrong artefact
     does not compile. The assert checks the build and decides no behaviour.
 - **`fl_subscriber` gains `std::mutex batches_mu; std::shared_ptr<void> batches;`,** declared
   after `subscriber`, so `~SubscriberArrow` runs first (domain 7 closes every batched subscription,
@@ -120,181 +115,186 @@ append changes no signature (L6, within the one 0.8 bump).
 
 It captures only `(on_batch, ctx)`, never the `fl_subscriber`. A destroy made inside the callback
 (rung 6) therefore leaves the remaining deliveries nothing to dangle on. Per delivery:
-1. Build one `fl_attachments` view per row from domain 7's row-aligned vector (moved in), plus the
-   array of pointers to them. This step may throw, and nothing is exported yet.
-2. Declare a local `ArrowArray` and `ArrowSchema`, zero-initialised, and give them a scope guard
-   that calls each `release` that is still non-NULL on every exit. **This guard is L14's rule** and
-   the one site of BC-13's batch half. It needs no "moved" flag: the C Data `release` pointer is the
-   only state.
-3. If the batch is non-null, call `arrow::ExportRecordBatch(*batch, &array, &schema)`. A non-OK
-   status is thrown as `PubSubError(kInternal, status message)`. D9S-6 replaces this throw with the
-   L18 delivery (BC-12's one site).
-4. Fill `fl_batch` (reason by `switch` over the three enumerators; `rows_dropped`; `num_rows =
-   batch ? batch->num_rows() : 0`; the pointers, or NULLs), then call `on_batch(ctx, &b)`.
-5. Return. The guard releases whatever the binding did not move, and the views die.
+1. (4b) Build one `fl_attachments` view per row from domain 7's aligned vector, plus a pointer
+   array. This may throw, and nothing is exported yet. In 4a the vector is dropped.
+2. A local `ArrowArray` and `ArrowSchema`, zero-initialised, with a scope guard that calls each
+   `release` still non-NULL on every exit. **This guard is L14's rule**, BC-13's one batch site. It
+   needs no "moved" flag: the `release` pointer is the only state.
+3. For a non-null batch, `arrow::ExportRecordBatch(*batch, &array, &schema)`. A non-OK status is
+   thrown as `PubSubError(kInternal, …)` until D9S-6 replaces the throw (BC-12).
+4. Fill `fl_batch`: the reason by a `switch` over domain 7's three values (DEBT-2),
+   `rows_dropped`, `num_rows`, and the pointers or NULLs. Then call `on_batch(ctx, &b)`.
+5. Return. The guard releases whatever was not moved.
 
-There is no window, count, timer, clock, queue or thread anywhere (BC-9, L15). Order and thread come
-from domain 7's single batch thread (d7 L12).
+There is no window, count, timer, clock, queue or thread (BC-9, L15). Order and thread are domain
+7's (d7 L12).
 
 ### Build (recipe and CMake)
 
-- **`conanfile.py`:** `if self.options.variant == "server": self.requires("fletcher-pubsub-arrow/0.5.1-alpha")`.
-  The `zlib/1.3.1` override, already required under `run_tests`, is shared when either option is on.
-  `"arrow/*:shared": False` goes into `default_options`, so the server shim stays one file per RID,
-  as the recipe's docstring promises. The edge graph is unchanged (BC-11; `check_edge_arrow_free.sh`
-  stays green with no edit). The comment at `conanfile.py:97-102` narrows to "the edge shim".
-- **`CMakeLists.txt`:** in the server branch, `find_package(fletcher-pubsub-arrow)`,
-  `target_sources(… src/batches_server.cpp)` and a PRIVATE link to `pubsub-arrow`. In the edge
-  branch, `src/batches_edge.cpp`. The probe target lists `src/batches_edge.cpp`. Visibility, the
-  version script and `--exclude-libs ALL` already hide Arrow's symbols (L7).
-- **CI:** `ci.c-abi.yml` gains `pubsub-arrow` in both legs' sparse checkout, and a `conan create
-  ../pubsub-arrow` after `arrow-bridge`. `ci.pr.yml`'s c-abi filter gains `pubsub-arrow/**`, because
-  a change there changes the server shim.
+- **`c-abi/conanfile.py`:** `variant == "server"` requires `fletcher-pubsub-arrow/0.5.1-alpha`. The
+  `zlib/1.3.1` override (today under `run_tests`) is shared by both, and `"arrow/*:shared": False`
+  keeps one file per RID. The edge graph is unchanged (BC-11). The comment at `:97-102` narrows to
+  the edge shim.
+- **`CMakeLists.txt`:** the server branch gets `find_package(fletcher-pubsub-arrow)`,
+  `batches_server.cpp` and a PRIVATE link. The edge branch and the probe target get
+  `batches_edge.cpp`. Visibility, the version script and `--exclude-libs ALL` hide Arrow (L7).
+- **CI:** `ci.c-abi.yml` adds `pubsub-arrow` to both legs' sparse checkout and `conan create`s it
+  after `arrow-bridge`. `ci.pr.yml`'s c-abi filter gains `pubsub-arrow/**`.
+- **PIC for a shared object (B3; the design assumes (a), PENDING OWNER RULING under D-D9S-8).**
+  `pubsub-arrow` and `arrow-bridge` are static packages without `fPIC`. Linking them into the Linux
+  `.so` fails as `pubsub` once did (`pubsub/conanfile.py:21-33`, `R_X86_64_TPOFF32`; `pubsub-arrow`
+  has a `thread_local`).
+  - **(a)** Add `fPIC` to `pubsub-arrow/conanfile.py` and `arrow-bridge/conanfile.py` exactly as
+    `pubsub` does: in `options` and `default_options` (True), deleted on Windows in
+    `config_options()`, with a comment citing `pubsub`. About +8 / −2 each. These are recipe lines,
+    not domain-7 or domain-2 code. Windows package IDs are unchanged; Linux IDs change and rebuild.
+  - **(b) If refused:** `.conan-profiles/Linux-gcc13-x86_64-Release` gains
+    `fletcher-pubsub-arrow/*:tools.build:cxxflags=["-fPIC"]`, the same for
+    `fletcher-arrow-bridge/*`, and `tools.info.package_id:confs=["tools.build:cxxflags"]` so that a
+    non-PIC binary is never reused (about +4). This is weaker: PIC then belongs to one profile, so
+    any other Linux profile fails at link. If (b) is refused too, stop: the Linux server leg cannot
+    build.
 
 ## Corner cases forbidden
 
 Rung 1 (unrepresentable):
-- **Arrow in the edge build:** the server backend and the `pubsub-arrow` link exist only in CMake's
-  server branch and the recipe's `variant=server` requirement (check: `check_edge_arrow_free.sh`).
-- **A mis-built artefact** (backend and constant disagree): `static_assert`, does not compile.
-- **The edge build half-serving a call:** the refusal is the first statement, before any argument
-  is read, so nothing is allocated, stored or written. The answer cannot depend on the arguments,
-  so BC-10's truth table (query = server ⇔ not `FL_NOT_SUPPORTED`) holds for every call.
-- **An `fl_schema` handed to a batch callback:** `fl_batch` has no such field (L14, BC-13).
-- **A moved batch released, or an unmoved one kept:** the struct's own `release` pointer decides
-  after the callback. There is no flag, so no second state can disagree with it.
-- **The shim answering options (BC-8) or batching (BC-9):** nothing reads `max_rows`/`timeout_ms`
-  except to build `BatchOptions`. There is no thread, timer, clock or queue (scan guard below).
-- **An id in the callback that may not be known yet:** a batch can arrive before `Subscribe`
-  returns, so the callback gets no id; a binding correlates by `ctx`.
+- **Arrow in the edge build:** only CMake's server branch and the recipe's `variant=server`
+  requirement name it (`check_edge_arrow_free.sh`).
+- **A mis-built artefact:** a `static_assert` means it does not compile.
+- **The edge build half-serving a call:** the refusal comes before any argument is read, so nothing
+  is allocated or written, and BC-10's truth table holds for every call.
+- **An `fl_schema` in a batch callback:** `fl_batch` has no such field (L14, BC-13).
+- **A moved batch released, or an unmoved one kept:** the `release` pointer decides; no flag.
+- **The shim answering options (BC-8) or batching (BC-9):** the options are only used to build
+  `BatchOptions`. There is no thread, timer, clock or queue (scan guard).
+- **An id in the callback that may not be known yet:** none is given; a binding correlates by `ctx`.
 - **A live subscription whose id never reaches the caller:** the arrival is allocated first, and
   only noexcept steps follow `Subscribe`.
-- **A batched subscription outliving its subscriber unseen:** the handle owns the host, and
-  destruction closes it through domain 7 (L9; the closing semantics are rung 6's).
-- **Attachments misaligned with rows, or a NULL entry:** one view per row of domain 7's aligned
-  vector (d7 L3), with an empty set for a row with none.
+- **A batched subscription outliving its subscriber unseen:** the handle owns the host, which is
+  closed through domain 7 (L9; rung 6).
+- **Attachments misaligned with rows, or a NULL entry (4b):** one view per aligned row (d7 L3).
+- **A row id equal to a batched id (B1):** bit 63 is set on batched ids only. Stage 5's close
+  refuses an untagged id, and the row unsubscribe sees a tagged id as unknown, a no-op (L13).
 
 Rung 2 (refused, typed, at the door): on the server build, a NULL `subscriber`, `on_batch`, `out_id`
 or `out_arrival` → `FL_INVALID_ARGUMENT`. On any non-server build → `FL_NOT_SUPPORTED`.
 
 Handled residue:
-- **H1. Two numberings on one subscriber.** Row ids and batched ids both count from 1 (one counter
-  per `Subscriber`, `pubsub/src/subscriber.cpp:267`). Stage 5's close (below) acts only on batched
-  ids, so a number given to the wrong close acts on the other kind. *Why not forbidden:* a separate
-  batch-subscriber handle costs four or more entry points (Brief Decision 1), and tagging ids would
-  change `fl_subscriber_unsubscribe`'s answer, an edge-surface change (L13; stop-and-ask).
-- **H2. A refused subscribe leaves the host behind.** A batched subscribe refused for its options
-  leaves the subscriber's batch host created, with no provider subscription. *Why not forbidden:*
-  only domain 7 answers the options (BC-8), and it is asked through its host. The host is
-  invisible, and the next batched subscribe reuses it.
-- **H3. Until D9S-6, a failed export is lost.** It throws into domain 7, which swallows it
-  uncounted (d7 L10). *Why not forbidden here:* L18's catch is rung 8's, red first with its
-  test-only seam. This is a coexistence window, closed by D9S-6 (Brief Decision 2).
+- **H1. Same-topic collision.** A row and a batched subscription to one topic through one provider
+  collide: on `inprocess` the later replaces the earlier silently, and on `fastdds` the later is
+  refused. *Why not forbidden:* "one callback per topic per instance" is domain 3's rule, enforced
+  differently per provider for any two subscribers. A shim refusal would be a third L4 exception
+  with per-topic bookkeeping, so it is offered as owner option (c) of Brief Decision 1. The split
+  is registered as a d3/d4 finding.
+- **H2. A refused subscribe leaves the host behind.** A subscribe refused for its options leaves an
+  empty batch host. *Why not forbidden:* only domain 7 answers options (BC-8), asked through the
+  host; the host is invisible and reused.
+- **H3. Until D9S-6, a failed hand-over is lost.** It throws into domain 7, which swallows it
+  uncounted (d7 L10; DEBT-1). *Why not forbidden here:* L18's catch is rung 8's, red first with its
+  test-only seam. It is a coexistence window, closed by D9S-6 (Brief Decision 2).
 
 ## Premises and stop conditions
 
-- **P1.** `milliseconds::rep` is signed 64-bit on both toolchains, so `INT64_MAX` is `kNoTimeout`.
-  *If false:* STOP-AND-ASK. Do not add a translation.
-- **P2.** Domain 7 refuses out-of-range options with `PubSubError(kInvalidArgument)` (d9 L15).
-  *If another type* (it would become `FL_INTERNAL`): STOP-AND-ASK. Never translate in the shim.
-- **P3.** `inprocess`, in its default `kAsDeclared` mode, delivers raw rows on an undeclared topic
-  with a null schema, so domain 7 has no decoder and sends a null batch
-  (`in_process_provider.cpp:30-39`). *If false:* use a topic whose schema domain 2 rejects (a nested
-  dictionary, d7 L8's test shape). That is still "a window domain 7 could not build". Stop only if
-  neither gives one.
-- **P4.** Arrow and `pubsub-arrow` link statically into the server shim with their symbols hidden.
-  On Linux this comes from `--exclude-libs ALL` and the version script. On Windows, static Arrow
-  carries no `dllexport`. *If* `check_shim_exports.sh` finds a non-`fl_` export on Linux, or the
+- **P1.** `milliseconds::rep` is signed 64-bit. *If not:* STOP-AND-ASK; add no translation.
+- **P2.** Domain 7 refuses with `PubSubError(kInvalidArgument)`. *If not:* STOP-AND-ASK; no translation.
+- **P3.** `inprocess` (`kAsDeclared`) delivers raw rows on an undeclared topic with a null schema,
+  so domain 7 sends a null batch (`in_process_provider.cpp:30-39`). *If false:* use a schema domain
+  2 rejects (a nested dictionary). Stop only if neither works.
+- **P4.** Arrow links statically with its symbols hidden (`--exclude-libs` and the version script;
+  no `dllexport` in static Arrow). *If* the export check finds a non-`fl_` Linux export, or the
   Windows `fl_` set differs: STOP-AND-ASK. Do not widen the export map.
-- **P5.** A second `Subscriber` on one provider (inside `SubscriberArrow`) is lawful; two
-  `fl_subscriber`s on one provider already exist. *If* a provider refuses: STOP-AND-ASK (domain 3).
-- **P6.** `~SubscriberArrow` from outside a callback closes and returns (d7 L9), so the tests tear
-  down by `fl_subscriber_destroy`. *If it hangs:* stop; that is rung 6's subject, not a workaround.
-- **P7.** Conan resolves `fletcher-pubsub-arrow` in the c-abi graph with the shared zlib override.
-  *If* it needs more: stop and report. Do not pin other packages blind.
+- **P8 (B3).** With PIC (branch (a) or (b)), the Linux server `.so` links. *If not:* stop and report.
+- **P5 (narrowed, B1).** A second `Subscriber` on one provider is lawful **for distinct topics**;
+  for the same topic it collides (H1). *If* a distinct topic is refused: STOP-AND-ASK (domain 3).
+- **P6.** `~SubscriberArrow` from outside a callback closes and returns (d7 L9). *If it hangs:* stop.
+- **P7.** Conan resolves `pubsub-arrow` with the shared zlib override. *If not:* stop and report.
 
 ## Forcing-test mapping
 
-The tests are in `c-abi/tests/test_batches.cpp` (new). It is compiled into `c_abi_tests`, which is
-built in the edge and the server package, and into `c_abi_probe_tests`. The expectation comes from
-`FLETCHER_EXPECTED_VARIANT`, never from the shim. Tables use int64 and utf8 columns only: no
-dictionary column, because d9 Q11 (re-fold vs value type) is open (audit note). Every rung test
-calls only `fl_*` and imports with the test binary's own Arrow.
+The tests are in `c-abi/tests/test_batches.cpp` (new), compiled into `c_abi_tests` (edge and server
+packages) and `c_abi_probe_tests`. The expectation comes from `FLETCHER_EXPECTED_VARIANT`, never
+from the shim. Columns are int64 and utf8 only: Q11 is open, so no dictionary columns. Tests call
+only `fl_*` and import with the test binary's own Arrow.
 
 | Test | Turns green by | Red before, for the right reason |
 |---|---|---|
-| `Batches.EachClosedWindowCrossesAsAnImportableBatchInWindowOrder` (server binary only) | Declare a topic and subscribe for batches (`max_rows` 2, a finite timeout of at least 1 s, so a descheduled publisher cannot split a row-limit window). Publish 5 rows in one `fl_publisher_publish_rows`, rows 1 and 3 with attachments. Wait one-sided (at most 10 s) for 3 deliveries. Assert ROW_LIMIT, ROW_LIMIT, TIMEOUT and `rows_dropped` 0. `arrow::ImportRecordBatch` of each (a move) equals the published values cell for cell. Attachments match row by row (keys and bytes). Every callback runs on one thread, not the test's own. The first `seq` strictly increases. | Does not compile: no `fl_subscriber_subscribe_batches`, no `fl_batch`. |
-| `Batches.AWindowThatCouldNotBeBuiltArrivesAsNoBatchWithItsRowsCounted` (server only) | `fl_publisher_publish_raw` 3 rows on an undeclared topic (P3), then subscribe for batches with a finite timeout. Every delivery has `array == schema == NULL`, `num_rows == 0` and `attachments == NULL`, and Σ`rows_dropped` == 3 (one-sided wait). | Does not compile. |
+| `Batches.EachClosedWindowCrossesAsAnImportableBatchInWindowOrder` (server binary only; 4a) | Declare a topic and subscribe for batches (`max_rows` 2, a finite timeout of at least 1 s, so a descheduled publisher cannot split a row-limit window). Publish 5 rows in one `fl_publisher_publish_rows`. Wait one-sided (at most 10 s) for 3 deliveries. Assert ROW_LIMIT, ROW_LIMIT, TIMEOUT and `rows_dropped` 0. `arrow::ImportRecordBatch` of each (a move) equals the published values cell for cell. Every callback runs on one thread, not the test's own. The first `seq` strictly increases. `out_id` has bit 63 set (B1). | Does not compile: no `fl_subscriber_subscribe_batches`, no `fl_batch`. |
+| `Batches.EachBatchRowCarriesItsOwnAttachments` (server only; 4b) | The same 5 rows, rows 1 and 3 with attachments. Every delivery's attachment sets match the published rows by position (keys and bytes), with an empty set for a row without any. | Does not compile until 4b appends `attachments`. |
+| `Batches.AWindowThatCouldNotBeBuiltArrivesAsNoBatchWithItsRowsCounted` (server only) | Subscribe for batches on an undeclared topic with a finite timeout, then `fl_publisher_publish_raw` 3 rows to it (P3; `inprocess` keeps nothing for a topic with no subscription). Every delivery has `array == schema == NULL` and `num_rows == 0`, and Σ`rows_dropped` == 3 (one-sided wait). | Does not compile. |
 | `Batches.TheBuildAnswersABatchedSubscribeAsItAnswersTheQuery` (all three artefacts: BC-10's truth table, guard (e)) | One body: subscribe (10 ms timeout), publish one row, then observe for 2 s. **Edge and probe:** `FL_NOT_SUPPORTED`, origin `FL_ORIGIN_SEAM`, a message naming "edge" and `fletcher-c-abi-server`. The sentinel outputs are unchanged and nothing is delivered in the 2 s. A NULL subscriber is also `FL_NOT_SUPPORTED`. **Server (the control):** `FL_OK` and one TIMEOUT delivery inside the same 2 s. This shows the window can see a delivery, and that a refusal reading anything but the build turns an arm red. | Does not compile. Against a refusal-less edge, the edge arm sees `FL_OK`. |
 
 **Guards (re-run, must stay green):**
-- (a) `check_shim_exports.sh`: edge = server = header, so both builds export the new declaration.
-- (c) `check_edge_arrow_free.sh`: no Arrow in the edge graph or symbols, now that the server links
-  it. Both controls are unchanged.
-- (d) `c99_probe.c` compiles the new declarations as C99.
-- (b) BC-9 scan, **new**: `ShimBatchesNothing.SourcesHoldNoThreadClockOrTimer`
-  (`test_shim_batches_nothing.cpp`, `c_abi_tests` only). It reads every file under `c-abi/src`
-  (path passed by CMake as a forward-slash literal) and fails on `std::thread`, `jthread`,
-  `condition_variable`, `_clock`, `sleep_for`, `sleep_until` or `std::async`. Its control runs the
-  same matcher over its own source, which spells each pattern, and requires every pattern to hit.
+- (a) `check_shim_exports.sh`: edge = server = header.
+- (c) `check_edge_arrow_free.sh`: unchanged, controls included.
+- (d) `c99_probe.c`.
+- (b) **New:** `ShimBatchesNothing.SourcesHoldNoThreadClockOrTimer` (`c_abi_tests` only). It scans
+  `c-abi/src` (path passed as a forward-slash literal) for `std::thread`, `jthread`,
+  `condition_variable`, `_clock`, `sleep_for`, `sleep_until` and `std::async`. Its control runs the
+  same matcher over its own source and requires every pattern to hit.
 
-There are no legs: no test reaches `SubscriberArrow` or a backend directly. Rung 5 may arrive green,
-because thunk step 2 is already exact; stage 5 shows it red or declares it a guard (ladder).
+There are no legs. Rung 5 may arrive green, because thunk step 2 is exact; stage 5 shows it red or
+declares it a guard.
 
 ## Risks / Unknowns
 
-- **Public surface is 4, one over the budget of 3.** Counted: one entry point
-  (`fl_subscriber_subscribe_batches`) and three types (`fl_batch_fn`, `fl_batch`,
-  `fl_batch_reason`). Nothing in scope can be retired: Q9's `fl_decode_rows_framed` is domain 10's.
-  The cut that would fit 3 is `int32_t reason` with `#define` values: the same vocabulary, less type
-  safety, against d9 §1's "C spelling of each seam value". I recommend against it. **Reviewer to
-  rule.** Stage 5 adds a fifth item, the close.
-- **Stage 5's close is designed here and not declared** (L6):
-  `fl_status fl_subscriber_unsubscribe_batches(fl_subscriber*, uint64_t id, fl_error*)`. It forwards
-  to `SubscriberArrow::Unsubscribe` behind the same door, the edge build refuses it the same way, and
-  with no host it is a no-op, as an unknown row id is. It changes no signature.
-- **H3, the L18 window from D9S-4 to D9S-6** (Brief Decision 2). This is a plan-shape fact, not a
-  merge request: merging would breach the ceiling and lose rung 8's red-first proof.
-- **Size.** About 209 counted production lines against the 250 ceiling. If the implementation
-  passes 250, take the ladder's 4a/4b split: attachments (the field and its assertions) are
-  appended in 4b. The edge refusal stays with the entry point.
-- **Timing.** The server tests wait one-sided. The timeout of at least 1 s keeps back-to-back
-  row-limit windows whole. A badly loaded runner could still split one, and then only the reasons
-  assertion flakes, never conservation.
-- **Windows server DLL.** Static Arrow makes it larger; its size is printed, not enforced (D22).
-  Any transitive DLL imports of Arrow are D-BIND-148's question for domain 10.
-- **Q11.** A batched dictionary column arrives re-folded. The tests avoid dictionary columns, and
-  the header says columns arrive "as domain 7 assembled them". Q11 stays open (domains 2 and 10).
-- **No STOP-AND-ASK is open.** Arrow stays out of edge. No edge entry point changes its answer: only
-  the new one refuses. No status number is added, nothing changes under `dotnet/`, and no code in
-  domain 7 or domain 2 changes. Nothing in the shim checks a window, count, timer, range or thread.
+- **Public surface is 3 (B2):** `fl_subscriber_subscribe_batches`, `fl_batch` and `fl_batch_fn`.
+  The `FL_BATCH_*` values are constants, not a type. Stage 5 adds the close.
+- **Stage 5's close is designed here and not declared (L6):**
+  `fl_subscriber_unsubscribe_batches(fl_subscriber*, uint64_t id, fl_error*)`. It sits behind the
+  same door, with the same edge refusal. An untagged id gets `FL_INVALID_ARGUMENT` ("not a batched
+  subscription id"). A tagged id has its bit cleared and goes to `SubscriberArrow::Unsubscribe`;
+  with no host it is a no-op.
+- **H3, the L18 window to D9S-6** (Decision 2; DEBT-1: the catch encloses thunk steps 1-4).
+- **4a/4b split, taken now.** The counted figure is about 254 after B1-B3(a), over 250.
+  - 4b appends `attachments` to `fl_batch`, adds thunk step 1, and adds
+    `EachBatchRowCarriesItsOwnAttachments`: about +20 production lines in 2 files, so it fits the
+    light lane.
+  - The edge refusal stays with the entry point in 4a (L12).
+  - **Disclosed:** in 4a, attachments are not delivered. Nothing ships between the two stages.
+- **B3 pending owner.** Branch (b) swaps the two recipes for the profile (+4); the count is about the
+  same.
+- **Timing.** The waits are one-sided, and a timeout of at least 1 s keeps the row-limit windows
+  whole. On a loaded runner only the reason assertion can flake, never conservation.
+- **Windows server DLL.** Static Arrow makes it larger; the size is printed, not enforced (D22).
+  Arrow's DLL imports are D-BIND-148's question (domain 10).
+- **Q11.** Batched dictionary columns arrive re-folded. The tests avoid them; Q11 stays open.
+- **No STOP-AND-ASK of mine is open.** B3's owner ruling is the PM's.
+  - Arrow stays out of the edge build, and only the new entry point refuses.
+  - No new status number, no change under `dotnet/`, and no domain-7 or domain-2 code.
+  - Nothing in the shim checks a window, count, timer or range, or owns a thread.
 
-**Declared lines (raw diff):** production about **+262 / −8**, of which about 45 are `binding.h`
-doc comments (listed, not counted, by the ladder), so the counted net is about **+209**. Per file:
-`binding.h` about 27 code and 45 comment, `binding.cpp` +32, `handles.hpp` +16,
-`batches_server.cpp` +95, `batches_edge.cpp` +18, `CMakeLists.txt` +12/−3, `conanfile.py` +10/−4,
-`ci.c-abi.yml` +6, `ci.pr.yml` +1. Tests about **+330**; docs about **+60 / −25**. Total raw about
-**+650 / −35**. No 4a/4b split.
+**Declared lines (raw diff), after B1-B3(a):**
+- **Unsplit:** production about +318 / −12. About 52 of those lines are `binding.h` doc comments,
+  which the ladder does not count, so the counted figure is about **254**, over 250.
+- **4a:** production about **+298 / −12**, counted about **236**.
+  - `binding.h`: about 22 code and 50 comment.
+  - `binding.cpp` +42, `handles.hpp` +16, `batches_server.cpp` +108, `batches_edge.cpp` +18.
+  - `CMakeLists.txt` +12/−3, `c-abi/conanfile.py` +10/−4, two recipes +8/−2 each, `ci.c-abi.yml`
+    +6, `ci.pr.yml` +1.
+  - Tests about +270, docs about +65/−25. Raw total about **+635 / −40**.
+- **4b:** production about +20 (counted about 17), tests about +60.
 
 ## Files-to-touch
 
-- **Production:** `c-abi/include/fletcher/abi/binding.h`, `c-abi/src/binding.cpp`,
-  `c-abi/src/handles.hpp`, `c-abi/src/batches_server.cpp` (new), `c-abi/src/batches_edge.cpp` (new),
-  `c-abi/CMakeLists.txt`, `c-abi/conanfile.py`, `.github/workflows/ci.c-abi.yml`,
-  `.github/workflows/ci.pr.yml`.
+- **Production:** in `c-abi/`: `include/fletcher/abi/binding.h`, `src/binding.cpp`,
+  `src/handles.hpp`, `src/batches_server.cpp` (new), `src/batches_edge.cpp` (new), `CMakeLists.txt`
+  and `conanfile.py`. Also `.github/workflows/ci.c-abi.yml` and `ci.pr.yml`, and, for B3(a),
+  `pubsub-arrow/conanfile.py` and `arrow-bridge/conanfile.py` (for (b), the Linux profile instead).
+  4b touches only `binding.h` and `batches_server.cpp`.
 - **Tests:** `c-abi/tests/test_batches.cpp` (new), `c-abi/tests/test_shim_batches_nothing.cpp`
   (new), `c-abi/tests/CMakeLists.txt` (both files, the source-dir literal; the comment at 6-15
   narrows to the edge shim).
-- **Docs, not counted:** `c-abi/README.md` ("Consuming": batched subscribe, server build only). In
-  d9: L12's refusals, L14 and L15 `[built]` for the crossing (Windows by hand until CI), §4's server
-  rows, and Q6, Q7 and Q12's edge half resolved. In the register: BC-9's shim scan, BC-10's
-  refusals and BC-13's batch half `[built]` (rung 5 pending); BC-8 and BC-14 "the shim forwards"
-  `[built]`, their grid test owed to D9S-5.
+- **Docs, not counted:**
+  - `c-abi/README.md`: "Consuming" covers the batched subscribe.
+  - d9: L12's refusals, L14 and L15 marked `[built]`; §4; Q6, Q7 and Q12's edge half resolved.
+  - Register:
+    - BC-9's scan, BC-10's refusals and BC-13's batch half `[built]`.
+    - BC-8 and BC-14: the shim forwards; their grid test is owed to D9S-5.
+    - H1's provider split recorded as a d3/d4 finding.
 
 ## Files-to-delete
 
-None. Nothing in the tree serves batches through the shim, so there is no predecessor to retire.
-What this stage makes redundant, C#'s managed batcher (BC-9's copy), is deleted by the C# switch
-round (domain 10, D-D9S-8, out of scope). Stale text is edited, not deleted: `conanfile.py:97-102`
-and `tests/CMakeLists.txt:8-13` ("the shipped shim must not link Arrow") narrow to the edge shim,
-and the `FL_ORIGIN_SEAM` comment widens (Q12).
+None. Nothing in the tree serves batches through the shim. The C# managed batcher this makes
+redundant is deleted by the C# switch round (D-D9S-8). Stale text is edited:
+- `conanfile.py:97-102` and `tests/CMakeLists.txt:8-13` narrow to the edge shim.
+- The `FL_ORIGIN_SEAM` comment widens.

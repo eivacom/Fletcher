@@ -842,3 +842,7 @@ Review: [../../docs/archive/D7F/reviews/D7F-1-design-review.md](../../docs/archi
 - ~~DEBT-1~~ Applied to the brief and design (`3dcfd69`).
 - ~~DEBT-2~~ Landed in `52a0103` (check runs before the size ceilings on both legs).
 - ~~DEBT-3~~ Landed before 0b (graph control uses step 1's test; both packages required).
+
+## D9S-4 — batches cross the shim (NEEDS-REWORK, 3 BLOCKERs, cycle 1 of 2) — [review](D9S-4-design-review.md)
+- **DEBT-1 (design H3; D9S-6):** H3 names only the export; thunk step 1 (per-row views) and the fill also throw into domain 7 until D9S-6. BC-12's one catch must enclose steps 1–4 — "a failed hand-over", not "a failed export".
+- **DEBT-2 (step 3):** a fourth domain-7 `Reason` (d7 Q4, owner-open) must fail the build in the reason `switch` (no `default:` + `-Wswitch` as error, or a static count check), never cross as 0.
