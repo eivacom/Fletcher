@@ -66,3 +66,23 @@ At phase A the check `scripts/check_edge_arrow_free.sh` measured **59 non-commen
 declared ~29); with phase B's workflow wiring (~+16) the stage lands near **75 touched lines vs the
 60-line admission**. Ejected to the full loop: design doc, architecture review and compliance review
 dispatched; phase A's script and red evidence carried forward unchanged (uncommitted).
+
+## D9S-3 — The edge build carries no Arrow C++, checked by name — 🟢 2026-11-13
+
+**Landed:** `52a0103`, fix `115b1e5`. `scripts/check_edge_arrow_free.sh`: graph half (`conan graph
+info`, shipped edge configuration) and symbol half (`nm -C` Linux; `@arrow@@` scan Windows), refusals
+when nothing was read, two controls that must go red by name every run; wired into `ci.c-abi.yml` on
+both legs ahead of the size ceilings (DEBT-2). d9 L8 / BC-11 `[built]` (Windows by hand), Q4 resolved.
+**Steps:** 0a CLEAR · light brief `e797564` · phase A (script; controls red) → **ejected** (~75 touched vs
+60) · design `b0a6780` · review APPROVE-WITH-DEBT(3) `3dcfd69` (DEBT-3 applied before 0b) · 0b CLEAR ·
+phase B wiring · 4a ISSUES(2, 0 blocking; F2 → owner ruling "Narrow the docs") · 4b 0 blocking, S1
+should-fix taken → fix 1 → 4b cycle 2 clean.
+**Verification:** Windows by hand: green on the real edge package (10 host nodes, no Arrow; 51
+`@fletcher@@` names, no Arrow), graph control red naming `fletcher-arrow-bridge arrow`, symbol control
+red (1248 Arrow names in the edge package's own `c_abi_tests.exe`); controls and refusals proven able to
+fail (`scratchpad/d9s3_check.log`, `d9s3_fix1.log`). Linux: WSL with real `nm` on synthetic `.so`s and a
+stub conan only. No compiled code changed, so D9S-2's suites stand. **CI and Linux unrun** (draft PR).
+**Numbers:** production ~+115/−7 (62 non-comment in the script) in 3 files vs declared +106 in 2;
+design cycles 1; fix cycles 1; implementer launches 1 (resumed 3×); owner touches 1.
+**Logged:** 4b nits N1–N4 (no `--no-remote`; unknown extensions to `nm`; root counted; Windows scan
+scope). Record: d9 L8 / design said `run_tests` leaves the package ID — false (flagged in place).

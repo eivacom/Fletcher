@@ -52,5 +52,5 @@ None. The Windows scope limit is disclosed under Risks.
 - New public surface: 0. Design cycles used: 1/2.
 
 ---
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
-<delta vs the above — actual net lines, anything retired or added the brief did not predict, fix cycles used>.
+*As landed (2026-11-13, `52a0103` + fix `115b1e5`):*
+Production ~+115/−7 in 3 files (script 92 lines, 62 non-comment; `ci.c-abi.yml` +19; `ci.pr.yml` +1, outside Files-to-touch, 4a F1); ejected from the light lane at phase A (~75 touched vs 60). Fix cycles 1 (control binary from the edge package's own folder). Owner ruling: a test-only Arrow dependency is refused too. Evidence: Windows by hand; Linux and CI unrun.

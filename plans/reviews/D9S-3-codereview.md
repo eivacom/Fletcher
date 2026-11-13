@@ -33,3 +33,15 @@
 ## RECORD
 - RECORD: d9 L8 "Holds at: `conanfile.py:58-83`" (and register BC-11 `conanfile.py:73-82`). The Arrow requires are now at `c-abi/conanfile.py:103-104`, inside `requirements()` at ~87-107.
 - RECORD: register BC-11's "outside test requires" is wider than the check, which does not tell a host `test_requires` apart (0b note 1). Either the text or the check should say so.
+
+## Cycle 2
+
+**Diff:** `git diff 52a0103..HEAD` (115b1e5). **Verdict:** 0 blocking, 0 should-fix, 0 nits. S1 is resolved, and I found no regression.
+- **The folder is right on both platforms.** `locate_shim.sh` returns `<cache>/p/b/<pkg>/p/{bin/x.dll | lib/libx.so}`. Three `dirname` calls give `<cache>/p/b/<pkg>` on both, so `B` is that package's `b`, the same folder whose `p/conaninfo.txt` picked the shim. The control is now tied to the edge package's identity, so a stale binary or one from another package or platform can no longer be chosen.
+- **`found`/`nfound` under `set -euo pipefail`.**
+  - A missing `B` makes `find` exit 1. pipefail carries that to `|| true`, so `found` is empty and does not abort the script.
+  - When `found` is empty, the here-string feeds a single blank line. `grep -c .` prints `0` and exits 1, `|| true` absorbs the 1, and `nfound=0` is refused with `::error::`.
+  - With 1 match `nfound` is 1, and with 2 it is 2 (refused, naming both). `nfound` is always numeric, so `-ne` cannot error.
+- **There is exactly one binary in practice.** `c_abi_tests.dir` and `c_abi_tests.tlog` are directories, which `-type f` excludes. `c_abi_tests.exe.recipe` and `.pdb`/`.ilk` do not match `-name`. If the edge package was built without tests (`run_tests` is not in the package ID), the count is 0 and that is refused loudly.
+- **Paths with spaces.** `bin=$found` assigns the one line verbatim and `scan "$bin"` is quoted. `$(echo $found)` is unquoted only inside the message text.
+- **Nothing regressed.** Steps 1–3, `scan` and the workflow wiring are unchanged. The owner's ruling (a test-only Arrow dependency is refused) matches the script's existing strictness, so no code change was due.
