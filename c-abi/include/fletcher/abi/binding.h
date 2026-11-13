@@ -857,19 +857,24 @@ FL_ABI_EXPORT fl_status fl_subscriber_create(fl_provider* provider, fl_subscribe
 
 /* Destroy a subscriber.
  *
- * DESTRUCTION REQUIRES QUIESCENCE, and from inside a ROW delivery on this same
- * subscriber it is not merely refused - the seam's answer is process
- * termination, by design, because the alternative is to leak the transport
- * subscription silently. A binding must refuse this call in its own code, with
- * its own exception, before it can reach the shim (D-BIND-18).
+ * DESTRUCTION REQUIRES QUIESCENCE, and from inside a ROW delivery on any
+ * subscriber over the same provider (this one, a batched-only one included) it is
+ * not merely refused - the seam's answer is process termination, by design,
+ * because the alternative is to leak the transport subscription silently. A
+ * binding must refuse this call in its own code, with its own exception, before
+ * it can reach the shim (D-BIND-18).
  *
  * BATCHED SUBSCRIPTIONS (server build; fl_subscriber_subscribe_batches). Outside a
- * batch callback this BLOCKS until running batch callbacks finish, and each
- * subscription's CLOSING batch is delivered, on another thread, before it
- * returns: do not hold across it a lock a batch callback takes. From INSIDE a
- * batch callback it returns without waiting for that subscription; the queued
- * batches, then CLOSING, arrive afterwards, so `on_batch` and `ctx` must stay
- * valid until CLOSING has arrived. */
+ * batch callback this BLOCKS until running batch callbacks finish, and the queued
+ * batches, then CLOSING if the last window holds rows or drops (an idle one
+ * delivers nothing), are delivered on another thread before it returns: do not
+ * hold across it a lock a batch callback takes. Once it returns nothing runs, so
+ * `ctx` may be freed then. From INSIDE a batch callback it returns without waiting
+ * for that subscription; the queued batches, then CLOSING if the last window holds
+ * rows or drops, arrive afterwards, and CLOSING is NOT guaranteed, so the caller
+ * gets no reliable end signal for `ctx`. A binding must not destroy from inside a
+ * batch callback, or must keep `on_batch` and `ctx` valid for the life of the
+ * process. */
 FL_ABI_EXPORT void fl_subscriber_destroy(fl_subscriber* subscriber);
 
 /* Delivery: raw encoded row bytes, the topic's schema, and any attachments.
@@ -935,7 +940,9 @@ FL_ABI_EXPORT fl_status fl_subscriber_subscribe_with_options(
  * running has finished - for as long as that handler takes, unbounded. On return
  * nothing is running and nothing will run, so the binding may free the context at
  * once. A binding that calls this while holding a lock its own handler takes will
- * deadlock.
+ * deadlock. This holds for ROW ids only: a batched id (bit 63) is not cancelled -
+ * FL_OK is returned, its batches continue and `ctx` stays live until the
+ * subscriber is destroyed (see fl_subscriber_destroy).
  *
  * FROM INSIDE A DELIVERY ON THIS SUBSCRIBER it is served rather than refused, as a
  * documented carve-out, and it does NOT wait: a cancellation cannot wait for the
@@ -1038,8 +1045,9 @@ typedef void (*fl_batch_fn)(void* ctx, const fl_batch* batch);
  * would need 2^63 subscriptions to reach it), so the two can never be confused.
  * fl_subscriber_unsubscribe is unchanged: it treats a batched id as unknown and
  * answers FL_OK without stopping its batches or releasing `ctx`; only
- * fl_subscriber_destroy ends a batched subscription for now. The callback is not given an id, because a batch may arrive before this
- * call returns: correlate by `ctx`.
+ * fl_subscriber_destroy ends a batched subscription for now. The callback is not
+ * given an id, because a batch may arrive before this call returns: correlate by
+ * `ctx`.
  *
  * THREADS. `on_batch` runs on domain 7's batch thread, one batch at a time, in
  * window order. A batch may arrive before this call returns.
