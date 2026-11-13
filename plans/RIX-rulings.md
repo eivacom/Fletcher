@@ -457,3 +457,12 @@ in stage 6."
 collision is documented, not refused; the provider difference is registered for domains 3/4. (2) **a
 failed conversion is lost uncounted during D9S-4/5 only**; L18 is built and proven red-first in D9S-6.
 **Applies to:** D9S-4a design; d9 L4, L18; register (d3/d4 finding).
+
+## 2026-11-13 — D9S-4a: ceiling overrun from documentation accepted
+> "Accept, as explained (Rec.)"
+
+*(Chosen option.)* Its text: "Users: none; the C interface keeps its full explanatory comments (who owns
+a batch, when it is released, what each reason means). Architecture: the overrun is documentation, not
+work — code is ~192 lines, within the ceiling's intent; recorded as an accepted close finding like D9S-2's."
+**Ruling:** **D9S-4a's ~312 counted production lines (≈192 code) over the 250 ceiling are accepted.**
+**Applies to:** D9S-4a close finding.
