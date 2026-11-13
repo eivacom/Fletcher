@@ -404,3 +404,16 @@ must teach C# the new name or rename it when packing."
 switch round teaches C# that name or renames it when packing (domain 10).
 **Applies to:** d9 Q5a (the shim-side half resolved); D9S-2 design; D9S-7 (both in one process).
 *Ingested (D9S-2 close, 2026-11-13): `CMakeLists.txt` names the server shim `fletcher-c-abi-server` from the variant; d9 §2 Server variant row, L17, BC-15; package names stay domain 10's (Q5a).*
+
+## 2026-11-13 — D9S-2 close: ceiling overrun accepted; CI evidence via the owner's draft PR
+> Ceiling: "Accept, as explained"
+> CI evidence: "You open a draft PR now"
+
+*(Chosen options.)* Texts: "Record the overrun as accepted: it came from review-found safety fixes,
+not planning drift. No process change; later stages keep the 250 ceiling." / "You open a draft PR from
+feature/shim-server-variant (I don't open PRs); CI runs on every later push, and I record run IDs as
+stages close."
+**Rulings:** (1) **D9S-2's net +265 over the 250 ceiling is accepted**; no process change. (2) **The
+owner opens a draft PR from `feature/shim-server-variant`**; from then on each stage close records the
+CI run IDs, and the "Windows, by hand; CI and Linux unrun" marks are lifted once a green run covers them.
+**Applies to:** D9S-2 close finding; the D9S evidence ledger; d9 and register marks narrowed at D9S-2.
