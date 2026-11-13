@@ -118,17 +118,12 @@ target_compile_definitions(fletcher-c-abi PRIVATE FLETCHER_C_ABI_BUILDING)
 # and the server build's own file name (owner ruling 2026-11-13), so both builds can
 # sit in one folder. OUTPUT_NAME renames the DLL, its import library and the .so (and
 # its SONAME); the CMake target stays `fletcher-c-abi` for every consumer. The name
-# is decided in ONE place, the Conan recipe, which passes it here and looks for that
-# same name when it packages; a server configure without it is refused.
-set(FLETCHER_SHIM_OUTPUT_NAME "" CACHE STRING "The shipped shim's file stem, decided by the Conan recipe")
-if(FLETCHER_SHIM_OUTPUT_NAME)
-    set_target_properties(fletcher-c-abi PROPERTIES OUTPUT_NAME ${FLETCHER_SHIM_OUTPUT_NAME})
-endif()
+# follows the variant on every configure, so a direct configure and a folder
+# reconfigured from one variant to the other both get the right file. The Conan
+# recipe names the same file when it packages, and refuses an empty copy.
 if(FLETCHER_SHIM_VARIANT STREQUAL "server")
-    if(NOT FLETCHER_SHIM_OUTPUT_NAME)
-        message(FATAL_ERROR "FLETCHER_SHIM_VARIANT=server needs FLETCHER_SHIM_OUTPUT_NAME: the server build's file name is decided by the Conan recipe")
-    endif()
     target_compile_definitions(fletcher-c-abi PRIVATE FLETCHER_C_ABI_VARIANT=FL_VARIANT_SERVER)
+    set_target_properties(fletcher-c-abi PROPERTIES OUTPUT_NAME fletcher-c-abi-server)
 else()
     target_compile_definitions(fletcher-c-abi PRIVATE FLETCHER_C_ABI_VARIANT=FL_VARIANT_EDGE)
 endif()

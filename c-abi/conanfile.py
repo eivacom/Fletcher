@@ -66,9 +66,9 @@ class FletcherCAbiConan(ConanFile):
 
     @property
     def _shim_stem(self):
-        # The one shim this package holds, and the ONE place its file name is decided:
-        # generate() passes it to CMake as the target's OUTPUT_NAME, and package() and
-        # package_info() use it to find and name what was built.
+        # The one shim this package holds. CMake names the file from the same variant
+        # (c-abi/CMakeLists.txt); package() refuses an empty copy, so a disagreement
+        # between the two is loud.
         return "fletcher-c-abi-server" if self.options.variant == "server" else "fletcher-c-abi"
 
     def validate(self):
@@ -117,7 +117,6 @@ class FletcherCAbiConan(ConanFile):
         deps.generate()
         tc = CMakeToolchain(self)
         tc.cache_variables["FLETCHER_SHIM_VARIANT"] = str(self.options.variant)
-        tc.cache_variables["FLETCHER_SHIM_OUTPUT_NAME"] = self._shim_stem
         if self.options.run_tests:
             tc.cache_variables["FLETCHER_BUILD_TESTS"] = "ON"
         if self.options.with_probe_shim:

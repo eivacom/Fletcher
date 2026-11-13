@@ -89,7 +89,7 @@ The same sources, a second build: it answers `FL_VARIANT_SERVER` to
 defaults to `edge`, is part of the package ID, and the CMake target stays
 `fletcher-c-abi::fletcher-c-abi`. It carries no Arrow C++ yet. It cannot be
 combined with `with_probe_shim`. A direct CMake configure takes
-`-DFLETCHER_SHIM_VARIANT=edge|server`.
+`-DFLETCHER_SHIM_VARIANT=edge|server`, and names the file from it.
 
 ### The probe shim (`with_probe_shim`, test-only)
 
