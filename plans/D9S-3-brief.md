@@ -22,7 +22,7 @@ Nothing. The size ceilings stay as the coarse check: L12 says no size check chan
 - The check is trusted without proof. Every run includes both controls, and each must go red and name Arrow; otherwise the step fails.
 - Arrow linked as a shared library. Linux lists undefined `arrow::` references too; on Windows, imported Arrow names carry `@arrow@@`.
 
-**Handled:** none.
+**Handled:** two residues, each failing safe (design, Corner cases): the symbol control takes the first `c_abi_tests` found, since nothing is measured from it; the platform is chosen by file extension, and a wrong guess is refused, never passed.
 
 **Red before the change:** none. The edge build is green by construction, because nothing links Arrow yet. Instead, two controls run every time and must go red, naming Arrow:
 - the same edge build with tests switched on (its graph includes Arrow, which the law allows for tests);
@@ -35,7 +35,7 @@ None. The Windows scope limit is disclosed under Risks.
 - **Windows checks less than Linux.**
   - Windows has no `nm`, a Release DLL keeps no full symbol table, and no PDB is built. So the Windows symbol half sees only the Arrow class and import names inside the file.
   - An Arrow link that adds neither would pass that half on Windows. The graph half (every Conan path) and the size ceiling still catch it, and Linux always checks the full symbol table.
-  - A link map or PDB would close the gap, but it would change how the edge build links, which L12 forbids. Rejected.
+  - A PDB would close the gap, but it changes the edge DLL itself, which L12 forbids. A link map leaves the DLL as it is. But it is written to the build folder, not the package, so the check could not choose the edge build's map by its package the way it chooses the shim. And the Linux leg already reads the full symbol list. Not taken in this stage; the debt is recorded.
 - **Evidence:** Windows is checked by hand at close. CI evidence waits for the owner's draft PR (ruling 2026-11-13). Until a green run exists, L8 and BC-11 are marked "Windows, by hand".
 - **Premises (stop and ask if false):**
   - Test build folders stay in the Conan cache after a build; otherwise the symbol control has nothing to check.

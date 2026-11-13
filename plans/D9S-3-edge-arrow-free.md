@@ -85,8 +85,9 @@ to the check to be caught. The names it does carry (three package names, one nam
 ### Why the graph is the *shipped* configuration and the symbols are the *built* artefact
 
 - `run_tests` is deleted from the package ID (`conanfile.py:109-110`), so CI's edge package, which
-  is built with `run_tests=True`, has the shipped identity. Its build graph lawfully contains Arrow,
-  for the test binaries (L8).
+  is built with `run_tests=True`, differs from the shipped identity only by `with_probe_shim`, which
+  adds a separate target and leaves the shim's own link unchanged (`c-abi/CMakeLists.txt:183-187`,
+  `:203-238`). Its build graph lawfully contains Arrow, for the test binaries (L8).
 - So the graph half judges the configuration that **defines** the shipped package, with
   `run_tests` off. That is the recipe's own contract.
 - The symbol half judges the **artefact** that was actually built under the test configuration. It
@@ -225,11 +226,13 @@ Rung 2, refused at the door, one typed message each:
   - `/DEBUG` changes the image itself. It adds a debug directory, and unless `/OPT` is set
     explicitly, MSVC's default turns `/OPT:REF` and `/OPT:ICF` off. That is a change to the edge
     build, forbidden by L12.
-  - `/MAP` leaves the binary unchanged, but it still edits the edge link step. Its output lands in
-    the build folder, not the package, so CI could not choose it by package identity (audit F8).
-  - Both are a change to the edge build that rung 3 does not need, given the Linux leg.
+  - `/MAP` leaves the DLL unchanged, so L12 does **not** forbid it. It is not taken for two
+    reasons. First, the map is written to the build folder, not the package, so the check could not
+    choose the edge build's map by package identity, as it chooses the shim (audit F8). Second, the
+    Linux leg already reads the full symbol table, so rung 3 does not need it.
 - **Recorded as debt.** If the owner wants Windows parity, a `/MAP` emitted and packaged for the
-  edge build is a question for a later round under L12.
+  edge build is a question for a later round. It leaves the DLL unchanged, so L12 does not stand
+  in the way.
 
 ## Forcing-test mapping
 

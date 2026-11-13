@@ -837,3 +837,8 @@ Review: [../../docs/archive/D7F/reviews/D7F-1-design-review.md](../../docs/archi
 - ~~DEBT-2~~ Applied to the brief before the owner read it (`fd6dcd2`).
 - ~~DEBT-3~~ Recorded at close: production +339/−74 (D9S-2 brief As landed).
 - ~~DEBT-4~~ Landed in `0a43e99` (server shim size printed on both legs, not enforced).
+
+## D9S-3 — the edge build carries no Arrow C++, by name (APPROVE-WITH-DEBT(3), cycle 1 of 2) — [review](D9S-3-design-review.md)
+- **DEBT-1 (PM, brief):** line 38 "L12 forbids" holds for `/DEBUG` (changes the image), not for `/MAP` (byte-identical; ladder rung 3 offered it). Reword: not needed given Linux and the graph; Windows parity via `/MAP` is a later-round question.
+- **DEBT-2 (step 3, wiring):** run the named check before the size ceilings (Windows: before "Measure the packaged shim"; Linux: right after `SHIM=`, `ci.c-abi.yml:207`), or a large Arrow link fails on size and is never named. The Linux comment sits inside `bash -c '…'`: no apostrophes.
+- **DEBT-3 (step 3, script):** the graph control must judge with step 1's `$ARROW_PKG` and require both `fletcher-arrow-bridge` and `arrow`, not the literal `grep -qx fletcher-arrow-bridge`.
