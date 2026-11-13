@@ -363,7 +363,7 @@ guard in `batches_server.cpp`, with **no test yet** (ladder rung 5, `[designed-n
 hand-over is L18 (D9S-6). Source: BIND Decision 4 / D-BIND-1a (values cross as C Data); ruling
 2026-11-13, "Batch owner: Borrowed; keep by moving" (D26), which **resolves audit B1**: the earlier
 text ("the receiver owns") contradicted L11 and D5 / D-BIND-2a for a batch handed to a callback.
-L11 holds as written. Precedent for an owned array: `fl_decode_rows` (`h:1061-1066`: a fresh array
+L11 holds as written. Precedent for an owned array: `fl_decode_rows` (`h:1180-1183`: a fresh array
 the caller imports and owns). Contrast `fl_schema`, which is shared and must never be released the
 Arrow way (`h:455-473`). How attachments (`L3` of domain 7, row-aligned) cross is settled by 4b (Q6). A batch
 the shim cannot hand over is L18's.
