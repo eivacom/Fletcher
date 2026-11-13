@@ -230,10 +230,12 @@ things in its own idiom:
    batched call with `FL_NOT_SUPPORTED` ("this provider or this build cannot do this"), never a
    missing symbol (d9 L12). On the server build, `fl_subscriber_subscribe_batches` hands each window
    domain 7 closes to a callback as one `fl_batch`: an Arrow C Data array and schema (borrowed for the
-   call; keep them by Arrow's move), the reason (`FL_BATCH_*`) and the loss count, one batch at a time
+   call; keep them by Arrow's move), the reason (`FL_BATCH_*`), the loss count and each row's
+   attachments (`fl_batch.attachments`: one set per row, in row order, an empty set for a row with
+   none; borrowed for the call, a value kept only by `fl_blob_retain`), one batch at a time
    on domain 7's batch thread, in window order; a window that could not be built arrives with a NULL
    array. A row and a batched subscription to the same topic through one provider collide (see the
-   header). Each row's attachments and the batched close are not built yet.
+   header). The batched close is not built yet.
 3. **Bring your own Arrow.** The header only forward-declares `ArrowSchema` and `ArrowArray`; the
    binding uses its Arrow library's C Data Interface (C#: `Apache.Arrow.C`), exports a batch for
    `fl_rows_bind` and imports what `fl_decode_rows` and `fl_schema_copy` produce.

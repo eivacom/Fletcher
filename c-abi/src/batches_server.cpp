@@ -15,6 +15,7 @@
 #include <arrow/record_batch.h>
 
 #include <chrono>
+#include <deque>
 #include <fletcher/core/status.hpp>
 #include <fletcher/pubsub_arrow/subscriber_arrow.hpp>
 #include <memory>
@@ -96,12 +97,24 @@ BatchedSubscription SubscribeBatches(fl_subscriber& subscriber, std::vector<std:
     // The thunk captures only `(on_batch, ctx)`, never the `fl_subscriber`: a destroy made inside
     // a callback leaves the remaining deliveries nothing to dangle on.
     auto thunk = [on_batch, ctx](std::shared_ptr<arrow::RecordBatch> batch,
-                                 std::vector<fletcher::Attachments> /*attachments: 4b*/,
+                                 std::vector<fletcher::Attachments> attachments,
                                  SubscriberArrow::BatchStatus status) {
         // NEVER THROWS INTO DOMAIN 7 (D-D9S-4). Until D9S-6 a window that cannot be handed over
         // is lost, uncounted (owner ruling 2026-11-13, "a failed conversion is lost uncounted
         // during D9S-4/5"); D9S-6 replaces this empty handler with L18's no-batch hand-over.
         try {
+            // One set per entry of domain 7's row-aligned list, in its order (d7 L3), each taking
+            // its entry's blobs (no byte is copied). A deque never moves its elements, and an
+            // `fl_attachments` can be neither copied nor moved. Built BEFORE the export, so a
+            // failure here hands nothing over; destroyed with this frame, after `on_batch`.
+            // No count or alignment check of the shim's own (d9 L15).
+            std::deque<fl_attachments> sets;
+            std::vector<const fl_attachments*> set_ptrs;
+            for (fletcher::Attachments& entry : attachments) {
+                sets.emplace_back(std::move(entry));
+                set_ptrs.push_back(&sets.back());
+            }
+
             ArrowArray array = {};
             ArrowSchema schema = {};
             const ReleaseUnmoved release_unmoved{&array, &schema};
@@ -109,6 +122,7 @@ BatchedSubscription SubscribeBatches(fl_subscriber& subscriber, std::vector<std:
             fl_batch out = {};
             out.reason = ReasonOf(status.reason);
             out.rows_dropped = status.rows_dropped;
+            out.attachments = set_ptrs.empty() ? nullptr : set_ptrs.data();
             if (batch != nullptr) {
                 const arrow::Status exported = arrow::ExportRecordBatch(*batch, &array, &schema);
                 if (!exported.ok()) {

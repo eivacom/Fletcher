@@ -1019,13 +1019,23 @@ FL_ABI_EXPORT fl_status fl_subscriber_unsubscribe_schema(fl_subscriber* subscrib
  * BE BUILT for this window (no usable schema, a rejected schema, or a failure
  * finishing it); `rows_dropped` counts the window's rows in every such case. That
  * differs from a zero-row batch (`array != NULL`, `num_rows == 0`), which a window
- * of only dropped rows can be. `rows_dropped` is domain 7's count, as given. */
+ * of only dropped rows can be. `rows_dropped` is domain 7's count, as given.
+ *
+ * `attachments` is each row's attachments, beside that row: `num_rows` entries, in
+ * row order, entry i belonging to row i of `array`. NO ENTRY IS NULL: a row that
+ * had no attachments gets an EMPTY set (fl_attachments_size == 0). The list is NULL
+ * exactly when `num_rows == 0` (no batch, or a zero-row one). It is the same type
+ * fl_publisher_publish_rows takes as `atts_per_row`, and it is BORROWED like the
+ * rest of the batch: every set and every value is valid for the call only, a
+ * program never disposes them, and keeps a value past the call only by
+ * fl_blob_retain. */
 typedef struct fl_batch {
     int32_t reason;             /* an FL_BATCH_* value */
     int64_t rows_dropped;       /* rows lost since the previous window; 0 == all good */
     int64_t num_rows;           /* rows in `array`; 0 when there is no array */
     struct ArrowArray* array;   /* NULL: no batch could be built */
     struct ArrowSchema* schema; /* NULL exactly when `array` is NULL */
+    const fl_attachments* const* attachments; /* `num_rows` sets, none NULL; NULL iff num_rows == 0 */
 } fl_batch;
 
 /* Invoked once per window, on domain 7's batch thread: one batch at a time, in window

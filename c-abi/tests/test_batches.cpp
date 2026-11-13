@@ -29,6 +29,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "fletcher/abi/binding.h"
@@ -75,6 +76,12 @@ struct Seen {
     std::string import_error;
     std::shared_ptr<arrow::RecordBatch> batch;
     std::thread::id thread;
+    // D9S-4b: each row's attachments, COPIED during the callback (keys and bytes), one entry per
+    // row, in row order. A NULL set is counted, not hidden: it is a forbidden state (d9 L14).
+    using Entries = std::vector<std::pair<std::string, std::string>>;
+    bool had_attachments = false;  // fl_batch::attachments != NULL
+    size_t null_attachment_sets = 0;
+    std::vector<Entries> attachments;
 };
 
 /// The caller's side of a batched subscription: collects what arrives, from whatever thread the
@@ -126,6 +133,28 @@ class BatchSink {
             s.num_rows = batch->num_rows;
             s.had_array = batch->array != nullptr;
             s.had_schema = batch->schema != nullptr;
+            s.had_attachments = batch->attachments != nullptr;
+            if (s.had_attachments) {
+                for (int64_t row = 0; row < batch->num_rows; ++row) {
+                    const fl_attachments* set = batch->attachments[row];
+                    Seen::Entries entries;
+                    if (set == nullptr) {
+                        ++s.null_attachment_sets;
+                    } else {
+                        for (size_t i = 0; i < fl_attachments_size(set); ++i) {
+                            const fl_str key = fl_attachments_key_at(set, i);
+                            const fl_blob value = fl_attachments_value_at(set, i);
+                            entries.emplace_back(
+                                std::string(reinterpret_cast<const char*>(key.data), key.len),
+                                value.size == 0
+                                    ? std::string()
+                                    : std::string(reinterpret_cast<const char*>(value.data),
+                                                  value.size));
+                        }
+                    }
+                    s.attachments.push_back(std::move(entries));
+                }
+            }
             if (s.had_array && s.had_schema) {
                 s.array_live_on_entry = batch->array->release != nullptr;
                 s.schema_live_on_entry = batch->schema->release != nullptr;
@@ -403,6 +432,7 @@ TEST(Batches, AWindowThatCouldNotBeBuiltArrivesAsNoBatchWithItsRowsCounted) {
         EXPECT_FALSE(s.had_array) << "no batch could be built: array is NULL";
         EXPECT_FALSE(s.had_schema) << "schema is NULL exactly when array is";
         EXPECT_EQ(s.num_rows, 0) << "no array, so no rows in it";
+        EXPECT_FALSE(s.had_attachments) << "no rows, so the attachments list is NULL (d9 L14)";
         EXPECT_EQ(s.reason, FL_BATCH_TIMEOUT)
             << "three rows against max_rows 100 and no decoder: the deadline is the only event "
                "left that can close the window (d7 L4)";
@@ -410,6 +440,106 @@ TEST(Batches, AWindowThatCouldNotBeBuiltArrivesAsNoBatchWithItsRowsCounted) {
         total += s.rows_dropped;
     }
     EXPECT_EQ(total, 3) << "every published row is counted, none twice";
+
+    fl_schema_arrival_dispose(arrival);
+}
+
+/// A set built through the shim's own builder, for the publish side of the test. The builder
+/// retains each value, so the test releases its own blob reference at once.
+using SetPtr = std::unique_ptr<fl_attachments, void (*)(fl_attachments*)>;
+
+SetPtr MakeSet(const Seen::Entries& entries) {
+    fl_error err = {};
+    fl_attachments_builder* builder = nullptr;
+    fl_attachments* set = nullptr;
+    EXPECT_EQ(fl_attachments_builder_create(&builder, &err), FL_OK) << MessageOf(err);
+    for (const auto& [key, value] : entries) {
+        fl_blob blob = {};
+        EXPECT_EQ(fl_blob_create(reinterpret_cast<const uint8_t*>(value.data()), value.size(), &blob,
+                                 &err),
+                  FL_OK)
+            << MessageOf(err);
+        EXPECT_EQ(fl_attachments_builder_set(
+                      builder, fl_str{reinterpret_cast<const uint8_t*>(key.data()), key.size()}, &blob,
+                      &err),
+                  FL_OK)
+            << MessageOf(err);
+        fl_blob_release(&blob);
+    }
+    EXPECT_EQ(fl_attachments_builder_build(builder, &set, &err), FL_OK) << MessageOf(err);
+    fl_attachments_builder_dispose(builder);
+    fl_error_dispose(&err);
+    return SetPtr(set, &fl_attachments_dispose);
+}
+
+/// d9 L14 (attachments clause), d7 L3, L15; register BC-13. Rows 100-104 in windows of two, no
+/// timeout, closed by destroying the subscriber, exactly as the test above. Row 1 carries
+/// {trace: r1} and row 2 carries {origin: o2, trace: r2}, published through `atts_per_row`; the
+/// other three carry none. Row 1 is the LAST row of window 1 and row 2 the FIRST of window 2, so a
+/// set landing on the wrong row inside a window, or slipping across the window boundary, is a
+/// different answer. Keys, values and set sizes are all distinct (0, 1 and 2 entries; 3, 5 and 2
+/// bytes, one with an embedded zero), so an all-empty, all-same, shifted or swapped answer fails.
+///
+///   window 1 (rows 0,1): [ {},                    {trace: r1} ]
+///   window 2 (rows 2,3): [ {origin: o2, trace: r2}, {}        ]
+///   closing  (row 4):    [ {} ]
+///
+/// A row without attachments gets an EMPTY set, never a NULL one; the list is non-NULL whenever
+/// the batch has rows. The sink copied every set during its callback, so nothing here reads a
+/// borrowed pointer after the call returned.
+TEST(Batches, EachBatchRowCarriesItsOwnAttachments) {
+    BatchSink sink;
+    BatchFixture fx;
+    PublishedRows published(/*first_seq=*/100, /*count=*/5);
+
+    const fl_str segments[] = {Str("d9s4"), Str("attachments")};
+    const fl_topic topic = {segments, 2};
+    fx.DeclareTopic(topic, published);
+
+    const std::string r1("\x01\x00\x02", 3);
+    const std::string o2("o2-by", 5);
+    const std::string r2("r2", 2);
+    const SetPtr row1 = MakeSet({{"trace", r1}});
+    const SetPtr row2 = MakeSet({{"origin", o2}, {"trace", r2}});
+    ASSERT_NE(row1, nullptr);
+    ASSERT_NE(row2, nullptr);
+    const fl_attachments* const per_row[5] = {nullptr, row1.get(), row2.get(), nullptr, nullptr};
+
+    fl_error err = {};
+    uint64_t id = 0;
+    fl_schema_arrival* arrival = nullptr;
+    ASSERT_EQ(fl_subscriber_subscribe_batches(fx.subscriber(), topic, /*max_rows=*/2,
+                                              /*timeout_ms=*/INT64_MAX, /*options=*/nullptr,
+                                              &BatchSink::OnBatch, &sink, &id, &arrival, &err),
+              FL_OK)
+        << MessageOf(err);
+    fl_error_dispose(&err);
+
+    ASSERT_EQ(fl_publisher_publish_rows(fx.publisher(), topic, published.rows(), 0, 5, per_row, &err),
+              FL_OK)
+        << MessageOf(err);
+    fl_error_dispose(&err);
+
+    ASSERT_TRUE(sink.WaitForDeliveries(2, seconds(10)))
+        << "only " << sink.Snapshot().size() << " of 2 full windows arrived within 10 s";
+    fx.DestroySubscriber();
+    const std::vector<Seen> seen = sink.Snapshot();
+    ASSERT_EQ(seen.size(), 3U) << "five rows in windows of two, then the closing batch";
+
+    const std::vector<std::vector<Seen::Entries>> expected = {
+        {{}, {{"trace", r1}}},
+        {{{"origin", o2}, {"trace", r2}}, {}},
+        {{}},
+    };
+    for (size_t i = 0; i < seen.size(); ++i) {
+        SCOPED_TRACE("delivery " + std::to_string(i));
+        const Seen& s = seen[i];
+        EXPECT_EQ(s.rows_dropped, 0);
+        EXPECT_EQ(s.num_rows, static_cast<int64_t>(expected[i].size()));
+        EXPECT_TRUE(s.had_attachments) << "a batch with rows carries its attachments list";
+        EXPECT_EQ(s.null_attachment_sets, 0U) << "a row with nothing gets an empty set, never NULL";
+        EXPECT_EQ(s.attachments, expected[i]);
+    }
 
     fl_schema_arrival_dispose(arrival);
 }

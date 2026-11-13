@@ -82,7 +82,7 @@ containment.
 | **Shim** | The shared library `fletcher-c-abi` (`CMakeLists.txt:80-83`): the only Fletcher component built as a shared library; statically links pub/sub, the two DDS providers and nanoarrow. |
 | **Variant** | One of the two builds of the shim from one source: `edge` and `server`, chosen by the Conan option `variant` (default `edge`, in the package ID; D9S-2). The test-only probe shim (`CMakeLists.txt:164-211`) is a third artifact from the same sources, always edge, not a variant. |
 | **Edge variant** | Today's shim: no Arrow C++, codec on nanoarrow. Shipped in the base package. |
-| **Server(-tier) variant** | `[built]` (Windows, by hand; CI and Linux unrun) as an artefact (D9S-2: `fletcher-c-abi-server`, the edge sources answering "server", no Arrow yet); the batched subscribe and the Arrow link are `[built]` for 4a (D9S-4a: `pubsub-arrow` is linked only under `variant=server`; Windows, by hand; CI and Linux unrun); attachments (4b) and the batched close (stage 5) are `[designed-not-built]`. Shipped in a package of its own (D22). |
+| **Server(-tier) variant** | `[built]` (Windows, by hand; CI and Linux unrun) as an artefact (D9S-2: `fletcher-c-abi-server`, the edge sources answering "server", no Arrow yet); the batched subscribe and the Arrow link are `[built]` for 4a (D9S-4a: `pubsub-arrow` is linked only under `variant=server`; Windows, by hand; CI and Linux unrun); each row's attachments are `[built]` for 4b (D9S-4b; same marks); the batched close (stage 5) is `[designed-not-built]`. Shipped in a package of its own (D22). |
 | **Variant query** | `[built]` for all three artefacts (D9S-1 edge and probe; D9S-2 server, (Windows, by hand; CI and Linux unrun)). `fl_binding_variant`: the entry point both builds export that answers which build was loaded (L16, D23). |
 | **Base package / server package** | `Eiva.Fletcher.Interop`, carrying the edge variant, and the separate .NET package carrying the server variant; each holds a full shim (D22). |
 | **Entry point** | An exported `fl_*` function. 48 today (`h`, `grep -c FL_ABI_EXPORT`). |
@@ -341,7 +341,7 @@ changes one's signature, or changes what one does. A caller written against the 
 behaves identically on the server variant. The only entry points whose answers differ between the
 builds are the variant query and the batched ones (L12).
 `[built]` on Windows for the edge surface on the server artefact (D9S-2: the whole edge-surface suite runs against it; Linux unrun);
-the added batched subscribe is `[built]` (D9S-4a; its attachments are 4b and its close is stage 5, `[designed-not-built]`). Source: as L12.
+the added batched subscribe is `[built]` (D9S-4a, with each row's attachments D9S-4b; its close is stage 5, `[designed-not-built]`). Source: as L12.
 
 **L14. A batch crosses as an Arrow C Data Interface array and schema, borrowed for the batch
 callback; a binding keeps it only by moving it.** *(Amended 2026-11-13, D26.)* The batch callback is
@@ -350,17 +350,22 @@ that keeps them takes them by the C Data Interface's move (it copies the structs
 sources released by setting their `release` to null), and from then on owns and releases them the
 Arrow way. What the binding has not moved when the callback returns, the shim releases then. The
 shim keeps nothing of a batch after its callback returns. A window's loss count and reason cross
-with it, and a "no batch could be built" (domain 7 L7) is expressible.
-`[built]` **in part** (D9S-4a, Windows, by hand; CI and Linux unrun): the callback is handed the array, the schema, the reason and the
+with it, and a "no batch could be built" (domain 7 L7) is expressible. **Attachments:** each row's
+attachments cross beside that row as one `fl_attachments` per row, in row order, borrowed for the
+call and kept only by `fl_blob_retain`; a row with none gets an empty set, never NULL, and the list
+is NULL exactly when the batch has no rows. The shim builds one set per entry of domain 7's
+row-aligned list (d7 L3) and checks none of it (L15).
+`[built]` **in part**: the attachments clause is `[built]` (D9S-4b, Windows, by hand; CI and Linux
+unrun: `Batches.EachBatchRowCarriesItsOwnAttachments`). The rest (D9S-4a, same marks): the callback is handed the array, the schema, the reason and the
 loss count, and a window that could not be built arrives as no batch (`Batches.EachClosedWindow...`,
 `Batches.AWindowThatCouldNotBeBuilt...`); the release of what the binding did not move is one scope
-guard in `batches_server.cpp`, with **no test yet** (ladder rung 5, `[designed-not-built]`); attachments
-are 4b (Q6) and a failed hand-over is L18 (D9S-6). Source: BIND Decision 4 / D-BIND-1a (values cross as C Data); ruling
+guard in `batches_server.cpp`, with **no test yet** (ladder rung 5, `[designed-not-built]`); a failed
+hand-over is L18 (D9S-6). Source: BIND Decision 4 / D-BIND-1a (values cross as C Data); ruling
 2026-11-13, "Batch owner: Borrowed; keep by moving" (D26), which **resolves audit B1**: the earlier
 text ("the receiver owns") contradicted L11 and D5 / D-BIND-2a for a batch handed to a callback.
 L11 holds as written. Precedent for an owned array: `fl_decode_rows` (`h:1061-1066`: a fresh array
 the caller imports and owns). Contrast `fl_schema`, which is shared and must never be released the
-Arrow way (`h:455-473`). How attachments (`L3` of domain 7, row-aligned) cross is open (Q6). A batch
+Arrow way (`h:455-473`). How attachments (`L3` of domain 7, row-aligned) cross is settled by 4b (Q6). A batch
 the shim cannot hand over is L18's.
 
 **L15. Domain 7's answers pass through; the shim answers none of them again.** Options are checked
@@ -430,9 +435,10 @@ Surface, `h` sections in order (ABI 0.8, 49 entry points, every one implemented)
 - **Batched subscribe** (D9S-4a `[built]`, Windows, by hand; CI and Linux unrun): `fl_subscriber_subscribe_batches` over domain 7's
   `SubscriberArrow::Subscribe(segments, RecordBatchCallback, BatchOptions, TopicOptions)`, with `fl_batch`
   (reason `FL_BATCH_ROW_LIMIT`/`TIMEOUT`/`CLOSING` = 1/2/3, `rows_dropped`, `num_rows`, array and schema,
-  both NULL for a window that could not be built) and `fl_batch_fn`. The array and schema are borrowed
+  both NULL for a window that could not be built), `attachments` (one `fl_attachments` per row, an
+  empty set for a row with none; D9S-4b `[built]`, same marks) and `fl_batch_fn`. The array and schema are borrowed
   for the call; a binding keeps them by moving them (L14, D26). A batched id has bit 63 set. **Not yet
-  built:** the batched close (stage 5), each row's attachments (4b) and `failure` (D9S-6, L18).
+  built:** the batched close (stage 5) and `failure` (D9S-6, L18).
 - **Both builds**: the variant query (L16) `[built]` for edge and probe (D9S-1; its single site is
   `binding_version.c`, BC-10). The edge build exports the batched entry points too, answering a
   named not-supported refusal (L12) `[built]` for the batched subscribe (D9S-4a).
@@ -544,7 +550,7 @@ in its own .NET package (D22); the NuGet-level name stays domain 10's (Q5a).
 | Q4 | Resolved by D9S-3 (`52a0103`): `scripts/check_edge_arrow_free.sh` checks the edge build's graph and the edge shim's names for Arrow C++ by name (BC-11); Windows by hand, Linux and CI unrun. | — |
 | Q5 | Resolved 2026-11-13 (D22): the server variant ships in its own .NET package; D-BIND-157 stays on the base package; D-BIND-13 and -17 revised. | — |
 | Q5a | Packaging residue the ruling does not settle: do the two packages' native files have distinct names (so both can sit in one app's output), does the server package depend on the base one, how does a binding choose which to load, and does the server package get a size ceiling of its own? **The shim-side half is resolved (owner ruling 2026-11-13, D9S-2 Decision 1): the server build's file is `fletcher-c-abi-server`.** **Registered 2026-11-13 as domain-10 questions in §6**, together with R-9 (D-BIND-148 / -149 for the server shim). | domain 10 (C# switch round), with the shim round for the native file name |
-| Q6 | How do a batch's row-aligned attachments, `BatchStatus` and a null batch cross? Per-row `fl_attachments` handles, a flattened form, or a C Data column? **Resolved for `BatchStatus` and the null batch (D9S-4a):** `int32_t reason`, `int64_t rows_dropped`, and `array == schema == NULL` for no batch (a zero-row batch has an array). **Attachments open until 4b** (designed: one `fl_attachments` per row, an empty set rather than a NULL entry). | shim round (4b), then owner if it widens the seam's vocabulary |
+| Q6 | How do a batch's row-aligned attachments, `BatchStatus` and a null batch cross? Per-row `fl_attachments` handles, a flattened form, or a C Data column? **Resolved for `BatchStatus` and the null batch (D9S-4a):** `int32_t reason`, `int64_t rows_dropped`, and `array == schema == NULL` for no batch (a zero-row batch has an array). **Attachments resolved (D9S-4b, `[built]`):** one `fl_attachments` per row, an empty set rather than a NULL entry, the list NULL exactly when the batch has no rows. | shim round (4b), then owner if it widens the seam's vocabulary |
 | Q7 | How are `kNoTimeout` and L15's refusal expressed in the C signature: an `int64_t timeout_ms` with `INT64_MAX` as no timeout (as `fl_schema_arrival_wait` does), and `FL_INVALID_ARGUMENT` with domain 7's message? D-D7O-1 says a plain value; confirm the field width. **Resolved (D9S-4a):** `int64_t max_rows` and `int64_t timeout_ms`, `INT64_MAX` is `kNoTimeout` untranslated; the refusal is domain 7's, passed through (its test is rung 7, D9S-5). | — |
 | Q8 | Resolved 2026-11-13 (D27, audit LC-1): one `FL_BINDING_ABI_VERSION` for both builds, and both bump; the C# loader's expected minor moves in the same commit (the named scope exception, L6). | — |
 | Q9 | After the C# switch, `fl_decode_rows_framed` exists only for the deleted managed batcher. Does it stay (L13: the edge surface is unchanged) or go (a 0.x minor may remove it)? Also carries Findings (d)6. | C# switch round (domain 10) |
