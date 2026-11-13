@@ -441,3 +441,19 @@ untouched. Serves the round purpose (batches through the shim on Linux)."
 `pubsub-arrow/conanfile.py` and `arrow-bridge/conanfile.py`**, exactly as `pubsub` has it — a named
 scope exception; no other edit to domains 7 or 2.
 **Applies to:** D9S-4 design branch (a); D-D9S-8's out-of-scope list (this one exception).
+
+## 2026-11-13 — D9S-4: one subscriber object; the interim handoff gap accepted
+> Decision 1: "(a) One object, documented (Rec.)"
+> Decision 2: "(a) Accept until stage 6 (Rec.)"
+
+*(Chosen options, D9S-4 Stage Brief.)* Texts: (1) "Users: nothing new to manage; destroying the
+subscriber ends both kinds; a same-topic mix collides as above, which a user may not expect inside one
+object. Architecture: the server build only adds one call (L12, L13); the shim forwards the transport's
+rule rather than answering it (L4); the provider difference is registered for domains 3/4." (2) "Users:
+no one is exposed — nothing ships mid-round and C# doesn't call this before a later round; those rows
+vanish uncounted in stages 4–5 only. Architecture: L18 holds at round close and keeps its red-first test
+in stage 6."
+**Rulings:** (1) **one `fl_subscriber` holds both row and batched subscriptions**; the same-topic
+collision is documented, not refused; the provider difference is registered for domains 3/4. (2) **a
+failed conversion is lost uncounted during D9S-4/5 only**; L18 is built and proven red-first in D9S-6.
+**Applies to:** D9S-4a design; d9 L4, L18; register (d3/d4 finding).
