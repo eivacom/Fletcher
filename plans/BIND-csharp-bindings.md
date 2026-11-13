@@ -62,7 +62,7 @@ All nineteen ruled. ✅ = settled.
 | 3 | **TypeScript scope** = generated `Publisher`/`Subscriber` over the gateway (not a Node native binding) | ✅ **agreed 2026-08-31** | — |
 | 4 | **ABI value-transfer = Arrow C Data Interface** (`ArrowArray` + `ArrowSchema`), with the three-layer encode surface (D-BIND-23) | ✅ **agreed 2026-09-11** (Q1) | — |
 | 5 | **`Apache.Arrow` as a base C# dependency**; collapse `Core` + `Arrow` into one package | ✅ **agreed 2026-09-11** (rider on #4); collapse agreed with Q2: three packages | — |
-| 6 | **Native artifact links nanoarrow only**, not Arrow C++ (package size) | ✅ **agreed 2026-09-11** (rider on #4) | — |
+| 6 | **Native artifact links nanoarrow only**, not Arrow C++ (package size) | ✅ **agreed 2026-09-11** (rider on #4). *Annotated 2026-11-13 (D9S pre-round, audit F17): partially superseded by the owner ruling of 2026-11-12, "one shim, two variants" (`plans/RIX-rulings.md`): holds for the edge build in `Interop`; the server-tier build links Arrow C++ and ships in a separate package (2026-11-13, "Separate server package"). See `docs/domains/d9-c-abi-shim.md` L8, L12.* | — |
 | 7 | **Accessor nesting depth**: match RBA's 2/3 cap | ✅ **agreed 2026-09-11** (Q6): match the cap; the asymmetry is RIR's to remove | — |
 | 8 | Does **"all tests" (18786)** include the 98 protoc generator tests? | ✅ **agreed 2026-09-11** (Q10): no — generator tests stay C++ and are extended; provider-internal cases (24) also excluded, documented; **276 of 302** non-generator cases port *(was 278; bucket 3's two provider-level fan-out cases joined the excluded set 2026-09-24)* — *corrected 2026-09-18: the figure was 275 of 300, low by three. `test_owned_schema` was subtracted from a total that never contained it (the 300 is buckets 1–4; it is bucket 6), and bucket 4 was carrying a stale `test_xrce_document` count. Denominator ruled 302 by the maintainer* | — |
 | 9 | **"Make C# emit Rust-native accessor classes" (16353)** — confirm the reading | ✅ **agreed 2026-09-11** (Q19): read as *C# accessor classes equivalent to the Rust-native ones*; BIND-7 scope; ADO 16353 wording to be corrected | — |
@@ -367,6 +367,11 @@ renames. `Interop` is the *only* package carrying native assets, so the RID matr
 and the LGPL question are isolated to one artifact (D-BIND-13). `GatewayClient`
 has no native dependency at all — that is what keeps a browser/WASM-adjacent story
 alive and mirrors `@eiva/fletcher-gateway-client`.
+*(Annotated 2026-11-13, D9S pre-round, audit F18/F19: D-BIND-13 and D-BIND-17 are **revised** by the
+owner ruling of 2026-11-13, "Packaging: Separate server package" (`plans/RIX-rulings.md`): a separate
+server package carries the server-tier shim beside `Interop`'s edge shim, each a full shim, one per
+process; D-BIND-157's ceiling stays on `Interop`. See `docs/domains/d9-c-abi-shim.md` D22, L17. The text above is kept
+as ruled.)*
 
 **One `dotnet/` component, one version source, one `dotnet-v` tag** — as
 `gateway-client-ts` ships one npm package from one directory. `c-abi/` is a

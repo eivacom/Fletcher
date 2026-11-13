@@ -73,21 +73,21 @@
 //
 //   A DECLARATION IS EXPORTED ONLY ONCE ITS ITEM LANDS. Nothing here is ever
 //   stubbed out to return FL_NOT_SUPPORTED because it has not been written yet -
-//   that status means "this build cannot do the thing", which is a different and
-//   much more confusing statement than "not linked yet".
+//   that status means "this provider or this build cannot do the thing", not
+//   "not linked yet". A build that cannot do a thing still exports it and
+//   refuses with FL_NOT_SUPPORTED (the edge build's batched entry points, d9
+//   L12); a caller asks which build it holds with the variant query (d9 L16).
 //
-// So an unimplemented entry point is a LINK ERROR, not a run-time surprise, and
-// `fl_binding_abi_version()` is the run-time handshake for everything else: it
-// answers for the shim actually loaded, so a binding compiled against a different
-// FL_BINDING_ABI_VERSION can refuse it rather than crash inside a struct whose
-// layout moved.
-//
-// Which items have landed is deliberately NOT listed here. That inventory has one
-// maintained home - the round's tracker, `plans/BIND-csharp-bindings.md` - and a
-// second copy in a header nobody edits at an item boundary is a copy that goes
-// stale silently. (It did: this paragraph claimed for a while that only
-// `fl_binding_abi_version()` existed, some fifteen entry points after that
-// stopped being true.)
+// So, statically linked, an unimplemented entry point is a LINK ERROR (through
+// P/Invoke, an error at its first call), and `fl_binding_abi_version()` is the
+// run-time handshake for everything else: it answers for the shim actually
+// loaded, so a binding built against another FL_BINDING_ABI_VERSION refuses it
+// rather than crash inside a struct whose layout moved.
+// Which items have landed, and which build implements what, is NOT listed here:
+// its one maintained home is `docs/domains/d9-c-abi-shim.md` (L6, L12, L16), and
+// the loaded shim answers at run time. A second copy in a header nobody edits at
+// an item boundary goes stale silently (it did: this paragraph once claimed only
+// `fl_binding_abi_version()` existed, fifteen entry points after that was false).
 #ifndef FLETCHER_C_ABI_INCLUDE_FLETCHER_ABI_BINDING_H_
 #define FLETCHER_C_ABI_INCLUDE_FLETCHER_ABI_BINDING_H_
 
@@ -210,8 +210,8 @@ typedef enum fl_status {
      * write that did not go out, a session that is gone. */
     FL_TRANSPORT_FAILURE = 5,
 
-    /* This provider does not implement the requested behaviour. Distinct from
-     * FL_REENTRANT_CALL, which says "not from there". */
+    /* This provider, or this build, cannot do the requested thing (d9 L12, D28).
+     * Distinct from FL_REENTRANT_CALL, which says "not from there". */
     FL_NOT_SUPPORTED = 6,
 
     /* The total catch-all. Anything with no better home arrives here carrying

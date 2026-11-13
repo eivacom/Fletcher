@@ -1,9 +1,14 @@
 # fletcher-c-abi — the binding ABI shim
 
-One pure C surface over Fletcher, shipped as **one shared library per RID**. It
-is what `Eiva.Fletcher.Interop` carries in `runtimes/<rid>/native/`, and what a
-second binding (Rust, or a Node.js add-on, on the root README's Roadmap) would
-call. Nothing above this boundary links a Fletcher C++ library or sees a C++ type.
+One pure C surface over Fletcher, shipped as **one shared library per RID per
+build**. Today that is the edge build, which `Eiva.Fletcher.Interop` carries in
+`runtimes/<rid>/native/`; a server-tier build of the same source, which adds the
+batched subscribe and links Arrow C++, is designed to ship in a separate package,
+so there will be two shims per RID, one per package, of which a process loads one
+(owner ruling 2026-11-13; `docs/domains/d9-c-abi-shim.md` L12, L17, D22). It is
+also what a second binding (Rust, or a Node.js add-on, on the root README's
+Roadmap) would call. Nothing above this boundary links a Fletcher C++ library or
+sees a C++ type.
 
 ```
 c-abi/
@@ -35,7 +40,7 @@ the other.
 
 The eProsima and Micro XRCE-DDS chains are linked **statically**, and the three
 built-in providers — `inprocess`, `fastdds`, `xrce` — are **registered by the
-shim itself** (D-BIND-16). A C# application therefore selects a real transport
+shim itself** (D-BIND-3, as amended 2026-09-11). A C# application therefore selects a real transport
 with a configuration string and deploys one native file per RID: no loader, no
 driver binaries beside it, no `conanrun`. Selecting a provider by **path**
 answers `kNotSupported` until PDA-ABI fills the resolver seat, and managed code
@@ -192,10 +197,17 @@ things in its own idiom:
    `fletcher-c-abi.dll`) from where the package puts it for the RID (C#: `NativeLoader`, a
    `DllImportResolver`), and never ship a second copy beside another binding's: the shim refuses
    to work when it finds another module exporting `fl_single_copy_marker`, naming both
-   (D-BIND-17).
+   (D-BIND-17). That holds across the two builds too: an application that references both the
+   base and the server package still loads only one shim. Which file a binding loads when both are
+   present, and how the two packages name their files, is not settled yet
+   (`docs/domains/d9-c-abi-shim.md` §6, Q5a).
 2. **Handshake before anything else.** Call `fl_binding_abi_version()` and refuse a shim whose major,
    or before 1.0 whose minor, differs from the `FL_BINDING_ABI_VERSION` the binding was built
-   against, with a message saying which two.
+   against, with a message saying which two. Both builds share one version (d9 D27), so the
+   version does not say which build was loaded: once the variant query lands (d9 L16, designed,
+   not built), a binding that needs the batched subscribe asks it, and the edge build answers a
+   batched call with `FL_NOT_SUPPORTED` ("this provider or this build cannot do this"), never a
+   missing symbol (d9 L12).
 3. **Bring your own Arrow.** The header only forward-declares `ArrowSchema` and `ArrowArray`; the
    binding uses its Arrow library's C Data Interface (C#: `Apache.Arrow.C`), exports a batch for
    `fl_rows_bind` and imports what `fl_decode_rows` and `fl_schema_copy` produce.

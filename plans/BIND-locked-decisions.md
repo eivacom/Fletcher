@@ -96,6 +96,12 @@ commit.
      would drag full Arrow C++ into `Eiva.Fletcher.Interop`. GIR-8's
      descriptor-driven codec must stay nanoarrow-only to keep the NuGet package
      small; verified by a packed-size check in CI.
+     *(Annotated 2026-11-13, D9S pre-round, audit F17: **partially superseded** by the owner ruling
+     of 2026-11-12, "C# moves onto the C++ batcher: one shim, two variants" (`plans/RIX-rulings.md`).
+     The rider still holds for the edge build, which ships in `Eiva.Fletcher.Interop` and never links
+     Arrow C++; the server-tier build links Arrow C++ through `pubsub-arrow` and ships in a separate
+     package (ruling 2026-11-13, "Packaging: Separate server package"). See `docs/domains/d9-c-abi-shim.md` L8, L12,
+     D3, D22. The text above is kept as ruled.)*
 
 - **D-BIND-1b — The zero-copy guarantee has a stated boundary.** PDA-L4 zero-copy
   covers the **row buffer and attachments**. It does **not** cover individual
@@ -331,6 +337,12 @@ commit.
   *Owner of the LGPL relinking review: the maintainer (assigned 2026-09-11, Q9). Decision due
   before BIND-9 designs packaging; the notice half is mechanised by #127's graph-derived
   `THIRD-PARTY-LICENSES.txt`, which BIND-9 reuses for the shim.*
+  *(Annotated 2026-11-13, D9S pre-round, audit F18: **revised** by the owner ruling of 2026-11-13,
+  "Domain 9 (C ABI shim): packaging, wrong build, codec owner, laws confirmed", Packaging: "Separate
+  server package" (`plans/RIX-rulings.md`). Two packages carry native assets: the base
+  `Eiva.Fletcher.Interop` (the edge shim) and a separate server package (the server-tier shim), each
+  a full shim; every other managed package stays asset-free. That ruling was this decision's
+  STOP-AND-ASK. See `docs/domains/d9-c-abi-shim.md` D8, D22. The text above is kept as ruled.)*
 
 - **D-BIND-14 — One `dotnet/` component; `c-abi/` is separate.** The managed
   packages ship from **one** top-level `dotnet/` directory, versioned by **one**
@@ -405,6 +417,12 @@ is a copy-paste from the RBA feature; the ADO text is corrected to say what is m
   future consumer host Fletcher twice, P1's own note applies: **STOP-AND-ASK before design**,
   never a registration handshake papering over a forked thread-local. The .NET README states
   the rule.
+  *(Annotated 2026-11-13, D9S pre-round, audit F19: **revised** by the owner ruling of 2026-11-13,
+  "Domain 9 (C ABI shim): …", Packaging: "Separate server package" (`plans/RIX-rulings.md`): two
+  packages ship a shim each, a full shim with the marker; one shim per process still holds, and a
+  second one loaded is refused by this check. Wording note: only the copy loaded second refuses, and
+  it still loads; "refuses to initialise" overstates. See `docs/domains/d9-c-abi-shim.md` L5, L17, D9, D22. The
+  text above is kept as ruled.)*
 
 - **D-BIND-18 — The delivery thunk owns the lifetime bookkeeping; re-entrant `Subscribe` is
   refused in managed code and the sanctioned route is an explicit async helper.** *LOCKED BY
@@ -3685,6 +3703,11 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   11.6 MB unpacked, measured in 9b-1; the package to about 7.7 MB); N-10's 3531 Windows exports
   (ConanCenter's fast-dds static build) are recorded and revisited only if the ceiling is hit. **Declined:**
   owning a fast-dds build now.
+  *(Annotated 2026-11-13, D9S pre-round: **kept for the base package** by the owner ruling of
+  2026-11-13, "Domain 9 (C ABI shim): …", Packaging ("keeps D-BIND-157 for the base package";
+  `plans/RIX-rulings.md`). The 12 MB ceiling stays on `Eiva.Fletcher.Interop`, which carries the edge
+  shim; whether the separate server package gets a ceiling of its own is not ruled (domain-10
+  question, `docs/domains/d9-c-abi-shim.md` §6, Q5a). The text above is kept as ruled.)*
 
 - **D-BIND-158 - `Eiva.Fletcher.Protoc` carries `fletcher/options.proto`, and wires it into
   `Grpc.Tools` projects.** *LOCKED BY THE MAINTAINER 2026-10-22 (BIND-9b Q6, revised with the

@@ -221,6 +221,7 @@ loads only when the app references the server package; otherwise the edge build.
 **Applies to:** the domain map (planned order of work); the rounds D7O, then the shim round, then
 the C# switch round.
 *Ingested (D7O close, 2026-11-12): (1) d7 D16, register BC-9; (2) domain-map row 9 and planned order 5–6. Not ingested: (3) "no interim fixes" — its domain (10) is only `anticipated`; named in domain-map "Where this map is incomplete".*
+*Ingested (D9S pre-round, 2026-11-13): the 2026-11-13 revision of (2) — `docs/domains/d9-c-abi-shim.md` §1 (server variant), D19 (revision noted in place), D29, §6 (domain 10: what a C# app loads, and the C# switch round's consequence).*
 
 ## 2026-11-12 — A batched subscription may have no timeout
 > "Add 'never' to C++ (Recommended)"
@@ -307,6 +308,7 @@ requires."
 **Ruling:** **d7 §2's "Deadline" definition is amended** to the wording above, by D7O-2.
 **Applies to:** `docs/domains/d7-batch-assembly.md` §2; audit F1 (`plans/D7O-pre-round-audit.md`).
 *Ingested (D7O close, 2026-11-12): d7 §2 "Deadline" row (wording verified, ruling cited).*
+*Archived path (D9S pre-round, 2026-11-13): the audit cited in *Applies to*, `plans/D7O-pre-round-audit.md`, is now `docs/archive/D7O/D7O-pre-round-audit.md` (archived at D7O close).*
 
 ## 2026-11-12 — D7O close: line overruns accepted
 > "Accept, as explained"
@@ -356,6 +358,7 @@ those refusals). (3) **The shim's row codec is domain 2's**; domain 9 hosts it (
 domain 2). (4) **Domain 9's laws L1–L17 are confirmed** as amended by (1)–(3); domain 9 is `specified`.
 **Applies to:** `docs/domains/d9-c-abi-shim.md`, `docs/domains/d2-row-encoding.md`,
 `docs/domain-map.md` rows 2 and 9; BIND D-BIND-13, -17, -157, Decision 6 (annotations owed).
+*Ingested (D9S pre-round, 2026-11-13): (1) d9 D22, L5, L17, §5 D8/D9/D18; (2) d9 D23, L12, L16, §4; (3) d9 D24, L10 (moved), and `docs/domains/d2-row-encoding.md` (former d9 L10); (4) d9 D25 and status `specified`; `docs/domain-map.md` rows 2 and 9 (all verified, written when domain 9 was specified). The owed annotations are now written: `plans/BIND-locked-decisions.md` D-BIND-1a rider ii, D-BIND-13, D-BIND-17, D-BIND-157 (kept for the base package); `plans/BIND-csharp-bindings.md` Decision 6 row and the Part 2 packaging prose.*
 
 ## 2026-11-13 — D9S pre-round: batch ownership, version, error code, what C# loads
 > Batch owner: "Borrowed; keep by moving (Recommended)"
@@ -375,6 +378,7 @@ references the server package, otherwise the edge build. Consequence owned by th
 C#'s per-row subscribe must work on the edge build without a batcher.
 **Applies to:** d9 L2, L6, L11, L12, L14, §2; `c-abi/include/fletcher/abi/binding.h` status docs;
 `dotnet/src/Fletcher.Interop/NativeLoader.cs` (one line); the 2026-11-12 entry (annotated).
+*Ingested (D9S pre-round, 2026-11-13): (1) d9 L14 (amended; L11 unchanged), D26, register BC-13; (2) d9 L6, L12, D27, §7 Q8 and LC-1 (the `NativeLoader.cs` line itself moves with the bump, in the round, not now); (3) d9 §2 "Not supported", L2, L12, D28, §7 Q3 and LC-2; `binding.h` comments on `FL_NOT_SUPPORTED` and "Status of the surface"; `c-abi/README.md`. Not ingested: the seam's published table, `core/README.md:37` (domain 3's text), still reads "This provider does not implement the requested behaviour" (d9 §7 LC-2); (4) d9 §1, D19 (revised in place), D29, §6 (domain 10).*
 
 ## 2026-11-13 — D9S pre-round: a failed handoff is reported; corrections approved
 > Lost handoff: "Report it as lost (Recommended)"
@@ -386,3 +390,4 @@ receives a "no batch could be built" delivery for that window with its rows coun
 its reason kept; one site in the shim (register BC-12); domain 7 untouched. (2) **The tier-2 text
 corrections listed in `plans/D9S-pre-round-audit.md` are approved** and applied before the round.
 **Applies to:** d9 (a new law or an L14 clause), register BC-12, the audit's F-rows.
+*Ingested (D9S pre-round, 2026-11-13): (1) d9 law L18 (a new law, not an L14 clause: its own question, site and test), D30, §2 "Hand-over", register BC-12; (2) d9 D31 and the F-rows: d9 (F1, F3, F4, F6, F7, F9, F15), BIND annotations (F17–F19), `binding.h` comments (F10, F22, F23), `c-abi/README.md` (F24–F26), these ledger notes (F27); register BC-10 to BC-15 and notes on BC-5, BC-8, BC-9.*
