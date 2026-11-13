@@ -86,3 +86,39 @@ stub conan only. No compiled code changed, so D9S-2's suites stand. **CI and Lin
 design cycles 1; fix cycles 1; implementer launches 1 (resumed 3×); owner touches 1.
 **Logged:** 4b nits N1–N4 (no `--no-remote`; unknown extensions to `nm`; root counted; Windows scan
 scope). Record: d9 L8 / design said `run_tests` leaves the package ID — false (flagged in place).
+
+## D9S-4a — Batches cross the C ABI on the server build; the edge build refuses — 🟢 2026-11-13
+
+**Landed:** `e766c3e`. Header fixes `8383095` and `e57e7af`; reviews in `609ee23`.
+- **Server build:** `fl_subscriber_subscribe_batches` hands every window that domain 7 closes to the caller as an importable Arrow batch, with its reason and loss count. A window that could not be built arrives as no-batch, with its rows counted.
+- **Edge and probe builds:** refuse with not-supported.
+- **Scan:** the BC-9 scan was widened.
+
+**Steps:**
+- Design: 2 cycles, APPROVE-WITH-DEBT(3). Ruled on: PIC (fPIC on the two batcher-side recipes), one subscriber object, the ceiling overrun.
+- Test audits: 0a CLEAR. 0b CLEAR in cycle 2, post-build (the tests arrived in the code commit).
+- Compliance review 4a: ISSUES(2, 0 blocking). F2 is the rung-4 test reshaped to ROW, ROW, CLOSING.
+- Code review 4b, cycle 1: 2 should-fix.
+  - **S1 DECLINED by the PM.** The fix would refuse a batched id in the row unsubscribe. d9 L13 forbids changing what an edge entry point does, and this round may change no laws. The no-op is documented in that function's own doc instead.
+  - **S2:** header text on the destroy contract → fix 1.
+- Code review 4b, cycle 2, **B1:** fix 1's text promised a CLOSING batch, but an idle last window delivers nothing (d7 L6) → fix 2.
+- Code review 4b, cycle 3: CLEAR. The review was then cut from 162 to 102 lines to meet the cap.
+
+**Verification at `e57e7af`:**
+- c-abi tests: server 104/104, edge+probe 114/114. The forcing tests are green on server, and the edge answers with a refusal.
+- Conformance: edge 11/11.
+- **Server conformance: 1/11 under the server DLL's own file name**, because the C# binding loads `fletcher-c-abi` by name. The same server DLL scores 11/11 when staged under the edge name. This is expected: the file name a binding loads is domain 10's Q5a, and D9S-7 owns "the lane passes against both builds".
+- pubsub-arrow-fastdds 4/4.
+- CI and Linux unrun (draft PR). Logs are in the session scratchpad.
+
+**Numbers:**
+- Production: +415/−20 in 12 files (code ≈+305), against a declared +298/−12. The overrun was ruled (`7b1bcbe`).
+- **Close finding:** tests came to +646 against a declared ~270, and the raw diff is about +67% over the declared total, with no owner note.
+- Cycles: design 2, fix 2. Implementer launches: 2 in the fix stage (launches during the build stage went unrecorded). Owner touches: 3 rulings.
+
+**Booked forward to D9S-5 (rung 6):** after a destroy from inside a batch callback, the C caller has no reliable end signal for `ctx`. CLOSING is not delivered when the last window is idle. The header now tells bindings not to destroy from inside a batch callback, or to keep `ctx` alive for the life of the process. D9S-5's design must face this gap, which may become an owner question.
+
+**Logged:**
+- 4b nits N1–N8.
+- 0b: rungs 6 and 7 are partly covered by the rung-4 test, but must not be marked green on it.
+- Suite agent: `locate_shim.sh` refuses when the cache holds several recipe revisions, and a stale shim in the `bin` folder could have produced a silent false green.

@@ -53,5 +53,5 @@ Nothing. Nothing in the shim served batches before. The C# batcher this makes re
 **4a:** declared net lines (raw diff) about **+635 / −40**. Production is +298/−12 in 11 files, of which about 236 count toward the 250 ceiling (`binding.h` doc comments are not counted). Tests about +270; docs about +65/−25. **4b:** production about +20 in 2 files and tests about +60, a light-lane candidate. Unsplit, the stage would count about 254, so the split is taken now. New public surface: 3. Design cycles used: 2/2.
 
 ---
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
-<delta vs the above — actual net lines, anything retired or added the brief did not predict, fix cycles used>.
+*As landed — 4a, 2026-11-13:*
+Production +415/−20 in 12 files (code ≈+305/−9; `binding.h` comments +99, README +11) against a declared +298/−12. The ceiling overrun was accepted by ruling (7b1bcbe). **Close finding:** tests came to +646 against a declared ~270 (+139%), putting the raw diff at about +67% over the declared +635, with no owner note. The rung-4 test landed as ROW, ROW, CLOSING instead of ROW, ROW, TIMEOUT (0b cycle 2); rungs 6 and 7 are only partly covered and are not green. The header gained the batched destroy contract: CLOSING arrives only if the last window is non-empty, and an in-callback destroy gives no end signal (fixes 8383095 and e57e7af). Booked to D9S-5. S1 (refusing a batched id in the row unsubscribe) was declined per L13. Cycles: design 2, fix 2, implementer launches 2.
