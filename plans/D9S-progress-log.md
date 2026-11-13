@@ -122,3 +122,5 @@ scope). Record: d9 L8 / design said `run_tests` leaves the package ID — false 
 - 4b nits N1–N8.
 - 0b: rungs 6 and 7 are partly covered by the rung-4 test, but must not be marked green on it.
 - Suite agent: `locate_shim.sh` refuses when the cache holds several recipe revisions, and a stale shim in the `bin` folder could have produced a silent false green.
+
+**Owner, 2026-11-13 (words-per-stage tripwire, about 7,300 vs 6,520):** "Tighter caps (Recommended)". The design cap is now 150 and the review cap 60 for the remaining full-loop stages; config and ledger updated.

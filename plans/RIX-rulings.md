@@ -466,3 +466,11 @@ a batch, when it is released, what each reason means). Architecture: the overrun
 work — code is ~192 lines, within the ceiling's intent; recorded as an accepted close finding like D9S-2's."
 **Ruling:** **D9S-4a's ~312 counted production lines (≈192 code) over the 250 ceiling are accepted.**
 **Applies to:** D9S-4a close finding.
+
+## 2026-11-13 — D9S: tighter document caps for the remaining stages
+> "Tighter caps (Recommended)"
+
+*(Chosen option.)* Its text: "You: about half as much to read per stage, and the same stops reach you. Architecture: serves
+the round's purpose by spending effort on code, not prose."
+**Ruling:** **D9S's remaining full-loop stages run with a 150-line design and 60-line reviews.** Light-lane caps are unchanged.
+**Applies to:** D9S-5, D9S-6 (and any ejection). Trigger: the words-per-stage tripwire (log, D9S-4a close).
