@@ -52,6 +52,9 @@ class FletcherCAbiConan(ConanFile):
         "fast-cdr/*:shared": False,
         "foonathan-memory/*:shared": False,
         "tinyxml2/*:shared": False,
+        # The server build links Arrow statically for the same reason: one native
+        # file per RID. Ignored where Arrow is not in the graph (the edge build).
+        "arrow/*:shared": False,
     }
 
     exports_sources = (
@@ -92,9 +95,16 @@ class FletcherCAbiConan(ConanFile):
             # TEST-ONLY and never released: the copy oracle's instrument, which
             # the probe shim registers and scores with (D-BIND-62).
             self.requires("fletcher-copy-probe/0.5.0-alpha")
+        if self.options.variant == "server":
+            # The SERVER build's batcher (d9 L8, L12, BC-11): domain 7's batched
+            # subscribe, linked into the shim and reached only through the one
+            # `fl_subscriber_subscribe_batches` door. `variant` is in the package ID, so
+            # the edge package's graph, and its binary, never name Arrow (the edge
+            # graph is unchanged; `check_edge_arrow_free.sh` proves it).
+            self.requires("fletcher-pubsub-arrow/0.5.1-alpha")
         if self.options.run_tests:
             self.requires("gtest/1.17.0")
-            # The byte-identity oracle, and TEST-ONLY. The shipped shim must not
+            # The byte-identity oracle, and TEST-ONLY. The EDGE shim must not
             # link arrow-bridge or Arrow C++ - that is what keeps the per-RID
             # native asset to nanoarrow - but the oracle has to be the real
             # encoder rather than a transcription of it, so the test binary links
@@ -102,8 +112,10 @@ class FletcherCAbiConan(ConanFile):
             # package is unaffected by their presence here.
             self.requires("fletcher-arrow-bridge/0.5.1-alpha")
             self.requires("arrow/23.0.1")
+        if self.options.run_tests or self.options.variant == "server":
             # The same zlib conflict arrow-bridge and pubsub-arrow resolve:
-            # arrow pins 1.2.13, openssl pulls 1.3.1.
+            # arrow pins 1.2.13, openssl pulls 1.3.1. Needed wherever Arrow is in
+            # the graph: the tests, and the server shim.
             self.requires("zlib/1.3.1", override=True)
 
     def package_id(self):

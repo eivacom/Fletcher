@@ -36,6 +36,7 @@
 #include <utility>
 #include <vector>
 
+#include "fletcher/abi/binding.h"
 #include "nanoarrow_codec.hpp"
 
 namespace fletcher::abi {
@@ -173,7 +174,33 @@ struct fl_subscriber {
 
     std::shared_ptr<fletcher::PubSubProvider> provider;
     std::unique_ptr<fletcher::Subscriber> subscriber;
+
+    /// The server build's batch host (D9S-4), created on the first batched subscribe and
+    /// never otherwise: a row-only caller sees exactly what it saw before. Declared AFTER
+    /// `subscriber` so it is destroyed FIRST: domain 7 then closes every batched
+    /// subscription (d7 L9) while the provider is still alive. Type-erased, so the edge
+    /// build's objects name no domain-7 type; only `batches_server.cpp` knows what it holds.
+    std::mutex batches_mu;
+    std::shared_ptr<void> batches;
 };
+
+namespace fletcher::abi::internal {
+
+/// A batched subscription as the entry point needs it: domain 7's id, untagged (the entry
+/// point sets bit 63), and the topic's schema arrival.
+struct BatchedSubscription {
+    uint64_t id;
+    fletcher::SchemaArrival arrival;
+};
+
+/// Defined in `batches_server.cpp` (server build) or `batches_edge.cpp` (edge and probe,
+/// where the entry point refuses first and this is unreachable): one door, two backends.
+BatchedSubscription SubscribeBatches(fl_subscriber& subscriber, std::vector<std::string> segments,
+                                     int64_t max_rows, int64_t timeout_ms,
+                                     const fletcher::TopicOptions& options, fl_batch_fn on_batch,
+                                     void* ctx);
+
+}  // namespace fletcher::abi::internal
 
 /// A waitable arrival the caller owns.
 ///

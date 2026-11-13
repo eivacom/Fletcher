@@ -5,12 +5,14 @@ find_package(GTest REQUIRED)
 
 # The ORACLE's dependencies, and test-only on purpose.
 #
-# `fletcher-c-abi` must never link `arrow-bridge`: that would pull Arrow C++ into
+# The EDGE shim must never link `arrow-bridge`: that would pull Arrow C++ into
 # the per-RID native asset the NuGet package ships, which is most of the reason
-# the codec was written on nanoarrow at all. The byte-identity test links it
-# because the oracle has to be the real encoder rather than a transcription of
-# it. CI's packed-size check measures the packaged shim, not this binary, so the
-# two facts do not fight.
+# the codec was written on nanoarrow at all. (The SERVER shim does link Arrow, by
+# its batcher alone - D9S-4; this test binary's own Arrow is a second, separate
+# copy, and a batch crosses between them only as the C Data Interface.) The
+# byte-identity test links it because the oracle has to be the real encoder
+# rather than a transcription of it. CI's packed-size check measures the packaged
+# shim, not this binary, so the two facts do not fight.
 find_package(fletcher-arrow-bridge CONFIG REQUIRED)
 find_package(Arrow CONFIG REQUIRED)
 
@@ -38,7 +40,9 @@ add_executable(c_abi_tests
     test_nanoarrow_codec.cpp
     test_binding_entry_points.cpp
     test_single_copy.cpp
-    test_containment.cpp)
+    test_containment.cpp
+    test_batches.cpp
+    test_shim_batches_nothing.cpp)
 add_dependencies(c_abi_tests single_copy_decoy)
 # The NAME only, never the path. A generator expression yields a NATIVE path,
 # and on Windows that is full of backslashes which become escape sequences the
@@ -69,6 +73,13 @@ else()
 endif()
 target_compile_definitions(c_abi_tests PRIVATE
     FLETCHER_EXPECTED_VARIANT=${FLETCHER_C_ABI_TESTS_EXPECTED_VARIANT})
+
+# D9S-4a (BC-9). The shim's own source directory, as ONE forward-slash literal, for the scan
+# `ShimBatchesNothing.SourcesHoldNoThreadClockOrTimer` runs over it. CMake spells its source dir with
+# forward slashes on every platform, so the string is a path on Windows and on Linux alike and has
+# no backslash for a C string literal to misread (see the decoy-name comment above).
+target_compile_definitions(c_abi_tests PRIVATE
+    FLETCHER_C_ABI_SRC_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../src")
 
 target_link_libraries(c_abi_tests PRIVATE
     GTest::gtest_main
@@ -104,10 +115,12 @@ include(GoogleTest)
 # `xrcedds-pubsub-provider/tests/CMakeLists.txt`, whose first Linux run spent
 # 2 h 04 m inside one hung test before the job was cancelled with no result.
 #
-# 30 s. Every row here is arithmetic on a constant — no wait, no I/O, no
-# transport — so the measured cost is the process start. The cap exists to turn
-# a future hang (the first row that touches a provider will be in this suite)
-# into a 30-second red instead of a cancelled job.
+# 30 s. Nearly every row here is arithmetic on a constant - no wait, no I/O, no
+# transport - so the measured cost is the process start. The exceptions are the
+# batched-subscribe rows (`test_batches.cpp`), which wait ONE-SIDEDLY on a
+# delivery: at most 10 s for a window, 2 s for an observation window; the longest
+# measured row takes about 2 s. The cap exists to turn a future hang into a
+# 30-second red instead of a cancelled job.
 gtest_discover_tests(c_abi_tests DISCOVERY_MODE PRE_TEST
     PROPERTIES TIMEOUT 30)
 
@@ -166,7 +179,8 @@ set_tests_properties(BindingAbi.CompilesAsC99AndIsSelfContained PROPERTIES
 if(FLETCHER_BUILD_PROBE_SHIM)
     add_executable(c_abi_probe_tests
         test_probe_shim.cpp
-        test_binding_abi.cpp)
+        test_binding_abi.cpp
+        test_batches.cpp)
     target_link_libraries(c_abi_probe_tests PRIVATE
         GTest::gtest_main
         fletcher-c-abi-probe

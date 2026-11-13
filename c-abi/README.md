@@ -87,8 +87,10 @@ The same sources, a second build: it answers `FL_VARIANT_SERVER` to
 `fl_binding_variant()` and is the file `fletcher-c-abi-server` (`.dll`, or
 `libfletcher-c-abi-server.so`), so both builds can sit in one folder. `variant`
 defaults to `edge`, is part of the package ID, and the CMake target stays
-`fletcher-c-abi::fletcher-c-abi`. It carries no Arrow C++ yet. It cannot be
-combined with `with_probe_shim`. A direct CMake configure takes
+`fletcher-c-abi::fletcher-c-abi`. It links `fletcher-pubsub-arrow` (domain 7's batcher) and so
+Arrow C++, statically and hidden, and only this build does; its recipe needs
+`conan create ../pubsub-arrow` first, after `../arrow-bridge`. It serves
+`fl_subscriber_subscribe_batches`. It cannot be combined with `with_probe_shim`. A direct CMake configure takes
 `-DFLETCHER_SHIM_VARIANT=edge|server`, and names the file from it.
 
 ### The probe shim (`with_probe_shim`, test-only)
@@ -224,9 +226,14 @@ things in its own idiom:
    or before 1.0 whose minor, differs from the `FL_BINDING_ABI_VERSION` the binding was built
    against, with a message saying which two. Both builds share one version (d9 D27), so the
    version does not say which build was loaded: a binding that needs the batched subscribe asks
-   `fl_binding_variant()` (d9 L16), and the edge build will answer a
+   `fl_binding_variant()` (d9 L16), and the edge build answers a
    batched call with `FL_NOT_SUPPORTED` ("this provider or this build cannot do this"), never a
-   missing symbol (d9 L12).
+   missing symbol (d9 L12). On the server build, `fl_subscriber_subscribe_batches` hands each window
+   domain 7 closes to a callback as one `fl_batch`: an Arrow C Data array and schema (borrowed for the
+   call; keep them by Arrow's move), the reason (`FL_BATCH_*`) and the loss count, one batch at a time
+   on domain 7's batch thread, in window order; a window that could not be built arrives with a NULL
+   array. A row and a batched subscription to the same topic through one provider collide (see the
+   header). Each row's attachments and the batched close are not built yet.
 3. **Bring your own Arrow.** The header only forward-declares `ArrowSchema` and `ArrowArray`; the
    binding uses its Arrow library's C Data Interface (C#: `Apache.Arrow.C`), exports a batch for
    `fl_rows_bind` and imports what `fl_decode_rows` and `fl_schema_copy` produce.

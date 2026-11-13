@@ -109,6 +109,11 @@ const Attachments& AttachmentsOf(const fl_attachments* atts) {
     return atts == nullptr ? kNone : atts->set;
 }
 
+/// A batched subscription's id carries this bit and a row subscription's never does (a counter
+/// from 1 needs 2^63 subscriptions to reach it), so the two can never be confused. Stage 5's
+/// close reuses it. Review B1.
+constexpr uint64_t kBatchedIdTag = uint64_t{1} << 63;
+
 /// Refuse a null OUT parameter before anything is built.
 ///
 /// Every creating entry point needs this and none of them can report it any
@@ -864,6 +869,43 @@ fl_status fl_subscriber_subscribe_with_options(fl_subscriber* subscriber, fl_top
 
         arrival->arrival = std::move(result.schema);
         *out_id = result.subscription_id;
+        *out_arrival = arrival.release();
+    });
+}
+
+/// Subscribe for batches (d9 L12, L14, L15). THE ONE DOOR: it asks the build first, through
+/// BC-10's single site, and only then reads an argument. The server build hands the options
+/// to domain 7 as given and answers none of them (BC-8, BC-14); the edge build refuses.
+fl_status fl_subscriber_subscribe_batches(fl_subscriber* subscriber, fl_topic topic,
+                                          int64_t max_rows, int64_t timeout_ms,
+                                          const fl_topic_options* options, fl_batch_fn on_batch,
+                                          void* ctx, uint64_t* out_id,
+                                          fl_schema_arrival** out_arrival, fl_error* err) {
+    return Contain(err, FL_ORIGIN_SEAM, [&] {
+        if (fl_binding_variant() != FL_VARIANT_SERVER) {
+            throw PubSubError(
+                PubSubStatus::kNotSupported,
+                "fl_subscriber_subscribe_batches: the edge build of the shim carries no batcher; "
+                "load the server build (fletcher-c-abi-server) to subscribe for batches");
+        }
+        RequireOut(out_id, "fl_subscriber_subscribe_batches (out_id)");
+        RequireOut(out_arrival, "fl_subscriber_subscribe_batches (out_arrival)");
+        if (subscriber == nullptr || on_batch == nullptr) {
+            throw PubSubError(
+                PubSubStatus::kInvalidArgument,
+                "fl_subscriber_subscribe_batches: subscriber and on_batch must not be null");
+        }
+
+        // Allocated BEFORE the subscription goes live, for the reason fl_subscriber_subscribe
+        // gives: only noexcept steps may follow `SubscribeBatches`.
+        auto arrival = std::make_unique<fl_schema_arrival>(fletcher::SchemaArrival{});
+
+        auto result = fletcher::abi::internal::SubscribeBatches(
+            *subscriber, ToSegments(topic), max_rows, timeout_ms, ToTopicOptions(options),
+            on_batch, ctx);
+
+        arrival->arrival = std::move(result.arrival);
+        *out_id = result.id | kBatchedIdTag;
         *out_arrival = arrival.release();
     });
 }

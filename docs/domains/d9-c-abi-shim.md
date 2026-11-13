@@ -82,7 +82,7 @@ containment.
 | **Shim** | The shared library `fletcher-c-abi` (`CMakeLists.txt:80-83`): the only Fletcher component built as a shared library; statically links pub/sub, the two DDS providers and nanoarrow. |
 | **Variant** | One of the two builds of the shim from one source: `edge` and `server`, chosen by the Conan option `variant` (default `edge`, in the package ID; D9S-2). The test-only probe shim (`CMakeLists.txt:164-211`) is a third artifact from the same sources, always edge, not a variant. |
 | **Edge variant** | Today's shim: no Arrow C++, codec on nanoarrow. Shipped in the base package. |
-| **Server(-tier) variant** | `[built]` (Windows, by hand; CI and Linux unrun) as an artefact (D9S-2: `fletcher-c-abi-server`, the edge sources answering "server", no Arrow yet); the batched subscribe and the Arrow link are `[designed-not-built]` (D9S-4). Shipped in a package of its own (D22). |
+| **Server(-tier) variant** | `[built]` (Windows, by hand; CI and Linux unrun) as an artefact (D9S-2: `fletcher-c-abi-server`, the edge sources answering "server", no Arrow yet); the batched subscribe and the Arrow link are `[built]` for 4a (D9S-4a: `pubsub-arrow` is linked only under `variant=server`; Windows, by hand; CI and Linux unrun); attachments (4b) and the batched close (stage 5) are `[designed-not-built]`. Shipped in a package of its own (D22). |
 | **Variant query** | `[built]` for all three artefacts (D9S-1 edge and probe; D9S-2 server, (Windows, by hand; CI and Linux unrun)). `fl_binding_variant`: the entry point both builds export that answers which build was loaded (L16, D23). |
 | **Base package / server package** | `Eiva.Fletcher.Interop`, carrying the edge variant, and the separate .NET package carrying the server variant; each holds a full shim (D22). |
 | **Entry point** | An exported `fl_*` function. 48 today (`h`, `grep -c FL_ABI_EXPORT`). |
@@ -158,8 +158,8 @@ Wait outcomes (`FL_PENDING`, `FL_SUBSCRIPTION_ENDED`) are returned values, never
   thrown).
 - **`FL_NOT_SUPPORTED` means "this provider or this build cannot do this"** (D28, 2026-11-13). The
   edge build's refusal of a batched entry point (L12) reuses it with a message naming the edge build
-  and the server package; the shim allocates no new number. Which `fl_origin` that refusal carries
-  is open (Q12, audit F5).
+  and the server package; the shim allocates no new number. That refusal carries `FL_ORIGIN_SEAM`
+  (Q12, edge half, resolved by D9S-4a; audit F5).
 - `Capture` casts `PubSubStatus` to `fl_status` (`containment.cpp:66`). Nothing in `c-abi/` asserts
   the two enums agree; `h:180-183` says a C# port of `test_status_taxonomy` compares the C# enum to
   the published table, and no such test was found under `dotnet/tests` (unsure; see Findings c).
@@ -191,7 +191,7 @@ and never consumes a caller's Arrow structure. OUT parameters are written only o
 the caller with the seam's number and message. A timeout crosses as the seam's value, untranslated:
 `INT64_MAX` ms is the unbounded form, a negative is the seam's refusal (`h:548-555`).
 `[built]`, with **one answer of its own**: the bound-rows publish check; a **second** is designed,
-the edge build's refusal of a batched entry point (L12) `[designed-not-built]`.
+the edge build's refusal of the batched subscribe (L12) `[built]` (D9S-4a).
 - Holds at: `cpp:28-39` (the six topic rules are `RequireSegments`'), `cpp:96-102` (topic options),
   `cpp:871-877` (unsubscribe's no-op and no-wait cases), `cpp:941-946` (the arrival timeout is
   forwarded; "negative means forever" belongs to C#, D-BIND-20).
@@ -199,7 +199,7 @@ the edge build's refusal of a batched entry point (L12) `[designed-not-built]`.
   for a topic this publisher did not declare, or whose wire layout differs. The seam's `Publisher`
   only sees bytes, so it cannot ask; C++ `PublisherArrow` answers the same question for C++ callers.
   That is one question with two sites (Findings b2).
-- **The second exception** `[designed-not-built]` (audit F3, D31): on the edge build, a batched
+- **The second exception** `[built]` (D9S-4a; audit F3, D31): on the edge build, a batched
   entry point answers `FL_NOT_SUPPORTED` itself (L12, D28), with no seam call behind it. It is the
   answer to "can this build do this?", which only the shim can know (BC-10).
 - Tests: `BindingEntryPoints.AMalformedTopicCarriesTheSeamsRefusal`,
@@ -238,7 +238,7 @@ exported only once it is implemented, never stubbed to answer `FL_NOT_SUPPORTED`
   -57, -68 each bumped the minor (0.7; D-BIND-52 added by audit F6, D31); D9S-1 made it 0.8.
 - **Both builds share one ABI version, and both bump** (D27, 2026-11-13; resolves Q8 and audit
   LC-1) `[built]` for the bump to 0.8 and the query (D9S-1, with the C# loader's one line);
-  `[designed-not-built]` for the batched entry points. The variant query and the batched entry
+  the batched subscribe is `[built]` (D9S-4a) and its close `[designed-not-built]` (stage 5). The variant query and the batched entry
   points are appended to the one header, so the edge build's minor moves with the server build's. The builds are told apart by
   the variant query (L16), never by the version.
 - **Named scope exception** (D27, audit OQ-1): the C# loader's expected minor,
@@ -320,8 +320,8 @@ point the server build does: the variant query answers truthfully, and each batc
 refuses with a named not-supported error, having done nothing. Nothing else in the edge build
 changes, beyond the version bump L6 requires (D27): no other entry point, no link (L8), no size
 check, no behaviour.
-`[built]` on Windows (by hand; CI and Linux unrun) for one source, one recipe and the two builds (D9S-2); the edge refusals of the batched entry
-points are `[designed-not-built]` (D9S-4). Source: 2026-11-12, "one shim in two variants", "the edge variant exactly as
+`[built]` on Windows (by hand; CI and Linux unrun) for one source, one recipe and the two builds (D9S-2); the edge refusal of the batched subscribe is `[built]` (D9S-4a: `Batches.TheBuildAnswersABatchedSubscribeAsItAnswersTheQuery`,
+in edge, probe and server; (Windows, by hand; CI and Linux unrun)); the batched close is `[designed-not-built]` (stage 5). Source: 2026-11-12, "one shim in two variants", "the edge variant exactly as
 today"; amended 2026-11-13, "Wrong build: Clear 'not supported'" ("the edge surface gains only that
 query and those refusals"; D23). Precedent: the probe shim is a second artifact from the same object
 library and entry points (`CMakeLists.txt:164-211`, `conanfile.py:30-34`, D-BIND-62).
@@ -333,14 +333,15 @@ library and entry points (`CMakeLists.txt:164-211`, `conanfile.py:30-34`, D-BIND
   D-BIND-31): `FL_NOT_SUPPORTED` means "this provider or this build cannot do this" (D28).
 - **"Named" resolved 2026-11-13 (D28; audit LC-2):** the existing `FL_NOT_SUPPORTED`, with a message
   naming the edge build and the server package. No new status number. This refusal is L4's second
-  exception (the shim's own answer). Its `fl_origin` is open (Q12).
+  exception (the shim's own answer). Its `fl_origin` is `FL_ORIGIN_SEAM`, as every refusal the shim
+  makes itself (Q12, edge half, resolved by D9S-4a).
 
 **L13. The server variant only adds.** It adds entry points; it never removes an edge entry point,
 changes one's signature, or changes what one does. A caller written against the edge surface
 behaves identically on the server variant. The only entry points whose answers differ between the
 builds are the variant query and the batched ones (L12).
 `[built]` on Windows for the edge surface on the server artefact (D9S-2: the whole edge-surface suite runs against it; Linux unrun);
-the added entry points are `[designed-not-built]` (D9S-4). Source: as L12.
+the added batched subscribe is `[built]` (D9S-4a; its attachments are 4b and its close is stage 5, `[designed-not-built]`). Source: as L12.
 
 **L14. A batch crosses as an Arrow C Data Interface array and schema, borrowed for the batch
 callback; a binding keeps it only by moving it.** *(Amended 2026-11-13, D26.)* The batch callback is
@@ -350,7 +351,11 @@ sources released by setting their `release` to null), and from then on owns and 
 Arrow way. What the binding has not moved when the callback returns, the shim releases then. The
 shim keeps nothing of a batch after its callback returns. A window's loss count and reason cross
 with it, and a "no batch could be built" (domain 7 L7) is expressible.
-`[designed-not-built]`. Source: BIND Decision 4 / D-BIND-1a (values cross as C Data); ruling
+`[built]` **in part** (D9S-4a, Windows, by hand; CI and Linux unrun): the callback is handed the array, the schema, the reason and the
+loss count, and a window that could not be built arrives as no batch (`Batches.EachClosedWindow...`,
+`Batches.AWindowThatCouldNotBeBuilt...`); the release of what the binding did not move is one scope
+guard in `batches_server.cpp`, with **no test yet** (ladder rung 5, `[designed-not-built]`); attachments
+are 4b (Q6) and a failed hand-over is L18 (D9S-6). Source: BIND Decision 4 / D-BIND-1a (values cross as C Data); ruling
 2026-11-13, "Batch owner: Borrowed; keep by moving" (D26), which **resolves audit B1**: the earlier
 text ("the receiver owns") contradicted L11 and D5 / D-BIND-2a for a batch handed to a callback.
 L11 holds as written. Precedent for an owned array: `fl_decode_rows` (`h:1061-1066`: a fresh array
@@ -364,7 +369,11 @@ only by domain 7 (BC-8): the shim forwards `max_rows` and the timeout as given, 
 the seam's `FL_INVALID_ARGUMENT` with domain 7's message. The shim adds no window, count, timer,
 ordering or thread (BC-9); the batch callback runs on domain 7's batch thread, one batch at a time,
 in window order (domain 7 L12, D10), and closing follows domain 7's L9.
-`[designed-not-built]`. Source: d7 §4 and §6, D-D7O-1, register BC-8 and BC-9, 2026-11-12 "Refuse
+`[built]` **in part** (D9S-4a, Windows, by hand; CI and Linux unrun): the shim adds no window, count, timer or thread
+(`ShimBatchesNothing.SourcesHoldNoThreadClockOrTimer`), and the callback runs on one batch thread in
+window order for one subscription (`Batches.EachClosedWindow...`). **Not yet tested:** the options
+pass-through and refusal (rung 7, BC-8, BC-14) and closing as domain 7's L9 (rung 6), both
+`[designed-not-built]` as tests though the shim forwards both. Source: d7 §4 and §6, D-D7O-1, register BC-8 and BC-9, 2026-11-12 "Refuse
 both" ("the shim passes the refusal through"). `subscriber_arrow.cpp:39-46` throws
 `PubSubError(kInvalidArgument)`, which `Capture` already forwards as `FL_INVALID_ARGUMENT`
 (`containment.cpp:62-66`); a `std::invalid_argument` at a seam origin would become `FL_INTERNAL`
@@ -404,7 +413,7 @@ census C5 and A37 / F12. Without it, a throw from the thunk is swallowed by doma
 
 ## 4. The interface
 
-Surface, `h` sections in order (ABI 0.8, 48 entry points, every one implemented):
+Surface, `h` sections in order (ABI 0.8, 49 entry points, every one implemented):
 - **Version** (`h:158-172`): `fl_binding_abi_version` and `fl_binding_variant` (with `fl_variant`,
   edge = 1, server = 2), each callable first, from any thread.
 - **Status and errors** (`h:174-316`): `fl_status` (0-10), `fl_origin`, `fl_error`, `fl_error_dispose`.
@@ -418,14 +427,15 @@ Surface, `h` sections in order (ABI 0.8, 48 entry points, every one implemented)
   `fl_provider_config`), `fl_publisher_*` (create, declare with or without `fl_topic_options`, list,
   `publish_raw`), `fl_subscriber_*` (subscribe with or without options, unsubscribe, schema watch pair).
 - **Codec** (`h:971-1092`): open, bind, `publish_row(s)`, `encode_row`, `decode_rows`, `decode_rows_framed`.
-- **Server variant** `[designed-not-built]`: a batched subscribe over domain 7's
-  `SubscriberArrow::Subscribe(segments, RecordBatchCallback, BatchOptions, TopicOptions)`
-  (`subscriber_arrow.hpp:77-160`) and its unsubscribe. Its C shape is the shim round's design, within
-  L12-L18. The batch callback's array and schema are borrowed for the call; a binding keeps them by
-  moving them (L14, D26).
+- **Batched subscribe** (D9S-4a `[built]`, Windows, by hand; CI and Linux unrun): `fl_subscriber_subscribe_batches` over domain 7's
+  `SubscriberArrow::Subscribe(segments, RecordBatchCallback, BatchOptions, TopicOptions)`, with `fl_batch`
+  (reason `FL_BATCH_ROW_LIMIT`/`TIMEOUT`/`CLOSING` = 1/2/3, `rows_dropped`, `num_rows`, array and schema,
+  both NULL for a window that could not be built) and `fl_batch_fn`. The array and schema are borrowed
+  for the call; a binding keeps them by moving them (L14, D26). A batched id has bit 63 set. **Not yet
+  built:** the batched close (stage 5), each row's attachments (4b) and `failure` (D9S-6, L18).
 - **Both builds**: the variant query (L16) `[built]` for edge and probe (D9S-1; its single site is
   `binding_version.c`, BC-10). The edge build exports the batched entry points too, answering a
-  named not-supported refusal (L12) `[designed-not-built]`.
+  named not-supported refusal (L12) `[built]` for the batched subscribe (D9S-4a).
 
 **Who calls, and on which thread:**
 - Any entry point from any thread; `fl_codec` and `fl_rows` are immutable and shared without locks
@@ -534,13 +544,13 @@ in its own .NET package (D22); the NuGet-level name stays domain 10's (Q5a).
 | Q4 | Resolved by D9S-3 (`52a0103`): `scripts/check_edge_arrow_free.sh` checks the edge build's graph and the edge shim's names for Arrow C++ by name (BC-11); Windows by hand, Linux and CI unrun. | — |
 | Q5 | Resolved 2026-11-13 (D22): the server variant ships in its own .NET package; D-BIND-157 stays on the base package; D-BIND-13 and -17 revised. | — |
 | Q5a | Packaging residue the ruling does not settle: do the two packages' native files have distinct names (so both can sit in one app's output), does the server package depend on the base one, how does a binding choose which to load, and does the server package get a size ceiling of its own? **The shim-side half is resolved (owner ruling 2026-11-13, D9S-2 Decision 1): the server build's file is `fletcher-c-abi-server`.** **Registered 2026-11-13 as domain-10 questions in §6**, together with R-9 (D-BIND-148 / -149 for the server shim). | domain 10 (C# switch round), with the shim round for the native file name |
-| Q6 | How do a batch's row-aligned attachments, `BatchStatus` and a null batch cross? Per-row `fl_attachments` handles, a flattened form, or a C Data column? | shim round, then owner if it widens the seam's vocabulary |
-| Q7 | How are `kNoTimeout` and L15's refusal expressed in the C signature: an `int64_t timeout_ms` with `INT64_MAX` as no timeout (as `fl_schema_arrival_wait` does), and `FL_INVALID_ARGUMENT` with domain 7's message? D-D7O-1 says a plain value; confirm the field width. | shim round |
+| Q6 | How do a batch's row-aligned attachments, `BatchStatus` and a null batch cross? Per-row `fl_attachments` handles, a flattened form, or a C Data column? **Resolved for `BatchStatus` and the null batch (D9S-4a):** `int32_t reason`, `int64_t rows_dropped`, and `array == schema == NULL` for no batch (a zero-row batch has an array). **Attachments open until 4b** (designed: one `fl_attachments` per row, an empty set rather than a NULL entry). | shim round (4b), then owner if it widens the seam's vocabulary |
+| Q7 | How are `kNoTimeout` and L15's refusal expressed in the C signature: an `int64_t timeout_ms` with `INT64_MAX` as no timeout (as `fl_schema_arrival_wait` does), and `FL_INVALID_ARGUMENT` with domain 7's message? D-D7O-1 says a plain value; confirm the field width. **Resolved (D9S-4a):** `int64_t max_rows` and `int64_t timeout_ms`, `INT64_MAX` is `kNoTimeout` untranslated; the refusal is domain 7's, passed through (its test is rung 7, D9S-5). | — |
 | Q8 | Resolved 2026-11-13 (D27, audit LC-1): one `FL_BINDING_ABI_VERSION` for both builds, and both bump; the C# loader's expected minor moves in the same commit (the named scope exception, L6). | — |
 | Q9 | After the C# switch, `fl_decode_rows_framed` exists only for the deleted managed batcher. Does it stay (L13: the edge surface is unchanged) or go (a 0.x minor may remove it)? Also carries Findings (d)6. | C# switch round (domain 10) |
 | Q10 | Which consumer loads the edge variant once C# desktop moves? "Embedded devices" has no RID today (D-BIND-27: `win-x64`, `linux-x64`; `linux-arm64` first addition). Partly answered 2026-11-13 (D29): a C# app that does not reference the server package loads the edge build. The embedded-device consumer remains open. | owner |
 | Q11 | A batched dictionary column arrives re-folded (domain 2's `BatchDecoder`), while `fl_decode_rows` returns its value type (D-BIND-39, D-BIND-59). Is that difference intended for a server-variant caller? | domain 2, with domain 10 |
-| Q12 | Which `fl_origin` does the edge build's `FL_NOT_SUPPORTED` refusal carry, and which a failed hand-over on domain 7's batch thread (L18)? `FL_ORIGIN_SEAM` is "a `PubSubError` from the seam". A new enumerator is the shim's own (append, bump, L6), not a seam stop-and-ask (audit F5). | shim round |
+| Q12 | Which `fl_origin` does the edge build's `FL_NOT_SUPPORTED` refusal carry, and which a failed hand-over on domain 7's batch thread (L18)? `FL_ORIGIN_SEAM` is "a `PubSubError` from the seam". A new enumerator is the shim's own (append, bump, L6), not a seam stop-and-ask (audit F5). **Edge half resolved (D9S-4a): `FL_ORIGIN_SEAM`**, as every refusal the shim makes itself; the comment on `FL_ORIGIN_SEAM` widens to "...or the shim's own refusal of an argument or of a call this build cannot serve" and D-BIND-54 switches only on (`FL_INVALID_ARGUMENT`, `FL_ORIGIN_CODEC`), so it is unaffected. **Hand-over half open**, owed to D9S-6. | shim round (D9S-6, hand-over half) |
 | LC-1 | Audit owner confirmation: does the edge build's minor bump, with one version for both builds? **Resolved 2026-11-13 (D27).** | — |
 | LC-2 | Audit owner confirmation: may the edge refusal reuse `FL_NOT_SUPPORTED`? **Resolved 2026-11-13 (D28):** yes, its meaning widened. Residue: the seam's own published table (`core/README.md:37`, domain 3's text) still reads "This provider does not implement the requested behaviour"; the origin is Q12. | domain 3, for the table's wording |
 
@@ -590,6 +600,15 @@ in its own .NET package (D22); the NuGet-level name stays domain 10's (Q5a).
 4. **Range checks on a timeout:** `SchemaArrival::Wait` refuses a negative; the shim forwards it
    (`cpp:941-946`). Not a second answer, recorded so the server variant follows the same pattern
    (L15).
+
+**(b2) Same topic, one provider (D9S-4a, owner ruling 2026-11-13, "one subscriber object").** A row
+subscription and a batched one to the same topic through one provider collide, because batched
+subscriptions run on a second subscriber of the provider (seam §7 clause 4: one callback per topic per
+instance). The providers answer it differently: on `inprocess` the later silently replaces the earlier
+(the earlier stops with no signal; a still-pending arrival answers `FL_SUBSCRIPTION_ENDED`), on `fastdds`
+the later is refused with `FL_INVALID_ARGUMENT` ("already subscribed"). The shim forwards the rule and
+documents it (`binding.h`); it does not refuse the mix (L4). **Reported to domains 3 and 4:** two
+providers, two answers to one seam rule.
 
 **(c) Behaviour with no test**
 - That every void entry point cannot throw (L1).

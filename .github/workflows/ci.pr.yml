@@ -138,6 +138,7 @@ jobs:
               - 'core/**'
               - 'pubsub/**'
               - 'arrow-bridge/**'
+              - 'pubsub-arrow/**'
               - 'fastdds-pubsub-provider/**'
               - 'xrcedds-pubsub-provider/**'
               - '.github/workflows/ci.pr.yml'

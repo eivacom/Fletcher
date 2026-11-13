@@ -262,7 +262,8 @@ typedef enum fl_status {
  * FL_INTERNAL, a defect - neither is malformed input. */
 typedef enum fl_origin {
     FL_ORIGIN_NONE = 0,    /* status == FL_OK */
-    FL_ORIGIN_SEAM = 1,    /* a PubSubError, or a std::exception, from the seam */
+    FL_ORIGIN_SEAM = 1,    /* a PubSubError, or a std::exception, from the seam, or the shim's own
+                              refusal of an argument or of a call this build cannot serve */
     FL_ORIGIN_CODEC = 2,   /* malformed bytes: the positional reader, envelope parsing */
     FL_ORIGIN_CALLBACK = 3 /* a caller-supplied writer or handler reported failure */
 } fl_origin;
@@ -982,6 +983,80 @@ FL_ABI_EXPORT fl_status fl_subscriber_subscribe_schema(fl_subscriber* subscriber
  * subscriber's to release later or at destruction. */
 FL_ABI_EXPORT fl_status fl_subscriber_unsubscribe_schema(fl_subscriber* subscriber, fl_topic topic,
                                                          fl_error* err);
+
+/* ── Batched subscribe (d9 L12, L14, L15; domain 7) ─────────────────────── */
+
+/* Why a window closed: domain 7's three reasons, as fl_batch.reason values. 0 is
+ * never a reason, so a zeroed field cannot pass for one. */
+#define FL_BATCH_ROW_LIMIT 1 /* max_rows reached, or the offset budget */
+#define FL_BATCH_TIMEOUT 2   /* the window's deadline passed */
+#define FL_BATCH_CLOSING 3   /* the subscription is closing */
+
+/* One closed window, handed to a batch callback. Written by the shim, read through
+ * a pointer, and EVERYTHING IT POINTS TO IS BORROWED FOR THE CALL.
+ *
+ * `array` and `schema` are an Arrow C Data array and schema. A binding keeps the
+ * batch only by Arrow's move: it copies each struct and sets the source's `release`
+ * to NULL. Whatever still has a non-NULL `release` when the callback returns, the
+ * shim releases then, exactly once.
+ *
+ * `array == NULL` (and then `schema == NULL`, `num_rows == 0`) means NO BATCH COULD
+ * BE BUILT for this window (no usable schema, a rejected schema, or a failure
+ * finishing it); `rows_dropped` counts the window's rows in every such case. That
+ * differs from a zero-row batch (`array != NULL`, `num_rows == 0`), which a window
+ * of only dropped rows can be. `rows_dropped` is domain 7's count, as given. */
+typedef struct fl_batch {
+    int32_t reason;             /* an FL_BATCH_* value */
+    int64_t rows_dropped;       /* rows lost since the previous window; 0 == all good */
+    int64_t num_rows;           /* rows in `array`; 0 when there is no array */
+    struct ArrowArray* array;   /* NULL: no batch could be built */
+    struct ArrowSchema* schema; /* NULL exactly when `array` is NULL */
+} fl_batch;
+
+/* Invoked once per window, on domain 7's batch thread: one batch at a time, in window
+ * order. The callback must not throw. */
+typedef void (*fl_batch_fn)(void* ctx, const fl_batch* batch);
+
+/* Subscribe to a topic's rows assembled into Arrow batches. SERVER BUILD ONLY.
+ * Since ABI 0.8.
+ *
+ * Domain 7 closes a window at `max_rows` rows, at its deadline, on the offset
+ * budget, or when the subscription closes, and each closed window reaches
+ * `on_batch` as one fl_batch. NEVER BLOCKS. `out_id` and `out_arrival` are written
+ * only on success, as fl_subscriber_subscribe's are; the arrival is the topic's
+ * schema, and the caller owns it and disposes it.
+ *
+ * IDS. A batched id has bit 63 set and a row id never does (a counter starting at 1
+ * would need 2^63 subscriptions to reach it), so the two can never be confused.
+ * fl_subscriber_unsubscribe is unchanged: it treats a batched id as unknown, a
+ * no-op. The callback is not given an id, because a batch may arrive before this
+ * call returns: correlate by `ctx`.
+ *
+ * THREADS. `on_batch` runs on domain 7's batch thread, one batch at a time, in
+ * window order. A batch may arrive before this call returns.
+ *
+ * OPTIONS. `max_rows` and `timeout_ms` go to domain 7 as given: INT64_MAX means no
+ * timeout. A value out of range is refused by domain 7 (FL_INVALID_ARGUMENT, its
+ * message); the shim checks neither. `options` is fl_subscriber_subscribe_with_options'.
+ *
+ * SAME TOPIC, ONE PROVIDER. One provider allows one callback per topic per
+ * instance, and batched subscriptions run on a second subscriber of the provider,
+ * so a row subscription and a batched one to the same topic through one provider
+ * collide, as two subscriber handles do. On `inprocess` the later silently replaces
+ * the earlier: the earlier stops receiving, with no signal (an arrival still pending
+ * then answers FL_SUBSCRIPTION_ENDED; one already ready stays ready). On `fastdds`
+ * the later is refused with FL_INVALID_ARGUMENT ("already subscribed"). Batched
+ * subscriptions to one topic share one provider subscription, as row ones do.
+ * fl_subscriber_destroy ends both kinds.
+ *
+ * THE EDGE BUILD answers FL_NOT_SUPPORTED whatever the arguments, with
+ * FL_ORIGIN_SEAM and a message naming the edge build and `fletcher-c-abi-server`.
+ * Its outputs are untouched and nothing is stored. Ask fl_binding_variant to know
+ * first. On the server build every other rule is fl_subscriber_subscribe's. */
+FL_ABI_EXPORT fl_status fl_subscriber_subscribe_batches(
+    fl_subscriber* subscriber, fl_topic topic, int64_t max_rows, int64_t timeout_ms,
+    const fl_topic_options* options, fl_batch_fn on_batch, void* ctx, uint64_t* out_id,
+    fl_schema_arrival** out_arrival, fl_error* err);
 
 /* ══ The codec ═════════════════════════════════════════════════════════════ */
 

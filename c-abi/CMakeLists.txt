@@ -121,11 +121,32 @@ target_compile_definitions(fletcher-c-abi PRIVATE FLETCHER_C_ABI_BUILDING)
 # follows the variant on every configure, so a direct configure and a folder
 # reconfigured from one variant to the other both get the right file. The Conan
 # recipe names the same file when it packages, and refuses an empty copy.
+#
+# The same block picks the backend of `fl_subscriber_subscribe_batches` (D9S-4), because the two
+# facts are one: the server shim links domain 7's batcher (`batches_server.cpp`, the only place
+# Arrow C++ enters a shim); the edge shim and the probe shim get `batches_edge.cpp`, which names no
+# Arrow. Each backend `static_assert`s the constant above, so a backend in the wrong artefact does
+# not compile. PRIVATE like every other link here: no consumer needs an Arrow header, and the
+# visibility settings, the version script and `--exclude-libs` below keep Arrow's symbols out of the
+# export table.
 if(FLETCHER_SHIM_VARIANT STREQUAL "server")
+    find_package(fletcher-pubsub-arrow CONFIG REQUIRED)
     target_compile_definitions(fletcher-c-abi PRIVATE FLETCHER_C_ABI_VARIANT=FL_VARIANT_SERVER)
     set_target_properties(fletcher-c-abi PROPERTIES OUTPUT_NAME fletcher-c-abi-server)
+    target_sources(fletcher-c-abi PRIVATE src/batches_server.cpp)
+    target_link_libraries(fletcher-c-abi PRIVATE
+        fletcher-pubsub-arrow::fletcher-pubsub-arrow)
+    # A fourth domain-7 batch reason (d7 Q4) must fail the build in batches_server.cpp's reason
+    # `switch` (no `default`), never cross as 0 (design debt DEBT-2): the "enumerator not handled"
+    # warning is an error for this one file.
+    if(MSVC)
+        set_source_files_properties(src/batches_server.cpp PROPERTIES COMPILE_OPTIONS "/we4062")
+    else()
+        set_source_files_properties(src/batches_server.cpp PROPERTIES COMPILE_OPTIONS "-Werror=switch")
+    endif()
 else()
     target_compile_definitions(fletcher-c-abi PRIVATE FLETCHER_C_ABI_VARIANT=FL_VARIANT_EDGE)
+    target_sources(fletcher-c-abi PRIVATE src/batches_edge.cpp)
 endif()
 
 # ...and the half of the same rule that visibility settings cannot reach on
@@ -206,6 +227,7 @@ if(FLETCHER_BUILD_PROBE_SHIM)
     add_library(fletcher-c-abi-probe SHARED
         src/binding_version.c
         src/binding.cpp
+        src/batches_edge.cpp
         probe/src/builtins_probe.cpp
         probe/src/probe_exports.cpp)
     target_compile_features(fletcher-c-abi-probe PRIVATE c_std_99 cxx_std_20)
