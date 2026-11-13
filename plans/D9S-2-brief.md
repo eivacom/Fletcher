@@ -48,5 +48,5 @@
 Declared net lines: **+266 / −101**, counted as the raw diff will count them. Production (recipe, CMake, C source, CI workflows, scripts, comments included) is **+197/−68, net +129, in 8 files**. Tests are +33/−12 and docs about +36/−21. New public surface: 2. Design cycles used: 1/2.
 
 ---
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
-<delta vs the above — actual net lines, anything retired or added the brief did not predict, fix cycles used>.
+*As landed (2026-11-13, `0a43e99` + fixes `e676e1c`, `849b12d`):*
+Production +339/−74, net +265 — **over the 250 ceiling** (declared +197/−68; review forecast ~+250/−68, DEBT-3); the overrun is two review-required fixes (empty-copy refusal; dumpbin errors named). Fix cycles 2. Evidence: Windows by hand; CI and Linux unrun (CI runs on PRs only) — marks narrowed accordingly. n1 moved to D9S-7.

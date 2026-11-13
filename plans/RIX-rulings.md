@@ -403,3 +403,4 @@ must teach C# the new name or rename it when packing."
 **Ruling:** **the server build's native file has its own name** (`fletcher-c-abi-server`); the C#
 switch round teaches C# that name or renames it when packing (domain 10).
 **Applies to:** d9 Q5a (the shim-side half resolved); D9S-2 design; D9S-7 (both in one process).
+*Ingested (D9S-2 close, 2026-11-13): `CMakeLists.txt` names the server shim `fletcher-c-abi-server` from the variant; d9 §2 Server variant row, L17, BC-15; package names stay domain 10's (Q5a).*

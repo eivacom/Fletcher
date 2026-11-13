@@ -34,3 +34,28 @@ C# should marshal as `int`) → domain 10 note; n4 harmless. Record: d9 `h:N` ci
 line noted).
 **PM note:** the conformance lane needs the corpus emitted first (`emit_corpus.exe`) and `dotnet test`
 run in `dotnet/BindingAbiConformance`; first attempt ran in the wrong folder and is not evidence.
+
+## D9S-2 — A server build from the same sources — 🟢 2026-11-13
+
+**Landed:** `0a43e99`, fixes `e676e1c`, `849b12d`. Conan `variant` option (edge default, in the
+package ID; server+probe refused); per-target build constant (BC-10); server shim
+`fletcher-c-abi-server` (owner ruling, Decision 1 (a)); `scripts/locate_shim.sh` picks shims by
+package (T3, T5, T19 re-anchored); `scripts/check_shim_exports.sh` edge = server = header, probe as
+negative control; CI wiring in `ci.c-abi.yml`, `ci.dotnet.yml`, `ci.pr.yml`. No Arrow yet.
+**Steps:** 0a CLEAR · design `6108b90` · review APPROVE-WITH-DEBT(4) `fd6dcd2` · Decision 1 ruled · phase A
+red (no `variant` option; forced server mapping "answered 1, linked to 2"; probe-as-server red by name) ·
+0b CLEAR · green · 4b 0 blocking, S1 should-fix (taken) · 4a F1 blocking (CI/Linux unrun; marks
+overclaimed) → fix 1 + PM narrowed marks · 4a cycle 2 C2-1 blocking (free name string) → fix 2 (name from
+the variant again, empty-copy refusal kept) · 4a cycle 3 PASS · 4b cycle 2 clean.
+**Verification:** both packages `conan create` run_tests (server 99/99, edge+probe 110/110), test_package
+per package, export check 48=48=48, probe control and throwaway control (`fl_zz_throwaway`) red by name
+(implementer logs `scratchpad/d9s2_conan.log`, `_fix1.log`, `_fix2.log`, PM-checked); full suite after
+fix 2: binding-abi-conformance 11/11 (edge via `locate_shim.sh`), pubsub-arrow-fastdds 4/4 (PM).
+**Not run:** every Linux leg and the CI workflows themselves (CI runs on pull requests only; opening a PR
+is the owner's step). Marks read "Windows, by hand; CI and Linux unrun".
+**Numbers:** production +339/−74, net +265 vs ceiling 250 (**close finding: over the ceiling**, from
+the two review-required fixes; declared +197/−68, review forecast ~+250); tests ~+78/−15; design cycles
+1; fix cycles 2; implementer launches 1 (resumed 3×); owner touches 1.
+**Booked forward:** D9S-1 n1 → D9S-7; DEBT-1 → D9S-7. 4b nits logged (C2-N1, integration lanes'
+first-match finds, double lookup, unquoted test_package path). Conan RECORD: `run_tests` does change the
+package ID (comment in `conanfile.py` is wrong; pre-existing).
