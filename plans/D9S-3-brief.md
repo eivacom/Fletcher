@@ -1,6 +1,6 @@
 # D9S-3 — Stage Brief (2026-11-13)
 
-**Light lane: fits.** About 45 production lines are touched, not counting comments, in 2 files. The limit is 60 lines and 3 files.
+**Lane:** full loop. The stage was ejected at phase A: about 75 touched lines against the 60-line admission. The design is in `plans/D9S-3-edge-arrow-free.md`.
 
 **In one sentence:** CI fails if Arrow C++ can reach the edge build, and the failure names the culprit. Two paths are checked: the edge build's dependency graph, and the names inside the edge shim. Until now only a size ceiling stood in the way. The server build is not judged.
 **Forcing test:** the new CI step "the edge build carries no Arrow C++ (d9 L8)" on both legs, also runnable by hand on Windows. It proves that no Arrow package and no Arrow name reaches the edge build. It must keep passing when D9S-4 links Arrow into the server build (ladder guard c).
@@ -24,15 +24,9 @@ Nothing. The size ceilings stay as the coarse check: L12 says no size check chan
 
 **Handled:** none.
 
-## How   (light lane: this section is the design)
-- **New `scripts/check_edge_arrow_free.sh <recipe dir> <profile> <edge shim>`** (bash).
-- **Graph half:** run `conan graph info` on the recipe with `variant=edge` and the shipped defaults (no tests, no probe), output as JSON. Parse it with `python` (or `python3`). Fail if any host node is `arrow`, `fletcher-arrow-bridge` or `fletcher-pubsub-arrow`, and list each one by name.
-- **Symbol half, Linux:** `nm -C` on the unstripped edge `.so`, all symbols. Fail on `(^|[^A-Za-z0-9_])arrow::`; the listing must contain `fletcher::`.
-- **Symbol half, Windows** (`.dll`/`.exe`): `grep -aoE '[A-Za-z0-9_?$@]*@(arrow|fletcher)@@'` on the image. This finds the type names and decorated import names the image carries. Fail on `@arrow@@`; the listing must contain `@fletcher@@`.
-- **Graph control:** the same graph with `run_tests=True` added. It must name `fletcher-arrow-bridge`.
-- **Symbol control:** a `c_abi_tests[.exe]` binary found under the cache's `p/b`. It links Arrow (T10), so it must yield an `arrow` name. If none is found, the step fails. Either build's binary will do, so which one it picks does not matter.
-- **`.github/workflows/ci.c-abi.yml`:** Windows gets a new step after the export comparison. Linux gets one call inside its existing docker block, after the export control.
-- **Red before the change:** none. The edge build is green by construction, because nothing links Arrow yet. The controls are the red, on every run.
+**Red before the change:** none. The edge build is green by construction, because nothing links Arrow yet. Instead, two controls run every time and must go red, naming Arrow:
+- the same edge build with tests switched on (its graph includes Arrow, which the law allows for tests);
+- a test program that links Arrow.
 
 ## Decisions for you
 None. The Windows scope limit is disclosed under Risks.
@@ -43,14 +37,18 @@ None. The Windows scope limit is disclosed under Risks.
   - An Arrow link that adds neither would pass that half on Windows. The graph half (every Conan path) and the size ceiling still catch it, and Linux always checks the full symbol table.
   - A link map or PDB would close the gap, but it would change how the edge build links, which L12 forbids. Rejected.
 - **Evidence:** Windows is checked by hand at close. CI evidence waits for the owner's draft PR (ruling 2026-11-13). Until a green run exists, L8 and BC-11 are marked "Windows, by hand".
-- **Premises (stop and ask if false):** (1) test build folders stay in the Conan cache after `conan create`; otherwise the symbol control has no binary. (2) The Windows edge shim carries at least one `@fletcher@@` name; this is checked by hand before the stage commits. In either case, stop rather than drop or weaken the check.
+- **Premises (stop and ask if false):**
+  - Test build folders stay in the Conan cache after a build; otherwise the symbol control has nothing to check.
+  - The Linux edge shim ships unstripped, and the build image's `nm` demangles names. Neither has been tried for real yet: Linux was checked only on test files, in WSL.
+  - On Windows this holds already: by hand, the edge shim carries 51 `@fletcher@@` names.
+  - If any of these fails, stop. Do not drop or weaken the check.
 - Docs, not counted: d9 L8 becomes `[built]` (no longer "no code owner"), Q4 is resolved, BC-11's graph and symbol check is marked built.
 
 ## Numbers
-- Declared net lines (raw diff, comments included): about **+68 / −0**.
-  - Script: about +52.
+- Declared net lines (raw diff, comments included): about **+106 / −0**.
+  - Script: +90 / −0, of which 59 are not comments.
   - `ci.c-abi.yml`: about +16.
-- Touched production lines, not counting comments: about 45, in **2 files**.
+- Touched production lines, not counting comments: about 75, in **2 files**. That is over the light lane's 60, so the stage runs the full loop. It is well under the 250 ceiling.
 - New public surface: 0. Design cycles used: 1/2.
 
 ---

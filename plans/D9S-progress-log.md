@@ -59,3 +59,10 @@ the two review-required fixes; declared +197/−68, review forecast ~+250); test
 **Booked forward:** D9S-1 n1 → D9S-7; DEBT-1 → D9S-7. 4b nits logged (C2-N1, integration lanes'
 first-match finds, double lookup, unquoted test_package path). Conan RECORD: `run_tests` does change the
 package ID (comment in `conanfile.py` is wrong; pre-existing).
+
+## D9S-3 — ejected from the light lane (2026-11-13)
+
+At phase A the check `scripts/check_edge_arrow_free.sh` measured **59 non-comment lines** (brief
+declared ~29); with phase B's workflow wiring (~+16) the stage lands near **75 touched lines vs the
+60-line admission**. Ejected to the full loop: design doc, architecture review and compliance review
+dispatched; phase A's script and red evidence carried forward unchanged (uncommitted).
