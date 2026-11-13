@@ -215,7 +215,8 @@ queued batches and then the closing batch. Source: step-0b audit `plans/reviews/
 `dotnet/src/Fletcher/SubscriberArrow.cs` is deleted once C# runs on it. (2) **The C ABI shim is built
 in two variants from one source**: the edge variant exactly as today, never carrying Arrow C++ (it
 must run on embedded devices); a server-tier variant that adds `pubsub-arrow`'s batched subscribe.
-C# on desktop loads the server variant. A second, separately loaded native library was rejected.
+C# on desktop loads the server variant. A second, separately loaded native library was rejected. **Revised 2026-11-13** (entry "D9S pre-round"): the server build
+loads only when the app references the server package; otherwise the edge build.
 (3) **No interim fixes to the C# batcher.**
 **Applies to:** the domain map (planned order of work); the rounds D7O, then the shim round, then
 the C# switch round.
@@ -355,3 +356,33 @@ those refusals). (3) **The shim's row codec is domain 2's**; domain 9 hosts it (
 domain 2). (4) **Domain 9's laws L1–L17 are confirmed** as amended by (1)–(3); domain 9 is `specified`.
 **Applies to:** `docs/domains/d9-c-abi-shim.md`, `docs/domains/d2-row-encoding.md`,
 `docs/domain-map.md` rows 2 and 9; BIND D-BIND-13, -17, -157, Decision 6 (annotations owed).
+
+## 2026-11-13 — D9S pre-round: batch ownership, version, error code, what C# loads
+> Batch owner: "Borrowed; keep by moving (Recommended)"
+> Version: "One version; edit the line (Recommended)"
+> Error code: "Reuse, widen meaning (Recommended)"
+> C# loads: "Depends on package (Recommended)"
+
+*(Chosen options; full texts in the D9S pre-round audit, B1, LC-1/OQ-1, LC-2, R-2.)*
+**Rulings:** (1) **A batch handed to a callback is borrowed for the call; a binding keeps it only by
+moving it (Arrow's move); what is not moved the shim frees when the callback returns** — d9 L11 holds,
+d9 L14 is amended (resolves audit B1). (2) **Both builds share one ABI version, and both bump**; this
+round may make **one named one-line edit in domain 10**: the C# loader's expected version, in the
+same commit as the bump (a recorded scope exception). (3) **`FL_NOT_SUPPORTED` is reused; its meaning
+widens to "this provider or this build cannot do this"**; no new status number. (4) **Revision in place
+of 2026-11-12's "C# on desktop loads the server variant"**: a C# app loads the server build only if it
+references the server package, otherwise the edge build. Consequence owned by the C# switch round:
+C#'s per-row subscribe must work on the edge build without a batcher.
+**Applies to:** d9 L2, L6, L11, L12, L14, §2; `c-abi/include/fletcher/abi/binding.h` status docs;
+`dotnet/src/Fletcher.Interop/NativeLoader.cs` (one line); the 2026-11-12 entry (annotated).
+
+## 2026-11-13 — D9S pre-round: a failed handoff is reported; corrections approved
+> Lost handoff: "Report it as lost (Recommended)"
+> Corrections: "Approve all as listed"
+
+*(Chosen options; texts in the D9S pre-round audit, C5/BC-12 and the tier-2 findings.)*
+**Rulings:** (1) **A batch the shim cannot hand over is reported, never lost silently**: the binding
+receives a "no batch could be built" delivery for that window with its rows counted as dropped and
+its reason kept; one site in the shim (register BC-12); domain 7 untouched. (2) **The tier-2 text
+corrections listed in `plans/D9S-pre-round-audit.md` are approved** and applied before the round.
+**Applies to:** d9 (a new law or an L14 clause), register BC-12, the audit's F-rows.
