@@ -42,3 +42,23 @@
 - L15's "closing follows domain 7's L9". Rung 6.
 
 Mark those clauses partial at the 4a close. Otherwise they are a false green.
+
+## Cycle 2
+
+**Verdict: CLEAR.** Scope: `git show e766c3e -- c-abi/tests`, limited to the reshaped window test and the widened BC-9 scan with its control. Ledger unchanged since cycle 1 apart from `7b1bcbe` (a ceiling-overrun ruling, which touches no test).
+
+- **Window test (`max_rows` 2, `INT64_MAX`, then `DestroySubscriber`): LAWFUL, timing-independent.**
+  - d7 L5 (D14): a subscription with no timeout "close[s] only on row count, the offset budget or closing". The d9 design and L15 say `INT64_MAX` = `kNoTimeout`, untranslated.
+  - `inprocess` delivers inside `Publish` (`in_process_provider.cpp:292-295`), so all 5 rows reach the batcher before `fl_publisher_publish_rows` returns. The split is therefore [2,2,1] and the reasons ROW, ROW, CLOSING for any scheduling.
+  - d7 L9: "The pending window is delivered once, as `kClosing`. After … `~SubscriberArrow` returns, no further batch is delivered". The destroy is called from outside a callback, so it waits. That makes snapshotting after the destroy exact.
+  - `rows_dropped` is 0 and the cell-for-cell slices hold (d7 L2). d9 L14 and L15 are unchanged. The only wait is a 10 s upper bound.
+- **Losing the imported-and-compared TIMEOUT batch leaves no law unproven.**
+  - d9 L14's "reason … cross[es] with it" is not specific to one reason. The truth table's server arm (10 ms) still asserts a TIMEOUT delivery with `num_rows` 1 and loss 0, and the no-batch test asserts TIMEOUT on null batches.
+  - The export and import path does not depend on the reason, and it is now proven on ROW_LIMIT and CLOSING.
+  - **Tier-3 drift to record:** the ladder's rung-4 text says "2 `kRowLimit` batches and a `kTimeout` batch". The brief's *As landed* should note CLOSING in its place.
+  - The test now also partly covers rung 7's no-timeout arm and rung 6's close-from-outside case. These are lawful vehicles, not new value subjects, but rungs 6 and 7 still owe their full arms and must not be marked green on this test.
+- **Widened scan: LAWFUL, still structural over files.**
+  - It still scans every source file recursively, with no site list and no exemption. The 16 patterns are all in the control's must-hit check (the list is iterated).
+  - It is green on `e766c3e`'s `c-abi/src`, including the new `batches_server.cpp` and `batches_edge.cpp` (`git grep`: no hits).
+  - It is still a deny-list by nature, which is accepted. It now matches BC-9's "thread, clock arithmetic or a timer".
+- **Process note:** these tests arrived in the same commit as the production code (`e766c3e`, "0b CLEAR"). This cycle is therefore post-build, and its "do not build" value was already spent.
