@@ -272,8 +272,8 @@ may appear only in test binaries.
 `[built]` (D9S-3; Windows, by hand, for the graph half and the name scan of the edge DLL; the Linux
 `nm -C` half and CI are unrun until the owner's draft PR runs them): the check by name now has a code
 owner.
-- Holds at: `conanfile.py:58-83` (Arrow and `arrow-bridge` are required only under `run_tests`,
-  and `run_tests` is deleted from the package ID), `CMakeLists.txt:154-162` (the shim's links),
+- Holds at: `conanfile.py:95-107` (Arrow and `arrow-bridge` are required only under `run_tests`; with tests off no Arrow package, test-only or not, may be in the graph — ruling 2026-11-13, "Narrow the docs";
+  and `run_tests` is deleted from the package ID — *record (D9S-2/3 reviews): false; the tests-on package lists `arrow` and `fletcher-arrow-bridge` in its `conaninfo.txt`, so it has a different ID*), `CMakeLists.txt:154-162` (the shim's links),
   `nanoarrow_codec.hpp:20-24`, `tests/CMakeLists.txt:6-15`.
 - **How it is enforced:** `scripts/check_edge_arrow_free.sh` (`ci.c-abi.yml`, both legs, before the
   size ceilings so a large Arrow link is named) fails by name if the edge configuration's Conan host
@@ -531,7 +531,7 @@ in its own .NET package (D22); the NuGet-level name stays domain 10's (Q5a).
 | Q1 | Resolved 2026-11-13 (D23, L16): a variant query both builds export. Its name and answer type are the shim round's design. | — |
 | Q2 | Resolved 2026-11-13 (D24): domain 2 owns `NanoarrowCodec`; former L10 is d2 L2 and L8. | — |
 | Q3 | Resolved 2026-11-13 (D23, L12): one surface; the edge build exports the batched entry points and refuses them by name. Residue resolved 2026-11-13 (D28, audit LC-2): "named" is `FL_NOT_SUPPORTED` plus a message; its meaning widens to "this provider or this build cannot do this"; no new number. | — |
-| Q4 | How is "the edge variant links no Arrow C++" enforced once the server variant links it from the same build? The size ceiling is a proxy; a symbol or dependency-graph check would be structural (register BC-11). The variant switch must stay in the package ID (audit F13), and CI must pick the edge artefact by package ID, not by file name (audit F8; T3, T5, T19). **CI by package identity built in the workflows but never run in CI in D9S-2** (`scripts/locate_shim.sh`); the structural Arrow check is built in D9S-3 (`scripts/check_edge_arrow_free.sh`, graph and name scan, both legs; **resolved: Windows, by hand; the Linux `nm -C` half and CI unrun until the owner's draft PR runs them**). | shim round |
+| Q4 | Resolved by D9S-3 (`52a0103`): `scripts/check_edge_arrow_free.sh` checks the edge build's graph and the edge shim's names for Arrow C++ by name (BC-11); Windows by hand, Linux and CI unrun. | — |
 | Q5 | Resolved 2026-11-13 (D22): the server variant ships in its own .NET package; D-BIND-157 stays on the base package; D-BIND-13 and -17 revised. | — |
 | Q5a | Packaging residue the ruling does not settle: do the two packages' native files have distinct names (so both can sit in one app's output), does the server package depend on the base one, how does a binding choose which to load, and does the server package get a size ceiling of its own? **The shim-side half is resolved (owner ruling 2026-11-13, D9S-2 Decision 1): the server build's file is `fletcher-c-abi-server`.** **Registered 2026-11-13 as domain-10 questions in §6**, together with R-9 (D-BIND-148 / -149 for the server shim). | domain 10 (C# switch round), with the shim round for the native file name |
 | Q6 | How do a batch's row-aligned attachments, `BatchStatus` and a null batch cross? Per-row `fl_attachments` handles, a flattened form, or a C Data column? | shim round, then owner if it widens the seam's vocabulary |

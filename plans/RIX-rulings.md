@@ -417,3 +417,15 @@ stages close."
 owner opens a draft PR from `feature/shim-server-variant`**; from then on each stage close records the
 CI run IDs, and the "Windows, by hand; CI and Linux unrun" marks are lifted once a green run covers them.
 **Applies to:** D9S-2 close finding; the D9S evidence ledger; d9 and register marks narrowed at D9S-2.
+
+## 2026-11-13 — D9S-3: a test-only Arrow dependency of the edge build is refused too
+> "Narrow the docs (Recommended)"
+
+*(Chosen option; D9S-3 compliance review F2.)* Its text: "Users: no change; a future recipe that adds
+Arrow as a test-only dependency of the edge build fails CI and must instead add it only when tests are
+built (as today). Architecture: L8 holds; BC-11 and ladder rung 3 are annotated 'with tests off, a
+test-only Arrow dependency is refused too' — the stricter check becomes the stated rule, one site, no
+exemption logic."
+**Ruling:** **with tests off, the edge build's graph may hold no Arrow package at all, test-only or
+not**; Arrow reaches test binaries only through dependencies added when tests are built.
+**Applies to:** register BC-11, ladder rung 3, d9 L8's "How it is enforced"; `check_edge_arrow_free.sh` unchanged.

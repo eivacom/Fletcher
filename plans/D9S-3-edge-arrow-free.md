@@ -1,4 +1,5 @@
 # D9S-3 — The edge build carries no Arrow C++, checked by name (design)
+> *Record (PM, D9S-3 close): as landed, the CI step runs **before** the size ceilings on both legs (DEBT-2); the graph control uses step 1's own test and requires both `fletcher-arrow-bridge` and `arrow` (DEBT-3); the symbol control takes its binary from the edge package's own build folder and refuses unless exactly one (4b S1); the script is 92 lines (+10/−7 at fix 1). Where the text below says otherwise, this note governs.*
 
 Round D9S, domain 9 (`docs/domains/d9-c-abi-shim.md`), ladder rung 3 (`plans/D9S-test-ladder.md`).
 Brief: `plans/D9S-3-brief.md`. **Lane:** full loop. The stage was ejected from the light lane at

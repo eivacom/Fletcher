@@ -17,8 +17,8 @@
 #   must hold @fletcher@@. Neither pattern can match nanoarrow, the edge codec.
 # CONTROLS, on every run, each must go red by naming Arrow or this step fails: the same graph
 #   with run_tests=True, judged by the graph half's own test, must name both
-#   fletcher-arrow-bridge and arrow, and a c_abi_tests binary from the
-#   Conan cache (it links Arrow) must yield an Arrow name.
+#   fletcher-arrow-bridge and arrow, and the one c_abi_tests binary in the edge package's own
+#   build folder (it links Arrow) must yield an Arrow name; none, or several, is refused.
 set -euo pipefail
 export LC_ALL=C
 
@@ -79,12 +79,15 @@ ctl=$(grep -xE "$ARROW_PKG" <<<"$tests" || true)   # step 1's own test, applied 
 if ! grep -qx fletcher-arrow-bridge <<<"$ctl" || ! grep -qx arrow <<<"$ctl"; then
   echo "::error::graph control: the run_tests=True graph must name both fletcher-arrow-bridge and arrow by step 1's test, and names: '$(echo $ctl)'; the graph half cannot be trusted"; fail=1
 else echo "control (graph) is red, as required, naming: $(echo $ctl)"; fi
-# 4. Control: a test binary that links Arrow must yield an Arrow name.
-bin=$(find "${CONAN_HOME:-$HOME/.conan2}/p/b" \( -name c_abi_tests -o -name c_abi_tests.exe \) -type f -print -quit)
-if [ -z "$bin" ]; then
-  echo "::error::symbol control: no c_abi_tests binary under the Conan cache, so the symbol half cannot be trusted"; fail=1
+# 4. Control: the test binary built beside the edge shim, in the same package's own build folder
+#    (<package>/p/<bin|lib>/<shim> sits beside <package>/b), links Arrow and must yield an Arrow name.
+B="$(dirname "$(dirname "$(dirname "$EDGE")")")/b"
+found=$(find "$B" \( -name c_abi_tests -o -name c_abi_tests.exe \) -type f 2>/dev/null | sort || true)
+nfound=$(grep -c . <<<"$found" || true)
+if [ "$nfound" -ne 1 ]; then
+  echo "::error::symbol control: expected exactly one c_abi_tests in the edge package's build folder $B, found $nfound: '$(echo $found)'; the symbol half cannot be trusted"; fail=1
 else
-  scan "$bin"
+  bin=$found; scan "$bin"
   if [ -z "$HITS" ]; then echo "::error::symbol control: $bin links Arrow but yields no Arrow name, so the symbol half cannot be trusted"; fail=1
   else echo "control (symbols) is red, as required: $NHITS Arrow name(s) in $bin, e.g. $(head -n 1 "$TMP/hits")"; fi
 fi
