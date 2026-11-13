@@ -116,7 +116,7 @@ jobs:
       # the loop: it is the c-abi lane byte-identity oracle, never linked into the
       # shim, so this lane has no use for it.
       #
-      # The find is checked rather than trusted. The two native rows in
+      # The lookup (locate_shim.sh) is checked rather than trusted. The two native rows in
       # Fletcher.Tests fail rather than skip when the shim is absent, so an empty
       # path here would surface as two confusing test failures instead of one
       # clear lane failure naming the real cause.

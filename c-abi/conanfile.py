@@ -2,7 +2,7 @@
 # Copyright (C) 2026 The Fletcher Authors
 #
 from conan import ConanFile
-from conan.errors import ConanInvalidConfiguration
+from conan.errors import ConanException, ConanInvalidConfiguration
 from conan.tools.cmake import CMake, CMakeToolchain, CMakeDeps, cmake_layout
 from conan.tools.files import copy
 import os
@@ -66,8 +66,9 @@ class FletcherCAbiConan(ConanFile):
 
     @property
     def _shim_stem(self):
-        # The one shim this package holds: the same stem CMake gives the target's
-        # OUTPUT_NAME (c-abi/CMakeLists.txt).
+        # The one shim this package holds, and the ONE place its file name is decided:
+        # generate() passes it to CMake as the target's OUTPUT_NAME, and package() and
+        # package_info() use it to find and name what was built.
         return "fletcher-c-abi-server" if self.options.variant == "server" else "fletcher-c-abi"
 
     def validate(self):
@@ -116,6 +117,7 @@ class FletcherCAbiConan(ConanFile):
         deps.generate()
         tc = CMakeToolchain(self)
         tc.cache_variables["FLETCHER_SHIM_VARIANT"] = str(self.options.variant)
+        tc.cache_variables["FLETCHER_SHIM_OUTPUT_NAME"] = self._shim_stem
         if self.options.run_tests:
             tc.cache_variables["FLETCHER_BUILD_TESTS"] = "ON"
         if self.options.with_probe_shim:
@@ -144,19 +146,26 @@ class FletcherCAbiConan(ConanFile):
         # path RELATIVE to src, so a bare "fletcher-c-abi.lib" matches nothing)
         # but name the file: the tests build a C99 probe object library beside
         # the shim, and a plain "*.lib" packages that too.
+        # `copy` returns [] without complaint when a pattern matches nothing, which
+        # would leave a valid package ID with headers and no shim, so an empty copy
+        # of the shipped shim (or, on Windows, of its import library) is refused.
         stem = self._shim_stem
-        copy(self, f"*{stem}.dll",
-             src=self.build_folder,
-             dst=os.path.join(self.package_folder, "bin"),
-             keep_path=False)
-        copy(self, f"*lib{stem}.so*",
-             src=self.build_folder,
-             dst=os.path.join(self.package_folder, "lib"),
-             keep_path=False)
-        copy(self, f"*{stem}.lib",
-             src=self.build_folder,
-             dst=os.path.join(self.package_folder, "lib"),
-             keep_path=False)
+        shim = copy(self, f"*{stem}.dll",
+                    src=self.build_folder,
+                    dst=os.path.join(self.package_folder, "bin"),
+                    keep_path=False)
+        shim += copy(self, f"*lib{stem}.so*",
+                     src=self.build_folder,
+                     dst=os.path.join(self.package_folder, "lib"),
+                     keep_path=False)
+        implib = copy(self, f"*{stem}.lib",
+                      src=self.build_folder,
+                      dst=os.path.join(self.package_folder, "lib"),
+                      keep_path=False)
+        if not shim or (self.settings.os == "Windows" and not implib):
+            raise ConanException(
+                f"package(): no shim named '{stem}' (.dll with its .lib, or .so) was found in "
+                f"{self.build_folder}; the recipe and the build disagree on the shim's file name")
         # The probe shim, when built: beside the shipped one, under its own name,
         # so no pattern above can pick it up by accident and a lane has to ask for
         # it by name.

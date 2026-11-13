@@ -255,7 +255,7 @@ exported only once it is implemented, never stubbed to answer `FL_NOT_SUPPORTED`
 **L7. The surface is pure C and self-contained, and the export table is exactly the surface.** No
 consumer needs a Fletcher, Arrow or eProsima header; Arrow structures are forward-declared.
 `[built]` for the header; the export-table clause `[built for Linux; violated on Windows]` (accepted,
-D-BIND-157). Since D9S-2 `scripts/check_shim_exports.sh` compares both builds' `fl_` sets with `binding.h` on both platforms (the whole-table clause stays Linux-only)
+D-BIND-157). Since D9S-2 `scripts/check_shim_exports.sh` compares both builds' `fl_` sets with `binding.h` on both platforms, by design; proven on Windows only, by hand (the whole-table clause stays Linux-only)
 - Holds at: `h:17-18`, `h:97-108`, `CMakeLists.txt:99-104`, `:138-147` (hidden visibility,
   `--exclude-libs ALL`, the version script `cmake/exports.map:46-51`), `:154-162` (private links),
   `conanfile.py:58-63` (no transitive headers).
@@ -306,7 +306,7 @@ thread. Everything a callback is handed is borrowed for that call.
   `.AttachmentsReachTheHandlerAndARetainedBlobOutlivesTheDelivery`, `.ASchemaWatchIsRefusedFromInsideADelivery`,
   `BindingEntryPoints.ManyThreadsShareOneCodecAndOneBoundBatch`.
 
-**The server-tier variant.** Confirmed 2026-11-13 (D25); none of it is built yet.
+**The server-tier variant.** Confirmed 2026-11-13 (D25). D9S-2 built the second build (no batching, no Arrow yet); *(D9S-2 evidence: Windows, run by hand at `0a43e99`; the CI workflows and every Linux leg are unrun — CI runs on pull requests only; owed before the marks read fully `[built]`.)*
 
 **L12. One source, two variants; the edge variant gains only the variant query and named refusals.**
 Both builds come from the same sources and declare one surface. The edge build exports every entry
@@ -314,7 +314,7 @@ point the server build does: the variant query answers truthfully, and each batc
 refuses with a named not-supported error, having done nothing. Nothing else in the edge build
 changes, beyond the version bump L6 requires (D27): no other entry point, no link (L8), no size
 check, no behaviour.
-`[built]` for one source, one recipe and the two builds (D9S-2); the edge refusals of the batched entry
+`[built]` on Windows (by hand; CI and Linux unrun) for one source, one recipe and the two builds (D9S-2); the edge refusals of the batched entry
 points are `[designed-not-built]` (D9S-4). Source: 2026-11-12, "one shim in two variants", "the edge variant exactly as
 today"; amended 2026-11-13, "Wrong build: Clear 'not supported'" ("the edge surface gains only that
 query and those refusals"; D23). Precedent: the probe shim is a second artifact from the same object
@@ -333,7 +333,7 @@ library and entry points (`CMakeLists.txt:164-211`, `conanfile.py:30-34`, D-BIND
 changes one's signature, or changes what one does. A caller written against the edge surface
 behaves identically on the server variant. The only entry points whose answers differ between the
 builds are the variant query and the batched ones (L12).
-`[built]` for the edge surface on the server artefact (D9S-2: the whole edge-surface suite runs against it);
+`[built]` on Windows for the edge surface on the server artefact (D9S-2: the whole edge-surface suite runs against it; Linux unrun);
 the added entry points are `[designed-not-built]` (D9S-4). Source: as L12.
 
 **L14. A batch crosses as an Arrow C Data Interface array and schema, borrowed for the batch

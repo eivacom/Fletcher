@@ -44,12 +44,17 @@ echo "binding.h declares $(echo "$declared" | wc -l | tr -d ' ') exported entry 
 # table is dumpbin's, which carries thousands of Fast DDS names (D-BIND-157), and
 # only the fl_ subset is judged below.
 table_of() {
-  local shim=$1
+  local shim=$1 out
   case "$shim" in
     *.so) nm -D --defined-only "$shim" | awk '{print $3}' | sort -u ;;
     *.dll)
       [ -n "$DUMPBIN" ] || { echo "::error::a .dll needs the path to dumpbin.exe as the fourth argument" >&2; exit 1; }
-      "$DUMPBIN" //nologo //exports "$shim" | tr -d '\r' | awk '$1 ~ /^[0-9]+$/ && NF >= 4 {print $4}' | sort -u
+      # dumpbin reports its failures on stdout: keep them, and say whose they are.
+      if ! out=$("$DUMPBIN" //nologo //exports "$shim" 2>&1); then
+        { echo "::error::dumpbin could not read $shim:"; echo "$out"; } >&2
+        exit 1
+      fi
+      echo "$out" | tr -d '\r' | awk '$1 ~ /^[0-9]+$/ && NF >= 4 {print $4}' | sort -u
       ;;
     *) echo "::error::unknown shim type: $shim" >&2; exit 1 ;;
   esac

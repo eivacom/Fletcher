@@ -124,8 +124,8 @@ numbers are the seam's own and are never renumbered.
 
 **The build.** `fl_binding_variant()` answers which build of the shim is loaded: `FL_VARIANT_EDGE`
 (1) for the edge build, `FL_VARIANT_SERVER` (2) for the server build. Like the version it is callable
-first and from any thread, and it still answers in a shim that refuses every other call. Both the
-shipped shim and the test-only probe shim answer edge.
+first and from any thread, and it still answers in a shim that refuses every other call. The edge
+shim and the test-only probe shim answer edge; the server shim (`fletcher-c-abi-server`) answers server.
 
 **Versioning.** `fl_binding_abi_version()` answers for the shim actually loaded, packed as
 `(major << 16) | minor`. Within a major the header is append-only, and from 1.0 a declaration is
