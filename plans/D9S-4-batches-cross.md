@@ -140,7 +140,7 @@ There is no window, count, timer, clock, queue or thread (BC-9, L15). Order and 
   `batches_edge.cpp`. Visibility, the version script and `--exclude-libs ALL` hide Arrow (L7).
 - **CI:** `ci.c-abi.yml` adds `pubsub-arrow` to both legs' sparse checkout and `conan create`s it
   after `arrow-bridge`. `ci.pr.yml`'s c-abi filter gains `pubsub-arrow/**`.
-- **PIC for a shared object (B3; the design assumes (a), PENDING OWNER RULING under D-D9S-8).**
+- **PIC for a shared object (B3; owner ruling 2026-11-13, "Allow the build option": branch (a), a named exception to D-D9S-8).**
   `pubsub-arrow` and `arrow-bridge` are static packages without `fPIC`. Linking them into the Linux
   `.so` fails as `pubsub` once did (`pubsub/conanfile.py:21-33`, `R_X86_64_TPOFF32`; `pubsub-arrow`
   has a `thread_local`).
@@ -148,12 +148,7 @@ There is no window, count, timer, clock, queue or thread (BC-9, L15). Order and 
     `pubsub` does: in `options` and `default_options` (True), deleted on Windows in
     `config_options()`, with a comment citing `pubsub`. About +8 / −2 each. These are recipe lines,
     not domain-7 or domain-2 code. Windows package IDs are unchanged; Linux IDs change and rebuild.
-  - **(b) If refused:** `.conan-profiles/Linux-gcc13-x86_64-Release` gains
-    `fletcher-pubsub-arrow/*:tools.build:cxxflags=["-fPIC"]`, the same for
-    `fletcher-arrow-bridge/*`, and `tools.info.package_id:confs=["tools.build:cxxflags"]` so that a
-    non-PIC binary is never reused (about +4). This is weaker: PIC then belongs to one profile, so
-    any other Linux profile fails at link. If (b) is refused too, stop: the Linux server leg cannot
-    build.
+  - (b), a flag in the Linux profile, was not taken.
 
 ## Corner cases forbidden
 
@@ -203,7 +198,7 @@ Handled residue:
 - **P4.** Arrow links statically with its symbols hidden (`--exclude-libs` and the version script;
   no `dllexport` in static Arrow). *If* the export check finds a non-`fl_` Linux export, or the
   Windows `fl_` set differs: STOP-AND-ASK. Do not widen the export map.
-- **P8 (B3).** With PIC (branch (a) or (b)), the Linux server `.so` links. *If not:* stop and report.
+- **P8 (B3).** With PIC (branch (a)), the Linux server `.so` links. *If not:* stop and report.
 - **P5 (narrowed, B1).** A second `Subscriber` on one provider is lawful **for distinct topics**;
   for the same topic it collides (H1). *If* a distinct topic is refused: STOP-AND-ASK (domain 3).
 - **P6.** `~SubscriberArrow` from outside a callback closes and returns (d7 L9). *If it hangs:* stop.
@@ -251,14 +246,13 @@ declares it a guard.
     light lane.
   - The edge refusal stays with the entry point in 4a (L12).
   - **Disclosed:** in 4a, attachments are not delivered. Nothing ships between the two stages.
-- **B3 pending owner.** Branch (b) swaps the two recipes for the profile (+4); the count is about the
-  same.
+- **B3 ruled:** branch (a) (owner, 2026-11-13, "Allow the build option").
 - **Timing.** The waits are one-sided, and a timeout of at least 1 s keeps the row-limit windows
   whole. On a loaded runner only the reason assertion can flake, never conservation.
 - **Windows server DLL.** Static Arrow makes it larger; the size is printed, not enforced (D22).
   Arrow's DLL imports are D-BIND-148's question (domain 10).
 - **Q11.** Batched dictionary columns arrive re-folded. The tests avoid them; Q11 stays open.
-- **No STOP-AND-ASK of mine is open.** B3's owner ruling is the PM's.
+- **No STOP-AND-ASK is open.** B3 is ruled (branch (a)).
   - Arrow stays out of the edge build, and only the new entry point refuses.
   - No new status number, no change under `dotnet/`, and no domain-7 or domain-2 code.
   - Nothing in the shim checks a window, count, timer or range, or owns a thread.
@@ -279,7 +273,7 @@ declares it a guard.
 - **Production:** in `c-abi/`: `include/fletcher/abi/binding.h`, `src/binding.cpp`,
   `src/handles.hpp`, `src/batches_server.cpp` (new), `src/batches_edge.cpp` (new), `CMakeLists.txt`
   and `conanfile.py`. Also `.github/workflows/ci.c-abi.yml` and `ci.pr.yml`, and, for B3(a),
-  `pubsub-arrow/conanfile.py` and `arrow-bridge/conanfile.py` (for (b), the Linux profile instead).
+  `pubsub-arrow/conanfile.py` and `arrow-bridge/conanfile.py` (the ruled exception, `fPIC` only).
   4b touches only `binding.h` and `batches_server.cpp`.
 - **Tests:** `c-abi/tests/test_batches.cpp` (new), `c-abi/tests/test_shim_batches_nothing.cpp`
   (new), `c-abi/tests/CMakeLists.txt` (both files, the source-dir literal; the comment at 6-15

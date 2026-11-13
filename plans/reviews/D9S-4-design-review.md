@@ -108,3 +108,64 @@ I found no tier-1 disagreement.
   "a failed export".
 - **DEBT-2 (step 3):** a fourth domain-7 `Reason` (d7 Q4, still open with the owner) must be a compile error
   in the reason `switch`, never a 0 on the wire.
+
+## Cycle 2
+
+**Verdict: APPROVE-WITH-DEBT(3).** B1–B3 are resolved and no BLOCKER stands. No deviation from a ruling,
+law or locked decision remains. B3 now sits inside the owner's named exception.
+**Proof of read:** `plans/RIX-rulings.md` has 443 lines and 33 entries; ripgrep and Read agree (your brief
+said 444). The new last heading (l.433) is "2026-11-13 — D9S-4: position-independent code for
+pubsub-arrow and arrow-bridge". It rules "Allow the build option": an `fPIC` option exactly as in `pubsub`,
+and no other edit to domains 7 or 2.
+**Budget:** the design is 294 lines and the brief 57. The new public surface is 3: the entry point,
+`fl_batch` and `fl_batch_fn`.
+
+**B1: resolved.**
+- Bit 63 keeps the two id spaces apart, because row ids count up from 1.
+- `fl_subscriber_unsubscribe` is unchanged and treats a tagged id as unknown, a no-op, so L13 holds.
+- Stage 5's typed refusal of an untagged id answers a question about the shim's own encoding, as `RequireOut`
+  does. It is not a seam rule answered again, so it is not an L4 exception.
+- P5 is narrowed. The same-topic collision is stated as H1, appears in all three options and is registered
+  for domains 3 and 4. One wording slip remains: DEBT-3.
+
+**B2: resolved.** `reason` is now an `int32_t` taking `FL_BATCH_*` values 1, 2 and 3, which matches
+`fl_error`.
+
+**B3: resolved by the ruling.** Branch (a) matches the ruling's text. The design and brief still said
+"pending"; I brought them up to date as a NIT.
+
+**The split**
+- **4a builds nothing that 4b must undo.** 4b appends one field to a struct the shim writes and the binding
+  reads through a pointer. That is D9S-6's mechanism for `failure`, and it changes no signature. 4b also
+  adds thunk step 1 and its own test.
+- **Batches without attachments in 4a are lawful.**
+  - The ladder pre-authorises exactly this split ("4b: attachments filled").
+  - L14 does not name attachments, and d7 L3 binds domain 7's delivery, which does not change.
+  - Nothing ships between 4a and 4b.
+  - Appending in 4b is safer than a 4a field that is always NULL, which would break "none NULL".
+- The edge refusal stays in 4a with the entry point, as L12 and the ladder require.
+
+**Ceiling.** 4a counts about 236 (+298/−12, less the 50 `binding.h` comment lines the ladder does not
+count). My own price is about 232–255, so the declared figure is credible, with about 14 lines of margin.
+The swing is `batches_server.cpp`'s comment density. 4b counts about 17 lines in 2 files, which fits the
+light lane. No further split exists inside rung 4: if 4a passes 250 at phase A, stop and report to the PM.
+
+**Decisions**
+- **Decision 1 is well formed.** Each of (a), (b) and (c) has a Users line and an Architecture line. The
+  recommendation rests on the round's purpose and on L4, and the default is (a).
+- **Decision 1 is genuinely the owner's.**
+  - The collision is inherent while domain 7 stays untouched, because `SubscriberArrow` owns its
+    `Subscriber`.
+  - (b) breaks the surface budget, and (c) would be a third L4 exception, which only the owner grants.
+- **Decision 2 is unchanged and well formed** (cycle 1, point 2).
+
+**DEBT** (register updated): DEBT-1 is struck, because H3 now says "a failed hand-over" and the catch covers
+steps 1–4. DEBT-2 stands. New:
+- **DEBT-3 (step 3, header doc).** "Its arrival answers `FL_SUBSCRIPTION_ENDED`" holds only for an arrival
+  that is still pending. In the default `kAsDeclared` mode the arrival is already Ready
+  (`in_process_provider.cpp:329-332`), and the `Subscriber` shares it (`subscriber.cpp:454-460`). So the
+  earlier subscription stops with no signal at all. Word the header that way; the brief already does.
+- **DEBT-4 (PM, housekeeping).**
+  - Annotate D-D9S-8 with the `fPIC` exception (the ruling's "Applies to").
+  - The tracker's D9S-4a row still promises attachments, and D9S-5's dependency should name 4b.
+  - 4a's doc marks must leave the attachments half of Q6 and BC-13 unbuilt until 4b.

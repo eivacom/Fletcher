@@ -843,6 +843,8 @@ Review: [../../docs/archive/D7F/reviews/D7F-1-design-review.md](../../docs/archi
 - ~~DEBT-2~~ Landed in `52a0103` (check runs before the size ceilings on both legs).
 - ~~DEBT-3~~ Landed before 0b (graph control uses step 1's test; both packages required).
 
-## D9S-4 — batches cross the shim (NEEDS-REWORK, 3 BLOCKERs, cycle 1 of 2) — [review](D9S-4-design-review.md)
-- **DEBT-1 (design H3; D9S-6):** H3 names only the export; thunk step 1 (per-row views) and the fill also throw into domain 7 until D9S-6. BC-12's one catch must enclose steps 1–4 — "a failed hand-over", not "a failed export".
-- **DEBT-2 (step 3):** a fourth domain-7 `Reason` (d7 Q4, owner-open) must fail the build in the reason `switch` (no `default:` + `-Wswitch` as error, or a static count check), never cross as 0.
+## D9S-4 — batches cross the shim (cycle 1 NEEDS-REWORK; cycle 2 APPROVE-WITH-DEBT(3)) — [review](D9S-4-design-review.md)
+- ~~DEBT-1~~ Applied in design cycle 2 (H3 says "a failed hand-over"; the catch encloses thunk steps 1–4).
+- **DEBT-2 (step 3, 4a):** a fourth domain-7 `Reason` (d7 Q4, owner-open) must fail the build in the reason `switch` (no `default:` + `-Wswitch` as error, or a static count check), never cross as 0.
+- **DEBT-3 (step 3, 4a header doc):** the same-topic bullet's "its arrival answers `FL_SUBSCRIPTION_ENDED`" holds only for a still-pending arrival; under default `kAsDeclared` it is already Ready (`in_process_provider.cpp:329-332`, shared by `subscriber.cpp:454-460`), so the earlier subscription stops with no signal. Word it so.
+- **DEBT-4 (PM):** annotate D-D9S-8 with the fPIC exception; tracker row D9S-4a drops "attachments", D9S-5 depends on 4b; 4a's doc marks leave Q6/BC-13's attachments half unbuilt.

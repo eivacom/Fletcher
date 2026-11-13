@@ -15,7 +15,7 @@
 | Batched subscribe: one call, exported by both builds | NEW | the server serves it; the edge refuses it with not-supported (L12, L14, L15) |
 | The batch a callback receives, and the callback (2 C types; the reason is named numbers) | NEW | Q6; 4b reuses the row path's attachments |
 | Server build's dependencies; CI c-abi lane | CHANGED | Arrow, through the batcher only; the edge build is unchanged (L8) |
-| Two Fletcher package recipes gain the Linux "position-independent" switch | CHANGED | the server shim cannot link on Linux without it. **Pending your ruling, asked by the PM.** |
+| Two Fletcher package recipes gain the Linux "position-independent" switch | CHANGED | the server shim cannot link on Linux without it. Allowed by your ruling of 2026-11-13, "Allow the build option". |
 
 ## Deleted
 Nothing. Nothing in the shim served batches before. The C# batcher this makes redundant belongs to the C# switch round.
@@ -45,7 +45,7 @@ Nothing. Nothing in the shim served batches before. The C# batcher this makes re
    **Recommendation:** (a). The ruling "Report it as lost" is met by the round, and each law keeps one test. **Default:** (a).
 
 ## Risks accepted / debt carried
-- **Linux link (pending your ruling, asked by the PM):** the design assumes the two batcher-side recipes gain the same "position-independent" switch Fletcher's pub/sub recipe has. If you refuse, the fallback sets it in the Linux build profile only, which is weaker: any other Linux profile fails to link the server shim.
+- **Linux link (your ruling of 2026-11-13, "Allow the build option"):** the two batcher-side recipes gain the same "position-independent" switch Fletcher's pub/sub recipe has; nothing else in domains 7 and 2 changes.
 - Between 4a and 4b, batches arrive without their rows' attachments; nothing ships in between. The server tests wait one-sided (timeout of at least 1 s), so a loaded runner can flake only the reason assertion. Dictionary columns arrive in the batcher's form (d9 Q11, open), so the tests avoid them.
 - **Premises (stop and ask if false):** Arrow's symbols stay hidden in the server build; `INT64_MAX` ms is exactly "no timeout"; the batcher's refusal keeps its error type. Evidence: Windows by hand. Linux and CI wait for the owner's draft PR.
 

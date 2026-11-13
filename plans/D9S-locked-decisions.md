@@ -27,4 +27,4 @@ proposed deviation from any line here is stop-and-ask.
 - **D-D9S-7 — One shim per process across builds** (L5, L17): the later one refuses and names both.
 - **D-D9S-8 — Out of scope:** NuGet packaging, the server .NET package, its DLL lists/floors/ceiling
   (Q5a, R-9, T6–T9's server halves), C#'s use of the batched entry points, D-BIND-68's future — all
-  domain 10. Domain 7 and domain 2 code and laws. `core/README.md`'s status wording (domain 3).
+  domain 10. Domain 7 and domain 2 code and laws — **one named exception** (owner ruling 2026-11-13, "Allow the build option"): D9S-4a adds an `fPIC` option to `pubsub-arrow/conanfile.py` and `arrow-bridge/conanfile.py`, exactly as `pubsub` has it. `core/README.md`'s status wording (domain 3).
