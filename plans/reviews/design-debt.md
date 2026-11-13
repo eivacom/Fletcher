@@ -831,3 +831,9 @@ Review: [../../docs/archive/D7F/reviews/D7F-1-design-review.md](../../docs/archi
 - ~~DEBT-2 (PM): Decision 2 is already law~~ Folded into the brief's Risks accepted, `957a514`.
 - ~~DEBT-3 (step 3): verdict/pre-size split test~~ Landed in `c18e95e` (`AFailedPreSizeDoesNotMakeTheSchemaUnusable`).
 - ~~DEBT-4 (step 3, docs): BC-3 gap, d7 Findings, BC-8 hint clause, bitmap residue~~ Landed in `c18e95e` (d7 Q8 and Findings (d); register BC-3, BC-8).
+
+## D9S-2 — the shim's server build (APPROVE-WITH-DEBT(4), cycle 1 of 2) — [review](D9S-2-design-review.md)
+- **DEBT-1 (D9S-7):** P3 fires when rung 10 creates a server package in the conformance lane. Re-anchor `ci.integration-test.binding-abi-conformance.yml:86, :150` with `locate_shim.sh` in that commit, and annotate ladder rung 9's "Builds on" with R1's 10–20 lines.
+- **DEBT-2 (PM, before the owner reads the brief):** make Decision 1(b)'s "copied last silently wins" conditional on domain 10 not renaming the file when packing (design, "Q5a, shim half"), and cite D29 in (a)'s architecture line.
+- **DEBT-3 (close):** realistic production is about +250/−68 (net about +185), under the 250 ceiling. Book it so the close does not read as an overrun.
+- **DEBT-4 (step 3, or D9S-4 at the latest):** print the server shim's size on both legs and never enforce it (pre-round audit T3), so R-9/Q5a has a measured number.

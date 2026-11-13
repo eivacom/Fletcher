@@ -10,7 +10,7 @@ One recipe, one source tree, two Conan packages: a package option `variant` (`ed
 that stays in the package ID. It decides the one shim the package holds, the file's name
 (`fletcher-c-abi` / `fletcher-c-abi-server`) and the answer of `fl_binding_variant` (BC-10's
 per-target constant). The edge-surface suite, the per-artefact variant rows and `test_package` run
-against both packages. CI picks every shim by the package it is in, never by file name. It compares
+against both packages. The c-abi and dotnet lanes pick every shim they check by the package it is in, never by file name. It compares
 each build's export table with `binding.h`'s declarations. **The server build links no Arrow C++
 and requires no `pubsub-arrow` yet** (see "Arrow at rung 2").
 
@@ -26,9 +26,9 @@ and requires no `pubsub-arrow` yet** (see "Arrow at rung 2").
   today's. `package_info().libs = [stem]`. The CMake target name stays `fletcher-c-abi::fletcher-c-abi`
   for both, so a consumer chooses the build with the option and changes nothing else (this is what
   rung 10 needs).
-- `validate()` refuses `variant=server` together with `with_probe_shim=True`. The probe is an edge
-  artefact (L13: three built-ins plus the probe, and it answers edge). A server package that carried
-  it would hold two builds under one identity, and BC-11's "one package, one answer" would break.
+- `validate()` refuses `variant=server` together with `with_probe_shim=True`. The probe is a
+  test-only edge artefact (D-BIND-62; it answers edge). A server package that carried it would hold
+  two builds under one identity, so the identity would no longer say which build its shims are.
 
 ### The artefact (one target, two names)
 
@@ -110,7 +110,7 @@ New `scripts/check_shim_exports.sh <binding.h> <edge shim> <server shim> [dumpbi
   each with the `diff` printed on failure. Edge = server follows. Any entry point exported by one
   build only is red by name. That is the guard for D9S-4 onward, where the ladder needs both builds
   to export the same set at every commit.
-- **Standing control in the c-abi lane:** the same script is run with the probe shim in the server's
+- **Standing control in the c-abi lane, on both legs:** the same script is run with the probe shim in the server's
   place. It must fail, and its output must name `fl_test_probe_loan`. The probe's two extra `fl_test_*`
   exports are a real "export on one artefact only", so the comparison is shown to catch one on every
   run, not only once.
