@@ -2,6 +2,7 @@
 # Copyright (C) 2026 The Fletcher Authors
 #
 from conan import ConanFile
+from conan.errors import ConanInvalidConfiguration
 from conan.tools.cmake import CMake, CMakeToolchain, CMakeDeps, cmake_layout
 from conan.tools.files import copy
 import os
@@ -31,10 +32,18 @@ class FletcherCAbiConan(ConanFile):
     # (D-BIND-62). Unlike `run_tests` it stays in the package ID: a package built
     # with it CONTAINS the probe, so it must never be mistaken for the release
     # one, which is built without it.
-    options = {"run_tests": [True, False], "with_probe_shim": [True, False]}
+    #
+    # `variant` is which build the package's shim is (d9 L12, BC-10, BC-11): `edge`
+    # as always, or `server`, from the same sources, answering "server" to
+    # `fl_binding_variant`. It stays in the package ID (only `run_tests` is deleted
+    # from it), so the two can never share an identity, and the server file has its
+    # own name (owner ruling 2026-11-13) so both can sit in one folder.
+    options = {"run_tests": [True, False], "with_probe_shim": [True, False],
+               "variant": ["edge", "server"]}
     default_options = {
         "run_tests": False,
         "with_probe_shim": False,
+        "variant": "edge",
         # Inherited in spirit from the fastdds-pubsub-provider recipe, and
         # restated here because THIS is the artifact the decision is about: the
         # eProsima chain is linked statically INTO the shim, so the NuGet package
@@ -54,6 +63,20 @@ class FletcherCAbiConan(ConanFile):
         "tests/*",
         "probe/*",
     )
+
+    @property
+    def _shim_stem(self):
+        # The one shim this package holds: the same stem CMake gives the target's
+        # OUTPUT_NAME (c-abi/CMakeLists.txt).
+        return "fletcher-c-abi-server" if self.options.variant == "server" else "fletcher-c-abi"
+
+    def validate(self):
+        if self.options.variant == "server" and self.options.with_probe_shim:
+            # The probe shim is a test-only EDGE artefact (D-BIND-62). A server
+            # package that carried it would hold two builds under one identity.
+            raise ConanInvalidConfiguration(
+                "variant=server cannot be combined with with_probe_shim=True: the probe shim "
+                "answers edge, and a package's identity must say which build its shims are")
 
     def requirements(self):
         # NO transitive_headers anywhere in this recipe, on purpose: binding.h
@@ -92,6 +115,7 @@ class FletcherCAbiConan(ConanFile):
         deps = CMakeDeps(self)
         deps.generate()
         tc = CMakeToolchain(self)
+        tc.cache_variables["FLETCHER_SHIM_VARIANT"] = str(self.options.variant)
         if self.options.run_tests:
             tc.cache_variables["FLETCHER_BUILD_TESTS"] = "ON"
         if self.options.with_probe_shim:
@@ -120,15 +144,16 @@ class FletcherCAbiConan(ConanFile):
         # path RELATIVE to src, so a bare "fletcher-c-abi.lib" matches nothing)
         # but name the file: the tests build a C99 probe object library beside
         # the shim, and a plain "*.lib" packages that too.
-        copy(self, "*fletcher-c-abi.dll",
+        stem = self._shim_stem
+        copy(self, f"*{stem}.dll",
              src=self.build_folder,
              dst=os.path.join(self.package_folder, "bin"),
              keep_path=False)
-        copy(self, "*libfletcher-c-abi.so*",
+        copy(self, f"*lib{stem}.so*",
              src=self.build_folder,
              dst=os.path.join(self.package_folder, "lib"),
              keep_path=False)
-        copy(self, "*fletcher-c-abi.lib",
+        copy(self, f"*{stem}.lib",
              src=self.build_folder,
              dst=os.path.join(self.package_folder, "lib"),
              keep_path=False)
@@ -154,7 +179,7 @@ class FletcherCAbiConan(ConanFile):
              keep_path=False)
 
     def package_info(self):
-        self.cpp_info.libs = ["fletcher-c-abi"]
+        self.cpp_info.libs = [self._shim_stem]
         self.cpp_info.includedirs = ["include"]
         self.cpp_info.set_property("cmake_file_name", "fletcher-c-abi")
         self.cpp_info.set_property("cmake_target_name", "fletcher-c-abi::fletcher-c-abi")

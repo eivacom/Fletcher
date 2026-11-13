@@ -21,10 +21,15 @@ on:
         type: string
 
 # The shim is the one SHARED library in the tree and it statically links the
-# whole eProsima and Micro XRCE-DDS chain, so this lane's real job — from BIND-0
-# on, with an ABI that exports one function — is to keep that link honest on both
-# platforms. Seam §12.4: PR #126's first lane run found seven defects local green
-# could not, three of them Linux-only, and Windows is the primary dev platform.
+# whole eProsima and Micro XRCE-DDS chain, so this lane's real job is to keep that
+# link honest on both platforms, and to keep what it exports equal to binding.h.
+# Seam §12.4: PR #126's first lane run found seven defects local green could not,
+# three of them Linux-only, and Windows is the primary dev platform.
+#
+# It builds BOTH builds (D9S-2), the server package first. The size, dependency and
+# strip checks are about the EDGE build: scripts/locate_shim.sh picks it by the
+# package's recorded options, and the edge create passes no `variant`, so a default
+# other than edge fails that lookup. The server shim's size is printed, never enforced.
 jobs:
   build-windows:
     runs-on: windows-2022
@@ -39,6 +44,7 @@ jobs:
             fastdds-pubsub-provider
             xrcedds-pubsub-provider
             integration-tests/copy-probe
+            scripts
             .github
             .conan-profiles
 
@@ -73,6 +79,14 @@ jobs:
           conan create ../xrcedds-pubsub-provider --build=missing -pr:a=$PROFILE
           conan create ../integration-tests/copy-probe --build=missing -pr:a=$PROFILE -o "&:run_tests=True"
 
+      # The server build first, with the same suite (d9 L13: it only adds). Then the
+      # edge build, which passes no `variant` on purpose: it relies on the default,
+      # so a default other than edge leaves no edge package and the lookup below fails.
+      - name: Build and test the server build
+        shell: bash
+        working-directory: c-abi
+        run: conan create . --build=missing -pr:a=../.conan-profiles/Windows-msvc194-x86_64-Release -o "&:run_tests=True" -o "&:variant=server"
+
       - name: Build and test
         shell: bash
         working-directory: c-abi
@@ -88,12 +102,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          SHIM=$(find ~/.conan2/p -path '*/p/bin/fletcher-c-abi.dll' -type f -print -quit)
-          if [ -z "$SHIM" ]; then
-            echo "::error::fletcher-c-abi.dll not found in the Conan cache"
-            find ~/.conan2/p -name 'fletcher-c-abi*' -type f
-            exit 1
-          fi
+          SHIM=$(bash scripts/locate_shim.sh fletcher-c-abi variant=edge with_probe_shim=True)
           # The ceiling is D-BIND-1a rider ii's check, not BIND-9's release
           # budget — see the Linux leg for the full reasoning. The two ceilings
           # DIFFER because the two baselines do: win-x64 measured 7.61 MiB where
@@ -106,9 +115,44 @@ jobs:
           echo "win-x64 shim: $BYTES bytes ($((BYTES / 1024)) KiB); baseline $((BASELINE / 1024)) KiB, ceiling $((CEILING / 1024)) KiB, headroom $(((CEILING - BYTES) / 1024)) KiB — $SHIM"
           echo "### win-x64 shim: $((BYTES / 1024)) KiB (ceiling $((CEILING / 1024)) KiB)" >> "$GITHUB_STEP_SUMMARY"
           if [ "$BYTES" -gt "$CEILING" ]; then
-            echo "::error::the shim is $((BYTES / 1024)) KiB, over the $((CEILING / 1024)) KiB ceiling, against a measured baseline of $((BASELINE / 1024)) KiB. This ceiling exists to catch Arrow C++ being linked into the shim (D-BIND-1a rider ii), which is the only change that moves this number by megabytes. Check what was added to the c-abi link; do not raise the ceiling without a reason that is not that."
+            echo "::error::the edge shim is $((BYTES / 1024)) KiB, over the $((CEILING / 1024)) KiB ceiling, against a measured baseline of $((BASELINE / 1024)) KiB. This ceiling exists to catch Arrow C++ being linked into the shim (D-BIND-1a rider ii), which is the only change that moves this number by megabytes. Check what was added to the c-abi link; do not raise the ceiling without a reason that is not that."
             exit 1
           fi
+          # The server shim: measured, never enforced (R-9 and its ceiling are domain 10's).
+          SERVER=$(bash scripts/locate_shim.sh fletcher-c-abi-server variant=server)
+          SBYTES=$(wc -c < "$SERVER")
+          echo "win-x64 server shim: $SBYTES bytes ($((SBYTES / 1024)) KiB), printed and not enforced — $SERVER"
+          echo "### win-x64 server shim: $((SBYTES / 1024)) KiB (no ceiling)" >> "$GITHUB_STEP_SUMMARY"
+
+      # Both builds export exactly what binding.h declares (d9 L7, L12); on Windows only
+      # the fl_ subset (D-BIND-157). The control puts the probe shim in the server's
+      # place: that run MUST fail and name an extra export, on every run.
+      - name: Compare the export tables with binding.h
+        shell: bash
+        run: |
+          set -euo pipefail
+          VS=$("/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe" -latest -products '*' \
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | tr -d '\r')
+          DUMPBIN=$(find "$VS/VC/Tools/MSVC" -path '*/bin/Hostx64/x64/dumpbin.exe' -print -quit)
+          if [ -z "$DUMPBIN" ]; then
+            echo "::error::dumpbin.exe not found under $VS"
+            exit 1
+          fi
+          HEADER=c-abi/include/fletcher/abi/binding.h
+          EDGE=$(bash scripts/locate_shim.sh fletcher-c-abi variant=edge with_probe_shim=True)
+          SERVER=$(bash scripts/locate_shim.sh fletcher-c-abi-server variant=server)
+          PROBE=$(bash scripts/locate_shim.sh fletcher-c-abi-probe variant=edge with_probe_shim=True)
+          bash scripts/check_shim_exports.sh "$HEADER" "$EDGE" "$SERVER" "$DUMPBIN"
+          if OUT=$(bash scripts/check_shim_exports.sh "$HEADER" "$EDGE" "$PROBE" "$DUMPBIN" 2>&1); then
+            echo "::error::the control passed: the comparison did not catch the probe shim's extra exports, so it cannot be trusted"
+            exit 1
+          fi
+          echo "$OUT"
+          if ! echo "$OUT" | grep -q fl_test_probe_loan; then
+            echo "::error::the control failed, but not by naming fl_test_probe_loan"
+            exit 1
+          fi
+          echo "control: the probe shim in the server's place is red, by name"
 
   build-linux:
     runs-on: ubuntu-latest
@@ -123,6 +167,7 @@ jobs:
             fastdds-pubsub-provider
             xrcedds-pubsub-provider
             integration-tests/copy-probe
+            scripts
             .github
             .conan-profiles
 
@@ -152,14 +197,14 @@ jobs:
               conan create ../fastdds-pubsub-provider --build=missing -pr:a=$PROFILE
               conan create ../xrcedds-pubsub-provider --build=missing -pr:a=$PROFILE
               conan create ../integration-tests/copy-probe --build=missing -pr:a=$PROFILE -o "&:run_tests=True"
+              # The server build first, with the same suite (d9 L13), then the edge
+              # build, which passes no `variant`: it relies on the default being edge.
+              conan create . --build=missing -pr:a=$PROFILE -o "&:run_tests=True" -o "&:variant=server"
               conan create . --build=missing -pr:a=$PROFILE -o "&:run_tests=True" -o "&:with_probe_shim=True"
 
-              SHIM=$(find ~/.conan2/p -path "*/p/lib/libfletcher-c-abi.so" -type f -print -quit)
-              if [ -z "$SHIM" ]; then
-                echo "::error::libfletcher-c-abi.so not found in the Conan cache"
-                find ~/.conan2/p -name "libfletcher-c-abi*" -type f
-                exit 1
-              fi
+              # The EDGE shim, by its package identity and never by file name or as
+              # "the first match" (D9S-2): the server package is in this cache too.
+              SHIM=$(bash /workspace/scripts/locate_shim.sh fletcher-c-abi variant=edge with_probe_shim=True)
 
               # The per-RID size is a release-facing number (the NuGet package
               # carries one shim per RID), so it is measured on every run.
@@ -191,9 +236,14 @@ jobs:
               echo "linux-x64 shim: $BYTES bytes ($((BYTES / 1024)) KiB); baseline $((BASELINE / 1024)) KiB, ceiling $((CEILING / 1024)) KiB, headroom $(((CEILING - BYTES) / 1024)) KiB"
               echo "### linux-x64 shim: $((BYTES / 1024)) KiB (ceiling $((CEILING / 1024)) KiB)" >> /workspace/shim-summary.md
               if [ "$BYTES" -gt "$CEILING" ]; then
-                echo "::error::the shim is $((BYTES / 1024)) KiB, over the $((CEILING / 1024)) KiB ceiling, against a measured baseline of $((BASELINE / 1024)) KiB. This ceiling exists to catch Arrow C++ being linked into the shim (D-BIND-1a rider ii), which is the only change that moves this number by megabytes. Check what was added to the c-abi link; do not raise the ceiling without a reason that is not that."
+                echo "::error::the edge shim is $((BYTES / 1024)) KiB, over the $((CEILING / 1024)) KiB ceiling, against a measured baseline of $((BASELINE / 1024)) KiB. This ceiling exists to catch Arrow C++ being linked into the shim (D-BIND-1a rider ii), which is the only change that moves this number by megabytes. Check what was added to the c-abi link; do not raise the ceiling without a reason that is not that."
                 exit 1
               fi
+              # The server shim: measured, never enforced (R-9 and its ceiling are domain 10).
+              SERVER_SHIM=$(bash /workspace/scripts/locate_shim.sh fletcher-c-abi-server variant=server)
+              SBYTES=$(wc -c < "$SERVER_SHIM")
+              echo "linux-x64 server shim: $SBYTES bytes ($((SBYTES / 1024)) KiB), printed and not enforced"
+              echo "### linux-x64 server shim: $((SBYTES / 1024)) KiB (no ceiling)" >> /workspace/shim-summary.md
 
               # THE GLIBC FLOOR, MEASURED RATHER THAN ASSUMED (N-7).
               #
@@ -228,23 +278,32 @@ jobs:
                 echo "### linux-x64 glibc floor: $FLOOR" >> /workspace/shim-summary.md
               fi
 
-              # The export table IS the interface, and on Linux it is enforced:
-              # CXX_VISIBILITY_PRESET hides this component own symbols and
-              # --exclude-libs ALL localises everything that arrived from a static
-              # archive. A symbol outside the fl_ prefix therefore means a
-              # statically linked dependency (the whole eProsima chain is in
-              # here) has become part of the shim interface — which is how a host
-              # process that links its own Fast DDS ends up binding one of two
-              # definitions at random. The allowlist is the linker own set.
-              echo "--- exported symbols ---"
-              nm -D --defined-only "$SHIM" | awk "{print \$3}" | sort | tee /workspace/shim-exports.txt
-              UNEXPECTED=$(grep -v -E "^(fl_[A-Za-z0-9_]*|_init|_fini|_edata|_end|__bss_start)$" /workspace/shim-exports.txt || true)
-              if [ -n "$UNEXPECTED" ]; then
-                echo "::error::the shim exports symbols that binding.h does not declare:"
-                echo "$UNEXPECTED"
+              # The export table IS the interface (d9 L7, L12). Both builds must export
+              # exactly the entry points binding.h declares, and nothing outside fl_
+              # and the linker own names: CXX_VISIBILITY_PRESET hides this component
+              # own symbols and --exclude-libs ALL localises everything that arrived
+              # from a static archive, so a stray symbol means a statically linked
+              # dependency (the whole eProsima chain is in here) has become part of
+              # the shim interface, which is how a host process that links its own
+              # Fast DDS ends up binding one of two definitions at random.
+              HEADER=/workspace/c-abi/include/fletcher/abi/binding.h
+              SERVER=$(bash /workspace/scripts/locate_shim.sh fletcher-c-abi-server variant=server)
+              PROBE=$(bash /workspace/scripts/locate_shim.sh fletcher-c-abi-probe variant=edge with_probe_shim=True)
+              bash /workspace/scripts/check_shim_exports.sh "$HEADER" "$SHIM" "$SERVER"
+              # The control: the test-only probe shim, which exports two more fl_test_*
+              # functions, stands in for the server build. That run MUST fail and name
+              # one of them, so the comparison is shown to catch an export on one
+              # artefact only on every run.
+              if OUT=$(bash /workspace/scripts/check_shim_exports.sh "$HEADER" "$SHIM" "$PROBE" 2>&1); then
+                echo "::error::the control passed: the comparison did not catch the probe shim extra exports, so it cannot be trusted"
                 exit 1
               fi
-              grep -q "^fl_binding_abi_version$" /workspace/shim-exports.txt
+              echo "$OUT"
+              if ! echo "$OUT" | grep -q fl_test_probe_loan; then
+                echo "::error::the control failed, but not by naming fl_test_probe_loan"
+                exit 1
+              fi
+              echo "control: the probe shim in place of the server build is red, by name"
             '
 
       - name: Publish the measurement

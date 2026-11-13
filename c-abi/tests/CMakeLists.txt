@@ -50,6 +50,26 @@ add_dependencies(c_abi_tests single_copy_decoy)
 target_compile_definitions(c_abi_tests PRIVATE
     FLETCHER_DECOY_NAME="$<TARGET_FILE_NAME:single_copy_decoy>")
 
+# D9S-2 (BC-10). Which build `c_abi_tests` is linked to, as a LITERAL the test
+# source compares the shim's answer with: 1 = edge, 2 = server (the wire values
+# `binding.h` promises). It is mapped HERE, from the package's `variant` switch,
+# and not read back from the definition the shim is built with: a test that took
+# its expectation from the shim would agree with the shim whatever the shim said.
+# The same suite is built a second time in the server package (d9 L13), so every
+# row that is not about the build must hold on both; the rows that are about the
+# build get one expected answer per artefact and never "either".
+if(FLETCHER_SHIM_VARIANT STREQUAL "edge")
+    set(FLETCHER_C_ABI_TESTS_EXPECTED_VARIANT 1)
+elseif(FLETCHER_SHIM_VARIANT STREQUAL "server")
+    set(FLETCHER_C_ABI_TESTS_EXPECTED_VARIANT 2)
+else()
+    message(FATAL_ERROR
+        "FLETCHER_SHIM_VARIANT is '${FLETCHER_SHIM_VARIANT}', not 'edge' or 'server': "
+        "the test executables cannot be told which build they are linked to")
+endif()
+target_compile_definitions(c_abi_tests PRIVATE
+    FLETCHER_EXPECTED_VARIANT=${FLETCHER_C_ABI_TESTS_EXPECTED_VARIANT})
+
 target_link_libraries(c_abi_tests PRIVATE
     GTest::gtest_main
     fletcher-c-abi
@@ -151,6 +171,9 @@ if(FLETCHER_BUILD_PROBE_SHIM)
         GTest::gtest_main
         fletcher-c-abi-probe
         arrow::arrow)
+    # The probe shim is the test-only EDGE artefact (D-BIND-62, D9S-2): 1, whatever
+    # variant the package around it is. It is never in a server package.
+    target_compile_definitions(c_abi_probe_tests PRIVATE FLETCHER_EXPECTED_VARIANT=1)
     set_target_properties(c_abi_probe_tests PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY $<TARGET_FILE_DIR:fletcher-c-abi-probe>)
     # `test_binding_abi.cpp` is compiled into this executable as well (D9S-1: the

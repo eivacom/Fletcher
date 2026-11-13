@@ -77,6 +77,20 @@ recipe also needs `fletcher-arrow-bridge`, for the C ABI encoder's oracle, so
 `conan create ../arrow-bridge` goes before it; `ci.c-abi.yml` does that, and
 builds the probe shim too (below).
 
+### The server build (`variant=server`)
+
+```bash
+conan create . --build=missing -pr:a=../.conan-profiles/<profile> -o "&:variant=server"
+```
+
+The same sources, a second build: it answers `FL_VARIANT_SERVER` to
+`fl_binding_variant()` and is the file `fletcher-c-abi-server` (`.dll`, or
+`libfletcher-c-abi-server.so`), so both builds can sit in one folder. `variant`
+defaults to `edge`, is part of the package ID, and the CMake target stays
+`fletcher-c-abi::fletcher-c-abi`. It carries no Arrow C++ yet. It cannot be
+combined with `with_probe_shim`. A direct CMake configure takes
+`-DFLETCHER_SHIM_VARIANT=edge|server`.
+
 ### The probe shim (`with_probe_shim`, test-only)
 
 ```bash
@@ -109,7 +123,7 @@ the rule rather than pointing at it, so a binding author never has to read the C
 numbers are the seam's own and are never renumbered.
 
 **The build.** `fl_binding_variant()` answers which build of the shim is loaded: `FL_VARIANT_EDGE`
-(1) today, `FL_VARIANT_SERVER` (2) once the server build exists. Like the version it is callable
+(1) for the edge build, `FL_VARIANT_SERVER` (2) for the server build. Like the version it is callable
 first and from any thread, and it still answers in a shim that refuses every other call. Both the
 shipped shim and the test-only probe shim answer edge.
 

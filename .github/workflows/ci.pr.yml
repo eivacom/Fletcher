@@ -141,6 +141,8 @@ jobs:
               - 'fastdds-pubsub-provider/**'
               - 'xrcedds-pubsub-provider/**'
               - '.github/workflows/ci.pr.yml'
+              - 'scripts/locate_shim.sh'
+              - 'scripts/check_shim_exports.sh'
               - '.github/workflows/ci.c-abi.yml'
               - '.github/workflows/ci.setup-devcontainer-image.yml'
               - '.github/actions/conan-install/**'
@@ -166,6 +168,7 @@ jobs:
               # the shim and the packages are checked by these two scripts.
               - 'gateway/deployers/**'
               - 'scripts/check_shim_dependencies.sh'
+              - 'scripts/locate_shim.sh'
               - 'scripts/check_dotnet_packages.sh'
               - 'scripts/shim_floors.env'
               # BIND-9b-7 (D-BIND-173): and its lockfile by this one.

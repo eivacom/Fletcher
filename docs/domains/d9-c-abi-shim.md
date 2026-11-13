@@ -80,10 +80,10 @@ containment.
 | Term | Definition (as the code behaves) |
 |---|---|
 | **Shim** | The shared library `fletcher-c-abi` (`CMakeLists.txt:80-83`): the only Fletcher component built as a shared library; statically links pub/sub, the two DDS providers and nanoarrow. |
-| **Variant** | One of the two builds of the shim from one source. Today there is one (edge); the test-only probe shim (`CMakeLists.txt:164-211`) is a third artifact from the same sources, not a variant. |
+| **Variant** | One of the two builds of the shim from one source: `edge` and `server`, chosen by the Conan option `variant` (default `edge`, in the package ID; D9S-2). The test-only probe shim (`CMakeLists.txt:164-211`) is a third artifact from the same sources, always edge, not a variant. |
 | **Edge variant** | Today's shim: no Arrow C++, codec on nanoarrow. Shipped in the base package. |
-| **Server(-tier) variant** | `[designed-not-built]` The edge surface plus the batched subscribe; links Arrow C++ through `pubsub-arrow`. Shipped in a package of its own (D22). |
-| **Variant query** | `[built]` for the edge and probe shims (D9S-1; the server half is D9S-2). `fl_binding_variant`: the entry point both builds export that answers which build was loaded (L16, D23). |
+| **Server(-tier) variant** | `[built]` as an artefact (D9S-2: `fletcher-c-abi-server`, the edge sources answering "server", no Arrow yet); the batched subscribe and the Arrow link are `[designed-not-built]` (D9S-4). Shipped in a package of its own (D22). |
+| **Variant query** | `[built]` for all three artefacts (D9S-1 edge and probe; D9S-2 server). `fl_binding_variant`: the entry point both builds export that answers which build was loaded (L16, D23). |
 | **Base package / server package** | `Eiva.Fletcher.Interop`, carrying the edge variant, and the separate .NET package carrying the server variant; each holds a full shim (D22). |
 | **Entry point** | An exported `fl_*` function. 48 today (`h`, `grep -c FL_ABI_EXPORT`). |
 | **Handle** | An opaque `fl_*` struct pointer the caller holds and cannot read (`handles.hpp:6-11`). |
@@ -255,17 +255,17 @@ exported only once it is implemented, never stubbed to answer `FL_NOT_SUPPORTED`
 **L7. The surface is pure C and self-contained, and the export table is exactly the surface.** No
 consumer needs a Fletcher, Arrow or eProsima header; Arrow structures are forward-declared.
 `[built]` for the header; the export-table clause `[built for Linux; violated on Windows]` (accepted,
-D-BIND-157)
+D-BIND-157). Since D9S-2 `scripts/check_shim_exports.sh` compares both builds' `fl_` sets with `binding.h` on both platforms (the whole-table clause stays Linux-only)
 - Holds at: `h:17-18`, `h:97-108`, `CMakeLists.txt:99-104`, `:138-147` (hidden visibility,
   `--exclude-libs ALL`, the version script `cmake/exports.map:46-51`), `:154-162` (private links),
   `conanfile.py:58-63` (no transitive headers).
 - Windows: ConanCenter's static Fast DDS carries `/EXPORT` directives; 3531 names exported
   (`CMakeLists.txt:116-127`, README:49-60).
 - Tests: `BindingAbi.CompilesAsC99AndIsSelfContained` (C99 with `-pedantic-errors`; C11 on MSVC),
-  `test_package/`. A CI step, not ctest, checks only that every exported name has the `fl_` prefix
-  and that `fl_binding_abi_version` is exported (`ci.c-abi.yml:231-247`, Linux). Nothing compares the
-  export set with `binding.h`'s `FL_ABI_EXPORT` declarations, or the edge set with the server set
-  (audit F7, D31; register BC-10).
+  `test_package/`. CI, not ctest: `scripts/check_shim_exports.sh` (`ci.c-abi.yml`, both legs, D9S-2) refuses
+  any Linux export outside `fl_*` and the linker's own names and compares each build's `fl_` set with
+  `binding.h`'s `FL_ABI_EXPORT` set, so edge = server = header; its control puts the probe shim in the
+  server's place and must fail by name.
 
 **L8. The edge variant links no Arrow C++.** Its codec is nanoarrow; Arrow C++ and `arrow-bridge`
 may appear only in test binaries.
@@ -314,7 +314,8 @@ point the server build does: the variant query answers truthfully, and each batc
 refuses with a named not-supported error, having done nothing. Nothing else in the edge build
 changes, beyond the version bump L6 requires (D27): no other entry point, no link (L8), no size
 check, no behaviour.
-`[designed-not-built]`. Source: 2026-11-12, "one shim in two variants", "the edge variant exactly as
+`[built]` for one source, one recipe and the two builds (D9S-2); the edge refusals of the batched entry
+points are `[designed-not-built]` (D9S-4). Source: 2026-11-12, "one shim in two variants", "the edge variant exactly as
 today"; amended 2026-11-13, "Wrong build: Clear 'not supported'" ("the edge surface gains only that
 query and those refusals"; D23). Precedent: the probe shim is a second artifact from the same object
 library and entry points (`CMakeLists.txt:164-211`, `conanfile.py:30-34`, D-BIND-62).
@@ -332,7 +333,8 @@ library and entry points (`CMakeLists.txt:164-211`, `conanfile.py:30-34`, D-BIND
 changes one's signature, or changes what one does. A caller written against the edge surface
 behaves identically on the server variant. The only entry points whose answers differ between the
 builds are the variant query and the batched ones (L12).
-`[designed-not-built]`. Source: as L12.
+`[built]` for the edge surface on the server artefact (D9S-2: the whole edge-surface suite runs against it);
+the added entry points are `[designed-not-built]` (D9S-4). Source: as L12.
 
 **L14. A batch crosses as an Arrow C Data Interface array and schema, borrowed for the batch
 callback; a binding keeps it only by moving it.** *(Amended 2026-11-13, D26.)* The batch callback is
@@ -366,8 +368,7 @@ both" ("the shim passes the refusal through"). `subscriber_arrow.cpp:39-46` thro
 query, callable before anything else and from any thread, as `fl_binding_abi_version` is. A caller
 that asks never has to learn its build from a missing symbol; one that does not ask gets L12's named
 refusal, never a crash.
-`[built]` for the edge shim and the probe shim (D9S-1; `fl_binding_variant`, `fl_variant`; the server
-half is D9S-2). Source: ruling 2026-11-13, "Wrong build: Clear 'not supported'" ("the program
+`[built]` for all three artefacts (D9S-1 edge and probe; D9S-2 server: `fl_binding_variant`, `fl_variant`). Source: ruling 2026-11-13, "Wrong build: Clear 'not supported'" ("the program
 can ask the shim which build it has … via a query that both builds export"; D23). Today
 `fl_binding_abi_version` cannot tell two builds of one version apart. The query's name, its answer's
 type, and whether it changes the ABI version (Q8) are the shim round's design.
@@ -431,11 +432,10 @@ Surface, `h` sections in order (ABI 0.8, 48 entry points, every one implemented)
   refuses it first. That is the row subscriber's; a batched subscription closed or destroyed from
   inside its own batch callback follows domain 7's L9 (L1).
 
-**Builds** (`conanfile.py:30-46`): the shipped shim; `with_probe_shim` adds the test-only
+**Builds** (`conanfile.py`): the shipped shim, `edge` or `server` by the `variant` option (default edge; in the package ID; the server build's file is `fletcher-c-abi-server`; `variant=server` with `with_probe_shim` is refused); `with_probe_shim` adds the test-only
 `fletcher-c-abi-probe` (in the package ID, so it cannot pass for a release); `run_tests` adds the
 gtest suites and the test-only Arrow C++ oracle (not in the package ID). The server variant ships
-in its own .NET package (D22); its build switch and native file name are the shim round's design
-(Q5a).
+in its own .NET package (D22); the NuGet-level name stays domain 10's (Q5a).
 
 ## 5. Decisions of record
 
@@ -525,9 +525,9 @@ in its own .NET package (D22); its build switch and native file name are the shi
 | Q1 | Resolved 2026-11-13 (D23, L16): a variant query both builds export. Its name and answer type are the shim round's design. | — |
 | Q2 | Resolved 2026-11-13 (D24): domain 2 owns `NanoarrowCodec`; former L10 is d2 L2 and L8. | — |
 | Q3 | Resolved 2026-11-13 (D23, L12): one surface; the edge build exports the batched entry points and refuses them by name. Residue resolved 2026-11-13 (D28, audit LC-2): "named" is `FL_NOT_SUPPORTED` plus a message; its meaning widens to "this provider or this build cannot do this"; no new number. | — |
-| Q4 | How is "the edge variant links no Arrow C++" enforced once the server variant links it from the same build? The size ceiling is a proxy; a symbol or dependency-graph check would be structural (register BC-11). The variant switch must stay in the package ID (audit F13), and CI must pick the edge artefact by package ID, not by file name (audit F8; T3, T5, T19). | shim round |
+| Q4 | How is "the edge variant links no Arrow C++" enforced once the server variant links it from the same build? The size ceiling is a proxy; a symbol or dependency-graph check would be structural (register BC-11). The variant switch must stay in the package ID (audit F13), and CI must pick the edge artefact by package ID, not by file name (audit F8; T3, T5, T19). **CI by package identity built in D9S-2** (`scripts/locate_shim.sh`); the structural Arrow check is D9S-3. | shim round |
 | Q5 | Resolved 2026-11-13 (D22): the server variant ships in its own .NET package; D-BIND-157 stays on the base package; D-BIND-13 and -17 revised. | — |
-| Q5a | Packaging residue the ruling does not settle: do the two packages' native files have distinct names (so both can sit in one app's output), does the server package depend on the base one, how does a binding choose which to load, and does the server package get a size ceiling of its own? **Registered 2026-11-13 as domain-10 questions in §6**, together with R-9 (D-BIND-148 / -149 for the server shim). | domain 10 (C# switch round), with the shim round for the native file name |
+| Q5a | Packaging residue the ruling does not settle: do the two packages' native files have distinct names (so both can sit in one app's output), does the server package depend on the base one, how does a binding choose which to load, and does the server package get a size ceiling of its own? **The shim-side half is resolved (owner ruling 2026-11-13, D9S-2 Decision 1): the server build's file is `fletcher-c-abi-server`.** **Registered 2026-11-13 as domain-10 questions in §6**, together with R-9 (D-BIND-148 / -149 for the server shim). | domain 10 (C# switch round), with the shim round for the native file name |
 | Q6 | How do a batch's row-aligned attachments, `BatchStatus` and a null batch cross? Per-row `fl_attachments` handles, a flattened form, or a C Data column? | shim round, then owner if it widens the seam's vocabulary |
 | Q7 | How are `kNoTimeout` and L15's refusal expressed in the C signature: an `int64_t timeout_ms` with `INT64_MAX` as no timeout (as `fl_schema_arrival_wait` does), and `FL_INVALID_ARGUMENT` with domain 7's message? D-D7O-1 says a plain value; confirm the field width. | shim round |
 | Q8 | Resolved 2026-11-13 (D27, audit LC-1): one `FL_BINDING_ABI_VERSION` for both builds, and both bump; the C# loader's expected minor moves in the same commit (the named scope exception, L6). | — |

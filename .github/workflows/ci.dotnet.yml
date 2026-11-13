@@ -134,17 +134,10 @@ jobs:
                 echo "::endgroup::"
               done
 
-              SHIM=$(find ~/.conan2/p -path "*/p/lib/libfletcher-c-abi.so" -type f -print -quit)
-              if [ -z "$SHIM" ]; then
-                echo "::error::libfletcher-c-abi.so not found in the Conan cache after conan create"
-                exit 1
-              fi
+              # By the package identity (D9S-2), not by file name: the edge shim, with the probe.
+              SHIM=$(bash /workspace/scripts/locate_shim.sh fletcher-c-abi variant=edge with_probe_shim=True)
               echo "staging shim: $SHIM"
-              PROBE=$(find ~/.conan2/p -path "*/p/lib/libfletcher-c-abi-probe.so" -type f -print -quit)
-              if [ -z "$PROBE" ]; then
-                echo "::error::libfletcher-c-abi-probe.so not found in the Conan cache after conan create"
-                exit 1
-              fi
+              PROBE=$(bash /workspace/scripts/locate_shim.sh fletcher-c-abi-probe variant=edge with_probe_shim=True)
               echo "staging probe shim: $PROBE"
 
               # BIND-9a-0 (D-BIND-134): the shim must load nothing but the OS and the
@@ -282,18 +275,11 @@ jobs:
         shell: bash
         run: |
           set -e
-          SHIM=$(find ~/.conan2/p -path '*/p/bin/fletcher-c-abi.dll' -type f -print -quit)
-          if [ -z "$SHIM" ]; then
-            echo "::error::fletcher-c-abi.dll not found in the Conan cache after conan create"
-            exit 1
-          fi
+          # By the package identity (D9S-2), not by file name: the edge shim, with the probe.
+          SHIM=$(bash scripts/locate_shim.sh fletcher-c-abi variant=edge with_probe_shim=True)
           echo "staging shim: $SHIM"
           echo "path=$SHIM" >> "$GITHUB_OUTPUT"
-          PROBE=$(find ~/.conan2/p -path '*/p/bin/fletcher-c-abi-probe.dll' -type f -print -quit)
-          if [ -z "$PROBE" ]; then
-            echo "::error::fletcher-c-abi-probe.dll not found in the Conan cache after conan create"
-            exit 1
-          fi
+          PROBE=$(bash scripts/locate_shim.sh fletcher-c-abi-probe variant=edge with_probe_shim=True)
           echo "staging probe shim: $PROBE"
           echo "probe=$PROBE" >> "$GITHUB_OUTPUT"
 
