@@ -299,3 +299,4 @@ At phase B, CI YAML measured **65 non-comment touched lines** (+77/−15 raw in 
 - A green CI run on the draft PR, which lifts the "CI and Linux unrun" marks.
 - d9 Q13: one CMake function for every shim.
 - PDA-DEC's live debt remains in `plans/reviews/design-debt.md`.
+**Retrospective:** 3 amend-only findings (F1 light-lane margin, F2 tripwire remedy, F3 test-line declaration). Owner: "Change nothing (default)".
