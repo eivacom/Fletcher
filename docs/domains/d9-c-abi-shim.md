@@ -176,7 +176,7 @@ Wait outcomes (`FL_PENDING`, `FL_SUBSCRIPTION_ENDED`) are returned values, never
   edge build's refusal of a batched entry point (L12) reuses it with a message naming the edge build
   and the server package; the shim allocates no new number. That refusal carries `FL_ORIGIN_SEAM`
   (Q12, edge half, resolved by D9S-4a; audit F5).
-- **A failure handed to a batch callback is borrowed for the callback** (D32, ruling 2026-11-14, ledger :504): a
+- **A failure handed to a batch callback is borrowed for the callback** (D32, ruling 2026-11-14, ledger :512): a
   failed hand-over's `fl_batch.failure` (L18), like the rest of the batch (L11). A binding copies it to
   keep it and never disposes it; the shim disposes it when the callback returns. A failure an entry
   point returns stays the caller's. `[built]` for the borrowed field's contents (the disposal is by inspection, untested) (D9S-6; Windows, by hand; CI and Linux unrun; `handover.Batches.AWindowTheShimCannotHandOverStillArrivesCounted`).
@@ -296,7 +296,7 @@ may appear only in test binaries.
 `[built]` (D9S-3; Windows, by hand, for the graph half and the name scan of the edge DLL; the Linux
 `nm -C` half and CI are unrun until the owner's draft PR runs them): the check by name now has a code
 owner.
-- Holds at: `conanfile.py:95-107` (Arrow and `arrow-bridge` are required only under `run_tests`; with tests off no Arrow package, test-only or not, may be in the graph — ruling 2026-11-13, "Narrow the docs", ledger :421;
+- Holds at: `conanfile.py:95-107` (Arrow and `arrow-bridge` are required only under `run_tests`; with tests off no Arrow package, test-only or not, may be in the graph — ruling 2026-11-13, "Narrow the docs", ledger :422;
   and `run_tests` is deleted from the package ID — *record (D9S-2/3 reviews): false; the tests-on package lists `arrow` and `fletcher-arrow-bridge` in its `conaninfo.txt`, so it has a different ID*), `CMakeLists.txt:154-162` (the shim's links),
   `nanoarrow_codec.hpp:20-24`, `tests/CMakeLists.txt:6-15`.
 - **How it is enforced:** `scripts/check_edge_arrow_free.sh` (`ci.c-abi.yml`, both legs, before the
@@ -368,7 +368,7 @@ builds are the variant query and the batched ones (L12).
 the added batched subscribe is `[built]` (D9S-4a, with each row's attachments D9S-4b; its close D9S-5a). Source: as L12.
 - Tests: the edge-surface suite linked to the server artefact (D9S-2). From C#, the binding-abi-conformance lane
   runs against both builds (D9S-7, ladder rung 10; CI unrun): the server shim is staged under the edge file name,
-  with a `cmp` guard and its control (ruling 2026-11-14, ledger :516, for the staging only); the corpus stays the
+  with a `cmp` guard and its control (ruling 2026-11-14, ledger :525, for the staging only); the corpus stays the
   edge build's, so the server pass compares server bytes with edge bytes (a design choice, not ruled). The
   mechanism lives in `integration-tests/binding-abi-conformance/README.md` (D9S, 2026-11-14).
 
@@ -413,9 +413,9 @@ refusal are `[built]` as tests (D9S-5a: `Batches.EveryBatchOptionReachesDomain7A
 ABI, the message byte-equal to domain 7's; BC-8, BC-14), and so is closing as domain 7's L9 from outside a callback
 (D9S-5a: `Batches.ClosingFromOutsideDeliversTheRestThenTheClosingBatch`, by close and by destroy). **Not yet
 tested** before D9S-5b, now `[built]` (D9S-5b, same marks): closing from inside a callback, from a row delivery on the
-same provider (it returns at once), and an idle close, each ending with exactly one closing delivery (ruling 2026-11-14, ledger :478;
+same provider (it returns at once), and an idle close, each ending with exactly one closing delivery (ruling 2026-11-14, ledger :484;
 `Batches.EveryCloseEndsWithExactlyOneClosingDelivery`); a refused batched subscribe delivers nothing (ruling 2026-11-14
-"a refused batched subscribe never delivers", ledger :493; `Batches.ARefusedBatchedSubscribeNeverDelivers`). The shim adds no code for
+"a refused batched subscribe never delivers", ledger :500; `Batches.ARefusedBatchedSubscribeNeverDelivers`). The shim adds no code for
 either (BC-9). Source: d7 §4 and §6, D-D7O-1, register BC-8 and BC-9, 2026-11-12 "Refuse
 both" ("the shim passes the refusal through"). `subscriber_arrow.cpp:39-46` throws
 `PubSubError(kInvalidArgument)`, which `Capture` already forwards as `FL_INVALID_ARGUMENT`
@@ -455,7 +455,7 @@ census C5 and A37 / F12. Without it, a throw from the thunk is swallowed by doma
   different question ("is a failed hand-over reported?") with its own single site and its own
   structural test (BC-12: Σ`num_rows` + Σ dropped seen by the C caller equals the rows offered, with
   the hand-over failing on a chosen window; the test fails it after the export). Kept apart so each law has one test.
-- **Settled (D32, ruling 2026-11-14, ledger :504):** "its reason kept" is the window's own reason (domain 7's
+- **Settled (D32, ruling 2026-11-14, ledger :512):** "its reason kept" is the window's own reason (domain 7's
   `BatchStatus`, CLOSING included, ruling 2026-11-14), and the failure crosses beside it in
   `fl_batch.failure`: its status (`FL_INTERNAL` for an allocation or export failure),
   `FL_ORIGIN_HANDOVER` (4) and its message, borrowed for the callback (L2). Every window reaches
@@ -549,8 +549,8 @@ in its own .NET package (D22); the NuGet-level name stays domain 10's (Q5a).
 | D29 | **Revision in place of D19's "C# on desktop loads the server variant":** a C# app loads the server build only if it references the server package, otherwise the edge build. Consequence owned by the C# switch round: C#'s per-row subscribe must work on the edge build, without a batcher (§6). Resolves audit R-2 / F2. | Owner ruling 2026-11-13, "C# loads: Depends on package" |
 | D30 | **A batch the shim cannot hand over is reported, never lost silently:** a "no batch could be built" delivery for that window, its rows counted as dropped, its reason kept; one site in the shim (register BC-12); domain 7 untouched. Recorded as law L18. Resolves audit census C5 / F12. | Owner ruling 2026-11-13, "Lost handoff: Report it as lost" ("D9S pre-round: a failed handoff is reported; corrections approved") |
 | D31 | **The audit's tier-2 text corrections are approved** and applied before the round: F1 (L12), F3 (L4, §1), F4 (L1), F6 (L6), F7 (L7), F9 (L12, D14), F15 (§8); F17-F19 (BIND annotations); F10, F22, F23 (`binding.h` comments); F24-F26 (`c-abi/README.md`); F27 (ledger notes). | Owner ruling 2026-11-13, "Corrections: Approve all as listed" |
-| D32 | **A failed hand-over carries its status and message; d9 §1 holds.** `fl_batch` gains a trailing `const fl_error* failure`, NULL unless the window's hand-over failed, and `fl_origin` gains `FL_ORIGIN_HANDOVER = 4`, both on D9S-1's 0.8 bump (D27); no status number. The failure is borrowed for the callback, so L2 gains that clause (a law change this ruling authorises). Settles L18's shape and Q12's hand-over half. Forward note (domain 10): C#'s `FletcherOrigin` stops at 3 (`dotnet/src/Fletcher/FletcherException.cs:62-75`); the C# switch round mirrors code 4 and never disposes `failure`. | Owner ruling 2026-11-14, "(b) Keep the promise" ([RIX-rulings.md](../../plans/RIX-rulings.md), "D9S-6: a failed hand-over still carries its status and message", :504) |
-| D33 | **One `fl_subscriber` holds both row and batched subscriptions;** destroying it ends both kinds. A row and a batched subscription to the same topic through one provider collide; the collision is documented (`binding.h`; Findings b2), not refused, because the shim forwards the transport's rule (L4). The two providers' different answers are registered for domains 3 and 4. (D9S, 2026-11-14.) | Owner ruling 2026-11-13, "(a) One object, documented" ([RIX-rulings.md](../../plans/RIX-rulings.md), "D9S-4: one subscriber object; the interim handoff gap accepted", :445 (1)) |
+| D32 | **A failed hand-over carries its status and message; d9 §1 holds.** `fl_batch` gains a trailing `const fl_error* failure`, NULL unless the window's hand-over failed, and `fl_origin` gains `FL_ORIGIN_HANDOVER = 4`, both on D9S-1's 0.8 bump (D27); no status number. The failure is borrowed for the callback, so L2 gains that clause (a law change this ruling authorises). Settles L18's shape and Q12's hand-over half. Forward note (domain 10): C#'s `FletcherOrigin` stops at 3 (`dotnet/src/Fletcher/FletcherException.cs:62-75`); the C# switch round mirrors code 4 and never disposes `failure`. | Owner ruling 2026-11-14, "(b) Keep the promise" ([RIX-rulings.md](../../plans/RIX-rulings.md), "D9S-6: a failed hand-over still carries its status and message", :512) |
+| D33 | **One `fl_subscriber` holds both row and batched subscriptions;** destroying it ends both kinds. A row and a batched subscription to the same topic through one provider collide; the collision is documented (`binding.h`; Findings b2), not refused, because the shim forwards the transport's rule (L4). The two providers' different answers are registered for domains 3 and 4. (D9S, 2026-11-14.) | Owner ruling 2026-11-13, "(a) One object, documented" ([RIX-rulings.md](../../plans/RIX-rulings.md), "D9S-4: one subscriber object; the interim handoff gap accepted", :448 (1)) |
 
 ## 6. Relationships
 
@@ -597,7 +597,7 @@ in its own .NET package (D22); the NuGet-level name stays domain 10's (Q5a).
     D-BIND-148's exact DLL allow-list and D-BIND-149's floors apply to the server shim as they stand
     or with lists and floors of its own, and whether the server package gets a size ceiling of its
     own (D-BIND-157 stays on the base package, D22).
-    Once settled, CI's D9S-7 staging of the server shim under the edge file name (ruling 2026-11-14, ledger :516) retires.
+    Once settled, CI's D9S-7 staging of the server shim under the edge file name (ruling 2026-11-14, ledger :525) retires.
 - **Domain 5 (gateway).** Not a consumer: `Eiva.Fletcher.GatewayClient` has its own managed codec
   and batcher (D-BIND-1's one exception; BC-9).
 
@@ -669,7 +669,7 @@ in its own .NET package (D22); the NuGet-level name stays domain 10's (Q5a).
    (`cpp:941-946`). Not a second answer, recorded so the server variant follows the same pattern
    (L15).
 
-**(b2) Same topic, one provider (D9S-4a, owner ruling 2026-11-13, "one subscriber object", ledger :445 (1); D33).** A row
+**(b2) Same topic, one provider (D9S-4a, owner ruling 2026-11-13, "one subscriber object", ledger :448 (1); D33).** A row
 subscription and a batched one to the same topic through one provider collide, because batched
 subscriptions run on a second subscriber of the provider (seam §7 clause 4: one callback per topic per
 instance). The providers answer it differently: on `inprocess` the later silently replaces the earlier

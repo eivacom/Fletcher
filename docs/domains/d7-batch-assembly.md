@@ -93,7 +93,7 @@ in the `rows_dropped` of a later delivered batch, except rows caught by a refuse
   is fixed by D7F-1 and D7F-2 (Q1 resolved); violation 2 by D7F-3.
 - **A refused `Subscribe` delivers nothing:** rows caught by a subscription refused before it was
   registered are discarded uncounted (owner ruling 2026-11-14, "a refused batched subscribe never
-  delivers", ledger :493, D19). `[built]` (D9S-5b). Holds at: `MarkRegistered` (set by `Subscribe` once it can no
+  delivers", ledger :500, D19). `[built]` (D9S-5b). Holds at: `MarkRegistered` (set by `Subscribe` once it can no
   longer throw) and `Loop`'s gate (nothing delivered before it; a batcher stopped unregistered
   discards its queue and ends). Tests: `ARefusedSubscribeNeverDeliversWhatItCaught` (rows caught
   inside a failing transport `Subscribe`), `FailedBatchedSubscribeReleasesItsCallback` (never
@@ -157,7 +157,7 @@ delivers nothing, except at closing: every close of an accepted subscription end
 `kClosing` (L9), zero-row, or null if there is no decoder. With no timeout, a window of only drops
 waits for closing (L1).
 `[built]` (closing clause: D9S-5b)
-- **Amended 2026-11-14** (owner ruling, "every close ends with one closing delivery", ledger :478, D18): the
+- **Amended 2026-11-14** (owner ruling, "every close ends with one closing delivery", ledger :484, D18): the
   closing exception. It settles the collision between "until the closing batch arrives" (2026-11-11)
   and the old "a window with nothing pending delivers nothing" in favour of the ruling.
 - Holds at: `Close`'s early return (idle, unless the closing of a registered subscription), `cpp:145`.
@@ -223,7 +223,7 @@ counted.
   covers destroying the `SubscriberArrow` inside its own batch callback, and an `Unsubscribe` from a
   row-delivery thread on the same transport (domain 3's no-wait-in-delivery rule, extended to
   batches). Destroying it from a row-delivery thread stays forbidden (2026-09-05).
-- **Revised 2026-11-14** (owner ruling, "every close ends with one closing delivery", ledger :478, D18): "the
+- **Revised 2026-11-14** (owner ruling, "every close ends with one closing delivery", ledger :484, D18): "the
   pending window is delivered once" became "exactly one `kClosing`, empty when nothing is pending",
   so a binding always has an end signal. A refused `Subscribe` was never accepted and gets none (L1).
 - Holds at: `cpp:116-138` (`Stop`: idempotent through `stopped_`; `kClosing` queued behind the
@@ -360,8 +360,8 @@ Surface (`hpp:72-144`):
 | D15 | Out-of-range `BatchOptions` (`max_rows < 1`, negative timeout) are refused with an invalid-argument error, never clamped (L15). Resolves Q5. | Owner ruling, 2026-11-12, "Refuse both" ([RIX-rulings.md](../../plans/RIX-rulings.md)). Applied by round D7O. |
 | D16 | There is one batch assembler, this domain's. C#'s managed batcher is deleted once C# reaches this one through the shim's server-tier variant. | Owner rulings, 2026-11-12 ([RIX-rulings.md](../../plans/RIX-rulings.md)). Explicitly supersedes the batcher half of D-BIND-25 ("Arrow tier managed … batch-first", [BIND-csharp-bindings.md](../../plans/BIND-csharp-bindings.md)); the owner was shown D-BIND-25 when ruling. Annotating D-BIND-25 is owed by the C# switch round. (D7O close, 2026-11-12, from `docs/archive/D7O/D7O-pre-round-audit.md` R-2.) |
 | D17 | L5's "a deadline is never earlier than its timeout says: a timeout too long for the clock to represent means no deadline, never an early or wrapped one" is law (it was authored by round-designer, audit LC-1). | Owner ruling, 2026-11-12, "Keep it" (LC-1) ([RIX-rulings.md](../../plans/RIX-rulings.md)). Built by D7O-2. |
-| D18 | Every close of an accepted batched subscription ends with exactly one closing delivery, even when nothing is pending (L6, L9). | Owner ruling, 2026-11-14, "D9S-5: every close ends with one closing delivery; D9S-5 splits" ([RIX-rulings.md](../../plans/RIX-rulings.md)), :478; "accepted" from ruling 2026-11-14 "a refused batched subscribe never delivers", :493. Built by D9S-5b. |
-| D19 | A refused batched subscribe never delivers anything; the caller may free its state when the call returns. Rows caught before the refusal are discarded uncounted (L1). | Owner ruling, 2026-11-14, "D9S-5b: a refused batched subscribe never delivers" ([RIX-rulings.md](../../plans/RIX-rulings.md)), :493. Built by D9S-5b. |
+| D18 | Every close of an accepted batched subscription ends with exactly one closing delivery, even when nothing is pending (L6, L9). | Owner ruling, 2026-11-14, "D9S-5: every close ends with one closing delivery; D9S-5 splits" ([RIX-rulings.md](../../plans/RIX-rulings.md)), :484; "accepted" from ruling 2026-11-14 "a refused batched subscribe never delivers", :500. Built by D9S-5b. |
+| D19 | A refused batched subscribe never delivers anything; the caller may free its state when the call returns. Rows caught before the refusal are discarded uncounted (L1). | Owner ruling, 2026-11-14, "D9S-5b: a refused batched subscribe never delivers" ([RIX-rulings.md](../../plans/RIX-rulings.md)), :500. Built by D9S-5b. |
 
 ## 6. Relationships
 

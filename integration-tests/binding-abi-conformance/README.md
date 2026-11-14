@@ -78,7 +78,7 @@ CI runs the C# round trip twice: once against the edge shim, then against the
 well as from C++. C# loads only `fletcher-c-abi`, and the server file is
 `fletcher-c-abi-server`, so the lane **stages a copy of the server file under the
 edge file name** in a scratch folder (owner ruling 2026-11-14, "CI stages a
-renamed copy", `plans/RIX-rulings.md` :516). That is test staging only: it decides
+renamed copy", `plans/RIX-rulings.md` :525). That is test staging only: it decides
 nothing about how packing names files (d9 Q5a stays domain 10's), and nothing under
 `dotnet/` changes.
 
