@@ -53,9 +53,7 @@ global scope. `RequireLoaded` fails the row if the load or any refusal-path name
   name; run `dotnet test -c Release -o <fresh dir> -p:FletcherNativeShim=<staged copy>` on the same corpus;
   then `cmp -s <out>/<edge name> <server file>` must report byte-identical, or the lane fails. No `dotnet/`
   or csproj edit.
-- **cmp control, every run.** An edge copy, under the same name in a third folder, is `cmp`'d against the server
-  file, and the lane fails if they match. Had `<out>` held the edge file, the real `cmp` would equal this one,
-  which is proven to differ.
+- **cmp control, every run:** as landed in fix 1 (`157d3c3`, 4b S1); the workflow file is its one home.
 - **Corpus.** One corpus, emitted by the edge build, is round-tripped by C# through each build, so the server
   pass compares server bytes with edge bytes. The emitter recipe is unchanged. This departs from ladder rung
   10's "passes the switch through" and is annotated there.
@@ -118,9 +116,7 @@ declared, but no log or commit records that they were executed.** The compliance
 2. **Test volume.** Declared about +170. Landed: `test_two_builds.cpp` has 188 new lines and the test CMake about
    74 (`:272-345`), about +262 in all. These counts are read from the files, not git-counted; confirm with
    `git diff --numstat c3d9670..f1a099e`.
-3. **How the control works.** The brief said "staging the edge file instead turns `cmp` red". As landed, the
-   control `cmp`s an edge copy against the server file directly, with no `dotnet test` run. The guarantee is the
-   same, at lower cost.
+3. **How the control works:** superseded by fix 1 (`157d3c3`, 4b S1); see the workflow file.
 4. **The path helper is copied, not shared.** The brief said "through the decoy's path helper"; `OtherPath()` is
    a 15-line copy of `test_single_copy.cpp:41-55` (`DecoyPath()`).
 5. **Test 1 also pins the linked build's variant** to its literal. That is stronger than the brief, and it

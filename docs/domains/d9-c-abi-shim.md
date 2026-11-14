@@ -229,8 +229,8 @@ links Fletcher and hosts a binding) is ruled out by fact, not by check (D-BIND-1
   forked state is not reachable through it. The header says "REFUSES TO INITIALISE" (`h:382-385`),
   which reads as both.
 - Void entry points, `fl_binding_abi_version` and the variant query (L16) still answer in a poisoned
-  shim, and its marker text is unchanged `[built]` (D9S-7: `TwoBuilds.ARefusedBuildStillAnswersItsVariantAndVersion`;
-  Windows by hand; CI and Linux unrun).
+  shim, and its marker text is unchanged `[built]` (D9S-7: `TwoBuilds.ARefusedBuildStillAnswersItsVariantAndVersion`,
+  against a same-source test rebuild of the edge build, not the shipped edge file; Windows by hand; CI and Linux unrun).
 - **Two packages, one process** (D22, 2026-11-13): an application may reference both the base and
   the server package, so two full shims can reach one application's output. The law still holds:
   only one may load per process, and a second loaded is refused by this check (L17). How the two

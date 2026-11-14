@@ -22,3 +22,18 @@ Checked and sound. The Linux `bash -c` quoting is right: `\$`, `\"`, the single 
 
 ## RECORD:
 - `c-abi/tests/CMakeLists.txt` says "`TwoBuilds`'s build assertion catches recipe drift", but it catches only a change to the variant define. Ladder rung 9's "about 10-20 lines of test CMake" is about 45 as landed. The brief's Linux finding ("in edge-first") also applies to server-first: there, the twin's calls to its own exported functions can bind to the server shim.
+
+## Cycle 2 — diff f1a099e..157d3c3 (plus 253801a's doc lines)
+
+**Verdict: APPROVE.** 0 blocking, 0 should-fix, 0 nits. Read only, nothing built.
+
+**S1 resolved.** On both legs the control now compares the edge pass's own output file with `$SERVER`.
+- *It points at the right folder.* No `Directory.Build.*` lies above the test project (`dotnet/`'s is not an ancestor). The csproj sets one TFM (`net10.0`) and no RID. The edge pass runs without `-o`, so its output is `bin/Release/net10.0/`. `Link="%(Filename)%(Extension)"` keeps the source file name, and `locate_shim.sh` only matches `lib/libfletcher-c-abi.so` or `bin/fletcher-c-abi.dll`, so the file is named exactly what `EDGERUN` names. The server pass writes to `-o "$OUT"`, which applies to every project in the build, so it never touches the edge pass's folder.
+- *It no longer passes vacuously.* On a missing file `cmp -s` returns 2, which used to count as "differ" and pass. `[ ! -f ]` now catches that first, so the only passing state is "the file exists and differs from the server file". The check goes red if the edge pass staged the server file, or left nothing behind.
+- *Linux leg, line by line.* Its subshells are `( … )`, so after each one the shell is back in `/workspace` (`-w`), and the relative `EDGERUN` resolves from there. `\"\$EDGERUN\"` becomes `"$EDGERUN"` inside. Neither single-quoted message contains an apostrophe. Every line ends `&& \`, and `if …; fi` inside the `&&` chain is fine under `set -e`. A fresh runner and a `--rm` container mean no `bin/` is left over from an earlier run. Windows: the step's working directory is the project folder, so the relative `EDGERUN` is correct.
+
+**DEBT-1 sound.** `env -u LD_LIBRARY_PATH FLETCHER_CORPUS_DIR=… dotnet test …` is valid `env` syntax, has no characters that need escaping, and applies only inside the subshell. It also reaches the testhost child process. It cannot break the server shim's load: the recipe forces `arrow/*:shared=False` and static eProsima packages (`c-abi/conanfile.py:51-57`), so the server file needs no Conan library at runtime. The edge pass still runs with `conanrun.sh`'s environment, as before.
+
+**DEBT-3 done.** The deleted line was reachable only if a successful call also wrote an error message, which the contract rules out. The leak path is the cycle-1 nit and is not reopened here.
+
+**DEBT-2 comment done.** `c-abi/tests/CMakeLists.txt:285-287` now says the twin is a hand copy, that the assertion catches only the variant define, and cites the registered debt. This also clears the cycle-1 RECORD line about that comment.
