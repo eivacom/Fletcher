@@ -286,3 +286,16 @@ At phase B, CI YAML measured **65 non-comment touched lines** (+77/−15 raw in 
 - CI YAML: 65 touched, against ~38 declared.
 - Tests: +262 (+56 in CMake).
 - Design cycles 1, fix cycles 1, implementer launches 1. Owner touches 1 (PS-1).
+
+## Round close — D9S (2026-11-14)
+
+**Ingest:** all 10 not-yet-ingested D9S rulings are marked in `plans/RIX-rulings.md` (`d3083d7`). None could not be ingested, and none contradicted a law. Migrations are in `384e90b`; citations re-pointed in `2f8632f`; archive in `8da5856`.
+**Cycle meter:**
+- Design cycles 10, fix cycles 8, implementer launches ≥10, owner touches 10.
+- 4 of 7 full-loop items closed on design cycle 1.
+- 2 light-lane ejections (D9S-3, D9S-7).
+
+**Owed after close:**
+- A green CI run on the draft PR, which lifts the "CI and Linux unrun" marks.
+- d9 Q13: one CMake function for every shim.
+- PDA-DEC's live debt remains in `plans/reviews/design-debt.md`.
