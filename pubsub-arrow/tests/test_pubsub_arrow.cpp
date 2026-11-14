@@ -522,12 +522,12 @@ ArrowRow MakeRow(int32_t x, const std::string& name) {
 }  // namespace
 
 TEST(SubscriberArrowBatchTest, SubscribeForwardsTopicOptions) {
+    BatchSink sink;  // declared first: it outlives the subscriber (d7 L9 closing)
     auto mock = std::make_shared<MockProvider>();
     PublisherArrow pub(mock);
     SubscriberArrow sub(mock);
     pub.CreateTopic(kTopic, TestSchema());
 
-    BatchSink sink;
     TopicOptions options{.profile = "reliable"};
     static_cast<void>(
         sub.Subscribe(kTopic, sink.callback(), SubscriberArrow::BatchOptions{}, options));
@@ -537,12 +537,12 @@ TEST(SubscriberArrowBatchTest, SubscribeForwardsTopicOptions) {
 }
 
 TEST(SubscriberArrowBatchTest, FlushesAtRowLimit) {
+    BatchSink sink;  // declared first: it outlives the subscriber (d7 L9 closing)
     auto mock = std::make_shared<MockProvider>();
     PublisherArrow pub(mock);
     SubscriberArrow sub(mock);
     pub.CreateTopic(kTopic, TestSchema());
 
-    BatchSink sink;
     SubscriberArrow::BatchOptions opt;
     opt.max_rows = 3;
     opt.timeout = std::chrono::minutes(10);  // long, so only the count triggers
@@ -560,12 +560,12 @@ TEST(SubscriberArrowBatchTest, FlushesAtRowLimit) {
 }
 
 TEST(SubscriberArrowBatchTest, FlushesAtTimeout) {
+    BatchSink sink;  // declared first: it outlives the subscriber (d7 L9 closing)
     auto mock = std::make_shared<MockProvider>();
     PublisherArrow pub(mock);
     SubscriberArrow sub(mock);
     pub.CreateTopic(kTopic, TestSchema());
 
-    BatchSink sink;
     SubscriberArrow::BatchOptions opt;
     opt.max_rows = 100000;  // high, so only the timeout triggers
     opt.timeout = std::chrono::milliseconds(100);
@@ -605,12 +605,12 @@ TEST(SubscriberArrowBatchTest, ClosingFlushOnUnsubscribe) {
 }
 
 TEST(SubscriberArrowBatchTest, AttachmentsAlignWithRows) {
+    BatchSink sink;  // declared first: it outlives the subscriber (d7 L9 closing)
     auto mock = std::make_shared<MockProvider>();
     PublisherArrow pub(mock);
     SubscriberArrow sub(mock);
     pub.CreateTopic(kTopic, TestSchema());
 
-    BatchSink sink;
     SubscriberArrow::BatchOptions opt;
     opt.max_rows = 2;
     opt.timeout = std::chrono::minutes(10);
@@ -665,12 +665,12 @@ TEST(SubscriberArrowBatchTest, DroppedRowReportedAndAttachmentDiscarded) {
 }
 
 TEST(SubscriberArrowBatchTest, OnlyDroppedRowsStillDeliversEmptyBatch) {
+    BatchSink sink;  // declared first: it outlives the subscriber (d7 L9 closing)
     auto mock = std::make_shared<MockProvider>();
     PublisherArrow pub(mock);
     SubscriberArrow sub(mock);
     pub.CreateTopic(kTopic, TestSchema());
 
-    BatchSink sink;
     SubscriberArrow::BatchOptions opt;
     opt.max_rows = 100000;
     opt.timeout = std::chrono::milliseconds(100);
@@ -1113,13 +1113,13 @@ TEST(SubscriberArrowBatchTest, SchemaArrivingMidWindowGivesOneBatchCarryingEarli
 // ---------------------------------------------------------------------------
 
 TEST(SubscriberArrowBatchTest, DictionaryColumnRefoldedToDictionaryArray) {
+    BatchSink sink;  // declared first: it outlives the subscriber (d7 L9 closing)
     auto mock = std::make_shared<MockProvider>();
     PublisherArrow pub(mock);
     SubscriberArrow sub(mock);
     auto dict_type = arrow::dictionary(arrow::int32(), arrow::utf8());
     pub.CreateTopic(kTopic, arrow::schema({arrow::field("category", dict_type, true)}));
 
-    BatchSink sink;
     SubscriberArrow::BatchOptions opt;
     opt.max_rows = 3;
     opt.timeout = std::chrono::minutes(10);
@@ -1154,13 +1154,13 @@ TEST(SubscriberArrowBatchTest, DictionaryColumnRefoldedToDictionaryArray) {
 }
 
 TEST(SubscriberArrowBatchTest, DictionaryColumnPreservesNulls) {
+    BatchSink sink;  // declared first: it outlives the subscriber (d7 L9 closing)
     auto mock = std::make_shared<MockProvider>();
     PublisherArrow pub(mock);
     SubscriberArrow sub(mock);
     auto dict_type = arrow::dictionary(arrow::int32(), arrow::utf8());
     pub.CreateTopic(kTopic, arrow::schema({arrow::field("category", dict_type, true)}));
 
-    BatchSink sink;
     SubscriberArrow::BatchOptions opt;
     opt.max_rows = 3;
     opt.timeout = std::chrono::minutes(10);
@@ -1189,6 +1189,7 @@ TEST(SubscriberArrowBatchTest, DictionaryColumnPreservesNulls) {
 // ---------------------------------------------------------------------------
 
 TEST(SubscriberArrowBatchTest, CorruptRowIsCountedDroppedAndBatchStaysAligned) {
+    BatchSink sink;  // declared first: it outlives the subscriber (d7 L9 closing)
     auto mock = std::make_shared<MockProvider>();
     PublisherArrow pub(mock);
     SubscriberArrow sub(mock);
@@ -1198,7 +1199,6 @@ TEST(SubscriberArrowBatchTest, CorruptRowIsCountedDroppedAndBatchStaysAligned) {
     });
     pub.CreateTopic(kTopic, schema);
 
-    BatchSink sink;
     SubscriberArrow::BatchOptions opt;
     opt.max_rows = 2;  // A and B; the corrupt row in between never counts toward the limit
     opt.timeout = std::chrono::minutes(10);
@@ -1260,6 +1260,7 @@ TEST(SubscriberArrowBatchTest, CorruptRowIsCountedDroppedAndBatchStaysAligned) {
 }
 
 TEST(SubscriberArrowBatchTest, FixedSizeListWithNamedItemArrivesNonNull) {
+    BatchSink sink;  // declared first: it outlives the subscriber (d7 L9 closing)
     auto mock = std::make_shared<MockProvider>();
     PublisherArrow pub(mock);
     SubscriberArrow sub(mock);
@@ -1267,7 +1268,6 @@ TEST(SubscriberArrowBatchTest, FixedSizeListWithNamedItemArrivesNonNull) {
     auto schema = arrow::schema({arrow::field("vec", fsl_type)});
     pub.CreateTopic(kTopic, schema);
 
-    BatchSink sink;
     SubscriberArrow::BatchOptions opt;
     opt.max_rows = 1;
     opt.timeout = std::chrono::minutes(10);
@@ -1457,6 +1457,7 @@ TEST(SubscriberArrowBatchTest, UnsubscribeFromInsideATimeoutFlushIsSafe) {
 }
 
 TEST(SubscriberArrowBatchTest, BatchesAreValidArrow) {
+    BatchSink sink;  // declared first: it outlives the subscriber (d7 L9 closing)
     auto mock = std::make_shared<MockProvider>();
     PublisherArrow pub(mock);
     SubscriberArrow sub(mock);
@@ -1469,7 +1470,6 @@ TEST(SubscriberArrowBatchTest, BatchesAreValidArrow) {
     });
     pub.CreateTopic(kTopic, schema);
 
-    BatchSink sink;
     SubscriberArrow::BatchOptions opt;
     opt.max_rows = 5;
     opt.timeout = std::chrono::minutes(10);
@@ -2446,11 +2446,11 @@ TEST(SubscriberArrowBatchTest, OutOfRangeBatchOptionsAreRefusedAndLeaveNothingBe
 TEST(SubscriberArrowBatchTest, InRangeBatchOptionsAreUsedAsGiven) {
     // Row-count arm: max_rows 1 closes a window on every row.
     {
+        BatchSink sink;  // declared first: it outlives the subscriber (d7 L9 closing)
         auto mock = std::make_shared<MockProvider>();
         PublisherArrow pub(mock);
         SubscriberArrow sub(mock);
         pub.CreateTopic(kTopic, TestSchema());
-        BatchSink sink;
         static_cast<void>(sub.Subscribe(kTopic, sink.callback(), RowLimitOptions(1)));
         for (int i = 0; i < 3; ++i) pub.Publish(kTopic, MakeRow(i, "n"));
         ASSERT_TRUE(sink.WaitFor(3, std::chrono::seconds(2)));
@@ -2464,15 +2464,16 @@ TEST(SubscriberArrowBatchTest, InRangeBatchOptionsAreUsedAsGiven) {
     }
     // Zero-timeout arm: accepted, and the window still waits at least the 1 ms floor.
     {
-        auto mock = std::make_shared<MockProvider>();
-        PublisherArrow pub(mock);
-        SubscriberArrow sub(mock);
-        pub.CreateTopic(kTopic, TestSchema());
+        // Declared first: what the callback captures outlives the subscriber (d7 L9 closing).
         std::mutex mu;
         std::condition_variable cv;
         std::vector<std::chrono::steady_clock::time_point> arrived;
         std::vector<BatchStatus> statuses;
         std::vector<int64_t> rows;
+        auto mock = std::make_shared<MockProvider>();
+        PublisherArrow pub(mock);
+        SubscriberArrow sub(mock);
+        pub.CreateTopic(kTopic, TestSchema());
         SubscriberArrow::BatchOptions opt;
         opt.max_rows = 8000;
         opt.timeout = std::chrono::milliseconds(0);
