@@ -182,3 +182,5 @@ scope). Record: d9 L8 / design said `run_tests` leaves the package ID — false 
 - Suite agent: the cache now holds two edge packages, so `locate_shim.sh` refuses until one is removed.
 
 **D9S-5b, 2026-11-14:** design review cycle 1 NEEDS-REWORK (B1: a refused subscribe can deliver). Cycle 2 framed it as Decision 1. Owner: "(a) Never (Rec.)" (ledger). The round is widened by the d7 L1 refused-subscribe clause; config updated.
+
+**D9S-5b note (4a, 2026-11-14):** d7 L9 was also revised. The compliance review reads its new wording as restating rulings :478 and :493 ("accepted"), so it is not a third law change, and D-D9S-8 already names L6/L9. No owner question is needed. The 4a review sits at exactly its 60-line cap, carrying 2 blockers and 6 RECORD items.
