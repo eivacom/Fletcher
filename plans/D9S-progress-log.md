@@ -251,3 +251,8 @@ scope). Record: d9 L8 / design said `run_tests` leaves the package ID — false 
 
 ## RESUME POINT — 2026-11-14 (resolved)
 Resumed the same day. PS-1: owner chose "CI stages a renamed copy (Rec.)" (ledger). Directive: D9S-7, then round close.
+**Carry to round close:**
+- 4a N1: confirm d7 L9's restatement is not a third law change.
+- Words per stage: about 6,540 since the caps ruling.
+- Test-volume close findings in 4a, 5b and 6.
+- Plugin version mismatch: source 0.10.0, marketplace 0.9.1.
