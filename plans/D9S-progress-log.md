@@ -145,3 +145,7 @@ scope). Record: d9 L8 / design said `run_tests` leaves the package ID — false 
 - BC-13 gained no attachments clause, because its text never named attachments; the brief's line was wrong.
 - d9 L14's stale `h:1061-1066` pointer was corrected to `h:1180-1183`.
 - The suite agent's `--help` misuse created a stray directory, which it removed.
+
+## D9S-5 — 0a BLOCKED → owner ruling; split into 5a and 5b (2026-11-14)
+
+0a (`plans/reviews/D9S-5-audit-0a.md`): BLOCKED, MUST-DELETE(0). The 2026-11-11 ruling ("then the closing batch") collides with d7 L6 ("a window with nothing pending delivers nothing") on an idle close. Owner: "Always a final delivery (Rec.)" and "Split and proceed (Rec.)" (ledger 2026-11-14). The round is widened to d7 L6 (closing only) in D9S-5b; config updated. Tracker: D9S-5 → 5a (move/release, options, close from outside a callback) and 5b (the closing delivery always arrives, including in-callback and idle; the d7 change). Texts still to correct: ladder rung 6 (`D9S-test-ladder.md:61`) and the d9 L1 annotation, both in 5b. The two d7 tests that pin the old L6 empty-close behaviour (`test_pubsub_arrow.cpp:1374`, `:1414`) are re-audited at 5b's 0a.

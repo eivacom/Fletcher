@@ -474,3 +474,18 @@ work — code is ~192 lines, within the ceiling's intent; recorded as an accepte
 the round's purpose by spending effort on code, not prose."
 **Ruling:** **D9S's remaining full-loop stages run with a 150-line design and 60-line reviews.** Light-lane caps are unchanged.
 **Applies to:** D9S-5, D9S-6 (and any ejection). Trigger: the words-per-stage tripwire (log, D9S-4a close).
+
+## 2026-11-14 — D9S-5: every close ends with one closing delivery; D9S-5 splits
+> Idle close: "Always a final delivery (Rec.)"
+> Split D9S-5: "Split and proceed (Rec.)"
+
+*(Chosen options.)* Idle-close text: "Users: every close ends with exactly one closing delivery (empty when idle), so a binding always
+knows when it may free its state. Architecture: keeps the ruling and d9 §1's 'who releases each'. Amends d7 L6 for closing and
+needs a small domain-7 change, which this round's config forbids, so you authorise widening the round."
+**Ruling:** **every close of a batched subscription ends with exactly one closing delivery, even when nothing is pending.**
+Settles the collision between the 2026-11-11 entry (1)/(2) ("then the closing batch … until the closing batch arrives") and
+d7 L6 ("A window with nothing pending delivers nothing") in favour of the ruling. d7 L6 is amended for closing, and the round is
+widened to that one domain-7 law and its code. The split: D9S-5a (move/release, options, close from outside a callback) proceeds
+now; D9S-5b carries the d7 L6 amendment, the domain-7 change and the in-callback close. Trigger: `plans/reviews/D9S-5-audit-0a.md`.
+Still live: the empty delivery's exact shape (zero-row vs null batch) is D9S-5b's design and may need its own owner question.
+`binding.h:867-877`'s "no reliable end signal" text is superseded once 5b lands.
