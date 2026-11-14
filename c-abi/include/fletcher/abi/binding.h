@@ -941,8 +941,8 @@ FL_ABI_EXPORT fl_status fl_subscriber_subscribe_with_options(
  * nothing is running and nothing will run, so the binding may free the context at
  * once. A binding that calls this while holding a lock its own handler takes will
  * deadlock. This holds for ROW ids only: a batched id (bit 63) is not cancelled -
- * FL_OK is returned, its batches continue and `ctx` stays live until the
- * subscriber is destroyed (see fl_subscriber_destroy).
+ * FL_OK is returned, its batches continue and `ctx` stays live until it is closed
+ * with fl_subscriber_unsubscribe_batches or the subscriber is destroyed.
  *
  * FROM INSIDE A DELIVERY ON THIS SUBSCRIBER it is served rather than refused, as a
  * documented carve-out, and it does NOT wait: a cancellation cannot wait for the
@@ -1054,8 +1054,9 @@ typedef void (*fl_batch_fn)(void* ctx, const fl_batch* batch);
  * IDS. A batched id has bit 63 set and a row id never does (a counter starting at 1
  * would need 2^63 subscriptions to reach it), so the two can never be confused.
  * fl_subscriber_unsubscribe is unchanged: it treats a batched id as unknown and
- * answers FL_OK without stopping its batches or releasing `ctx`; only
- * fl_subscriber_destroy ends a batched subscription for now. The callback is not
+ * answers FL_OK without stopping its batches or releasing `ctx`. A batched
+ * subscription is ended by fl_subscriber_unsubscribe_batches, or by
+ * fl_subscriber_destroy with every other subscription of its subscriber. The callback is not
  * given an id, because a batch may arrive before this call returns: correlate by
  * `ctx`.
  *
@@ -1084,6 +1085,29 @@ FL_ABI_EXPORT fl_status fl_subscriber_subscribe_batches(
     fl_subscriber* subscriber, fl_topic topic, int64_t max_rows, int64_t timeout_ms,
     const fl_topic_options* options, fl_batch_fn on_batch, void* ctx, uint64_t* out_id,
     fl_schema_arrival** out_arrival, fl_error* err);
+
+/* End one batched subscription. SERVER BUILD ONLY. Since ABI 0.8.
+ *
+ * OUTSIDE ANY BATCH CALLBACK THIS BLOCKS: every finished batch, then the closing
+ * batch (FL_BATCH_CLOSING) with the rows still pending, is delivered on domain 7's
+ * batch thread before it returns, and nothing is delivered for this id afterwards,
+ * so `ctx` may be freed then. Do not hold across it a lock a batch callback takes.
+ *
+ * From this subscription's own batch callback, or from a row delivery on the same
+ * provider, it does not wait (d7 L9); what then arrives, and when `ctx` may be
+ * freed, is as fl_subscriber_destroy describes for a destroy from inside a batch
+ * callback. Closing ANOTHER batched subscription from inside a batch callback does
+ * wait, so two callbacks that close each other hang.
+ *
+ * IDS. `subscription_id` is the id fl_subscriber_subscribe_batches wrote, on this
+ * subscriber. An id with bit 63 clear is not a batched id: FL_INVALID_ARGUMENT,
+ * and nothing is closed. A batched id that is no longer live (closed already) is
+ * a no-op answering FL_OK. Other subscriptions are untouched.
+ *
+ * THE EDGE BUILD answers FL_NOT_SUPPORTED whatever the arguments, as it answers
+ * fl_subscriber_subscribe_batches. */
+FL_ABI_EXPORT fl_status fl_subscriber_unsubscribe_batches(fl_subscriber* subscriber,
+                                                          uint64_t subscription_id, fl_error* err);
 
 /* ══ The codec ═════════════════════════════════════════════════════════════ */
 

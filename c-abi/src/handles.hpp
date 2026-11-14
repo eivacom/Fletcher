@@ -200,6 +200,10 @@ BatchedSubscription SubscribeBatches(fl_subscriber& subscriber, std::vector<std:
                                      const fletcher::TopicOptions& options, fl_batch_fn on_batch,
                                      void* ctx);
 
+/// Ends one batched subscription (`id` untagged): domain 7's `Unsubscribe`, forwarded. With no
+/// batch host it is a no-op. Same two backends as `SubscribeBatches`.
+void UnsubscribeBatches(fl_subscriber& subscriber, uint64_t id);
+
 }  // namespace fletcher::abi::internal
 
 /// A waitable arrival the caller owns.

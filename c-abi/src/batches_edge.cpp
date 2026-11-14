@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-// The EDGE (and probe) backend of `fl_subscriber_subscribe_batches` (D9S-4; d9 L12).
+// The EDGE (and probe) backend of `fl_subscriber_subscribe_batches` and
+// `fl_subscriber_unsubscribe_batches` (D9S-4, D9S-5a; d9 L12).
 //
 // UNREACHABLE: the entry point asks `fl_binding_variant()` first and refuses a non-server build
 // with FL_NOT_SUPPORTED before it reads an argument. This definition exists so the one door links
@@ -28,6 +29,11 @@ BatchedSubscription SubscribeBatches(fl_subscriber&, std::vector<std::string>, i
     // A mis-build report, never an answer to "can this build batch" (that is the door's).
     throw PubSubError(PubSubStatus::kInternal,
                       "fl_subscriber_subscribe_batches: built without the batch assembler");
+}
+
+void UnsubscribeBatches(fl_subscriber&, uint64_t) {
+    throw PubSubError(PubSubStatus::kInternal,
+                      "fl_subscriber_unsubscribe_batches: built without the batch assembler");
 }
 
 }  // namespace fletcher::abi::internal

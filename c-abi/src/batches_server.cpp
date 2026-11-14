@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-// The SERVER build's backend of `fl_subscriber_subscribe_batches` (D9S-4; d9 L12, L14, L15).
+// The SERVER build's backend of `fl_subscriber_subscribe_batches` and its close (D9S-4, D9S-5a;
+// d9 L12, L14, L15).
 //
 // There is ONE batch assembler and it is domain 7's `SubscriberArrow` (ruling 2026-11-12). This
 // file only hands over what it closes: it forwards the options as given, and each window it
@@ -142,6 +143,19 @@ BatchedSubscription SubscribeBatches(fl_subscriber& subscriber, std::vector<std:
         segments, std::move(thunk),
         SubscriberArrow::BatchOptions{max_rows, std::chrono::milliseconds(timeout_ms)}, options);
     return {result.subscription_id, std::move(result.schema)};
+}
+
+void UnsubscribeBatches(fl_subscriber& subscriber, uint64_t id) {
+    // The lock covers reading the host pointer only, never `Unsubscribe` or a callback (d9 L11).
+    BatchHost* host = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(subscriber.batches_mu);
+        host = static_cast<BatchHost*>(subscriber.batches.get());
+    }
+    if (host == nullptr) return;  // nothing was ever subscribed for batches here
+    // Domain 7 answers everything: when the closing batch comes, whether to wait (d7 L9), and
+    // that an id no longer live is a no-op. The shim adds no wait, flag or check (d9 L15).
+    host->arrow.Unsubscribe(id);
 }
 
 }  // namespace fletcher::abi::internal

@@ -88,6 +88,14 @@ target_link_libraries(c_abi_tests PRIVATE
     fletcher-arrow-bridge::fletcher-arrow-bridge
     arrow::arrow)
 
+# D9S-5a (rung 7). The server test binary links domain 7 as an ORACLE: the expected refusal message
+# of `Batches.EveryBatchOptionReachesDomain7AsGiven` comes from `SubscriberArrow` itself, a second
+# copy beside the shim's, as `arrow-bridge` is for T13. The parent found the package for the server
+# shim; the edge graph is untouched (BC-11).
+if(FLETCHER_SHIM_VARIANT STREQUAL "server")
+    target_link_libraries(c_abi_tests PRIVATE fletcher-pubsub-arrow::fletcher-pubsub-arrow)
+endif()
+
 # ---------------------------------------------------------------------------
 # The shim is a SHARED library — the only one in the tree — so the loader has to
 # find it before a single test runs. CMake puts the DLL in the top-level build

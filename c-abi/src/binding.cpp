@@ -110,8 +110,8 @@ const Attachments& AttachmentsOf(const fl_attachments* atts) {
 }
 
 /// A batched subscription's id carries this bit and a row subscription's never does (a counter
-/// from 1 needs 2^63 subscriptions to reach it), so the two can never be confused. Stage 5's
-/// close reuses it. Review B1.
+/// from 1 needs 2^63 subscriptions to reach it), so the two can never be confused. The batched
+/// close reads it back. Review B1.
 constexpr uint64_t kBatchedIdTag = uint64_t{1} << 63;
 
 /// Refuse a null OUT parameter before anything is built.
@@ -224,6 +224,17 @@ void RequireRowsMatchTopic(fl_publisher& publisher, const std::vector<std::strin
                 "''s; bind them with a codec opened over the topic's schema");
     }
     rows.matched.store(plan);
+}
+
+/// THE ONE DOOR of every batched entry point (d9 L12, L16): it asks the build, through BC-10's
+/// single site, before any argument is read, and refuses a non-server build by name.
+void RequireServerBuild(const char* entry) {
+    if (fl_binding_variant() != FL_VARIANT_SERVER) {
+        throw PubSubError(PubSubStatus::kNotSupported,
+                          std::string(entry) +
+                              ": the edge build of the shim carries no batcher; load the server "
+                              "build (fletcher-c-abi-server) for batched subscriptions");
+    }
 }
 
 }  // namespace
@@ -873,21 +884,15 @@ fl_status fl_subscriber_subscribe_with_options(fl_subscriber* subscriber, fl_top
     });
 }
 
-/// Subscribe for batches (d9 L12, L14, L15). THE ONE DOOR: it asks the build first, through
-/// BC-10's single site, and only then reads an argument. The server build hands the options
-/// to domain 7 as given and answers none of them (BC-8, BC-14); the edge build refuses.
+/// Subscribe for batches (d9 L12, L14, L15). Behind the door, the server build hands the
+/// options to domain 7 as given and answers none of them (BC-8, BC-14).
 fl_status fl_subscriber_subscribe_batches(fl_subscriber* subscriber, fl_topic topic,
                                           int64_t max_rows, int64_t timeout_ms,
                                           const fl_topic_options* options, fl_batch_fn on_batch,
                                           void* ctx, uint64_t* out_id,
                                           fl_schema_arrival** out_arrival, fl_error* err) {
     return Contain(err, FL_ORIGIN_SEAM, [&] {
-        if (fl_binding_variant() != FL_VARIANT_SERVER) {
-            throw PubSubError(
-                PubSubStatus::kNotSupported,
-                "fl_subscriber_subscribe_batches: the edge build of the shim carries no batcher; "
-                "load the server build (fletcher-c-abi-server) to subscribe for batches");
-        }
+        RequireServerBuild("fl_subscriber_subscribe_batches");
         RequireOut(out_id, "fl_subscriber_subscribe_batches (out_id)");
         RequireOut(out_arrival, "fl_subscriber_subscribe_batches (out_arrival)");
         if (subscriber == nullptr || on_batch == nullptr) {
@@ -907,6 +912,27 @@ fl_status fl_subscriber_subscribe_batches(fl_subscriber* subscriber, fl_topic to
         arrival->arrival = std::move(result.arrival);
         *out_id = result.id | kBatchedIdTag;
         *out_arrival = arrival.release();
+    });
+}
+
+/// End one batched subscription (d9 L15, d7 L9; d9 §4). Behind the same door. Bit 63 is the
+/// shim's own spelling of a batched id, so an id without it is a malformed argument, refused like
+/// NULL: forwarding its number would close whichever batched subscription shares it. Everything
+/// else, when the closing batch comes and that an id no longer live is a no-op, is domain 7's.
+fl_status fl_subscriber_unsubscribe_batches(fl_subscriber* subscriber, uint64_t subscription_id,
+                                            fl_error* err) {
+    return Contain(err, FL_ORIGIN_SEAM, [&] {
+        RequireServerBuild("fl_subscriber_unsubscribe_batches");
+        if (subscriber == nullptr) {
+            throw PubSubError(PubSubStatus::kInvalidArgument,
+                              "fl_subscriber_unsubscribe_batches: subscriber must not be null");
+        }
+        if ((subscription_id & kBatchedIdTag) == 0) {
+            throw PubSubError(PubSubStatus::kInvalidArgument,
+                              "fl_subscriber_unsubscribe_batches: not a batched subscription id "
+                              "(bit 63 clear)");
+        }
+        fletcher::abi::internal::UnsubscribeBatches(*subscriber, subscription_id & ~kBatchedIdTag);
     });
 }
 

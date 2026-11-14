@@ -21,10 +21,14 @@
 #include <arrow/c/bridge.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <array>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -33,6 +37,12 @@
 #include <vector>
 
 #include "fletcher/abi/binding.h"
+
+#if FLETCHER_EXPECTED_VARIANT == 2
+// Rung 7's oracle only (D9S-5a): domain 7, linked by the server test binary alone.
+#include <fletcher/pubsub/in_process_provider.hpp>
+#include <fletcher/pubsub_arrow/subscriber_arrow.hpp>
+#endif
 
 #ifndef FLETCHER_EXPECTED_VARIANT
 #error "FLETCHER_EXPECTED_VARIANT is not defined: the executable must say which build its shim is (1 = edge, 2 = server). Do not make it optional, and do not accept either."
@@ -273,8 +283,26 @@ class BatchFixture {
     BatchFixture(const BatchFixture&) = delete;
     BatchFixture& operator=(const BatchFixture&) = delete;
 
+    fl_provider* provider() const { return provider_; }
     fl_publisher* publisher() const { return publisher_; }
     fl_subscriber* subscriber() const { return subscriber_; }
+
+    /// Destroys every handle now, the provider first or last (d9 L3: release order between handles
+    /// never matters to the shim). The destructor does not repeat it.
+    void DestroyAll(bool provider_first) {
+        if (provider_first) fl_provider_destroy(std::exchange(provider_, nullptr));
+        fl_subscriber_destroy(std::exchange(subscriber_, nullptr));
+        fl_publisher_destroy(std::exchange(publisher_, nullptr));
+        fl_provider_destroy(std::exchange(provider_, nullptr));
+    }
+
+    void Publish(fl_topic topic, const PublishedRows& rows, int64_t first, int64_t count) {
+        fl_error err = {};
+        EXPECT_EQ(fl_publisher_publish_rows(publisher_, topic, rows.rows(), first, count, nullptr, &err),
+                  FL_OK)
+            << MessageOf(err);
+        fl_error_dispose(&err);
+    }
 
     void DeclareTopic(fl_topic topic, const PublishedRows& rows) {
         ArrowSchema schema = rows.ExportSchema();
@@ -291,6 +319,108 @@ class BatchFixture {
     fl_publisher* publisher_ = nullptr;
     fl_subscriber* subscriber_ = nullptr;
 };
+
+// ---------------------------------------------------------------------------
+// D9S-5a helpers (plans/D9S-5a-close-release-options.md, "Forcing-test mapping")
+// ---------------------------------------------------------------------------
+
+constexpr uint64_t kBatchedIdTag = uint64_t{1} << 63;
+
+/// A two-segment topic that owns its strings, so a test can make many. Neither copied nor moved:
+/// the `fl_str`s point into the strings.
+class OwnedTopic {
+   public:
+    OwnedTopic(std::string a, std::string b) : parts_{std::move(a), std::move(b)} {
+        for (const std::string& p : parts_) segs_.push_back(Str(p.c_str()));
+    }
+    OwnedTopic(const OwnedTopic&) = delete;
+    OwnedTopic& operator=(const OwnedTopic&) = delete;
+    fl_topic topic() const { return {segs_.data(), segs_.size()}; }
+
+   private:
+    std::vector<std::string> parts_;
+    std::vector<fl_str> segs_;
+};
+
+/// A per-row subscription's caller: counts deliveries; the wait is one-sided.
+class RowSink {
+   public:
+    static void OnRow(void* ctx, uint64_t, const uint8_t*, size_t, const fl_schema*,
+                      const fl_attachments*) {
+        auto* self = static_cast<RowSink*>(ctx);
+        {
+            std::lock_guard<std::mutex> lock(self->mu_);
+            ++self->count_;
+        }
+        self->cv_.notify_all();
+    }
+    bool WaitFor(size_t count, milliseconds limit) {
+        std::unique_lock<std::mutex> lock(mu_);
+        return cv_.wait_for(lock, limit, [&] { return count_ >= count; });
+    }
+
+   private:
+    std::mutex mu_;
+    std::condition_variable cv_;
+    size_t count_ = 0;
+};
+
+/// Subscribes `sink` for batches, disposes the arrival (the caller's, and not needed here) and
+/// returns the id.
+uint64_t SubscribeBatches(fl_subscriber* subscriber, fl_topic topic, int64_t max_rows,
+                          int64_t timeout_ms, BatchSink& sink) {
+    fl_error err = {};
+    uint64_t id = 0;
+    fl_schema_arrival* arrival = nullptr;
+    EXPECT_EQ(fl_subscriber_subscribe_batches(subscriber, topic, max_rows, timeout_ms, nullptr,
+                                              &BatchSink::OnBatch, &sink, &id, &arrival, &err),
+              FL_OK)
+        << MessageOf(err);
+    fl_error_dispose(&err);
+    if (arrival != nullptr) fl_schema_arrival_dispose(arrival);
+    return id;
+}
+
+/// The batched close, its status asserted.
+void CloseBatches(fl_subscriber* subscriber, uint64_t id, fl_status expected) {
+    fl_error err = {};
+    EXPECT_EQ(fl_subscriber_unsubscribe_batches(subscriber, id, &err), expected) << MessageOf(err);
+    fl_error_dispose(&err);
+}
+
+/// One expected delivery: its reason, and the published rows [first, first + rows) it carries.
+struct Window {
+    int32_t reason;
+    int64_t first;
+    int64_t rows;
+};
+
+/// Exactly these deliveries, in this order: reason, row count, nothing dropped, and cell for cell
+/// the published rows.
+void ExpectWindows(const std::vector<Seen>& seen, const PublishedRows& published,
+                   const std::vector<Window>& want) {
+    ASSERT_EQ(seen.size(), want.size()) << "deliveries";
+    for (size_t i = 0; i < seen.size(); ++i) {
+        SCOPED_TRACE("delivery " + std::to_string(i));
+        EXPECT_EQ(seen[i].reason, want[i].reason);
+        EXPECT_EQ(seen[i].rows_dropped, 0);
+        EXPECT_EQ(seen[i].num_rows, want[i].rows);
+        ASSERT_TRUE(seen[i].imported) << seen[i].import_error;
+        EXPECT_TRUE(seen[i].batch->Equals(*published.batch().Slice(want[i].first, want[i].rows)))
+            << seen[i].batch->ToString();
+    }
+}
+
+/// The edge build's one answer to a batched entry point (d9 L12, BC-10), shared by both truth
+/// tables (design debt DEBT-4).
+void ExpectRefusedAsEdge(fl_status status, const fl_error& err) {
+    EXPECT_EQ(status, FL_NOT_SUPPORTED) << MessageOf(err);
+    EXPECT_EQ(err.origin, FL_ORIGIN_SEAM)
+        << "the shim's own refusal of a call this build cannot serve is the seam origin";
+    const std::string message = MessageOf(err);
+    EXPECT_NE(message.find("edge"), std::string::npos) << "message: " << message;
+    EXPECT_NE(message.find("fletcher-c-abi-server"), std::string::npos) << "message: " << message;
+}
 
 #if FLETCHER_EXPECTED_VARIANT == 2
 
@@ -544,6 +674,337 @@ TEST(Batches, EachBatchRowCarriesItsOwnAttachments) {
     fl_schema_arrival_dispose(arrival);
 }
 
+// ---------------------------------------------------------------------------
+// The server build only (5a)
+// ---------------------------------------------------------------------------
+
+/// Rung 6 from outside a callback; d9 L15, d7 L9; ruling 2026-11-14 ("exactly one closing
+/// delivery"). Run once with each closer. Five rows in windows of two, no timeout, closed at once:
+/// WHEN THE CALL RETURNS, with no wait, ROW_LIMIT, ROW_LIMIT, CLOSING (row 5) have arrived, in
+/// order. Two more rows then reach no one in 2 s, while a live subscription on another topic gets a
+/// ROW_LIMIT window inside the same 2 s (the control). The close's live subscription shares the
+/// subscriber, so a close that ended the whole host turns it red; a destroy ends every
+/// subscription of its subscriber, so its control is on a second one (DEBT-2). Each subscription
+/// has its own sink and every count is asserted before teardown, which closes the live ones
+/// unasserted (no test asserts what an idle close delivers).
+TEST(Batches, ClosingFromOutsideDeliversTheRestThenTheClosingBatch) {
+    for (const bool by_destroy : {false, true}) {
+        SCOPED_TRACE(by_destroy ? "fl_subscriber_destroy" : "fl_subscriber_unsubscribe_batches");
+        BatchSink sink;
+        BatchSink control;
+        BatchFixture fx;
+        PublishedRows published(/*first_seq=*/100, /*count=*/5);
+        const OwnedTopic closed("d9s5", "closed");
+        const OwnedTopic live("d9s5", "live");
+        fx.DeclareTopic(closed.topic(), published);
+        fx.DeclareTopic(live.topic(), published);
+
+        fl_subscriber* second = nullptr;
+        if (by_destroy) {
+            fl_error err = {};
+            ASSERT_EQ(fl_subscriber_create(fx.provider(), &second, &err), FL_OK) << MessageOf(err);
+        }
+        const std::unique_ptr<fl_subscriber, void (*)(fl_subscriber*)> second_guard(
+            second, &fl_subscriber_destroy);
+
+        const uint64_t id = SubscribeBatches(fx.subscriber(), closed.topic(), 2, INT64_MAX, sink);
+        SubscribeBatches(by_destroy ? second : fx.subscriber(), live.topic(), 2, INT64_MAX, control);
+
+        fx.Publish(closed.topic(), published, 0, 5);
+        if (by_destroy) {
+            fx.DestroySubscriber();
+        } else {
+            CloseBatches(fx.subscriber(), id, FL_OK);
+        }
+        ExpectWindows(sink.Snapshot(), published,
+                      {{FL_BATCH_ROW_LIMIT, 0, 2}, {FL_BATCH_ROW_LIMIT, 2, 2}, {FL_BATCH_CLOSING, 4, 1}});
+
+        fx.Publish(closed.topic(), published, 0, 2);
+        fx.Publish(live.topic(), published, 0, 2);
+        EXPECT_FALSE(sink.WaitForDeliveries(4, seconds(2))) << "a delivery came after the close";
+        ExpectWindows(control.Snapshot(), published, {{FL_BATCH_ROW_LIMIT, 0, 2}});
+
+        if (!by_destroy) {
+            CloseBatches(fx.subscriber(), id, FL_OK);  // not live: a no-op (H1)
+            const std::vector<Seen> seen = sink.Snapshot();
+            EXPECT_EQ(seen.size(), 3U);
+            EXPECT_EQ(std::count_if(seen.begin(), seen.end(),
+                                    [](const Seen& s) { return s.reason == FL_BATCH_CLOSING; }),
+                      1)
+                << "exactly one closing delivery";
+        }
+    }
+}
+
+/// G1's caller (rung 5): per window it MOVES both structs, LEAVES both, or moves the array and
+/// leaves the schema. A struct left in place is first moved into the test's own stash, and the
+/// in-place copy gets a counting `release` whose state is the test's: a second call is counted,
+/// never a use-after-free. It records how many times it ran, whether its window's callback had
+/// returned, and on which thread.
+class MoveOrLeaveSink {
+   public:
+    enum class Keep { kBoth, kNeither, kArrayOnly };
+    struct Counter {
+        std::atomic<int> calls{0};
+        std::atomic<int> before_return{0};
+        std::thread::id thread;
+        const std::atomic<bool>* returned = nullptr;
+    };
+    struct Taken {
+        int32_t reason = 0;
+        std::thread::id thread;
+        ArrowArray array = {};    // moved, or the stashed original
+        ArrowSchema schema = {};  // moved, or the stashed original
+        Counter array_release;
+        Counter schema_release;
+        std::atomic<bool> returned{false};
+    };
+    static constexpr Keep kPlan[3] = {Keep::kBoth, Keep::kNeither, Keep::kArrayOnly};
+
+    static void OnBatch(void* ctx, const fl_batch* batch) {
+        auto* self = static_cast<MoveOrLeaveSink*>(ctx);
+        const size_t i = self->count_.fetch_add(1);
+        if (i >= 3 || batch->array == nullptr || batch->schema == nullptr) return;
+        Taken& t = self->taken_[i];
+        t.reason = batch->reason;
+        t.thread = std::this_thread::get_id();
+        t.array = *batch->array;
+        t.schema = *batch->schema;
+        if (kPlan[i] == Keep::kNeither) {
+            Leave(batch->array, t.array_release, t.returned);
+        } else {
+            batch->array->release = nullptr;
+        }
+        if (kPlan[i] == Keep::kBoth) {
+            batch->schema->release = nullptr;
+        } else {
+            Leave(batch->schema, t.schema_release, t.returned);
+        }
+        t.returned.store(true);  // the callback's last act
+    }
+
+    size_t count() const { return count_.load(); }
+    Taken& taken(size_t i) { return taken_[i]; }
+
+   private:
+    template <class T>
+    static void Leave(T* in_place, Counter& counter, const std::atomic<bool>& returned) {
+        counter.returned = &returned;
+        in_place->private_data = &counter;
+        in_place->release = &Count<T>;
+    }
+    template <class T>
+    static void Count(T* s) {
+        auto* c = static_cast<Counter*>(s->private_data);
+        if (!c->returned->load()) c->before_return.fetch_add(1);
+        c->thread = std::this_thread::get_id();
+        c->calls.fetch_add(1);
+        s->release = nullptr;  // marked released, as the C Data Interface requires
+    }
+
+    std::atomic<size_t> count_{0};
+    std::array<Taken, 3> taken_;
+};
+
+/// Rung 5; d9 L14 (D26), L11, L3; register BC-13 (the batch half, counted not measured: see the
+/// design's Risks). A GUARD: green on the pre-stage tree apart from the close. Windows as in the
+/// forcing test: W0 moved whole, W1 left whole, W2 array moved and schema left. Close, then
+/// destroy the subscriber and the provider, in both orders. Then, on a new thread, import W0 and
+/// W2's array, compare them cell for cell, and release them. Each counting `release` ran EXACTLY
+/// ONCE, after its callback returned, on the batch thread. Mutation controls (design): delete
+/// `ReleaseUnmoved` → 0 calls; release unconditionally → a call through NULL; release twice → 2.
+TEST(Batches, ABatchIsTheCallersOnlyIfMoved) {
+    for (const bool provider_first : {false, true}) {
+        SCOPED_TRACE(provider_first ? "provider destroyed first" : "provider destroyed last");
+        MoveOrLeaveSink sink;
+        PublishedRows published(/*first_seq=*/100, /*count=*/5);
+        auto fx = std::make_unique<BatchFixture>();
+        const OwnedTopic topic("d9s5", "move-or-leave");
+        fx->DeclareTopic(topic.topic(), published);
+
+        fl_error err = {};
+        uint64_t id = 0;
+        fl_schema_arrival* arrival = nullptr;
+        ASSERT_EQ(fl_subscriber_subscribe_batches(fx->subscriber(), topic.topic(), 2, INT64_MAX,
+                                                  nullptr, &MoveOrLeaveSink::OnBatch, &sink, &id,
+                                                  &arrival, &err),
+                  FL_OK)
+            << MessageOf(err);
+        fl_error_dispose(&err);
+        fl_schema_arrival_dispose(arrival);
+        fx->Publish(topic.topic(), published, 0, 5);
+        CloseBatches(fx->subscriber(), id, FL_OK);
+        fx->DestroyAll(provider_first);
+        fx.reset();
+        ASSERT_EQ(sink.count(), 3U) << "deliveries";
+
+        std::thread([&] {
+            const int64_t first[] = {0, 2, 4};
+            const int64_t count[] = {2, 2, 1};
+            for (size_t i : {size_t{0}, size_t{2}}) {
+                SCOPED_TRACE("window " + std::to_string(i));
+                MoveOrLeaveSink::Taken& t = sink.taken(i);
+                auto imported = arrow::ImportRecordBatch(&t.array, &t.schema);
+                ASSERT_TRUE(imported.ok()) << imported.status().ToString();
+                EXPECT_TRUE((*imported)->Equals(*published.batch().Slice(first[i], count[i])))
+                    << (*imported)->ToString();
+            }
+            MoveOrLeaveSink::Taken& w1 = sink.taken(1);
+            w1.array.release(&w1.array);    // the stashed originals are the test's
+            w1.schema.release(&w1.schema);
+        }).join();
+
+        const std::pair<const char*, MoveOrLeaveSink::Counter*> left[] = {
+            {"W1 array", &sink.taken(1).array_release},
+            {"W1 schema", &sink.taken(1).schema_release},
+            {"W2 schema", &sink.taken(2).schema_release}};
+        const std::thread::id batch_thread = sink.taken(0).thread;
+        for (const auto& [name, counter] : left) {
+            SCOPED_TRACE(name);
+            EXPECT_EQ(counter->calls.load(), 1) << "the shim releases what was not moved exactly once";
+            EXPECT_EQ(counter->before_return.load(), 0) << "released before the callback returned";
+            EXPECT_EQ(counter->thread, batch_thread) << "released off the batch thread";
+        }
+        EXPECT_NE(batch_thread, std::this_thread::get_id());
+        const int32_t reasons[] = {FL_BATCH_ROW_LIMIT, FL_BATCH_ROW_LIMIT, FL_BATCH_CLOSING};
+        for (size_t i = 0; i < 3; ++i) EXPECT_EQ(sink.taken(i).reason, reasons[i]) << "window " << i;
+    }
+}
+
+/// The oracle (rung 7): domain 7's own refusal of these options, through a `SubscriberArrow` over
+/// the test's own `inprocess` provider. It computes the expected message only; every exercise in
+/// the test below is an `fl_*` call.
+std::string Domain7Refusal(int64_t max_rows, int64_t timeout_ms) {
+    fletcher::SubscriberArrow d7(std::make_shared<fletcher::InProcessPubSubProvider>());
+    try {
+        (void)d7.Subscribe({"d9s5", "oracle"},
+                           [](std::shared_ptr<arrow::RecordBatch>, std::vector<fletcher::Attachments>,
+                              fletcher::SubscriberArrow::BatchStatus) {},
+                           fletcher::SubscriberArrow::BatchOptions{
+                               max_rows, std::chrono::milliseconds(timeout_ms)});
+    } catch (const fletcher::PubSubError& e) {
+        return e.what();
+    }
+    return "<domain 7 accepted these options>";
+}
+
+/// Rung 7; d9 L15, L4; d7 L15, L5; register BC-8, BC-14. A GUARD: green on the pre-stage tree
+/// apart from the close. d7's 6 x 7 grid, in int64_t, one topic and one sink per cell, one row
+/// each, one 2 s window. Refused (27) exactly when max_rows < 1 || timeout < 0: FL_INVALID_ARGUMENT
+/// at SEAM, domain 7's message byte for byte, OUT sentinels untouched, nothing delivered. Accepted
+/// (15): max_rows 1 → ROW_LIMIT; timeouts 0 and 1 → TIMEOUT; the six cells with no deadline in
+/// reach (INT64_MAX is BC-14's "none"; 100 years and the clock's maximum never fire early, d7 L5)
+/// deliver nothing in the window, then exactly one CLOSING with the row when the close returns.
+/// Timing control: a 10 ms subscription gives TIMEOUT inside the same window. Topic options: a
+/// max_payload_bytes the row subscribe refuses gets that same status and message.
+TEST(Batches, EveryBatchOptionReachesDomain7AsGiven) {
+    const int64_t row_counts[] = {INT64_MIN, -1, 0, 1, 2, INT64_MAX};
+    const int64_t timeouts[] = {
+        INT64_MIN, -1, 0, 1, INT64_MAX, 3'155'760'000'000LL /* 100 years */,
+        std::chrono::duration_cast<milliseconds>(std::chrono::steady_clock::duration::max()).count()};
+    struct Cell {
+        int64_t max_rows;
+        int64_t timeout_ms;
+        fl_status status;
+        int32_t origin;
+        std::string message;
+        uint64_t id;
+        fl_schema_arrival* arrival;
+    };
+    constexpr uint64_t kSentinelId = 0x5A5A5A5A5A5A5A5AULL;
+    static char sentinel_byte;
+    fl_schema_arrival* const kSentinelArrival = reinterpret_cast<fl_schema_arrival*>(&sentinel_byte);
+
+    std::deque<BatchSink> sinks;  // one per cell, then the control's; they outlive the fixture
+    RowSink rows;
+    std::deque<OwnedTopic> topics;
+    std::vector<Cell> cells;
+    BatchFixture fx;
+    PublishedRows published(/*first_seq=*/1, /*count=*/1);
+
+    for (const int64_t max_rows : row_counts) {
+        for (const int64_t timeout_ms : timeouts) {
+            topics.emplace_back("d9s5-grid", std::to_string(cells.size()));
+            sinks.emplace_back();
+            fx.DeclareTopic(topics.back().topic(), published);
+            Cell c{max_rows, timeout_ms, FL_OK, 0, {}, kSentinelId, kSentinelArrival};
+            fl_error err = {};
+            c.status = fl_subscriber_subscribe_batches(fx.subscriber(), topics.back().topic(), max_rows,
+                                                       timeout_ms, nullptr, &BatchSink::OnBatch,
+                                                       &sinks.back(), &c.id, &c.arrival, &err);
+            c.origin = err.origin;
+            c.message = MessageOf(err);
+            fl_error_dispose(&err);
+            if (c.status == FL_OK) fl_schema_arrival_dispose(c.arrival);
+            cells.push_back(std::move(c));
+        }
+    }
+    topics.emplace_back("d9s5-grid", "control");
+    sinks.emplace_back();
+    BatchSink& control = sinks.back();
+    fx.DeclareTopic(topics.back().topic(), published);
+    SubscribeBatches(fx.subscriber(), topics.back().topic(), 100, 10, control);
+
+    for (const OwnedTopic& t : topics) fx.Publish(t.topic(), published, 0, 1);
+    std::this_thread::sleep_for(seconds(2));  // the one observation window
+
+    int refused = 0;
+    for (size_t i = 0; i < cells.size(); ++i) {
+        const Cell& c = cells[i];
+        SCOPED_TRACE("max_rows " + std::to_string(c.max_rows) + ", timeout_ms " +
+                     std::to_string(c.timeout_ms));
+        if (c.max_rows < 1 || c.timeout_ms < 0) {
+            ++refused;
+            EXPECT_EQ(c.status, FL_INVALID_ARGUMENT) << c.message;
+            EXPECT_EQ(c.origin, FL_ORIGIN_SEAM);
+            EXPECT_EQ(c.message, Domain7Refusal(c.max_rows, c.timeout_ms)) << "byte for byte";
+            EXPECT_EQ(c.id, kSentinelId) << "a refused call writes no output";
+            EXPECT_EQ(c.arrival, kSentinelArrival) << "a refused call writes no output";
+            EXPECT_TRUE(sinks[i].Snapshot().empty()) << "a refused subscription delivered";
+        } else if (c.max_rows == 1) {
+            EXPECT_EQ(c.status, FL_OK) << c.message;
+            ExpectWindows(sinks[i].Snapshot(), published, {{FL_BATCH_ROW_LIMIT, 0, 1}});
+        } else if (c.timeout_ms <= 1) {
+            EXPECT_EQ(c.status, FL_OK) << c.message;
+            ExpectWindows(sinks[i].Snapshot(), published, {{FL_BATCH_TIMEOUT, 0, 1}});
+        } else {
+            EXPECT_EQ(c.status, FL_OK) << c.message;
+            EXPECT_TRUE(sinks[i].Snapshot().empty()) << "a window closed with no deadline in reach";
+            CloseBatches(fx.subscriber(), c.id, FL_OK);
+            ExpectWindows(sinks[i].Snapshot(), published, {{FL_BATCH_CLOSING, 0, 1}});
+        }
+    }
+    EXPECT_EQ(cells.size(), 42U);
+    EXPECT_EQ(refused, 27);
+    ExpectWindows(control.Snapshot(), published, {{FL_BATCH_TIMEOUT, 0, 1}});
+
+    // Topic options reach domain 7 as the row subscribe's reach the seam (rung 7, P5).
+    const fl_topic_options options = {{nullptr, 0}, /*max_payload_bytes=*/1};
+    const OwnedTopic row_topic("d9s5-options", "row");
+    const OwnedTopic batch_topic("d9s5-options", "batched");
+    fx.DeclareTopic(row_topic.topic(), published);
+    fx.DeclareTopic(batch_topic.topic(), published);
+    fl_error row_err = {};
+    fl_error batch_err = {};
+    uint64_t row_id = 0;
+    uint64_t batch_id = 0;
+    fl_schema_arrival* row_arrival = nullptr;
+    fl_schema_arrival* batch_arrival = nullptr;
+    const fl_status row_status = fl_subscriber_subscribe_with_options(
+        fx.subscriber(), row_topic.topic(), &RowSink::OnRow, &rows, &options, &row_id, &row_arrival,
+        &row_err);
+    const fl_status batch_status = fl_subscriber_subscribe_batches(
+        fx.subscriber(), batch_topic.topic(), 100, INT64_MAX, &options, &BatchSink::OnBatch,
+        &sinks.front(), &batch_id, &batch_arrival, &batch_err);
+    EXPECT_NE(row_status, FL_OK) << "precondition: the row subscribe refuses this option";
+    EXPECT_EQ(batch_status, row_status);
+    EXPECT_EQ(MessageOf(batch_err), MessageOf(row_err));
+    if (row_status == FL_OK) fl_schema_arrival_dispose(row_arrival);
+    if (batch_status == FL_OK) fl_schema_arrival_dispose(batch_arrival);
+    fl_error_dispose(&row_err);
+    fl_error_dispose(&batch_err);
+}
+
 #endif  // FLETCHER_EXPECTED_VARIANT == 2
 
 // ---------------------------------------------------------------------------
@@ -620,12 +1081,7 @@ TEST(Batches, TheBuildAnswersABatchedSubscribeAsItAnswersTheQuery) {
 
         if (status == FL_OK && arrival != kSentinelArrival) fl_schema_arrival_dispose(arrival);
     } else {
-        EXPECT_EQ(status, FL_NOT_SUPPORTED) << MessageOf(err);
-        EXPECT_EQ(err.origin, FL_ORIGIN_SEAM)
-            << "the shim's own refusal of a call this build cannot serve is the seam origin";
-        const std::string message = MessageOf(err);
-        EXPECT_NE(message.find("edge"), std::string::npos) << "message: " << message;
-        EXPECT_NE(message.find("fletcher-c-abi-server"), std::string::npos) << "message: " << message;
+        ExpectRefusedAsEdge(status, err);
         EXPECT_EQ(id, kSentinelId) << "a refused call writes no output";
         EXPECT_EQ(arrival, kSentinelArrival) << "a refused call writes no output";
         EXPECT_FALSE(delivered) << "the edge refused, yet a batch arrived";
@@ -639,6 +1095,68 @@ TEST(Batches, TheBuildAnswersABatchedSubscribeAsItAnswersTheQuery) {
     }
 
     fl_error_dispose(&err);
+    fl_error_dispose(&null_err);
+}
+
+/// d9 L12, L16, BC-10 (guard e), for the batched close; D9S-4 B1 (bit 63). ONE body, one answer
+/// per artefact. A row subscription on another topic is live throughout, and must still deliver
+/// at the end whatever the close was handed: its own id, bare and tagged, on the edge; on the
+/// server the bare raw id, the number it shares with the batched subscription.
+///
+///   * edge and probe: every call, a NULL subscriber included, is the edge refusal.
+///   * server (the control): an untagged id and a NULL subscriber are FL_INVALID_ARGUMENT and
+///     close nothing; the tagged id, with one row pending, is FL_OK and its CLOSING has arrived
+///     when the call returns (d7 L9).
+TEST(Batches, TheBuildAnswersABatchedCloseAsItAnswersTheQuery) {
+    BatchSink sink;
+    RowSink rows;
+    BatchFixture fx;
+    PublishedRows published(/*first_seq=*/7, /*count=*/1);
+    const OwnedTopic batched("d9s5", "close-truth-table");
+    const OwnedTopic row_topic("d9s5", "close-row");
+    fx.DeclareTopic(batched.topic(), published);
+    fx.DeclareTopic(row_topic.topic(), published);
+
+    fl_error err = {};
+    uint64_t row_id = 0;
+    fl_schema_arrival* row_arrival = nullptr;
+    ASSERT_EQ(fl_subscriber_subscribe(fx.subscriber(), row_topic.topic(), &RowSink::OnRow, &rows,
+                                      &row_id, &row_arrival, &err),
+              FL_OK)
+        << MessageOf(err);
+    fl_error_dispose(&err);
+    fl_schema_arrival_dispose(row_arrival);
+
+    fl_error null_err = {};
+    const fl_status null_status = fl_subscriber_unsubscribe_batches(nullptr, row_id, &null_err);
+
+    if (kServerBuild) {
+        const uint64_t id = SubscribeBatches(fx.subscriber(), batched.topic(), 100, INT64_MAX, sink);
+        fx.Publish(batched.topic(), published, 0, 1);
+        for (const uint64_t bare : {row_id, id & ~kBatchedIdTag}) {
+            SCOPED_TRACE("untagged id " + std::to_string(bare));
+            CloseBatches(fx.subscriber(), bare, FL_INVALID_ARGUMENT);
+            EXPECT_TRUE(sink.Snapshot().empty()) << "an untagged id closed a batched subscription";
+        }
+        CloseBatches(fx.subscriber(), id, FL_OK);
+        ExpectWindows(sink.Snapshot(), published, {{FL_BATCH_CLOSING, 0, 1}});
+
+        EXPECT_EQ(null_status, FL_INVALID_ARGUMENT) << MessageOf(null_err);
+        EXPECT_EQ(null_err.origin, FL_ORIGIN_SEAM);
+    } else {
+        for (const uint64_t any : {row_id, row_id | kBatchedIdTag}) {
+            SCOPED_TRACE("id " + std::to_string(any));
+            fl_error edge_err = {};
+            ExpectRefusedAsEdge(fl_subscriber_unsubscribe_batches(fx.subscriber(), any, &edge_err),
+                                edge_err);
+            fl_error_dispose(&edge_err);
+        }
+        SCOPED_TRACE("a NULL subscriber: the door reads the build before any argument");
+        ExpectRefusedAsEdge(null_status, null_err);
+    }
+
+    fx.Publish(row_topic.topic(), published, 0, 1);
+    EXPECT_TRUE(rows.WaitFor(1, seconds(2))) << "the row subscription stopped delivering";
     fl_error_dispose(&null_err);
 }
 
