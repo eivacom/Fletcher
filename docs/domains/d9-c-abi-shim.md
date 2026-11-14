@@ -82,10 +82,10 @@ containment.
 | **Shim** | The shared library `fletcher-c-abi` (`CMakeLists.txt:80-83`): the only Fletcher component built as a shared library; statically links pub/sub, the two DDS providers and nanoarrow. |
 | **Variant** | One of the two builds of the shim from one source: `edge` and `server`, chosen by the Conan option `variant` (default `edge`, in the package ID; D9S-2). The test-only probe shim (`CMakeLists.txt:164-211`) is a third artifact from the same sources, always edge, not a variant. |
 | **Edge variant** | Today's shim: no Arrow C++, codec on nanoarrow. Shipped in the base package. |
-| **Server(-tier) variant** | `[built]` (Windows, by hand; CI and Linux unrun) as an artefact (D9S-2: `fletcher-c-abi-server`, the edge sources answering "server", no Arrow yet); the batched subscribe and the Arrow link are `[built]` for 4a (D9S-4a: `pubsub-arrow` is linked only under `variant=server`; Windows, by hand; CI and Linux unrun); each row's attachments are `[built]` for 4b (D9S-4b; same marks); the batched close is `[built]` from outside a callback (D9S-5a; same marks), and from inside one is D9S-5b's. Shipped in a package of its own (D22). |
+| **Server(-tier) variant** | `[built]` (Windows, by hand; CI and Linux unrun) as an artefact (D9S-2: `fletcher-c-abi-server`, the edge sources answering "server", no Arrow yet); the batched subscribe and the Arrow link are `[built]` for 4a (D9S-4a: `pubsub-arrow` is linked only under `variant=server`; Windows, by hand; CI and Linux unrun); each row's attachments are `[built]` for 4b (D9S-4b; same marks); the batched close is `[built]` from outside a callback (D9S-5a; same marks), and from inside one, or of an idle subscription, is D9S-5b's (ruling 2026-11-14). Shipped in a package of its own (D22). |
 | **Variant query** | `[built]` for all three artefacts (D9S-1 edge and probe; D9S-2 server, (Windows, by hand; CI and Linux unrun)). `fl_binding_variant`: the entry point both builds export that answers which build was loaded (L16, D23). |
 | **Base package / server package** | `Eiva.Fletcher.Interop`, carrying the edge variant, and the separate .NET package carrying the server variant; each holds a full shim (D22). |
-| **Entry point** | An exported `fl_*` function. 48 today (`h`, `grep -c FL_ABI_EXPORT`). |
+| **Entry point** | An exported `fl_*` function. 50 today (`h`, as counted by `scripts/check_shim_exports.sh`). |
 | **Handle** | An opaque `fl_*` struct pointer the caller holds and cannot read (`handles.hpp:6-11`). |
 | **Owner handle** | The `owner` of an `fl_blob` or `fl_schema`: a refcounted block reached only through retain/release (`h:398-512`, `handles.hpp:43-59`). |
 | **Borrowed / Owned / OUT** | The header's three ownership words (`h:29-42`). Unqualified pointers are borrowed. |
@@ -383,7 +383,7 @@ window order for one subscription (`Batches.EachClosedWindow...`). The options p
 refusal are `[built]` as tests (D9S-5a: `Batches.EveryBatchOptionReachesDomain7AsGiven`, d7's 6 x 7 grid through the
 ABI, the message byte-equal to domain 7's; BC-8, BC-14), and so is closing as domain 7's L9 from outside a callback
 (D9S-5a: `Batches.ClosingFromOutsideDeliversTheRestThenTheClosingBatch`, by close and by destroy). **Not yet
-tested:** closing from inside a callback or a row delivery (D9S-5b), `[designed-not-built]`. Source: d7 §4 and §6, D-D7O-1, register BC-8 and BC-9, 2026-11-12 "Refuse
+tested:** closing from inside a callback or a row delivery, or an idle close (D9S-5b, ruling 2026-11-14), `[designed-not-built]`. Source: d7 §4 and §6, D-D7O-1, register BC-8 and BC-9, 2026-11-12 "Refuse
 both" ("the shim passes the refusal through"). `subscriber_arrow.cpp:39-46` throws
 `PubSubError(kInvalidArgument)`, which `Capture` already forwards as `FL_INVALID_ARGUMENT`
 (`containment.cpp:62-66`); a `std::invalid_argument` at a seam origin would become `FL_INTERNAL`
@@ -423,7 +423,7 @@ census C5 and A37 / F12. Without it, a throw from the thunk is swallowed by doma
 
 ## 4. The interface
 
-Surface, `h` sections in order (ABI 0.8, 49 entry points, every one implemented):
+Surface, `h` sections in order (ABI 0.8, 50 entry points, every one implemented):
 - **Version** (`h:158-172`): `fl_binding_abi_version` and `fl_binding_variant` (with `fl_variant`,
   edge = 1, server = 2), each callable first, from any thread.
 - **Status and errors** (`h:174-316`): `fl_status` (0-10), `fl_origin`, `fl_error`, `fl_error_dispose`.
@@ -448,11 +448,10 @@ Surface, `h` sections in order (ABI 0.8, 49 entry points, every one implemented)
   behind the batched subscribe's door (`RequireServerBuild`), forwards the id with bit 63 cleared to domain 7's
   `SubscriberArrow::Unsubscribe`, which owns the wait (d7 L9) and the no-op for an id no longer live (`FL_OK`); with
   no batch host it is a no-op. **An id with bit 63 clear is a malformed argument**, refused `FL_INVALID_ARGUMENT`
-  like NULL, and nothing is closed. Bit 63 is the shim's own C spelling of a batched id (§1 "Owns: the C spelling";
-  D9S-4 B1), which domain 7 does not have, so the refusal answers no seam's rule and is **not an L4 exception**
+  like NULL, and nothing is closed. Bit 63 is the shim's own C spelling of a batched id (D9S-4 B1), which domain 7 does not have, so the refusal answers no seam's rule and is **not an L4 exception**
   (L4 keeps two). Forwarding the number would close whichever batched subscription shares it (both counters
-  start at 1); a no-op would report a close that did not happen. Source: D9S-5a design, step 2; its review,
-  "Rulings asked for"; design debt DEBT-1.
+  start at 1); a no-op would report a close that did not happen. Source: D9S-5a design, step 2, and its design
+  review's reading (tier 3; no owner ruling exists); design debt DEBT-1.
 - **Both builds**: the variant query (L16) `[built]` for edge and probe (D9S-1; its single site is
   `binding_version.c`, BC-10). The edge build exports the batched entry points too, answering a
   named not-supported refusal (L12) `[built]` for the batched subscribe (D9S-4a) and its close (D9S-5a).

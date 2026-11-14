@@ -127,8 +127,8 @@ include(GoogleTest)
 # transport - so the measured cost is the process start. The exceptions are the
 # batched-subscribe rows (`test_batches.cpp`), which wait ONE-SIDEDLY on a
 # delivery: at most 10 s for a window, 2 s for an observation window; the longest
-# measured row takes about 2 s. The cap exists to turn a future hang into a
-# 30-second red instead of a cancelled job.
+# measured row takes about 4 s (F1: two 2 s windows; G2 just over 2 s). The cap
+# exists to turn a future hang into a 30-second red instead of a cancelled job.
 gtest_discover_tests(c_abi_tests DISCOVERY_MODE PRE_TEST
     PROPERTIES TIMEOUT 30)
 

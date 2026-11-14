@@ -946,7 +946,20 @@ TEST(Batches, EveryBatchOptionReachesDomain7AsGiven) {
     SubscribeBatches(fx.subscriber(), topics.back().topic(), 100, 10, control);
 
     for (const OwnedTopic& t : topics) fx.Publish(t.topic(), published, 0, 1);
-    std::this_thread::sleep_for(seconds(2));  // the one observation window
+    // The one observation window: wait one-sidedly for each expected delivery, then sleep out
+    // the rest of the 2 s before the cells that must see nothing are judged.
+    const auto window_end = std::chrono::steady_clock::now() + seconds(2);
+    const auto left = [&] {
+        return std::chrono::duration_cast<milliseconds>(window_end - std::chrono::steady_clock::now());
+    };
+    for (size_t i = 0; i < cells.size(); ++i) {
+        const Cell& c = cells[i];
+        if (c.max_rows >= 1 && c.timeout_ms >= 0 && (c.max_rows == 1 || c.timeout_ms <= 1)) {
+            sinks[i].WaitForDeliveries(1, left());
+        }
+    }
+    control.WaitForDeliveries(1, left());
+    std::this_thread::sleep_until(window_end);
 
     int refused = 0;
     for (size_t i = 0; i < cells.size(); ++i) {

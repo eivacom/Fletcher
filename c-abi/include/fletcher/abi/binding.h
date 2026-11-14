@@ -1089,7 +1089,8 @@ FL_ABI_EXPORT fl_status fl_subscriber_subscribe_batches(
 /* End one batched subscription. SERVER BUILD ONLY. Since ABI 0.8.
  *
  * OUTSIDE ANY BATCH CALLBACK THIS BLOCKS: every finished batch, then the closing
- * batch (FL_BATCH_CLOSING) with the rows still pending, is delivered on domain 7's
+ * batch (FL_BATCH_CLOSING) if the last window holds rows or drops (an idle one: see
+ * fl_subscriber_destroy), is delivered on domain 7's
  * batch thread before it returns, and nothing is delivered for this id afterwards,
  * so `ctx` may be freed then. Do not hold across it a lock a batch callback takes.
  *

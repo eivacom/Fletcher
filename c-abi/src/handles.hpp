@@ -172,6 +172,18 @@ struct fl_subscriber {
     explicit fl_subscriber(std::shared_ptr<fletcher::PubSubProvider> p)
         : provider(std::move(p)), subscriber(std::make_unique<fletcher::Subscriber>(provider)) {}
 
+    /// Detaches the batch host under the lock, then destroys it outside it (domain 7 closes every
+    /// batched subscription there). A close racing this teardown, e.g. from a callback, finds no
+    /// host and is the no-host no-op instead of reaching a host mid-destruction (code review S1).
+    ~fl_subscriber() {
+        std::shared_ptr<void> host;
+        {
+            std::lock_guard<std::mutex> lock(batches_mu);
+            host = std::move(batches);
+        }
+        host.reset();
+    }
+
     std::shared_ptr<fletcher::PubSubProvider> provider;
     std::unique_ptr<fletcher::Subscriber> subscriber;
 
