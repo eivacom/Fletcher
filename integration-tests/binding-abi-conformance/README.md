@@ -70,3 +70,26 @@ exercised here without anyone remembering to add it.
 
 Both halves **fail rather than skip** when the shim or the corpus is missing: a
 suite that reads green because it ran over nothing is worse than a red one.
+
+## Against both builds
+
+CI runs the C# round trip twice: once against the edge shim, then against the
+**server** shim, so "the server build only adds" (d9 L13) is checked from C# as
+well as from C++. C# loads only `fletcher-c-abi`, and the server file is
+`fletcher-c-abi-server`, so the lane **stages a copy of the server file under the
+edge file name** in a scratch folder (owner ruling 2026-11-14, "CI stages a
+renamed copy", `plans/RIX-rulings.md` :516). That is test staging only: it decides
+nothing about how packing names files (d9 Q5a stays domain 10's), and nothing under
+`dotnet/` changes.
+
+Two checks keep the server pass honest. It writes into a fresh output folder, and
+`cmp` fails the lane unless the shim beside the C# tests is byte-identical to the
+server file, so an edge file left from the first pass cannot be re-tested under
+the server's name. The **control** runs the same comparison on the edge pass's own
+output folder, which holds the edge file, and must be red on every run.
+
+The **corpus stays the edge build's**: C# round-trips it through each build, so
+the server pass compares server bytes with edge bytes. A corpus the server build
+emitted would compare the server build with itself. That is a design choice
+(D9S-7), not part of the ruling. Both legs are in
+`.github/workflows/ci.integration-test.binding-abi-conformance.yml`. (D9S, 2026-11-14.)

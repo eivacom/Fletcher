@@ -9,7 +9,7 @@ Created 2026-11-10 by the D7F pre-round census ([docs/archive/D7F/D7F-pre-round-
 part B). BC-1, BC-5 and BC-6 are adapted to the later owner ruling that every batch callback runs on
 the batch thread (domain 7 D10). A new row is added whenever a round's census finds a question with
 no row. A change to a row's single site needs the round that changes it to say so. BC-10 to BC-15
-were added by the D9S pre-round census (2026-11-13, [plans/D9S-pre-round-audit.md](../../plans/D9S-pre-round-audit.md),
+were added by the D9S pre-round census (2026-11-13, [docs/archive/D9S/D9S-pre-round-audit.md](../archive/D9S/D9S-pre-round-audit.md),
 part D) for domain 9, the C ABI shim; BC-12's site was ruled by the owner the same day.
 
 | ID | Question | Single site | Structural test | Status | Domain |

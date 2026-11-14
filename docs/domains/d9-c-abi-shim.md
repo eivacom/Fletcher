@@ -5,13 +5,18 @@
 > variant ships in its own .NET package (D22), both builds answer a variant query and the edge build
 > refuses a batched subscribe by name (D23; L12, L16), and the shim's row codec is domain 2's (D24;
 > L10 moved). A change to a law needs an owner ruling, recorded in a decision of record. L12-L18
-> describe the server-tier variant and stay `[designed-not-built]` until the shim round builds them.
+> describe the server-tier variant; **the shim round built them (D9S-1..7; D9S, 2026-11-14)**, each
+> `[built]` mark qualified as in its law: Windows, by hand; CI and Linux unrun, except what a law
+> still marks `[designed-not-built]` (L14's "keeps nothing"). **Linux and CI never ran in D9S.** The
+> "Windows, by hand; CI and Linux unrun" marks lift only once a green CI run on the owner's draft PR
+> from `feature/shim-server-variant` covers them, with the run IDs recorded (ruling 2026-11-13,
+> ledger :408 (2)).
 > **D9S pre-round rulings (2026-11-13) applied:** a batch is borrowed for its callback and kept only
 > by moving it (D26; L14 amended, audit B1 resolved); one ABI version for both builds, both bump
 > (D27; L6); `FL_NOT_SUPPORTED` means "this provider or this build cannot do this" (D28; L2, L12);
 > a C# app loads the server build only if it references the server package (D29, revising D19); a
 > batch the shim cannot hand over is reported (D30; new law L18); the audit's tier-2 corrections
-> (D31). Audit: [D9S-pre-round-audit.md](../../plans/D9S-pre-round-audit.md).
+> (D31). Audit: [D9S-pre-round-audit.md](../archive/D9S/D9S-pre-round-audit.md) (archived at D9S close).
 
 **Mode: survey for everything that exists, verified against the tree at `180b2d7`; D9S-1 (`fcb7be6`) added 15 header lines, so `h:N` citations after `h:172` are about 15 low; D9S-2 changed `CMakeLists.txt`, `conanfile.py` and the workflows, so citations into those predate it** (branch
 `feature/shim-server-variant`). The code is ground truth. `binding.h`'s comments, `c-abi/README.md`,
@@ -149,6 +154,10 @@ into the shim either. `[built]`
   crossing.
 - The other direction (`fl_writer_fn`, `fl_grow_fn`, `fl_delivery_fn`) is the caller's obligation
   (`h:702-705`, `h:858-861`); the shim cannot enforce it.
+  **A batch callback (`fl_batch_fn`) that throws anyway is swallowed** after it has had its window
+  (`batches_server.cpp`, the `catch` around `on_batch` in the batch thunk), so the throw never reaches
+  domain 7. This is **handled, not ruled**: no ruling grants either swallowing or terminating (D9S-6
+  compliance review F1; D9S, 2026-11-14).
 - Tests: `Containment.AnUnknownExceptionTypeIsContainedAsInternal`,
   `Containment.OverflowIsPayloadTooLargeAtEitherOrigin`, `Containment.TheReadersRefusalTypesDependOnTheOrigin`,
   `BindingEntryPoints.AGrowReturningANonStatusIsContainedAsInternal`. No test drives every entry point
@@ -357,6 +366,11 @@ behaves identically on the server variant. The only entry points whose answers d
 builds are the variant query and the batched ones (L12).
 `[built]` on Windows for the edge surface on the server artefact (D9S-2: the whole edge-surface suite runs against it; Linux unrun);
 the added batched subscribe is `[built]` (D9S-4a, with each row's attachments D9S-4b; its close D9S-5a). Source: as L12.
+- Tests: the edge-surface suite linked to the server artefact (D9S-2). From C#, the binding-abi-conformance lane
+  runs against both builds (D9S-7, ladder rung 10; CI unrun): the server shim is staged under the edge file name,
+  with a `cmp` guard and its control (ruling 2026-11-14, ledger :516, for the staging only); the corpus stays the
+  edge build's, so the server pass compares server bytes with edge bytes (a design choice, not ruled). The
+  mechanism lives in `integration-tests/binding-abi-conformance/README.md` (D9S, 2026-11-14).
 
 **L14. A batch crosses as an Arrow C Data Interface array and schema, borrowed for the batch
 callback; a binding keeps it only by moving it.** *(Amended 2026-11-13, D26.)* The batch callback is
@@ -416,6 +430,8 @@ refusal, never a crash.
 can ask the shim which build it has … via a query that both builds export"; D23). Today
 `fl_binding_abi_version` cannot tell two builds of one version apart. The query's name, its answer's
 type, and whether it changes the ABI version (Q8) are the shim round's design.
+- Tests: `BindingAbi.TheVariantIsAnsweredBeforeAnyOtherCall`,
+  `BindingAbi.TheVariantAndVersionAnswerAlikeFromManyThreads` (ladder rung 1; D9S, 2026-11-14).
 
 **L17. One shim per process holds across variants and packages.** A process loads the edge variant
 or the server variant, never both, even when the application references both the base and the
@@ -443,7 +459,7 @@ census C5 and A37 / F12. Without it, a throw from the thunk is swallowed by doma
   `BatchStatus`, CLOSING included, ruling 2026-11-14), and the failure crosses beside it in
   `fl_batch.failure`: its status (`FL_INTERNAL` for an allocation or export failure),
   `FL_ORIGIN_HANDOVER` (4) and its message, borrowed for the callback (L2). Every window reaches
-  the callback exactly once (L15, BC-9; a throwing callback is handled, not ruled: design D9S-6 step 2).
+  the callback exactly once (L15, BC-9; a throwing callback is handled, not ruled: L1, "the other direction"; D9S, 2026-11-14).
 
 ## 4. The interface
 
@@ -534,6 +550,7 @@ in its own .NET package (D22); the NuGet-level name stays domain 10's (Q5a).
 | D30 | **A batch the shim cannot hand over is reported, never lost silently:** a "no batch could be built" delivery for that window, its rows counted as dropped, its reason kept; one site in the shim (register BC-12); domain 7 untouched. Recorded as law L18. Resolves audit census C5 / F12. | Owner ruling 2026-11-13, "Lost handoff: Report it as lost" ("D9S pre-round: a failed handoff is reported; corrections approved") |
 | D31 | **The audit's tier-2 text corrections are approved** and applied before the round: F1 (L12), F3 (L4, §1), F4 (L1), F6 (L6), F7 (L7), F9 (L12, D14), F15 (§8); F17-F19 (BIND annotations); F10, F22, F23 (`binding.h` comments); F24-F26 (`c-abi/README.md`); F27 (ledger notes). | Owner ruling 2026-11-13, "Corrections: Approve all as listed" |
 | D32 | **A failed hand-over carries its status and message; d9 §1 holds.** `fl_batch` gains a trailing `const fl_error* failure`, NULL unless the window's hand-over failed, and `fl_origin` gains `FL_ORIGIN_HANDOVER = 4`, both on D9S-1's 0.8 bump (D27); no status number. The failure is borrowed for the callback, so L2 gains that clause (a law change this ruling authorises). Settles L18's shape and Q12's hand-over half. Forward note (domain 10): C#'s `FletcherOrigin` stops at 3 (`dotnet/src/Fletcher/FletcherException.cs:62-75`); the C# switch round mirrors code 4 and never disposes `failure`. | Owner ruling 2026-11-14, "(b) Keep the promise" ([RIX-rulings.md](../../plans/RIX-rulings.md), "D9S-6: a failed hand-over still carries its status and message") |
+| D33 | **One `fl_subscriber` holds both row and batched subscriptions;** destroying it ends both kinds. A row and a batched subscription to the same topic through one provider collide; the collision is documented (`binding.h`; Findings b2), not refused, because the shim forwards the transport's rule (L4). The two providers' different answers are registered for domains 3 and 4. (D9S, 2026-11-14.) | Owner ruling 2026-11-13, "(a) One object, documented" ([RIX-rulings.md](../../plans/RIX-rulings.md), "D9S-4: one subscriber object; the interim handoff gap accepted", :445 (1)) |
 
 ## 6. Relationships
 
@@ -601,6 +618,7 @@ in its own .NET package (D22); the NuGet-level name stays domain 10's (Q5a).
 | Q10 | Which consumer loads the edge variant once C# desktop moves? "Embedded devices" has no RID today (D-BIND-27: `win-x64`, `linux-x64`; `linux-arm64` first addition). Partly answered 2026-11-13 (D29): a C# app that does not reference the server package loads the edge build. The embedded-device consumer remains open. | owner |
 | Q11 | A batched dictionary column arrives re-folded (domain 2's `BatchDecoder`), while `fl_decode_rows` returns its value type (D-BIND-39, D-BIND-59). Is that difference intended for a server-variant caller? | domain 2, with domain 10 |
 | Q12 | Which `fl_origin` does the edge build's `FL_NOT_SUPPORTED` refusal carry, and which a failed hand-over on domain 7's batch thread (L18)? `FL_ORIGIN_SEAM` is "a `PubSubError` from the seam". A new enumerator is the shim's own (append, bump, L6), not a seam stop-and-ask (audit F5). **Edge half resolved (D9S-4a): `FL_ORIGIN_SEAM`**, as every refusal the shim makes itself; the comment on `FL_ORIGIN_SEAM` widens to "...or the shim's own refusal of an argument or of a call this build cannot serve" and D-BIND-54 switches only on (`FL_INVALID_ARGUMENT`, `FL_ORIGIN_CODEC`), so it is unaffected. **Hand-over half resolved (D9S-6, D32): `FL_ORIGIN_HANDOVER` (4)**, appended, on D9S-1's bump. | — |
+| Q13 | Build every shim (edge, server, probe, handover-fault, edge twin) through one CMake function, from its variant. Until then the edge twin (`fletcher-c-abi-edge-twin`, `c-abi/tests/CMakeLists.txt`) is a hand copy of the edge recipe, and `TwoBuilds`'s build assertion catches only a change to the variant define, not drift in sources, flags or links (L5, L17). From D9S-7 design debt DEBT-2 (D9S, 2026-11-14). | a later d9 stage |
 | LC-1 | Audit owner confirmation: does the edge build's minor bump, with one version for both builds? **Resolved 2026-11-13 (D27).** | — |
 | LC-2 | Audit owner confirmation: may the edge refusal reuse `FL_NOT_SUPPORTED`? **Resolved 2026-11-13 (D28):** yes, its meaning widened. Residue: the seam's own published table (`core/README.md:37`, domain 3's text) still reads "This provider does not implement the requested behaviour"; the origin is Q12. | domain 3, for the table's wording |
 
@@ -668,6 +686,11 @@ providers, two answers to one seam rule.
 - ~~That the edge shim contains no Arrow C++ (L8): only the size ceiling.~~ Checked by name since
   D9S-3 (`scripts/check_edge_arrow_free.sh`; Windows, by hand; Linux and CI unrun).
 - The Windows half of the export-table property: violated, accepted (L7).
+- The real hand-over failure points (L18): the test fault fires only after the export, so neither a
+  failing `arrow::ExportRecordBatch` or attachments build, nor the DEBT-5 `catch` that deletes a
+  half-built attachment set's blocks (`handles.hpp`, `fl_attachments`' constructor), is exercised (D9S, 2026-11-14).
+- A window domain 7 already delivered as no-batch whose hand-over then fails (L18, d7 L7): no test
+  (D9S, 2026-11-14).
 
 **(d) Tier-1 collisions for the owner** (between a BIND decision, a 2026-11-12 ruling and the code).
 Items 2-4 resolved by the 2026-11-13 packaging ruling (D22); item 6 handed to the C# switch round.

@@ -845,32 +845,32 @@ Review: [../../docs/archive/D7F/reviews/D7F-1-design-review.md](../../docs/archi
 
 ## D9S-4 — batches cross the shim (cycle 1 NEEDS-REWORK; cycle 2 APPROVE-WITH-DEBT(3)) — [review](D9S-4-design-review.md)
 - ~~DEBT-1~~ Applied in design cycle 2 (H3 says "a failed hand-over"; the catch encloses thunk steps 1–4).
-- **DEBT-2 (step 3, 4a):** a fourth domain-7 `Reason` (d7 Q4, owner-open) must fail the build in the reason `switch` (no `default:` + `-Wswitch` as error, or a static count check), never cross as 0.
-- **DEBT-3 (step 3, 4a header doc):** the same-topic bullet's "its arrival answers `FL_SUBSCRIPTION_ENDED`" holds only for a still-pending arrival; under default `kAsDeclared` it is already Ready (`in_process_provider.cpp:329-332`, shared by `subscriber.cpp:454-460`), so the earlier subscription stops with no signal. Word it so.
-- **DEBT-4 (PM):** annotate D-D9S-8 with the fPIC exception; tracker row D9S-4a drops "attachments", D9S-5 depends on 4b; 4a's doc marks leave Q6/BC-13's attachments half unbuilt.
+- ~~DEBT-2 (step 3, 4a): a fourth `Reason` must fail the build~~ Landed in `e766c3e` (exhaustive `switch` in `batches_server.cpp`, switch warning as error; d9 L1, `ReasonOf`).
+- ~~DEBT-3 (step 3, 4a header doc): the same-topic arrival wording~~ Landed in `e766c3e` (`binding.h` same-topic bullet; d9 Findings b2).
+- ~~DEBT-4 (PM): D-D9S-8 fPIC annotation, tracker rows~~ Landed in `5b36a63` (`plans/D9S-locked-decisions.md`, `plans/D9S-plan.md`).
 
 ## D9S-5a — close from outside, borrow-and-move, options as given (APPROVE-WITH-DEBT(4), cycle 1 of 2) — [review](D9S-5a-design-review.md)
-- **DEBT-1 (step 3, docs):** BC-13's batch half and d9 L14's unmoved-release clause are `[built]` only for "released exactly once, after the callback, on the batch thread". BC-13's pool-baseline test and L14's "keeps nothing" stay `[designed-not-built]`, owed to the ASan/LSan leg. d9 §4: an untagged id is a malformed argument, not an L4 answer. Header: the row-delivery clause says "on the same provider".
-- **DEBT-2 (step 3, tests):** each batched subscription gets its own sink, and counts are asserted before teardown, so that 5b's empty CLOSING on an idle torn-down subscription (F1's destroy variant, G2) cannot turn a 5a count red. F1's destroy variant gets its own control for the 2 s window, on a second subscriber.
-- **DEBT-3 (PM):** the brief is 60/60 with its placeholder at l.57-60, so the As-landed block will push it past the cap at close. Trim at least 3 lines before the owner reads it. The design (146/150) needs nothing unless a cycle 2 opens; then cut rather than add.
-- **DEBT-4 (step 3, close):** F2's truth-table arms share one body with `TheBuildAnswersABatchedSubscribeAsItAnswersTheQuery` (guard e) rather than copying it. G2 is one table-driven cell runner. Report actual test lines against +490 at close; more than 2× is a close finding.
+- ~~DEBT-1 (step 3, docs): BC-13 / d9 L14 marks, the untagged id, the row-delivery clause~~ Landed in `ea49aa3` and `640e8cd` (register BC-13, d9 L14 and §4, `binding.h`).
+- ~~DEBT-2 (step 3, tests): one sink per subscription, counts before teardown~~ Test item, landed with `ea49aa3` (`test_batches.cpp`).
+- ~~DEBT-3 (PM): trim the brief~~ Process item, landed in `c7220e2`.
+- ~~DEBT-4 (step 3, close): shared truth-table body, table-driven G2, test-line report~~ Test and process item, reported at close (`ad69f4a`, `plans/D9S-progress-log.md`).
 
 ## D9S-5b — every close ends with one closing delivery (cycle 1 NEEDS-REWORK, B1 answered by ruling :493; cycle 2 APPROVE-WITH-DEBT(3)) — [review](D9S-5b-design-review.md)
 - ~~**DEBT-1**~~ Resolved in cycle 2: brief :8-9 and :40-42, design :22.
 - ~~**DEBT-2**~~ Resolved in cycle 2: F1 has cell (d); D18/D19 record only the rulings.
 - ~~DEBT-3 (PM)~~ landed: D-D9S-8 annotated with both 2026-11-14 widenings.
-- **DEBT-4 (step 3):** m4 is an equivalent mutant. Rule 2's Loop clears the queue of a batcher stopped while unregistered, so the closing m4 queues is never delivered and D7-2 `max_rows` 100 stays green. Either delete rule 3 and m4, so that m3 (today's Loop restored whole) kills both D7-2 cells, or declare m4 equivalent. At close, report F2 as the external proof, with its measured pre-change red rate and m2's deterministic red, never as "a guard, with D7-2 carrying the red".
-- **DEBT-5 (code commit; compliance checks):** "no batch arrives before the call returns" is false. `registered_` is set at `subscriber_arrow.cpp:450`, inside the call, and `*out_id` is written later (`binding.cpp:913`). Write instead: "no batch is delivered unless the call succeeds; the first may arrive while it is returning, before `out_id` is written: correlate by `ctx`". This applies to `binding.h` :1060-1064, the C++ hpp and README (add the sentence there; the quoted C++ phrase does not exist), and the design and brief risk lines.
+- ~~DEBT-4 (step 3): m4 is an equivalent mutant~~ Landed in `3903911` (design rule 3 and m4 restated as DEBT-4 (b); F2 reported as the external proof).
+- ~~DEBT-5 (code commit): "no batch arrives before the call returns" is false~~ Landed in `60ff057` (`binding.h`, the C++ hpp and README: correlate by `ctx`).
 
 ## D9S-6 — a batch the shim cannot hand over still arrives, counted (cycle 1 NEEDS-REWORK, B1 + B2 STOP-AND-ASK; cycle 2 APPROVE-WITH-DEBT(2), B2 answered by ruling :504) — [review](D9S-6-design-review.md)
 - ~~DEBT-1~~ Resolved in cycle 2: restated as "held by name" (design 4(iii), P2, corner case 7; brief risk).
 - ~~DEBT-2~~ Applied in cycle 2: design step 6 (d9 L1). Lands with the docs.
 - ~~DEBT-3~~ Applied in cycle 2: design l.103-104 (one batched subscription per cell).
-- **DEBT-4 (step 3, docs; PM):** (a) `binding.h`'s `fl_error` paragraph (h:271-292: "owned by it", "a `finally`") gains L2's clause: `fl_batch.failure` is borrowed, and never passed to `fl_error_dispose`. (b) d9 §5 gains D32 for ruling :504 (d9 l.7: a law change is recorded in a decision of record), cited from L2 and L18. (c) d9 §6, domain 10: the C# switch round mirrors `FL_ORIGIN_HANDOVER` (`FletcherException.cs:62-75` stops at 3) and never disposes `failure`. (PM) The ruling's "layout line" is the ladder's l.93 and rung 4 (l.59).
-- **DEBT-5 (step 3, code):** if `make_shared` throws mid-loop, `fl_attachments`' constructor leaks its `BlobOwner` blocks (`handles.hpp:117-119`, and no destructor runs). So design step 1's "what the attempt built is released" is false for a half-built set. It is a leak on OOM, not a loss. Hold each block in a `unique_ptr` until `push_back`, and drop the earlier blocks on a throw (~5 lines, adds `handles.hpp`), or register it.
+- ~~DEBT-4 (step 3, docs; PM): `fl_error` paragraph, D32, d9 §6 domain 10~~ Landed in `abc0776` (`binding.h`; d9 L2, D32, §6).
+- ~~DEBT-5 (step 3, code): a half-built attachment set leaks on OOM~~ Landed in `abc0776` (`handles.hpp`, `fl_attachments`' constructor deletes the built blocks; untested, d9 Findings c).
 
 ## D9S-7 — two builds in one process; C# against both (APPROVE-WITH-DEBT(4), cycle 1 of 2) — [review](D9S-7-design-review.md)
 - ~~DEBT-1~~ landed `157d3c3` (`env -u LD_LIBRARY_PATH`).
-- **DEBT-2 (round close or a later d9 stage):** the twin is a fourth hand-copied shim recipe. One CMake function should build every shim from its variant. Until then, change `c-abi/tests/CMakeLists.txt:285` from "catches recipe drift" to "catches only the variant define".
+- ~~DEBT-2 (round close or a later d9 stage): one CMake function for every shim~~ Migrated to d9 §7 Q13 (D9S close, 2026-11-14); `c-abi/tests/CMakeLists.txt` points there.
 - ~~DEBT-3~~ landed `157d3c3` (dead line and design paragraph deleted).
 - ~~DEBT-4~~ landed: d9 §6 domain-10 list notes the staging retires with Q5a; ladder rung 10 credits :516 for the staging only.
