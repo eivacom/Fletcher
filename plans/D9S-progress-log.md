@@ -149,3 +149,34 @@ scope). Record: d9 L8 / design said `run_tests` leaves the package ID — false 
 ## D9S-5 — 0a BLOCKED → owner ruling; split into 5a and 5b (2026-11-14)
 
 0a (`plans/reviews/D9S-5-audit-0a.md`): BLOCKED, MUST-DELETE(0). The 2026-11-11 ruling ("then the closing batch") collides with d7 L6 ("a window with nothing pending delivers nothing") on an idle close. Owner: "Always a final delivery (Rec.)" and "Split and proceed (Rec.)" (ledger 2026-11-14). The round is widened to d7 L6 (closing only) in D9S-5b; config updated. Tracker: D9S-5 → 5a (move/release, options, close from outside a callback) and 5b (the closing delivery always arrives, including in-callback and idle; the d7 change). Texts still to correct: ladder rung 6 (`D9S-test-ladder.md:61`) and the d9 L1 annotation, both in 5b. The two d7 tests that pin the old L6 empty-close behaviour (`test_pubsub_arrow.cpp:1374`, `:1414`) are re-audited at 5b's 0a.
+
+## D9S-5a — Batched close; a batch is the caller's only if moved; options reach domain 7 as given — 🟢 2026-11-14
+
+**Landed:** `ea49aa3`, then fix `4cb0144` and record fix `640e8cd`.
+- `fl_subscriber_unsubscribe_batches` sits behind one `RequireServerBuild` door, which the subscribe now shares.
+- An untagged id or a NULL subscriber gets `FL_INVALID_ARGUMENT`. d9 §4 records this as tier 3: no owner ruling exists for it.
+- `~fl_subscriber` detaches the batch host before teardown (S1).
+
+**Steps:**
+- 0a: the D9S-5 audit (BLOCKED, resolved by the 2026-11-14 ruling) stood for 5a.
+- Design: cycle 1, APPROVE-WITH-DEBT(4). DEBT-3 (brief at its cap) was handled by the PM trimming the placeholder.
+- Phase A: red. The implementer reverted a stub that my brief allowed and **d9 L6 forbids**. That was a PM error, and the law governed.
+- 0b: CLEAR.
+- Green.
+- 4a: PASS, 5 RECORD items. 4b: APPROVE, 1 should-fix (S1, the race between destroy and an in-callback close).
+- Fix 1, then 4b cycle 2: APPROVE.
+- Record fixes: d9 §1/L4 and BC-10 now name the close's refusal; the stale not-built marks were corrected.
+
+**Verification:**
+- c-abi server 109/109 and edge+probe 116/116 at `4cb0144`; exports 50=50=50.
+- Full suite at `ea49aa3`: conformance edge 11/11 and server shim (renamed) 11/11; pubsub-arrow-fastdds 4/4.
+- Not re-run after fix 1: it changes only the destructor, which neither lane touches.
+- G1 and G2 mutation controls went red; they are recorded in the evidence.
+- CI and Linux unrun.
+
+**Numbers:** production +104/−17 raw in 5 files (55 touched, against ≈89 declared); tests +547/−8 (1.12×). Design cycles 1, fix cycles 1, implementer launches 1 (resumed 3×). Owner touches: 1 ruling pair (idle close, split).
+
+**Logged nits:**
+- 4b: G1's provider-order loop asserts nothing new.
+- 4b cycle 2: a subscribe from a batch callback during destroy makes a second host. It is safe; the door could refuse it in 5b.
+- Suite agent: the cache now holds two edge packages, so `locate_shim.sh` refuses until one is removed.

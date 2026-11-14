@@ -54,4 +54,6 @@ check in the shim, and no change to the batcher, the encoding or C#.
 ## Numbers
 Declared net lines: production +80/−9 (≈+52/−6 counted, ≈89 touched) · tests +490/−3 · new public surface: 1 · design cycles used: 1/2
 
-*As landed:* (PM, at close)
+*As landed — 5a, 2026-11-14:* production +104/−17 raw in 5 files (55 touched non-comment lines, against ≈89 declared); tests +547/−8 (1.12× declared). Fix 1 added `~fl_subscriber` to detach the batch host before teardown (S1).
+The edge refusal message was reworded for both batched entry points; the compliance review found this within L12/L13. Rung 5 is proven by counting releases, not by measuring memory, so L14 and BC-13 are only partly built (DEBT-1).
+Cycles: design 1, fix 1, implementer launches 1 (resumed 3×). PM error: the phase-A brief allowed a stub that L6 forbids; the implementer reverted it.

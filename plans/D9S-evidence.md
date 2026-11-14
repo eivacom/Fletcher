@@ -12,3 +12,5 @@
 | 2026-11-13 | D9S-4 | `EachClosedWindowCrossesAsAnImportableBatchInWindowOrder` | e57e7af |
 | D9S-4b | `Batches.EachBatchRowCarriesItsOwnAttachments` (red: runtime, NULL list; green) + NULL-list assertion in the 4a no-batch test | server 105/105, edge+probe 114/114 at `b09fc64` | binding-abi-conformance edge 11/11, server shim renamed 11/11; pubsub-arrow-fastdds 4/4; **CI and Linux unrun** | `b09fc64` |
 | 2026-11-13 | D9S-4b | `EachBatchRowCarriesItsOwnAttachments` | 6b7b29c |
+| D9S-5a | `Batches.ClosingFromOutsideDeliversTheRestThenTheClosingBatch` (forcing), `.TheBuildAnswersABatchedCloseAsItAnswersTheQuery` (edge/probe/server); guards `.ABatchIsTheCallersOnlyIfMoved`, `.EveryBatchOptionReachesDomain7AsGiven`; mutation controls red (G1: no release / unconditional / double; G2: clamp / own range check) | server 109/109, edge+probe 116/116 at `4cb0144`; exports 50=50=50 | at `ea49aa3`: conformance edge 11/11, server shim renamed 11/11; pubsub-arrow-fastdds 4/4 (fix 1 is destructor-only, outside both lanes); **CI and Linux unrun** | `ea49aa3`, `4cb0144`, `640e8cd` |
+| 2026-11-14 | D9S-5a | `ClosingFromOutsideDeliversTheRestThenTheClosingBatch` | 640e8cd |
