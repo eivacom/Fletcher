@@ -101,7 +101,7 @@ are built inside it. The catch cannot throw: `Capture` is `noexcept` and allocat
 ## Forcing-test mapping
 **`handover.Batches.AWindowTheShimCannotHandOverStillArrivesCounted`** (`test_batches.cpp`, under the test macro;
 reuses `BatchFixture`, `PublishedRows`, `BatchSink`, `CloseBatches`). Cells k = 2, 3, each with **exactly one batched
-subscription** (DEBT-3, applied): publish 5 rows, arm hand-over k, close from outside. Each asserts:
+subscription** (DEBT-3, applied): arm hand-over k, publish 5 rows, close from outside (arming after would race; 0b). Each asserts:
 - 3 deliveries, RL, RL, CLOSING, with exactly one CLOSING, and it last;
 - delivery k: no array, schema or attachments; `num_rows` 0; `rows_dropped` equal to its window's rows (2 or 1);
 - delivery k's `failure`: `FL_INTERNAL`, `FL_ORIGIN_HANDOVER`, message == `std::bad_alloc().what()` (copied in the callback);
