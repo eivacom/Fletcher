@@ -1,58 +1,60 @@
 # D9S-6 — Stage Brief (2026-11-14)
 
-**In one sentence:** On the server build, a window of rows that the shim fails to hand to the program still
-reaches it. It arrives once, as "no batch could be built", with its rows counted as lost and its reason
-unchanged, including "closing". Until now such a window vanished without being counted.
-**Forcing test:** `handover.Batches.AWindowTheShimCannotHandOverStillArrivesCounted`. It makes the hand-over
-fail for the 2nd window, and separately for the closing window. The program must still receive every window,
-the failed one marked as lost, with exactly one closing delivery and it last. Rows received plus rows reported
-lost must equal rows published.
+**In one sentence:** On the server build, a window the shim fails to hand over still reaches the program, once,
+as "no batch could be built", with its rows counted as lost and its reason unchanged, including "closing".
+Until now such a window vanished uncounted.
+**Forcing test:** `handover.Batches.AWindowTheShimCannotHandOverStillArrivesCounted`. It fails the 2nd window,
+then separately the closing one. Every window still arrives, exactly one closing delivery comes last, and rows
+received plus rows lost equals rows published.
 
 ## Interfaces
 | Surface | Change | Why |
 |---|---|---|
 | The "no batch could be built" delivery | CHANGED (meaning widens) | It now also covers "the shim could not hand this window over" (d9 L18) |
+| The failure that comes with that delivery: why, plus a new origin code "hand-over" | NEW under (b), the default | d9 §1: every failure reaches the program as a status plus a message |
 | A test-only fault shim, never packaged | NEW (test-only) | The only way to make a hand-over fail on demand. It is not public surface |
 
 ## Deleted
-- **The silent loss.** The shim's catch-everything handler is replaced by the reported delivery. The interim
-  allowance "lost uncounted during stages 4–5" (ruling 2026-11-13) ends here.
-- **The planned failure message**, under Decision 1 (a): never built. Disclosed here.
+- **The silent loss:** the catch-everything handler becomes the reported delivery; ruling 2026-11-13's interim allowance ends.
+- **Under (a) only:** the planned failure message is never built. Disclosed here.
 
 ## Corner cases forbidden vs handled
 **Forbidden:** a window delivered twice; a "no batch" delivery that still carries part of a batch; a lost or
 changed reason (which would lose the end signal); a retry or a partial batch; the fault hook in any shipped
 build, edge or server.
-**Handled:** a program's callback that throws despite the rule. The throw is swallowed after the window has
-been delivered, so nothing is lost. It cannot be forbidden, because the shim cannot stop foreign code from
-throwing, and crashing instead would be new behaviour that no ruling grants.
+**Handled:** a callback that throws despite the rule. It is swallowed after delivery, so nothing is lost. It
+can't be forbidden: the shim can't stop foreign code throwing, and crashing would be unruled behaviour.
 
 ## Decisions for you
-1. **When the shim fails to hand a batch over, is the program told why, or only that the rows were lost?**
-   **(a) Only that the rows were lost.** *Users:* "N rows lost" plus the window's reason, the same as when
-   the batcher itself cannot build a batch; an operator cannot tell a shim failure from a batcher failure.
-   *Architecture:* the program gets the batcher's answer unchanged (round purpose: "batches straight from the
-   one batcher"; d7 L7, L10), one error channel (d9 L2), no new surface. It strains d9 §1's "every failure
-   becomes a status plus message", for this one failure.
-   **(b) Also an error message.** *Users:* the program also gets "internal error: …", for shim failures
-   only; batcher failures still arrive without one. *Architecture:* serves d9 §1's message promise, but
-   strains d9 L2 (a second way for failures to reach the program), takes 2 of the 3 new-surface slots, and
-   changes the batch layout the plan had fixed.
-   **Recommendation:** (a), on the round purpose and d9 L2: the shim passes the one batcher's answer through
-   and adds no failure channel of its own. **Default if you don't answer:** (a).
-   *Background (skippable): the plan's rung 8 and a note under d9 L18 assume a message crosses; the ruling
-   (D30) does not ask for one. Choosing (a) also settles d9 Q12's last half: no origin code, because no error
-   value crosses.*
+1. **Domain 9 promises that every failure reaches the program as a status plus a message. Does that promise
+   hold when the shim fails to hand a batch over, or do you rule an exception for this one failure?**
+   **(a) Rule an exception.**
+   - *Users:* the program sees only "N rows lost" and the window's reason, as it does when the batcher
+     itself cannot build a batch, so an operator cannot tell why.
+   - *Architecture:* matches domain 7's own no-batch, which carries no message (d7 L7, L10), and the letter
+     of ruling D30. No new surface. d9 §1 is amended to record the exception.
+   **(b) Keep the promise.**
+   - *Users:* the program also gets the reason: "internal error: …", with origin "hand-over". An operator can
+     tell a shim failure from a batcher failure.
+   - *Architecture:* keeps d9 §1, and d9 L2's "a failure is a status plus its message". The failure is
+     borrowed for the callback, not owned (L11), so L2 gains that clause. It adds 1 field and 1 origin code
+     (2 of the 3 surface slots). Only the plan's "no batch-layout change after stage 4" line is amended.
+
+   **Recommendation:** (b). d9 §1 is a principle, and it outranks the details that point to (a): L18's silence
+   on a message and the plan's layout line. d9 L2, L18's note and rung 8 point to (b). **Default:** (b).
+   *Background (skippable): this settles d9 Q12's last half, which origin a failed hand-over carries. It is
+   a new code, 4, under (b), and none under (a).*
 
 ## Risks accepted / debt carried
-- When a hand-over fails, the release of the half-built batch is proven by the code's shape, not measured.
-  The leak-check leg is still owed (D9S-5a DEBT-1).
-- CI runs about 20 s longer: the batch suite runs a second time, unarmed, against the fault shim, to show
-  the hook changes nothing when off.
+- The release of a half-built batch is proven by the code's shape, not measured; the leak-check leg is owed.
+- CI runs about 20 s longer: the batch suite reruns, unarmed, against the fault shim.
+- The fault shim stays out of packages by its file name only; nothing checks the package contents.
 
 ## Numbers
-Declared net lines: production +34 / −16; test-only fault shim +75; tests +110 (stage about +219 / −16;
-(b) adds about +25) · new public surface: 0 ((b): 2) · design cycles used: 1/2
+Declared net lines:
+- (b): production +50 / −16; test-only fault shim +75; tests +130.
+- (a): production +34 / −16; fault shim +75; tests +110.
+New public surface: 2 under (b), 0 under (a). Design cycles used: 2/2.
 
 ---
 *As landed:* (PM, at close)
