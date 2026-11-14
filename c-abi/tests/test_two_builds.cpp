@@ -145,7 +145,6 @@ TEST(TwoBuilds, TheLaterBuildRefusesNamingBothAndTheFirstKeepsWorking) {
     ASSERT_NE(refused.message, nullptr);
     const std::string message(reinterpret_cast<const char*>(refused.message), refused.message_len);
     other.error_dispose(&refused);  // freed by the copy that wrote it
-    if (status == FL_OK && never != nullptr) other.provider_destroy(never);
     EXPECT_NE(message.find(FLETCHER_TWO_BUILDS_LINKED_NAME), std::string::npos)
         << "the refusal does not name the first copy: " << message;
     EXPECT_NE(message.find(FLETCHER_TWO_BUILDS_OTHER_NAME), std::string::npos)

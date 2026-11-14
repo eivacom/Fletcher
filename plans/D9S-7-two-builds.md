@@ -76,10 +76,6 @@ global scope. `RequireLoaded` fails the row if the load or any refusal-path name
 - **Freeing a message with the wrong copy, or unloading the refused copy.** Unrepresentable: the message is
   freed by `other.error_dispose`, and the handle is a never-released function-local static.
 
-**Handled (test hygiene, no production path):** `test_two_builds.cpp:148` destroys a provider that the later
-copy wrongly created. *Why not forbidden?* That state is what the row exists to detect, so it must be
-representable. The cleanup accepts nothing (audit 0b law (a)).
-
 ## Premises and stop conditions
 - **Both builds export the marker from `fletcher-c-abi-impl`, and L5's scan runs once, at each copy's load.**
   STOP-AND-ASK if either becomes per-variant or lazy: rung 9 would then be testing a different law.

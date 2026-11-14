@@ -120,10 +120,11 @@ jobs:
                      STAGE=\$(mktemp -d) && OUT=\$(mktemp -d) && \
                      cp \"\$SERVER\" \"\$STAGE/libfletcher-c-abi.so\" && \
                      (cd integration-tests/binding-abi-conformance/dotnet/BindingAbiConformance && \
-                      FLETCHER_CORPUS_DIR=/workspace/corpus-out dotnet test -c Release -o \"\$OUT\" -p:FletcherNativeShim=\"\$STAGE/libfletcher-c-abi.so\") && \
+                      env -u LD_LIBRARY_PATH FLETCHER_CORPUS_DIR=/workspace/corpus-out dotnet test -c Release -o \"\$OUT\" -p:FletcherNativeShim=\"\$STAGE/libfletcher-c-abi.so\") && \
                      if ! cmp -s \"\$OUT/libfletcher-c-abi.so\" \"\$SERVER\"; then echo '::error::the shim beside the C# tests is not byte-identical to the server file; the server pass did not test the server build'; exit 1; fi && \
-                     CONTROL=\$(mktemp -d) && cp \"\$SHIM\" \"\$CONTROL/libfletcher-c-abi.so\" && \
-                     if cmp -s \"\$CONTROL/libfletcher-c-abi.so\" \"\$SERVER\"; then echo '::error::control failed: the edge file staged instead did not turn the byte comparison red'; exit 1; fi && \
+                     EDGERUN=integration-tests/binding-abi-conformance/dotnet/BindingAbiConformance/bin/Release/net10.0/libfletcher-c-abi.so && \
+                     if [ ! -f \"\$EDGERUN\" ]; then echo '::error::control: the edge pass left no shim in its output folder'; exit 1; fi && \
+                     if cmp -s \"\$EDGERUN\" \"\$SERVER\"; then echo '::error::control failed: the edge pass output folder holds the server file, so the byte comparison cannot tell the builds apart'; exit 1; fi && \
                      echo '::endgroup::'"
 
   windows:
@@ -205,8 +206,8 @@ jobs:
       # The server pass (D9S-7, rung 10): the corpus the edge build emitted, round-tripped by C#
       # through the SERVER shim, staged under the edge file name in a scratch folder (see the
       # header). Into a fresh output folder, and `cmp` fails the lane unless the shim beside the
-      # tests is byte-identical to the server file. The control stages the EDGE file instead and
-      # must turn the same comparison red, on every run.
+      # tests is byte-identical to the server file. The control runs the same comparison on the
+      # edge pass's own output folder, which holds the edge file, and must turn it red on every run.
       - name: Round-trip the corpus from C# (server build, staged under the edge file name)
         shell: bash
         working-directory: integration-tests/binding-abi-conformance/dotnet/BindingAbiConformance
@@ -223,9 +224,12 @@ jobs:
             echo "::error::the shim beside the C# tests is not byte-identical to the server file; the server pass did not test the server build"
             exit 1
           fi
-          CONTROL=$(mktemp -d)
-          cp "${{ steps.emit.outputs.path }}" "$CONTROL/fletcher-c-abi.dll"
-          if cmp -s "$CONTROL/fletcher-c-abi.dll" "$SERVER"; then
-            echo "::error::control failed: the edge file staged instead did not turn the byte comparison red"
+          EDGERUN=bin/Release/net10.0/fletcher-c-abi.dll
+          if [ ! -f "$EDGERUN" ]; then
+            echo "::error::control: the edge pass left no shim in its output folder"
+            exit 1
+          fi
+          if cmp -s "$EDGERUN" "$SERVER"; then
+            echo "::error::control failed: the edge pass output folder holds the server file, so the byte comparison cannot tell the builds apart"
             exit 1
           fi

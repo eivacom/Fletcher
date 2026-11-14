@@ -40,7 +40,7 @@
 
 ## Risks accepted / debt carried
 - **Rung 9's edge half is a test-only rebuild from the edge build's sources, not the shipped edge file**, which sits in another package by identity. What L17 needs from it (the marker export, same source) is identical; recipe drift is caught only by Test 1's build assertion.
-- **Finding, not fixed (Linux):** in edge-first, the refused server copy's calls to its own exported functions can bind to the edge copy's. Only the refused copy is affected, and it refuses before any body runs.
+- **Finding, not fixed (Linux):** in edge-first, the refused server copy's calls to its own exported functions can bind to the edge copy's; in server-first, the refused twin's can bind to the server's (both load orders, code review record). Only the refused copy is affected, and it refuses before any body runs.
 - **Docs owed (not counted):** d9 L5's test list, and its "still answer" bullet names the variant query (L16 already requires it); d9 L17 and BC-15 `[built]`; the ladder's rung 9 "Builds on" note (DEBT-1) and rung 10's emitter departure.
 
 ## Numbers

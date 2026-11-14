@@ -282,7 +282,9 @@ endif()
 # (`fletcher-c-abi-server`), which this file name does not match. It links no Arrow, and it lives in the
 # SERVER package: the edge package's graph is untouched (BC-11), so rung 9 cannot put Arrow on the edge.
 # The shipped edge file sits in another package by identity; what L17 needs from it - the marker export,
-# from one source - is the same here, and `TwoBuilds`'s build assertion catches recipe drift.
+# from one source - is the same here. The twin is a hand copy of the edge recipe: `TwoBuilds`'s build
+# assertion catches only a change to the variant define, not drift in sources, flags or links (registered
+# debt, D9S-7 DEBT-2: one CMake function should build every shim).
 if(FLETCHER_SHIM_VARIANT STREQUAL "server")
     add_library(fletcher-c-abi-edge-twin SHARED
         ${_c_abi_root}/src/binding_version.c
