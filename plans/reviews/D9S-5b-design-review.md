@@ -1,48 +1,56 @@
-# D9S-5b design review — cycle 1
+# D9S-5b design review
 
-**Verdict: NEEDS-REWORK** — 1 BLOCKER (STOP-AND-ASK), 3 DEBT (register, under D9S-5b).
-**Proof of read:** `plans/RIX-rulings.md`, 491 lines, read top to bottom. The highest entry is at line 478:
-"2026-11-14 — D9S-5: every close ends with one closing delivery; D9S-5 splits". The 2026-11-10/11 L9
-rulings and the 2026-11-13 "Accept until stage 6" were applied. Reviewed at `3c7e1d0`.
+## Cycle 1 — NEEDS-REWORK (at `3c7e1d0`; ledger 491 lines, highest entry :478)
+- **B1 (STOP-AND-ASK):** a refused Subscribe could deliver rows or a CLOSING. `subscriber.cpp:597-599` publishes
+  the entry before the `:324-325` refusal, and `binding.h` would then invite a double free or a use-after-free.
+  **Answered by ruling :493, option (a); closed in Cycle 2.**
+- **DEBT-1** (brief: "has decoded a row"; the risk line on idle use-after-free), **DEBT-2** (F1 cell (d); D18
+  records only the ruling), **DEBT-3** (PM: annotate D-D9S-8). All three are in the register under D9S-5b.
+- Pressure tests 1–5 (scope, throw after rows, P3, shape, caps) and the checks (7b, audit 0a carried whole, the
+  tree claims, D-D9S-2/-3/-4): no other findings.
 
-## B1 — A refused Subscribe can still deliver a CLOSING; the design calls that forbidden (STOP-AND-ASK)
-The code contradicts forbidden #2 ("unrepresentable"), the brief's "cannot happen by construction" and Risks'
-unverified "practically unreachable". `subscriber.cpp:597-599` publishes the entry before the options-conflict throw
-(`:324-325`), and only `:633` retires it, after the unwind. A busy topic's delivery there runs `AddRow`, and
-`StopOnThrow`'s `Stop` (`subscriber_arrow.cpp:416-421`) queues a `kClosing` holding that row (any provider).
-Outside a delivery, the CLOSING reaches `on_batch` before `FL_INVALID_ARGUMENT` returns. Under 5b's new `binding.h`
-("CLOSING is the last use of `ctx`") plus "written only on success", a conforming binding frees `ctx` twice. Inside a row
-delivery, `Stop` detaches (`:136-140`) and the CLOSING arrives after the refusal: a use-after-free. Neither is signalled.
-*Acceptable fix:* delete the false claims, state this path, and make `binding.h` say what a refused call may have
-delivered. Forbidding the case is cheaper (~5 lines: discard an unregistered batcher's window and queue), but it leaves
-rows unreported against d7 L1, which is outside the L6 widening. So it is one owner question, not a Risks line.
+## Cycle 2 — APPROVE-WITH-DEBT(3) (at `da4fa84`)
+**Proof of read:** `plans/RIX-rulings.md`, 502 lines, read top to bottom. The highest entry is at line 493:
+"2026-11-14 — D9S-5b: a refused batched subscribe never delivers".
 
-## Pressure tests (no further findings)
-1. **Scope.** In scope. L9's wording edit takes in the same ruling, which itself settles the collision with L9's
-   2026-11-11 text. D1 and Findings (c) are records. D18 is the decision of record that d7's header requires for a law
-   change. It adds law only if it says more than the ruling, e.g. the registration ordering (DEBT-2).
-2. **Throw after rows reached the batcher.** B1: reachable, and verified against the code.
-3. **P3 holds.** `Loop` pushes no `DeliveryScope`. On the batch thread, `~fl_subscriber` runs `~SubscriberArrow`, whose
-   own `Stop` returns at `loop_id_` (`:136`). Both `~Subscriber`s see `InsideDeliveryOn` false, so the provider's
-   `Unsubscribe` is entered, not refused, and that thread holds no gate. The thunk captures only `(on_batch, ctx)`
-   (`batches_server.cpp:100`). Nothing terminates and nothing hangs.
-4. **Shape.** Settled by L6 and L7; not a principle question. With a decoder, L7 forbids a null ("never 'no rows'").
-   Without one, no batch can be built and no schema invented. One point of precision for the owner (DEBT-1): "knows its
-   layout" means "has decoded a row" (L13), so a declared topic closed before its first row gets the null shape.
-5. **Caps.** Neither document is padded to its cap; the corpus list and the texts to correct are required content. The
-   cap shows only where the throw-after-rows case was squeezed into a parenthetical (B1). The brief has 5 lines of room
-   left for As-landed.
+**(1) B1 is closed, and the gate is sound.** Ruling :493 binds exactly what rules 2–3 do: rows are discarded uncounted
+and no closing is sent. It also narrows :478 to accepted subscriptions, which is where L9's "accepted" comes from.
+- *No stall.* `registered_` is written and read under `mu_`, and its setter notifies, so the Loop cannot miss the
+  wake-up. Every success passes `:450`, the only `return` being `:458`. Every throw from `:422` to `:449` reaches
+  `StopOnThrow`, whose unregistered `Stop` wakes the Loop to clear and end. Inside a delivery, `:136-140` detaches and
+  the Loop still ends. A deadline reached while gated closes onto the queue and resets `has_deadline_`: no spin.
+- *No reordering.* There is one FIFO with one consumer. The gate only delays the head of the queue. L12 holds.
+- *Not a third law change.* No law in d7 or d9 promises a batch before `Subscribe` returns. d7 §5's "rows can arrive
+  before `Subscribe` returns" is about rows reaching `AddRow`, and it stays true. L13 holds, because nothing new waits.
+  L2 needs no clause: it says "The exceptions are L1's" (d7:95). The only text that changes is tier-3 prose at
+  `binding.h:1060,1064`, and its new wording promises more than the mechanism gives (DEBT-5).
 
-## Checks
-- **7b, priced:** one flag, one setter, one condition, one call site, one comment: about +9 net production lines (about
-  +2 more if doc comments are counted). Far under 250, so no rung is needed; tests are excluded.
-- **Audit 0a, carried whole:** the 1 delete with its L6 citation; the 7 + 11 re-anchors at the audit's lines, with the
-  tolerance re-anchors first; both watches; the stress tightening; every text the audit lists (d7 L6, L9, D1, Findings
-  (c), D-row; README; hpp; cpp comment; `binding.h` at both sites; c-abi test comments; d9 L1, L15, §1, §2; BC-5; ladder).
-- **Tree claims verified:**
-  - The disarm is at `:450`, after `batchers_`.
-  - The shim does only noexcept steps after `SubscribeBatches` (`binding.cpp:904-914`).
-  - G1 is refused from inside a delivery, so m2 does turn it red.
-  - P1's witness asserts a non-null zero-row `kClosing`.
-- **Locked decisions:** D-D9S-2, -3 and -4 (the interim) are honoured. D-D9S-8 still lists only the fPIC exception; the
-  2026-11-14 widening is not annotated there (DEBT-3).
+**(2) F2 under law (b): sufficient.** F2 asserts the whole promise externally. Its green is deterministic, because any
+call to a refused sink fails it. Under m2 it is red on **every** attempt: an idle refused close with `registered_` set
+queues an empty CLOSING. That gives the closing half an external, deterministic red. Only the caught-rows half takes
+its red from D7-2, which is d7 L1's own cited proof at d7's public surface; the shim adds no code on that path. So no
+promise rests on a supplementary leg alone. G1 is a d7 test, not an external one. Close wording is owed (DEBT-4).
+
+**(3) DEBT-1 and DEBT-2 are applied.** DEBT-1: brief :8-9 and :40-42; design :22 and :121-123. DEBT-2: F1 cell (d);
+d9 L15's clause marked `[built]`; D18/D19 "recording the rulings only". DEBT-3 is still open for the PM, and has
+grown: `D9S-locked-decisions.md:30` names only the fPIC exception, and now owes :478 (L6/L9) and :493 (L1).
+
+**(4) 7b fits; no rung split is needed.** Priced from the work: one flag and its setter, the call site, the `Close`
+condition, the Loop gate and clear, and rule 3. That is about +20/−4 in one production file, and the shim is 0, against
+a ceiling of 250. Tests and doc text are not counted (ladder :15). Even at double that figure, no split is needed.
+
+**(5) Caps.** The design is at its cap (147/150) but not padded. The cap costs precision in one place: "no batch
+before Subscribe returns" squeezes "no batch before registration" (DEBT-5). The brief is 52/60 and not cap-sized.
+
+### DEBT (register, D9S-5b)
+- **DEBT-4: m4 is an equivalent mutant.** Rule 2's Loop clears the queue whenever a batcher stops while unregistered.
+  A closing that m4 lets an unregistered `Stop` queue is therefore cleared, and D7-2's `max_rows` 100 cell stays
+  green. *Fix:* delete rule 3 and m4. One mechanism then remains, and m3 (today's Loop restored whole) kills both D7-2
+  cells. Or keep rule 3 and declare m4 equivalent. At close, report F2 as the external proof, with its measured
+  pre-change red rate (even if 0) and m2's deterministic red. Do not report it as "a guard, with D7-2 carrying the red".
+- **DEBT-5: the header promises more than the gate gives.** `registered_` is set at `:450`, inside `Subscribe`, and
+  the shim writes `*out_id` after the call (`binding.cpp:913`). So `on_batch` can run before the call returns and before
+  `out_id` is written. A binding that trusts "no batch before the call returns" and reads the id from its `ctx` races,
+  with no signal. *Fix, in the code commit:* "no batch is delivered unless the call succeeds. The first may arrive while
+  it is returning, before `out_id` is written: correlate by `ctx`." Apply it to `binding.h` :1060-1064, the C++ hpp and
+  README, and the design and brief risk lines. The C++ phrase the design quotes is not in the hpp or README, so add it.
