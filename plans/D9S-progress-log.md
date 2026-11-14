@@ -256,3 +256,7 @@ Resumed the same day. PS-1: owner chose "CI stages a renamed copy (Rec.)" (ledge
 - Words per stage: about 6,540 since the caps ruling.
 - Test-volume close findings in 4a, 5b and 6.
 - Plugin version mismatch: source 0.10.0, marketplace 0.9.1.
+
+## D9S-7 — ejected from the light lane (2026-11-14)
+
+At phase B, CI YAML measured **65 non-comment touched lines** (+77/−15 raw in 2 files). The brief declared ~38 touched lines, and admission is 60. Ejected to the full loop: a design doc, the architecture review and a compliance review are dispatched; phase A/B work (`f1a099e`) is carried forward unchanged. The overrun is mostly comments, plus the Linux `bash -c` block that must carry the same steps.
