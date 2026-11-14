@@ -90,7 +90,8 @@ first batched entry point: L12 requires the two builds to export the same set at
 **Accumulation and deletion checks.** Rung 1 creates BC-10's single site, rung 2 gives it a second
 value, and rung 4's refusal reads it, so no second `#if` is ever written. The Arrow-free check
 (rung 3) is in place before the first Arrow link (rung 4). The C delivery shape is designed once, at
-rung 4, and rungs 5-8 add behaviour behind it, never a signature change. The no-batch delivery exists
+rung 4, and rungs 5-8 add behaviour behind it, never a signature change, except rung 8's appended
+`failure` field (owner ruling 2026-11-14, ledger :504). The no-batch delivery exists
 (rung 4) before L18 reuses it (rung 8). Closing (rung 6) exists before the no-timeout arm needs it
 (rung 7). No rung builds something a later rung deletes.
 
