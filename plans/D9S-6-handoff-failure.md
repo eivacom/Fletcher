@@ -133,7 +133,7 @@ subscription** (DEBT-3, applied): arm hand-over k, publish 5 rows, close from ou
 - **C1 adds about 20 s to CI.** No coexistence window. Domains 7 and 2 and `dotnet/` are untouched.
 
 ## Files-to-touch
-- **Code:** `c-abi/src/batches_server.cpp`.
+- **Code:** `c-abi/src/batches_server.cpp`; `c-abi/src/handles.hpp` (DEBT-5).
 - **Header:** `c-abi/include/fletcher/abi/binding.h` (`failure`, `FL_ORIGIN_HANDOVER`, and their docs).
 - **Tests:** `c-abi/tests/handover_fault.cpp` (new), `c-abi/tests/CMakeLists.txt`, `c-abi/tests/test_batches.cpp`.
 - **Docs:** step 6's texts, in `docs/domains/d9-c-abi-shim.md`, `bounded-context-register.md` and `c-abi/README.md`.

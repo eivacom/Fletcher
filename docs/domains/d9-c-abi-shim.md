@@ -170,7 +170,7 @@ Wait outcomes (`FL_PENDING`, `FL_SUBSCRIPTION_ENDED`) are returned values, never
 - **A failure handed to a batch callback is borrowed for the callback** (D32, ruling 2026-11-14): a
   failed hand-over's `fl_batch.failure` (L18), like the rest of the batch (L11). A binding copies it to
   keep it and never disposes it; the shim disposes it when the callback returns. A failure an entry
-  point returns stays the caller's. `[built]` (D9S-6; Windows, by hand; CI and Linux unrun; `handover.Batches.AWindowTheShimCannotHandOverStillArrivesCounted`).
+  point returns stays the caller's. `[built]` for the borrowed field's contents (the disposal is by inspection, untested) (D9S-6; Windows, by hand; CI and Linux unrun; `handover.Batches.AWindowTheShimCannotHandOverStillArrivesCounted`).
 - `Capture` casts `PubSubStatus` to `fl_status` (`containment.cpp:66`). Nothing in `c-abi/` asserts
   the two enums agree; `h:180-183` says a C# port of `test_status_taxonomy` compares the C# enum to
   the published table, and no such test was found under `dotnet/tests` (unsure; see Findings c).
@@ -433,12 +433,12 @@ census C5 and A37 / F12. Without it, a throw from the thunk is swallowed by doma
 - **A law, not an L14 clause:** L14 says what a batch is and who releases it; L18 answers a
   different question ("is a failed hand-over reported?") with its own single site and its own
   structural test (BC-12: Σ`num_rows` + Σ dropped seen by the C caller equals the rows offered, with
-  the export failing on a chosen window). Kept apart so each law has one test.
+  the hand-over failing on a chosen window; the test fails it after the export). Kept apart so each law has one test.
 - **Settled (D32, ruling 2026-11-14):** "its reason kept" is the window's own reason (domain 7's
   `BatchStatus`, CLOSING included, ruling 2026-11-14), and the failure crosses beside it in
   `fl_batch.failure`: its status (`FL_INTERNAL` for an allocation or export failure),
   `FL_ORIGIN_HANDOVER` (4) and its message, borrowed for the callback (L2). Every window reaches
-  the callback exactly once; a callback that throws anyway is swallowed after it has its window.
+  the callback exactly once (L15, BC-9; a throwing callback is handled, not ruled: design D9S-6 step 2).
 
 ## 4. The interface
 
