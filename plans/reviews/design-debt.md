@@ -833,7 +833,7 @@ Review: [../../docs/archive/D7F/reviews/D7F-1-design-review.md](../../docs/archi
 - ~~DEBT-4 (step 3, docs): BC-3 gap, d7 Findings, BC-8 hint clause, bitmap residue~~ Landed in `c18e95e` (d7 Q8 and Findings (d); register BC-3, BC-8).
 
 ## D9S-2 — the shim's server build (APPROVE-WITH-DEBT(4), cycle 1 of 2) — [review](D9S-2-design-review.md)
-- **DEBT-1 (D9S-7):** P3 fires when rung 10 creates a server package in the conformance lane. Re-anchor `ci.integration-test.binding-abi-conformance.yml:86, :150` with `locate_shim.sh` in that commit, and annotate ladder rung 9's "Builds on" with R1's 10–20 lines.
+- ~~DEBT-1 (D9S-7): P3 fires when rung 10 creates a server package in the conformance lane. Re-anchor `ci.integration-test.binding-abi-conformance.yml:86, :150` with `locate_shim.sh` in that commit, and annotate ladder rung 9's "Builds on" with R1's 10–20 lines.~~ Landed in the D9S-7 stage commit (both lookups by package identity; `plans/D9S-test-ladder.md` rung 9 annotated).
 - ~~DEBT-2~~ Applied to the brief before the owner read it (`fd6dcd2`).
 - ~~DEBT-3~~ Recorded at close: production +339/−74 (D9S-2 brief As landed).
 - ~~DEBT-4~~ Landed in `0a43e99` (server shim size printed on both legs, not enforced).

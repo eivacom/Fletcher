@@ -228,7 +228,9 @@ links Fletcher and hosts a binding) is ruled out by fact, not by check (D-BIND-1
   first copy saw one module and stays healthy. Nothing can be created through the second, so the
   forked state is not reachable through it. The header says "REFUSES TO INITIALISE" (`h:382-385`),
   which reads as both.
-- Void entry points and `fl_binding_abi_version` still answer in a poisoned shim.
+- Void entry points, `fl_binding_abi_version` and the variant query (L16) still answer in a poisoned
+  shim, and its marker text is unchanged `[built]` (D9S-7: `TwoBuilds.ARefusedBuildStillAnswersItsVariantAndVersion`;
+  Windows by hand; CI and Linux unrun).
 - **Two packages, one process** (D22, 2026-11-13): an application may reference both the base and
   the server package, so two full shims can reach one application's output. The law still holds:
   only one may load per process, and a second loaded is refused by this check (L17). How the two
@@ -237,7 +239,9 @@ links Fletcher and hosts a binding) is ruled out by fact, not by check (D-BIND-1
 - Tests: `SingleCopy.TheMarkerIsExportedAndIdentifiesTheShim`, `.TheShimItselfIsFound`,
   `.ASecondMarkerExportIsFound` (a decoy module), `.TheAnswerFollowsTheProcess`,
   `.AHealthyProcessIsNotPoisoned`, `Containment.APoisonedShimRefusesWithoutRunningTheCall`,
-  `Containment.ClearingTheRefusalRestoresService`.
+  `Containment.ClearingTheRefusalRestoresService`; with a real second shim in either load order
+  (D9S-7), `server-first.` and `edge-first.TwoBuilds.TheLaterBuildRefusesNamingBothAndTheFirstKeepsWorking`
+  and `.ARefusedBuildStillAnswersItsVariantAndVersion`.
 
 **L6. A change to the ABI is never silent.** The loaded shim reports its version; within a major
 the header is append-only; before 1.0 there is no compatibility guarantee, so a binding refuses a
@@ -416,7 +420,8 @@ type, and whether it changes the ABI version (Q8) are the shim round's design.
 **L17. One shim per process holds across variants and packages.** A process loads the edge variant
 or the server variant, never both, even when the application references both the base and the
 server package. Both builds export the marker, so L5's check refuses the later one.
-`[designed-not-built]`. Source: the 2026-11-12 rejection of a second native library; D-BIND-17 as
+`[built]` (D9S-7: both load orders, `server-first.TwoBuilds.*` and `edge-first.TwoBuilds.*`, against a same-source
+test rebuild of the edge build, not the shipped edge file; Windows by hand; CI and Linux unrun). Source: the 2026-11-12 rejection of a second native library; D-BIND-17 as
 revised 2026-11-13 ("two packages, each a full shim; one shim per process still holds"; D22).
 
 **L18. A batch the shim cannot hand over is reported, never lost silently.** When the shim cannot

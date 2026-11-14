@@ -269,3 +269,77 @@ if(FLETCHER_SHIM_VARIANT STREQUAL "server")
         TEST_PREFIX "handover."
         PROPERTIES TIMEOUT 30)
 endif()
+
+# ---------------------------------------------------------------------------
+# THE TWO-BUILDS PROOF (D9S-7, rung 9; d9 L5, L16, L17, BC-15), server only, TEST-ONLY. A process that
+# holds BOTH builds, in either load order, gets one working shim; the later copy refuses and names both.
+#
+# One program cannot link both builds (they export the same names), so each executable links ONE and
+# loads the OTHER by path, once. The edge half is `fletcher-c-abi-edge-twin`: the edge build's own sources
+# and settings (`FL_VARIANT_EDGE`, `batches_edge.cpp`, the same visibility and export map) rebuilt under a
+# name of their own, beside the server shim. It exists only here, so it can never ship: this directory is
+# built with FLETCHER_BUILD_TESTS alone, and `package()`'s patterns name the shipped stem
+# (`fletcher-c-abi-server`), which this file name does not match. It links no Arrow, and it lives in the
+# SERVER package: the edge package's graph is untouched (BC-11), so rung 9 cannot put Arrow on the edge.
+# The shipped edge file sits in another package by identity; what L17 needs from it - the marker export,
+# from one source - is the same here, and `TwoBuilds`'s build assertion catches recipe drift.
+if(FLETCHER_SHIM_VARIANT STREQUAL "server")
+    add_library(fletcher-c-abi-edge-twin SHARED
+        ${_c_abi_root}/src/binding_version.c
+        ${_c_abi_root}/src/builtins.cpp
+        ${_c_abi_root}/src/binding.cpp
+        ${_c_abi_root}/src/batches_edge.cpp)
+    target_compile_features(fletcher-c-abi-edge-twin PRIVATE c_std_99 cxx_std_20)
+    set_target_properties(fletcher-c-abi-edge-twin PROPERTIES
+        C_VISIBILITY_PRESET hidden
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON
+        RUNTIME_OUTPUT_DIRECTORY $<TARGET_FILE_DIR:fletcher-c-abi>
+        LIBRARY_OUTPUT_DIRECTORY $<TARGET_FILE_DIR:fletcher-c-abi>)
+    target_compile_definitions(fletcher-c-abi-edge-twin PRIVATE FLETCHER_C_ABI_BUILDING
+        FLETCHER_C_ABI_VARIANT=FL_VARIANT_EDGE)
+    if(NOT MSVC)
+        target_link_options(fletcher-c-abi-edge-twin PRIVATE
+            "LINKER:--exclude-libs,ALL"
+            "LINKER:--version-script=${_c_abi_root}/cmake/exports.map")
+        set_target_properties(fletcher-c-abi-edge-twin PROPERTIES
+            LINK_DEPENDS ${_c_abi_root}/cmake/exports.map)
+    endif()
+    target_include_directories(fletcher-c-abi-edge-twin
+        PUBLIC ${_c_abi_root}/include
+        PRIVATE ${_c_abi_root}/src)
+    target_link_libraries(fletcher-c-abi-edge-twin PRIVATE
+        fletcher-c-abi-impl
+        fletcher-pubsub::fletcher-pubsub
+        fletcher-fastdds-pubsub-provider::fletcher-fastdds-pubsub-provider
+        fletcher-xrcedds-pubsub-provider::fletcher-xrcedds-pubsub-provider)
+
+    # server-first: links the server shim, loads the edge twin. edge-first: the reverse. Same source,
+    # the build each links given as a LITERAL (1 edge, 2 server), the file names as names only.
+    add_executable(c_abi_two_builds_server_first test_two_builds.cpp)
+    target_compile_definitions(c_abi_two_builds_server_first PRIVATE
+        FLETCHER_TWO_BUILDS_LINKED_VARIANT=2
+        FLETCHER_TWO_BUILDS_LINKED_NAME="$<TARGET_FILE_NAME:fletcher-c-abi>"
+        FLETCHER_TWO_BUILDS_OTHER_NAME="$<TARGET_FILE_NAME:fletcher-c-abi-edge-twin>")
+    target_link_libraries(c_abi_two_builds_server_first PRIVATE GTest::gtest_main fletcher-c-abi)
+    add_dependencies(c_abi_two_builds_server_first fletcher-c-abi-edge-twin)
+    set_target_properties(c_abi_two_builds_server_first PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY $<TARGET_FILE_DIR:fletcher-c-abi>)
+    gtest_discover_tests(c_abi_two_builds_server_first DISCOVERY_MODE PRE_TEST
+        TEST_PREFIX "server-first."
+        PROPERTIES TIMEOUT 30)
+
+    add_executable(c_abi_two_builds_edge_first test_two_builds.cpp)
+    target_compile_definitions(c_abi_two_builds_edge_first PRIVATE
+        FLETCHER_TWO_BUILDS_LINKED_VARIANT=1
+        FLETCHER_TWO_BUILDS_LINKED_NAME="$<TARGET_FILE_NAME:fletcher-c-abi-edge-twin>"
+        FLETCHER_TWO_BUILDS_OTHER_NAME="$<TARGET_FILE_NAME:fletcher-c-abi>")
+    target_link_libraries(c_abi_two_builds_edge_first PRIVATE GTest::gtest_main
+        fletcher-c-abi-edge-twin)
+    add_dependencies(c_abi_two_builds_edge_first fletcher-c-abi)
+    set_target_properties(c_abi_two_builds_edge_first PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY $<TARGET_FILE_DIR:fletcher-c-abi>)
+    gtest_discover_tests(c_abi_two_builds_edge_first DISCOVERY_MODE PRE_TEST
+        TEST_PREFIX "edge-first."
+        PROPERTIES TIMEOUT 30)
+endif()

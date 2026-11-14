@@ -39,6 +39,20 @@ on:
 # never emitted makes the C# half a theory with no cases, and a theory with no
 # cases passes.
 #
+# THE SERVER PASS (D9S-7, rung 10; ruling 2026-11-14 "CI stages a renamed copy"). The same C#
+# rows run a second time against the SERVER build, so d9 L13 ("the server build only adds") is
+# checked from C# as well as from C++. C# loads only `fletcher-c-abi`, and the server file is
+# `fletcher-c-abi-server`, so this lane STAGES a copy of the server file under the edge file
+# name in a scratch folder. That is test staging and decides nothing about how packing names
+# files (d9 Q5a stays domain 10's); nothing under dotnet/ changes. The corpus is the one the
+# EDGE build emitted: C# round-trips it through each build, so the server pass compares server
+# bytes with edge bytes (a corpus emitted by the server build would compare it with itself).
+# Two guards keep the pass honest. It runs into its own fresh output folder, and `cmp` fails
+# the lane unless the shim beside the C# tests is byte-identical to the server file, so a stale
+# edge file left from the first pass cannot be re-tested under the server's name. And each
+# shim is found by the identity of its package (scripts/locate_shim.sh), never as the first
+# file with that name: the cache holds both builds, and the lookup refuses none or several.
+#
 # THE CHECKOUT INCLUDES c-abi/tests, and that is not a stray entry: the emitter
 # includes `codec_corpus.hpp` from there, because the scenarios this suite
 # round-trips must be the SAME objects the codec's byte-identity test uses
@@ -58,6 +72,8 @@ jobs:
             fastdds-pubsub-provider
             xrcedds-pubsub-provider
             c-abi
+            pubsub-arrow
+            scripts
             dotnet
             integration-tests/binding-abi-conformance
             .conan-profiles
@@ -75,16 +91,19 @@ jobs:
             fletcher-build \
             bash -c "set -e && \
                      PROFILE=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release && \
-                     for COMPONENT in core pubsub arrow-bridge fastdds-pubsub-provider xrcedds-pubsub-provider c-abi; do \
+                     for COMPONENT in core pubsub arrow-bridge pubsub-arrow fastdds-pubsub-provider xrcedds-pubsub-provider c-abi; do \
                        echo '::group::conan create '\$COMPONENT && \
                        (cd \$COMPONENT && conan create . --build=missing -pr:a=\$PROFILE) && \
                        echo '::endgroup::'; \
                      done && \
+                     echo '::group::conan create c-abi (server build)' && \
+                     (cd c-abi && conan create . --build=missing -pr:a=\$PROFILE -o '&:variant=server') && \
+                     echo '::endgroup::' && \
                      echo '::group::build the emitter' && \
                      (cd integration-tests/binding-abi-conformance && conan build . --build=missing -pr:a=\$PROFILE) && \
                      echo '::endgroup::' && \
-                     SHIM=\$(find ~/.conan2/p -path '*/p/lib/libfletcher-c-abi.so' -type f -print -quit) && \
-                     if [ -z \"\$SHIM\" ]; then echo '::error::libfletcher-c-abi.so not found after conan create'; exit 1; fi && \
+                     SHIM=\$(bash scripts/locate_shim.sh fletcher-c-abi variant=edge) && \
+                     SERVER=\$(bash scripts/locate_shim.sh fletcher-c-abi-server variant=server) && \
                      EMITTER=\$(find integration-tests/binding-abi-conformance -name emit_corpus -type f -print -quit) && \
                      if [ -z \"\$EMITTER\" ]; then echo '::error::emit_corpus was not built'; exit 1; fi && \
                      RUNENV=\$(find integration-tests/binding-abi-conformance -name conanrun.sh -print -quit) && \
@@ -93,9 +112,18 @@ jobs:
                      . \"\$RUNENV\" && \
                      \$EMITTER /workspace/corpus-out && \
                      echo '::endgroup::' && \
-                     echo '::group::dotnet test' && \
-                     cd integration-tests/binding-abi-conformance/dotnet/BindingAbiConformance && \
-                     FLETCHER_CORPUS_DIR=/workspace/corpus-out dotnet test -c Release -p:FletcherNativeShim=\$SHIM && \
+                     echo '::group::dotnet test (edge build)' && \
+                     (cd integration-tests/binding-abi-conformance/dotnet/BindingAbiConformance && \
+                      FLETCHER_CORPUS_DIR=/workspace/corpus-out dotnet test -c Release -p:FletcherNativeShim=\$SHIM) && \
+                     echo '::endgroup::' && \
+                     echo '::group::dotnet test (server build, staged under the edge file name)' && \
+                     STAGE=\$(mktemp -d) && OUT=\$(mktemp -d) && \
+                     cp \"\$SERVER\" \"\$STAGE/libfletcher-c-abi.so\" && \
+                     (cd integration-tests/binding-abi-conformance/dotnet/BindingAbiConformance && \
+                      FLETCHER_CORPUS_DIR=/workspace/corpus-out dotnet test -c Release -o \"\$OUT\" -p:FletcherNativeShim=\"\$STAGE/libfletcher-c-abi.so\") && \
+                     if ! cmp -s \"\$OUT/libfletcher-c-abi.so\" \"\$SERVER\"; then echo '::error::the shim beside the C# tests is not byte-identical to the server file; the server pass did not test the server build'; exit 1; fi && \
+                     CONTROL=\$(mktemp -d) && cp \"\$SHIM\" \"\$CONTROL/libfletcher-c-abi.so\" && \
+                     if cmp -s \"\$CONTROL/libfletcher-c-abi.so\" \"\$SERVER\"; then echo '::error::control failed: the edge file staged instead did not turn the byte comparison red'; exit 1; fi && \
                      echo '::endgroup::'"
 
   windows:
@@ -110,6 +138,8 @@ jobs:
             fastdds-pubsub-provider
             xrcedds-pubsub-provider
             c-abi
+            pubsub-arrow
+            scripts
             dotnet
             integration-tests/binding-abi-conformance
             .conan-profiles
@@ -129,11 +159,16 @@ jobs:
         run: |
           set -e
           PROFILE=.conan-profiles/Windows-msvc194-x86_64-Release
-          for COMPONENT in core pubsub arrow-bridge fastdds-pubsub-provider xrcedds-pubsub-provider c-abi; do
+          for COMPONENT in core pubsub arrow-bridge pubsub-arrow fastdds-pubsub-provider xrcedds-pubsub-provider c-abi; do
             echo "::group::conan create $COMPONENT"
             (cd "$COMPONENT" && conan create . --build=missing -pr:a="../$PROFILE")
             echo "::endgroup::"
           done
+          # The server build too (no tests: ci.c-abi.yml runs them). Both builds are in the
+          # cache for the whole lane, which is why every lookup below is by package identity.
+          echo "::group::conan create c-abi (server build)"
+          (cd c-abi && conan create . --build=missing -pr:a="../$PROFILE" -o "&:variant=server")
+          echo "::endgroup::"
 
       - name: Build the emitter
         shell: bash
@@ -141,17 +176,14 @@ jobs:
         run: conan build . --build=missing -pr:a=../../.conan-profiles/Windows-msvc194-x86_64-Release
 
       # Checked, not trusted: the suite FAILS rather than skips when either the
-      # shim or the corpus is missing, so an empty find must stop the job here
-      # with a diagnostic rather than produce a green run over nothing.
+      # shim or the corpus is missing, so a lookup that finds none or several must
+      # stop the job here with a diagnostic rather than produce a green run over
+      # nothing. The edge shim is found by its package's identity (locate_shim.sh).
       - name: Emit the corpus
         shell: bash
         run: |
           set -e
-          SHIM=$(find ~/.conan2/p -path '*/p/bin/fletcher-c-abi.dll' -type f -print -quit)
-          if [ -z "$SHIM" ]; then
-            echo "::error::fletcher-c-abi.dll not found in the Conan cache after conan create"
-            exit 1
-          fi
+          SHIM=$(bash scripts/locate_shim.sh fletcher-c-abi variant=edge)
           echo "path=$SHIM" >> "$GITHUB_OUTPUT"
           EMITTER=$(find integration-tests/binding-abi-conformance -name emit_corpus.exe -type f -print -quit)
           if [ -z "$EMITTER" ]; then
@@ -163,9 +195,37 @@ jobs:
           PATH="$(dirname "$SHIM"):$PATH" "$EMITTER" "$(pwd -W)/corpus-out"
         id: emit
 
-      - name: Round-trip the corpus from C#
+      - name: Round-trip the corpus from C# (edge build)
         shell: bash
         working-directory: integration-tests/binding-abi-conformance/dotnet/BindingAbiConformance
         env:
           FLETCHER_CORPUS_DIR: ${{ github.workspace }}\corpus-out
         run: dotnet test -c Release -p:FletcherNativeShim="${{ steps.emit.outputs.path }}"
+
+      # The server pass (D9S-7, rung 10): the corpus the edge build emitted, round-tripped by C#
+      # through the SERVER shim, staged under the edge file name in a scratch folder (see the
+      # header). Into a fresh output folder, and `cmp` fails the lane unless the shim beside the
+      # tests is byte-identical to the server file. The control stages the EDGE file instead and
+      # must turn the same comparison red, on every run.
+      - name: Round-trip the corpus from C# (server build, staged under the edge file name)
+        shell: bash
+        working-directory: integration-tests/binding-abi-conformance/dotnet/BindingAbiConformance
+        env:
+          FLETCHER_CORPUS_DIR: ${{ github.workspace }}\corpus-out
+        run: |
+          set -e
+          SERVER=$(bash "$GITHUB_WORKSPACE/scripts/locate_shim.sh" fletcher-c-abi-server variant=server)
+          STAGE=$(mktemp -d)
+          OUT=$(mktemp -d)
+          cp "$SERVER" "$STAGE/fletcher-c-abi.dll"
+          dotnet test -c Release -o "$(cygpath -m "$OUT")" -p:FletcherNativeShim="$(cygpath -m "$STAGE/fletcher-c-abi.dll")"
+          if ! cmp -s "$OUT/fletcher-c-abi.dll" "$SERVER"; then
+            echo "::error::the shim beside the C# tests is not byte-identical to the server file; the server pass did not test the server build"
+            exit 1
+          fi
+          CONTROL=$(mktemp -d)
+          cp "${{ steps.emit.outputs.path }}" "$CONTROL/fletcher-c-abi.dll"
+          if cmp -s "$CONTROL/fletcher-c-abi.dll" "$SERVER"; then
+            echo "::error::control failed: the edge file staged instead did not turn the byte comparison red"
+            exit 1
+          fi
