@@ -48,4 +48,5 @@ Declared net lines: production +20 / −4 (batcher), +0 / −0 (shim); tests ~+4
 new public surface: 0 · design cycles used: 2/2
 
 ---
-*As landed:* (PM, at close)
+*As landed — 5b, 2026-11-14:* domain 7 has 19 touched non-comment lines in `subscriber_arrow.cpp` (≈+18/−4 declared); the shim has 0. Tests +791/−73 (1.7× the declared ~+470; close finding). Decision 1 was ruled "(a) Never" (:493).
+Fix 1 kept a second guard in `Close` (rule 3, DEBT-4 (b)); deleting it is an equivalent mutant. The d7 L1 and L6 headlines now carry their exceptions. 1 test deleted, 18 re-anchored. Cycles: design 2, fix 1, implementer launches 1 (resumed 3×).

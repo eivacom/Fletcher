@@ -23,12 +23,7 @@ D7-2 is deterministic. `DeliverThenFailProvider` calls back synchronously and th
 
 ## Findings
 
-**S1 · should-fix · confidence medium. An unregistered `Stop` still builds and queues a `kClosing`; the design says it discards.**
-`Close` returns early only when idle. With rows pending and `registered_` false it runs `Finish()` and `queue_.push_back(...)` (cpp:256-274). Only `Loop`'s discard branch keeps that closing from being delivered, so the refused clause rests on one gate instead of two.
-- Design rule 3 ("queues no `kClosing`") is not what landed, and mutation m4 ("let an unregistered Stop queue its window") describes the current code, so m4 can never go red.
-- The batcher in a refused subscribe is stopped by `StopOnThrow` while the stack is unwinding. A `bad_alloc` from `push_back` there calls `std::terminate`, for a batch that is thrown away anyway.
-
-Fix: at the top of `Close`, add `if (reason == kClosing && !registered_) return;`. The builders' rows are freed with `decoder_` at the end of `Loop`, outside `mu_`. Keep the queue discard in `Loop` for full windows queued earlier. Or amend rule 3 and drop m4.
+**S1 · should-fix · confidence medium.** An unregistered `Stop` built and queued a `kClosing` (design rule 3 says it discards; m4 could not go red; `bad_alloc` during unwind could terminate). Fixed in f140eb3; closed in cycle 2.
 
 ## Nits
 - N1 (high): F2's inside half cannot catch the race. `inprocess` holds its instance mutex through the row delivery that makes the attempt, so the flood cannot reach `busy` during it. Only m2 can turn that half red. The test's header comment ("half … from inside") should say so.
@@ -43,22 +38,20 @@ Fix: at the top of `Close`, add `if (reason == kClosing && !registered_) return;
 `60ff057..f140eb3`. **Verdict: APPROVE.** 0 blocking · 0 should-fix · 0 nits. S1 is closed. Read only, nothing was built.
 
 **S1 fix (cpp:257).**
-- The lock is right. `Close` has three callers (`Stop`, `AddRow`, `Loop`), and each holds `mu_`. `registered_` is written only under `mu_` in `MarkRegistered`.
-- The terminate path is closed. While unwinding, `StopOnThrow` now leads to `Stop`, then `Close(kClosing)`, which returns before `Finish()` and `queue_.push_back`. Nothing allocates on the way.
-- The rows that were pending stay where they are. `decoder_` is freed at the end of `Loop`, outside `mu_`, and `atts_` goes when the batcher does.
+- The lock is right: all three `Close` callers hold `mu_`.
+- The terminate path is closed: during unwind, `Close(kClosing)` returns before `Finish()` and `queue_.push_back`, so nothing allocates.
+- Pending rows are freed with `decoder_` at the end of `Loop`, outside `mu_`; `atts_` goes with the batcher.
 - The rewritten idle test (`reason != kClosing`) is equivalent: past the new line, `kClosing` implies `registered_`.
-- Loop's discard is unchanged. A refused batcher can still have windows in `queue_` that closed earlier (`kRowLimit` from `AddRow`, `kTimeout` from `Loop`). The `stopped_ && !registered_` branch still swaps them out and frees them outside `mu_`.
+- Loop's discard is unchanged and still frees windows closed earlier (`kRowLimit`, `kTimeout`) outside `mu_`.
 - Skipping `has_deadline_ = false` is harmless, because `Loop` takes the discard branch first.
 
 **Two gates: acceptable, keep both.** They do not overlap in purpose.
-- `Loop`'s gate is the only one that matters for correctness. It holds back windows that closed before registration, and it discards them on refusal. The `max_rows 1` cell kills m3, as the design says.
-- The `Close` gate exists so that nothing allocates during unwind. Its only observable difference is under `bad_alloc`, so deleting it is an equivalent mutant for every delivery-observing test. That is the nature of a no-throw guard, not a design flaw. Do not write a test for it.
+- `Loop`'s gate is the only one that matters for correctness: it holds back pre-registration windows and discards them on refusal. The `max_rows 1` cell kills m3.
+- The `Close` gate only keeps unwind allocation-free, so deleting it is an equivalent mutant for every delivery-observing test. That is the nature of a no-throw guard, not a design flaw. Do not write a test for it.
 - The `max_rows 100` cell now guards the pair: it goes red only if both gates are gone. Keep it.
 - Step 3 / close should record this mutant as equivalent so nobody expects it to go red.
 
-**N3 comment (cpp:476).** Accurate for `Unsubscribe`. Losing an idle closing there is still unreachable under P5.
-
-**Stop comment (cpp:134).** Matches the code: exactly one `kClosing`, behind what is already queued; none when unregistered; idempotent.
+**Comments.** N3 (cpp:476): accurate for `Unsubscribe`; still unreachable under P5. `Stop` (cpp:134): matches the code: exactly one `kClosing`, behind what is already queued; none when unregistered; idempotent.
 
 ## RECORD:
 - cpp:476: the destructor also closes, and it does so without an id. It is excluded only because destroying the object during a member call breaks the contract. The comment names only "closing needs the id".

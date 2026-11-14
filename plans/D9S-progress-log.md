@@ -184,3 +184,32 @@ scope). Record: d9 L8 / design said `run_tests` leaves the package ID — false 
 **D9S-5b, 2026-11-14:** design review cycle 1 NEEDS-REWORK (B1: a refused subscribe can deliver). Cycle 2 framed it as Decision 1. Owner: "(a) Never (Rec.)" (ledger). The round is widened by the d7 L1 refused-subscribe clause; config updated.
 
 **D9S-5b note (4a, 2026-11-14):** d7 L9 was also revised. The compliance review reads its new wording as restating rulings :478 and :493 ("accepted"), so it is not a third law change, and D-D9S-8 already names L6/L9. No owner question is needed. The 4a review sits at exactly its 60-line cap, carrying 2 blockers and 6 RECORD items.
+
+## D9S-5b — Every accepted close ends with one closing delivery; a refused batched subscribe never delivers — 🟢 2026-11-14
+
+**Landed:** re-anchors `f1e8363`, code `60ff057`, fix `f140eb3`, record `3903911`. In domain 7, a `registered_` flag gates delivery. An accepted subscription's close always queues exactly one closing, last: a zero-row batch if it has decoded a row, null if not. A refused one queues and delivers nothing. The d7 L1, L6 and L9 texts and D18/D19 were amended per rulings :478 and :493. The shim's code is unchanged; `binding.h` text only (DEBT-5).
+
+**Steps:**
+- 0a: MUST-DELETE(1), with 18 re-anchors (11 for tolerance).
+- Design cycle 1: NEEDS-REWORK. B1 found that a refused subscribe could deliver.
+- Design cycle 2: B1 framed as Decision 1; owner "(a) Never (Rec.)". Then APPROVE-WITH-DEBT(3), with DEBT-3 handled by the PM.
+- Phase A: red, the deletion and re-anchors. 0b: CLEAR. Green.
+- 4a: ISSUES, B1/B2 (the d7 L1/L6 headlines). 4b: APPROVE, S1 (a refused close could still build a closing).
+- Fix 1. 4a cycle 2: B3, a record mismatch between the design and the code over rule 3. The PM corrected it in place (DEBT-4 (b)).
+- 4b cycle 2: APPROVE. The 4b review was then cut from 67 to 60 lines.
+
+**Verification:**
+- pubsub-arrow 59/59, c-abi server 111/111 and edge+probe 116/116, fastdds 4/4, all at `f140eb3`.
+- Conformance 11/11 and 11/11 at `60ff057`. That lane is codec-only; fix 1 changed only d7's `Close`.
+- m1, m2 and m3 go red; m4 is an equivalent mutant.
+- F2 before the change: red in 20 of 20 runs (91–98 of 100 outside; 0 of 100 inside). Under m2: 200 of 200 in 10 of 10 runs.
+- CI and Linux unrun.
+
+**Numbers:** d7 has 19 touched non-comment lines, the shim 0. Tests +791/−73. **Close finding:** tests came to 1.7× the declared ~+470, with no owner note. Design cycles 2, fix cycles 1, implementer launches 1 (resumed 3×). Owner touches: 1 (Decision 1).
+
+**For the owner at round close (4a N1):** d7 L9's wording was revised as a restatement of :478/:493. The reviewers judge it is not a third law change, and the owner should confirm that at ingest.
+
+**Logged:**
+- 4b record: the comments at cpp:476 ("closing needs the id"; the destructor also closes) and cpp:136 ("gets none" means nothing at all) are imprecise.
+- 4b nits N1/N2: F2's header comment; a positive control for D7-2.
+- The implementer's runner once deleted the clean cache package; it was rebuilt from identical source.
