@@ -45,7 +45,7 @@ containment.
   `[built]` (subscribe D9S-4a, close D9S-5a). Never
   carries Arrow C++, because "it needs to be able to run on embedded devices" (owner, 2026-11-12).
   Ships in the base package, `Eiva.Fletcher.Interop` (D22).
-- **Server-tier variant** `[built]` (D9S-2..5b; the in-callback and idle close by D9S-5b): the edge surface plus `pubsub-arrow`'s batched
+- **Server-tier variant** `[built]` (D9S-2..5b; the in-callback and idle close by D9S-5b: `Batches.EveryCloseEndsWithExactlyOneClosingDelivery`, `Batches.ARefusedBatchedSubscribeNeverDelivers`): the edge surface plus `pubsub-arrow`'s batched
   subscribe (domain 7). Ships in its own .NET package, a full shim (D22). A C# app loads it only if
   it references the server package; otherwise it loads the edge build (D29, revising in place
   D19's "C# on desktop loads the server variant"; domain 10, next round).
@@ -82,7 +82,7 @@ containment.
 | **Shim** | The shared library `fletcher-c-abi` (`CMakeLists.txt:80-83`): the only Fletcher component built as a shared library; statically links pub/sub, the two DDS providers and nanoarrow. |
 | **Variant** | One of the two builds of the shim from one source: `edge` and `server`, chosen by the Conan option `variant` (default `edge`, in the package ID; D9S-2). The test-only probe shim (`CMakeLists.txt:164-211`) is a third artifact from the same sources, always edge, not a variant. |
 | **Edge variant** | Today's shim: no Arrow C++, codec on nanoarrow. Shipped in the base package. |
-| **Server(-tier) variant** | `[built]` (Windows, by hand; CI and Linux unrun) as an artefact (D9S-2: `fletcher-c-abi-server`, the edge sources answering "server", no Arrow yet); the batched subscribe and the Arrow link are `[built]` for 4a (D9S-4a: `pubsub-arrow` is linked only under `variant=server`; Windows, by hand; CI and Linux unrun); each row's attachments are `[built]` for 4b (D9S-4b; same marks); the batched close is `[built]` from outside a callback (D9S-5a; same marks), and from inside one, from a row delivery, or of an idle subscription, each ending with exactly one closing delivery (D9S-5b; same marks; ruling 2026-11-14). Shipped in a package of its own (D22). |
+| **Server(-tier) variant** | `[built]` (Windows, by hand; CI and Linux unrun) as an artefact (D9S-2: `fletcher-c-abi-server`, the edge sources answering "server", no Arrow yet); the batched subscribe and the Arrow link are `[built]` for 4a (D9S-4a: `pubsub-arrow` is linked only under `variant=server`; Windows, by hand; CI and Linux unrun); each row's attachments are `[built]` for 4b (D9S-4b; same marks); the batched close is `[built]` from outside a callback (D9S-5a; same marks), and from inside one, from a row delivery, or of an idle subscription, each ending with exactly one closing delivery (D9S-5b; same marks; ruling 2026-11-14; `Batches.EveryCloseEndsWithExactlyOneClosingDelivery`, and a refused subscribe delivering nothing, `Batches.ARefusedBatchedSubscribeNeverDelivers`). Shipped in a package of its own (D22). |
 | **Variant query** | `[built]` for all three artefacts (D9S-1 edge and probe; D9S-2 server, (Windows, by hand; CI and Linux unrun)). `fl_binding_variant`: the entry point both builds export that answers which build was loaded (L16, D23). |
 | **Base package / server package** | `Eiva.Fletcher.Interop`, carrying the edge variant, and the separate .NET package carrying the server variant; each holds a full shim (D22). |
 | **Entry point** | An exported `fl_*` function. 50 today (`h`, as counted by `scripts/check_shim_exports.sh`). |
@@ -379,7 +379,7 @@ only by domain 7 (BC-8): the shim forwards `max_rows` and the timeout as given, 
 the seam's `FL_INVALID_ARGUMENT` with domain 7's message. The shim adds no window, count, timer,
 ordering or thread (BC-9); the batch callback runs on domain 7's batch thread, one batch at a time,
 in window order (domain 7 L12, D10), and closing follows domain 7's L9.
-`[built]` **in part** (D9S-4a, Windows, by hand; CI and Linux unrun): the shim adds no window, count, timer or thread
+`[built]` (D9S-4a..5b, every clause; Windows, by hand; CI and Linux unrun): the shim adds no window, count, timer or thread
 (`ShimBatchesNothing.SourcesHoldNoThreadClockOrTimer`), and the callback runs on one batch thread in
 window order for one subscription (`Batches.EachClosedWindow...`). The options pass-through and
 refusal are `[built]` as tests (D9S-5a: `Batches.EveryBatchOptionReachesDomain7AsGiven`, d7's 6 x 7 grid through the

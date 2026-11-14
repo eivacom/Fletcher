@@ -22,8 +22,7 @@ idle: zero-row with a decoder, null without (d7 L6/L7). A **refused** subscribe 
    Without one: null, 0 dropped (L7). A close before the first row, even on a declared topic, is null.
 2. **`Loop` delivers only once `registered_`.** Earlier windows wait in order (D10, L12). If the
    batcher is stopped while unregistered, `Loop` clears the queue and ends.
-3. **An unregistered `Stop` discards:** it resets the window (`Finish()` discarded, attachments
-   cleared, `dropped_` = 0) and queues no `kClosing`. This is the d7 L1 refused clause.
+3. *Deleted (DEBT-4).*
 
 **Why the gate (B1, verified).** Domain 3 publishes the entry (`subscriber.cpp:597-599`) before two
 late refusals: an options conflict on a subscribed topic (`:324-325`), and a provider that delivered
@@ -77,7 +76,7 @@ allocation failure cannot be ruled out by type; L7 names it.* The shim fails to 
 
 **Mutations** (step 3 records each red): **m1** restore `Close`'s early return → F1/D7-1 idle cells.
 **m2** set `registered_` at construction → G1, D7-2, F2. **m3** delete `Loop`'s gate → D7-2 `max_rows`
-1, F2. **m4** let an unregistered `Stop` queue its window → D7-2 `max_rows` 100.
+1, F2. **m4** *deleted (DEBT-4).*
 
 ## Corpus changes (audit 0a, carried whole)
 

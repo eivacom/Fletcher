@@ -131,8 +131,9 @@ class SubscriberArrow::RecordBatchBatcher {
         if (decoder_->num_rows() >= max_rows_) Close(BatchStatus::Reason::kRowLimit);
     }
 
-    // Closes the subscription: the pending window becomes the kClosing batch, behind any batch
-    // already queued, and later rows are ignored (L9). Idempotent. Returns true once every
+    // Closes the subscription: exactly one kClosing batch (the pending window, empty when idle)
+    // follows any batch already queued, and later rows are ignored (L9); a subscription that was
+    // never registered (a refused Subscribe) gets none (L1). Idempotent. Returns true once every
     // delivery has been made. Returns false at once, delivering nothing, when called from inside
     // this subscription's own callback, or from a thread delivering rows on its transport (owner
     // rulings 2026-11-11); the batch thread then delivers the rest and ends on its own.
@@ -251,9 +252,12 @@ class SubscriberArrow::RecordBatchBatcher {
     // with a decoder and null without (L6, L9; ruling 2026-11-14). The batch is queued for the
     // batch thread, in window order.
     void Close(BatchStatus::Reason reason) {
+        // A refused Subscribe never builds a closing (L1): nothing would deliver it, and nothing
+        // may be allocated for it while its exception is unwinding the stack.
+        if (reason == BatchStatus::Reason::kClosing && !registered_) return;
         has_deadline_ = false;
         last_flush_ = std::chrono::steady_clock::now();
-        if (!HasPending() && !(reason == BatchStatus::Reason::kClosing && registered_)) return;
+        if (!HasPending() && reason != BatchStatus::Reason::kClosing) return;
 
         // Finish() only hands the builders' buffers over — O(1) per column.
         std::shared_ptr<arrow::RecordBatch> batch;
@@ -469,6 +473,8 @@ SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
         batchers_[result.subscription_id] = batcher;
         sub_topic_[result.subscription_id] = key;
     }
+    // No Stop can land between the insert above and this line: closing needs the id, which no
+    // caller has before Subscribe returns (P5).
     batcher->MarkRegistered();        // accepted: from here on its windows are delivered
     stop_on_throw.batcher = nullptr;  // registered: the batcher is closed by the usual paths
 

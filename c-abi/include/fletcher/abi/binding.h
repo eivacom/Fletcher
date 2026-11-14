@@ -867,7 +867,7 @@ FL_ABI_EXPORT fl_status fl_subscriber_create(fl_provider* provider, fl_subscribe
  * BATCHED SUBSCRIPTIONS (server build; fl_subscriber_subscribe_batches). Every
  * batched subscription ends with EXACTLY ONE FL_BATCH_CLOSING delivery, last: the
  * last window, or an empty one when nothing is pending (an empty table of the
- * topic's schema once a row has been decoded; `array` NULL before). It is the last
+ * topic's schema once a row has brought a usable schema; `array` NULL before). It is the last
  * use of that subscription's `on_batch` and `ctx`. Outside a batch callback this
  * BLOCKS until running batch callbacks finish, and the queued batches, then
  * CLOSING, are delivered on another thread before it returns: do not hold across

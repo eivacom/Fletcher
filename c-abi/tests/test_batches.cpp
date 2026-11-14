@@ -268,7 +268,8 @@ class BatchFixture {
     }
 
     /// Destroys the subscriber now. Domain 7 closes every batched subscription first (L9): every
-    /// finished batch, then the partial one (reason closing), has been delivered when this returns.
+    /// finished batch, then exactly one closing batch (empty when idle), has been delivered when
+    /// this returns.
     /// The destructor does not repeat it.
     void DestroySubscriber() {
         fl_subscriber_destroy(subscriber_);

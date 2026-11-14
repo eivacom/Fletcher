@@ -60,8 +60,10 @@ whether a subscription's `BatchOptions` are acceptable (L15, since 2026-11-12).
 
 ## 3. Invariants and laws
 
-**L1. A lost row is always reported, never silent.** Every row that reaches the batcher before
-closing and is not delivered is counted in the `rows_dropped` of a later delivered batch.
+**L1. A lost row is always reported, never silent, except rows caught by a refused `Subscribe`
+(below; D19).** Every row that reaches the batcher before closing and is not delivered is counted
+in the `rows_dropped` of a later delivered batch, except rows caught by a refused `Subscribe`
+(below; D19).
 `[built]` (violation 1: closing D7F-1, deadline D7F-2; violation 2: D7F-3)
 - Holds at: `cpp:95-99` (no decoder), `cpp:149-163` (`TryAppend`: malformed, internal),
   `cpp:100-105` (over budget: close, retry, count), `cpp:170-177` (`DiscardPending`),
@@ -148,7 +150,7 @@ unrepresentable case (D14, D7O-2).
   stops being representable as `last_flush` advances); accepted as used as given, and no user can
   tell the two apart. (D7O close, 2026-11-12, from `docs/archive/D7O/D7O-2-brief.md` Handled.)
 
-**L6. Loss gets a delivery, and idleness does not.** A window that contains only drops is still
+**L6. Loss gets a delivery, and idleness does not, except the closing (L9, D18).** A window that contains only drops is still
 delivered: a zero-row batch, or a null batch if there is no decoder. A window with nothing pending
 delivers nothing, except at closing: every close of an accepted subscription ends with exactly one
 `kClosing` (L9), zero-row, or null if there is no decoder. With no timeout, a window of only drops
@@ -357,7 +359,7 @@ Surface (`hpp:72-144`):
 | D15 | Out-of-range `BatchOptions` (`max_rows < 1`, negative timeout) are refused with an invalid-argument error, never clamped (L15). Resolves Q5. | Owner ruling, 2026-11-12, "Refuse both" ([RIX-rulings.md](../../plans/RIX-rulings.md)). Applied by round D7O. |
 | D16 | There is one batch assembler, this domain's. C#'s managed batcher is deleted once C# reaches this one through the shim's server-tier variant. | Owner rulings, 2026-11-12 ([RIX-rulings.md](../../plans/RIX-rulings.md)). Explicitly supersedes the batcher half of D-BIND-25 ("Arrow tier managed … batch-first", [BIND-csharp-bindings.md](../../plans/BIND-csharp-bindings.md)); the owner was shown D-BIND-25 when ruling. Annotating D-BIND-25 is owed by the C# switch round. (D7O close, 2026-11-12, from `docs/archive/D7O/D7O-pre-round-audit.md` R-2.) |
 | D17 | L5's "a deadline is never earlier than its timeout says: a timeout too long for the clock to represent means no deadline, never an early or wrapped one" is law (it was authored by round-designer, audit LC-1). | Owner ruling, 2026-11-12, "Keep it" (LC-1) ([RIX-rulings.md](../../plans/RIX-rulings.md)). Built by D7O-2. |
-| D18 | Every close of an accepted batched subscription ends with exactly one closing delivery, even when nothing is pending (L6, L9). | Owner ruling, 2026-11-14, "D9S-5: every close ends with one closing delivery; D9S-5 splits" ([RIX-rulings.md](../../plans/RIX-rulings.md)), :478. Built by D9S-5b. |
+| D18 | Every close of an accepted batched subscription ends with exactly one closing delivery, even when nothing is pending (L6, L9). | Owner ruling, 2026-11-14, "D9S-5: every close ends with one closing delivery; D9S-5 splits" ([RIX-rulings.md](../../plans/RIX-rulings.md)), :478; "accepted" from ruling 2026-11-14 "a refused batched subscribe never delivers", :493. Built by D9S-5b. |
 | D19 | A refused batched subscribe never delivers anything; the caller may free its state when the call returns. Rows caught before the refusal are discarded uncounted (L1). | Owner ruling, 2026-11-14, "D9S-5b: a refused batched subscribe never delivers" ([RIX-rulings.md](../../plans/RIX-rulings.md)), :493. Built by D9S-5b. |
 
 ## 6. Relationships
