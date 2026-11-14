@@ -249,17 +249,5 @@ scope). Record: d9 L8 / design said `run_tests` leaves the package ID — false 
 - 4b nits: the fault fires only after the export, so the real failure points and the DEBT-5 catch are untested; no cell covers a window domain 7 already delivered as no-batch whose hand-over then fails; a stale "noexcept calls" comment.
 - 4a: the `batches_server.cpp:79` comment cites L1 where L18/D-D9S-4 is meant.
 
-## RESUME POINT — 2026-11-14 (owner rebooting)
-
-**State:** 8 of 9 tracker items are 🟢 (1, 2, 3, 4a, 4b, 5a, 5b, 6), all pushed. **D9S-7** (light lane) is at step 0a: CLEAR with plan-shape finding **PS-1** (`plans/reviews/D9S-7-audit-0a.md`, `49ed72b`). No design has started.
-
-**Pending owner question (asked, not answered; re-ask on resume):** D9S-7 promises "the C# conformance lane passes against both builds", but C# loads only `fletcher-c-abi`, while the server file is `fletcher-c-abi-server` (Q5a is domain 10's). Options:
-- **(a) CI stages a renamed copy.** Recommended, and the default. YAML only, no dotnet/ edit; it is what every hand run did this round (11/11).
-- **(b) C++ emitter on server, C# on edge.** The C# proof on server moves to domain 10.
-- **(c) Defer the server half to domain 10.**
-
-**Next after the answer:** record the ruling (ledger next free entry after :504; the ledger is 514 lines), then the D9S-7 light-lane brief (architect), phase A, 0b, green, 4b, gate `--light`. Then **round close** (`context/round-close.md`, including step 2b, ledger ingest). Items to carry to round close:
-- 4a N1: confirm d7 L9's restatement is not a third law change.
-- Words/stage about 6,540 since the caps ruling.
-- Test-volume close findings in 4a, 5b and 6.
-- Plugin version mismatch: source 0.10.0, marketplace 0.9.1.
+## RESUME POINT — 2026-11-14 (resolved)
+Resumed the same day. PS-1: owner chose "CI stages a renamed copy (Rec.)" (ledger). Directive: D9S-7, then round close.

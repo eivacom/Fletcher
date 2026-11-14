@@ -512,3 +512,13 @@ no new status number. Amends only the plan's layout line."
 Binds: `fl_batch` gains a failure field and the origin list gains a hand-over code. d9 L2 gains a borrowed-for-the-callback clause; that is a
 d9 law change authorised by this ruling, in D9S-6. Ladder rung 8 and the plan's "no batch-layout change after stage 4" line are amended.
 d9 Q12's origin half is settled (the new code). Trigger: `plans/reviews/D9S-6-design-review.md` B2; brief Decision 1.
+
+## 2026-11-14 — D9S-7: CI proves C# against the server build through a renamed copy
+> "CI stages a renamed copy (Rec.)"
+
+*(Chosen option.)* Its text: "Users/operators: nothing shipped changes; CI proves the same C# tests pass on the server shim, as the hand
+runs did (11/11). Architecture: serves the round purpose ('C# can get batches from the server shim') with no dotnet/ edit. The rename is
+test staging only, so Q5a (how packing names files) stays domain 10's."
+**Ruling:** **the C# conformance lane runs against the server build by CI staging a copy of the server shim under the edge file name.**
+Binds: D9S-7, rung 10's server half. Test staging only; it decides nothing about packing or which file a binding loads (d9 Q5a stays
+domain 10's). No dotnet/ edit. Trigger: `plans/reviews/D9S-7-audit-0a.md` PS-1.
