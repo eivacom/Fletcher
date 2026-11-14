@@ -489,3 +489,14 @@ widened to that one domain-7 law and its code. The split: D9S-5a (move/release, 
 now; D9S-5b carries the d7 L6 amendment, the domain-7 change and the in-callback close. Trigger: `plans/reviews/D9S-5-audit-0a.md`.
 Still live: the empty delivery's exact shape (zero-row vs null batch) is D9S-5b's design and may need its own owner question.
 `binding.h:867-877`'s "no reliable end signal" text is superseded once 5b lands.
+
+## 2026-11-14 — D9S-5b: a refused batched subscribe never delivers
+> "(a) Never (Rec.)"
+
+*(Chosen option.)* Its text: "Users: a refusal means nothing ever arrives, so state can be freed as soon as the call returns.
+Architecture: serves d9 §1 'who releases each' and matches every other refusal (L12, L15). Strains d7 L1 'no silent loss' (the few
+caught rows are discarded uncounted), so the round widens by one more domain-7 clause."
+**Ruling:** **a refused batched subscribe never delivers anything; the caller may free its state when the call returns.**
+Binds: d7 L1 gains a clause for rows caught by a subscription refused before it was registered (they are discarded uncounted). The
+round's widening grows by that one d7 L1 clause, in D9S-5b. Supersedes nothing; it narrows the 2026-11-14 "every close ends with one
+closing delivery" ruling to subscriptions that were accepted. Trigger: `plans/reviews/D9S-5b-design-review.md` B1; brief Decision 1.

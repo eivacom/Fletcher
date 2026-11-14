@@ -180,3 +180,5 @@ scope). Record: d9 L8 / design said `run_tests` leaves the package ID — false 
 - 4b: G1's provider-order loop asserts nothing new.
 - 4b cycle 2: a subscribe from a batch callback during destroy makes a second host. It is safe; the door could refuse it in 5b.
 - Suite agent: the cache now holds two edge packages, so `locate_shim.sh` refuses until one is removed.
+
+**D9S-5b, 2026-11-14:** design review cycle 1 NEEDS-REWORK (B1: a refused subscribe can deliver). Cycle 2 framed it as Decision 1. Owner: "(a) Never (Rec.)" (ledger). The round is widened by the d7 L1 refused-subscribe clause; config updated.
