@@ -28,7 +28,8 @@ in `c-abi/tests/`, named `Suite.Case`.
 **Owns:** the one pure C surface through which a language binding reaches Fletcher, in **two
 variants built from one source** (owner rulings, 2026-11-12). That means: the C spelling of each
 seam value (blob, schema, arrival, attachments, write window, topic, status); the handles, and who
-releases each; turning every C++ failure into a status plus message at one containment site; the
+releases each; turning every C++ failure into a status plus message at one containment site
+(a failed hand-over too: its status and message cross with its window, L18, D32); the
 ABI version and its compatibility rule; the export table; the one-copy-per-process check; the
 built-in provider registry the shim carries; and **which variant a build is**, how a caller asks,
 and what each variant may link.
@@ -91,8 +92,8 @@ containment.
 | **Borrowed / Owned / OUT** | The header's three ownership words (`h:29-42`). Unqualified pointers are borrowed. |
 | **Status** | An `fl_status` number: the seam's published taxonomy, number for number (`h:176-234`). |
 | **Not supported** | `FL_NOT_SUPPORTED`: "this provider or this build cannot do this" (D28, 2026-11-13; widened from "this provider does not implement the requested behaviour"). The edge build's refusal of a batched entry point reuses it; no new status number. |
-| **Hand-over** | `[designed-not-built]` The shim's turning one batch domain 7 delivered into its C form and calling the binding's batch callback with it (L14). A **failed hand-over** is one the shim cannot complete; it reaches the binding as a "no batch could be built" delivery (L18). |
-| **Origin** | `fl_origin`: which containment arm produced a failure (seam, codec, callback); the shim's own field, not a status (`h:236-253`). |
+| **Hand-over** | `[built]` (D9S-6; Windows, by hand; CI and Linux unrun; `handover.Batches.AWindowTheShimCannotHandOverStillArrivesCounted`) The shim's turning one batch domain 7 delivered into its C form and calling the binding's batch callback with it (L14). A **failed hand-over** is one the shim cannot complete; it reaches the binding as a "no batch could be built" delivery carrying the failure (L18, D32). |
+| **Origin** | `fl_origin`: which containment arm produced a failure (seam, codec, callback, hand-over); the shim's own field, not a status (`h:236-253`). |
 | **Containment site** | `Contain`/`Capture` (`containment.hpp:55-77`, `containment.cpp:56-105`): the one place a C++ exception becomes a status. |
 | **Arrival** | `fl_schema_arrival`: the waitable answer for a topic's schema, five outcomes (`h:516-564`). |
 | **Delivery** | One call of a binding's `fl_delivery_fn` with one encoded row (`h:851-876`). |
@@ -142,6 +143,10 @@ into the shim either. `[built]`
   so the shim neither terminates nor refuses that call; it forwards it (BC-5, L15). Test:
   `Batches.EveryCloseEndsWithExactlyOneClosingDelivery` (`fl_subscriber_destroy` inside its own
   callback).
+- **`ReasonOf` aborts on an unknown reason** (`batches_server.cpp`, D9S-6; design debt DEBT-2): it is
+  `noexcept`, so the hand-over can fix the reason first (L18). Its tail is unreachable, because a fourth
+  domain-7 reason fails the build at its `switch`; reaching it anyway is termination, not an exception
+  crossing.
 - The other direction (`fl_writer_fn`, `fl_grow_fn`, `fl_delivery_fn`) is the caller's obligation
   (`h:702-705`, `h:858-861`); the shim cannot enforce it.
 - Tests: `Containment.AnUnknownExceptionTypeIsContainedAsInternal`,
@@ -162,6 +167,10 @@ Wait outcomes (`FL_PENDING`, `FL_SUBSCRIPTION_ENDED`) are returned values, never
   edge build's refusal of a batched entry point (L12) reuses it with a message naming the edge build
   and the server package; the shim allocates no new number. That refusal carries `FL_ORIGIN_SEAM`
   (Q12, edge half, resolved by D9S-4a; audit F5).
+- **A failure handed to a batch callback is borrowed for the callback** (D32, ruling 2026-11-14): a
+  failed hand-over's `fl_batch.failure` (L18), like the rest of the batch (L11). A binding copies it to
+  keep it and never disposes it; the shim disposes it when the callback returns. A failure an entry
+  point returns stays the caller's. `[built]` (D9S-6; Windows, by hand; CI and Linux unrun; `handover.Batches.AWindowTheShimCannotHandOverStillArrivesCounted`).
 - `Capture` casts `PubSubStatus` to `fl_status` (`containment.cpp:66`). Nothing in `c-abi/` asserts
   the two enums agree; `h:180-183` says a C# port of `test_status_taxonomy` compares the C# enum to
   the published table, and no such test was found under `dotnet/tests` (unsure; see Findings c).
@@ -416,23 +425,27 @@ thunk), the binding's batch callback still receives that window, as a "no batch 
 delivery (L14; domain 7 L7): no array, the batch's rows counted as dropped in that window's loss
 count, and its reason kept. The thunk never throws back into domain 7. One site in the shim answers
 this (register BC-12). Domain 7 is untouched: to it, the window was delivered.
-`[designed-not-built]`. Source: ruling 2026-11-13, "Lost handoff: Report it as lost" (D30); audit
+`[built]` (D9S-6; Windows, by hand; CI and Linux unrun): the `catch` in `batches_server.cpp`'s batch thunk; `handover.Batches.AWindowTheShimCannotHandOverStillArrivesCounted`, which fails a
+row-limit and the closing window through the test-only fault shim (`fletcher-c-abi-handover-fault`,
+never packaged). Source: ruling 2026-11-13, "Lost handoff: Report it as lost" (D30); audit
 census C5 and A37 / F12. Without it, a throw from the thunk is swallowed by domain 7 uncounted
 (d7 L10, BC-7) and the C caller loses rows domain 7 counted as delivered, which d7 L1 forbids.
 - **A law, not an L14 clause:** L14 says what a batch is and who releases it; L18 answers a
   different question ("is a failed hand-over reported?") with its own single site and its own
   structural test (BC-12: Σ`num_rows` + Σ dropped seen by the C caller equals the rows offered, with
   the export failing on a chosen window). Kept apart so each law has one test.
-- **Ambiguous in the ruling:** "its reason kept" is read as the window's own closing reason (domain
-  7's `BatchStatus`) still reaching the binding, with the hand-over failure's message crossing
-  beside it. How both cross is the stage's design (Q6).
+- **Settled (D32, ruling 2026-11-14):** "its reason kept" is the window's own reason (domain 7's
+  `BatchStatus`, CLOSING included, ruling 2026-11-14), and the failure crosses beside it in
+  `fl_batch.failure`: its status (`FL_INTERNAL` for an allocation or export failure),
+  `FL_ORIGIN_HANDOVER` (4) and its message, borrowed for the callback (L2). Every window reaches
+  the callback exactly once; a callback that throws anyway is swallowed after it has its window.
 
 ## 4. The interface
 
 Surface, `h` sections in order (ABI 0.8, 50 entry points, every one implemented):
 - **Version** (`h:158-172`): `fl_binding_abi_version` and `fl_binding_variant` (with `fl_variant`,
   edge = 1, server = 2), each callable first, from any thread.
-- **Status and errors** (`h:174-316`): `fl_status` (0-10), `fl_origin`, `fl_error`, `fl_error_dispose`.
+- **Status and errors** (`h:174-316`): `fl_status` (0-10), `fl_origin` (0-4), `fl_error`, `fl_error_dispose`.
 - **Strings, topics, marker** (`h:318-394`): `fl_str`, `fl_topic`, `fl_string_list_*`, `fl_single_copy_marker`.
 - **Shared ownership** (`h:396-512`): `fl_blob_create/retain/release`, `fl_schema_retain/release/copy`.
 - **Arrival** (`h:514-564`): `fl_schema_arrival_wait` (five outcomes; `int64_t timeout_ms`,
@@ -448,8 +461,9 @@ Surface, `h` sections in order (ABI 0.8, 50 entry points, every one implemented)
   (reason `FL_BATCH_ROW_LIMIT`/`TIMEOUT`/`CLOSING` = 1/2/3, `rows_dropped`, `num_rows`, array and schema,
   both NULL for a window that could not be built), `attachments` (one `fl_attachments` per row, an
   empty set for a row with none; D9S-4b `[built]`, same marks) and `fl_batch_fn`. The array and schema are borrowed
-  for the call; a binding keeps them by moving them (L14, D26). A batched id has bit 63 set. **Not yet
-  built:** `failure` (D9S-6, L18).
+  for the call; a binding keeps them by moving them (L14, D26). A batched id has bit 63 set. `failure`
+  (D9S-6 `[built]`, same marks; `handover.Batches.AWindowTheShimCannotHandOverStillArrivesCounted`): NULL unless the window's hand-over failed, then its status,
+  `FL_ORIGIN_HANDOVER` and message, borrowed for the call (L2, L18, D32).
 - **Batched close** (D9S-5a `[built]`, Windows, by hand; CI and Linux unrun): `fl_subscriber_unsubscribe_batches`,
   behind the batched subscribe's door (`RequireServerBuild`), forwards the id with bit 63 cleared to domain 7's
   `SubscriberArrow::Unsubscribe`, which owns the wait (d7 L9) and the no-op for an id no longer live (`FL_OK`); with
@@ -514,6 +528,7 @@ in its own .NET package (D22); the NuGet-level name stays domain 10's (Q5a).
 | D29 | **Revision in place of D19's "C# on desktop loads the server variant":** a C# app loads the server build only if it references the server package, otherwise the edge build. Consequence owned by the C# switch round: C#'s per-row subscribe must work on the edge build, without a batcher (§6). Resolves audit R-2 / F2. | Owner ruling 2026-11-13, "C# loads: Depends on package" |
 | D30 | **A batch the shim cannot hand over is reported, never lost silently:** a "no batch could be built" delivery for that window, its rows counted as dropped, its reason kept; one site in the shim (register BC-12); domain 7 untouched. Recorded as law L18. Resolves audit census C5 / F12. | Owner ruling 2026-11-13, "Lost handoff: Report it as lost" ("D9S pre-round: a failed handoff is reported; corrections approved") |
 | D31 | **The audit's tier-2 text corrections are approved** and applied before the round: F1 (L12), F3 (L4, §1), F4 (L1), F6 (L6), F7 (L7), F9 (L12, D14), F15 (§8); F17-F19 (BIND annotations); F10, F22, F23 (`binding.h` comments); F24-F26 (`c-abi/README.md`); F27 (ledger notes). | Owner ruling 2026-11-13, "Corrections: Approve all as listed" |
+| D32 | **A failed hand-over carries its status and message; d9 §1 holds.** `fl_batch` gains a trailing `const fl_error* failure`, NULL unless the window's hand-over failed, and `fl_origin` gains `FL_ORIGIN_HANDOVER = 4`, both on D9S-1's 0.8 bump (D27); no status number. The failure is borrowed for the callback, so L2 gains that clause (a law change this ruling authorises). Settles L18's shape and Q12's hand-over half. Forward note (domain 10): C#'s `FletcherOrigin` stops at 3 (`dotnet/src/Fletcher/FletcherException.cs:62-75`); the C# switch round mirrors code 4 and never disposes `failure`. | Owner ruling 2026-11-14, "(b) Keep the promise" ([RIX-rulings.md](../../plans/RIX-rulings.md), "D9S-6: a failed hand-over still carries its status and message") |
 
 ## 6. Relationships
 
@@ -539,6 +554,9 @@ in its own .NET package (D22); the NuGet-level name stays domain 10's (Q5a).
   - **What a C# app loads** (D29, 2026-11-13, revising D19): the server build only if the app
     references the server package; otherwise the edge build. **Consequence, owned by the C# switch
     round:** C#'s per-row subscribe must then work on the edge build, without a batcher.
+  - **Origin 4 and `fl_batch.failure`** (D32): C#'s `FletcherOrigin` stops at 3
+    (`FletcherException.cs:62-75`); the C# switch round mirrors `FL_ORIGIN_HANDOVER` and never
+    disposes a batch's `failure` (borrowed, L2).
   - **The one line this round edits in domain 10** (D27): `HeaderVersionMinor` in
     `dotnet/src/Fletcher.Interop/NativeLoader.cs`, in the bump's commit (L6).
   - **Collisions registered for the C# switch round** (audit, not ruled here):
@@ -576,7 +594,7 @@ in its own .NET package (D22); the NuGet-level name stays domain 10's (Q5a).
 | Q9 | After the C# switch, `fl_decode_rows_framed` exists only for the deleted managed batcher. Does it stay (L13: the edge surface is unchanged) or go (a 0.x minor may remove it)? Also carries Findings (d)6. | C# switch round (domain 10) |
 | Q10 | Which consumer loads the edge variant once C# desktop moves? "Embedded devices" has no RID today (D-BIND-27: `win-x64`, `linux-x64`; `linux-arm64` first addition). Partly answered 2026-11-13 (D29): a C# app that does not reference the server package loads the edge build. The embedded-device consumer remains open. | owner |
 | Q11 | A batched dictionary column arrives re-folded (domain 2's `BatchDecoder`), while `fl_decode_rows` returns its value type (D-BIND-39, D-BIND-59). Is that difference intended for a server-variant caller? | domain 2, with domain 10 |
-| Q12 | Which `fl_origin` does the edge build's `FL_NOT_SUPPORTED` refusal carry, and which a failed hand-over on domain 7's batch thread (L18)? `FL_ORIGIN_SEAM` is "a `PubSubError` from the seam". A new enumerator is the shim's own (append, bump, L6), not a seam stop-and-ask (audit F5). **Edge half resolved (D9S-4a): `FL_ORIGIN_SEAM`**, as every refusal the shim makes itself; the comment on `FL_ORIGIN_SEAM` widens to "...or the shim's own refusal of an argument or of a call this build cannot serve" and D-BIND-54 switches only on (`FL_INVALID_ARGUMENT`, `FL_ORIGIN_CODEC`), so it is unaffected. **Hand-over half open**, owed to D9S-6. | shim round (D9S-6, hand-over half) |
+| Q12 | Which `fl_origin` does the edge build's `FL_NOT_SUPPORTED` refusal carry, and which a failed hand-over on domain 7's batch thread (L18)? `FL_ORIGIN_SEAM` is "a `PubSubError` from the seam". A new enumerator is the shim's own (append, bump, L6), not a seam stop-and-ask (audit F5). **Edge half resolved (D9S-4a): `FL_ORIGIN_SEAM`**, as every refusal the shim makes itself; the comment on `FL_ORIGIN_SEAM` widens to "...or the shim's own refusal of an argument or of a call this build cannot serve" and D-BIND-54 switches only on (`FL_INVALID_ARGUMENT`, `FL_ORIGIN_CODEC`), so it is unaffected. **Hand-over half resolved (D9S-6, D32): `FL_ORIGIN_HANDOVER` (4)**, appended, on D9S-1's bump. | — |
 | LC-1 | Audit owner confirmation: does the edge build's minor bump, with one version for both builds? **Resolved 2026-11-13 (D27).** | — |
 | LC-2 | Audit owner confirmation: may the edge refusal reuse `FL_NOT_SUPPORTED`? **Resolved 2026-11-13 (D28):** yes, its meaning widened. Residue: the seam's own published table (`core/README.md:37`, domain 3's text) still reads "This provider does not implement the requested behaviour"; the origin is Q12. | domain 3, for the table's wording |
 

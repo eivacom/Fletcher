@@ -234,7 +234,10 @@ things in its own idiom:
    attachments (`fl_batch.attachments`: one set per row, in row order, an empty set for a row with
    none; borrowed for the call, a value kept only by `fl_blob_retain`), one batch at a time
    on domain 7's batch thread, in window order; a window that could not be built arrives with a NULL
-   array. A row and a batched subscription to the same topic through one provider collide (see the
+   array. So does a window the shim could not hand over (d9 L18): its rows are counted lost, its
+   reason is kept, and `fl_batch.failure` carries the failure (status, `FL_ORIGIN_HANDOVER`,
+   message), borrowed for the call like the rest of the batch: copy the message to keep it, and
+   never pass it to `fl_error_dispose`. A row and a batched subscription to the same topic through one provider collide (see the
    header). `fl_subscriber_unsubscribe_batches` ends one batched subscription: called outside a
    batch callback it returns once every finished batch, then the closing batch, has been delivered,
    so `ctx` may be freed then. It refuses an id without bit 63 (`FL_INVALID_ARGUMENT`), and a

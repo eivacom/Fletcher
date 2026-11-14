@@ -105,18 +105,25 @@ struct fl_provider {
 struct fl_attachments {
     explicit fl_attachments(fletcher::Attachments a) : set(std::move(a)) {
         owners.reserve(set.size());
-        for (size_t i = 0; i < set.size(); ++i) {
-            // The entry's own owner keeps the bytes; this block keeps the entry's
-            // owner. One indirection, and it is what lets a retained blob outlive
-            // the set it came from.
-            // A COPY OF THE BLOB, not its owner: `Blob` keeps `owner_` private
-            // and exposes no accessor, and copying one copies the `shared_ptr`
-            // inside it — so holding the copy keeps the bytes alive exactly as
-            // holding the owner would, without core growing an accessor that
-            // exists only for this boundary.
-            auto* block = new fletcher::abi::BlobOwner();
-            block->keep = std::make_shared<const fletcher::Blob>(set.ValueAt(i));
-            owners.push_back(block);
+        // A throw part-way (an allocation) runs no destructor, so the blocks built so far are
+        // deleted here: none has been handed out yet (D9S-6 DEBT-5).
+        try {
+            for (size_t i = 0; i < set.size(); ++i) {
+                // The entry's own owner keeps the bytes; this block keeps the entry's
+                // owner. One indirection, and it is what lets a retained blob outlive
+                // the set it came from.
+                // A COPY OF THE BLOB, not its owner: `Blob` keeps `owner_` private
+                // and exposes no accessor, and copying one copies the `shared_ptr`
+                // inside it — so holding the copy keeps the bytes alive exactly as
+                // holding the owner would, without core growing an accessor that
+                // exists only for this boundary.
+                auto block = std::make_unique<fletcher::abi::BlobOwner>();
+                block->keep = std::make_shared<const fletcher::Blob>(set.ValueAt(i));
+                owners.push_back(block.release());  // reserved above: cannot throw
+            }
+        } catch (...) {
+            for (auto* block : owners) delete block;
+            throw;
         }
     }
 

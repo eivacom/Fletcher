@@ -265,7 +265,9 @@ typedef enum fl_origin {
     FL_ORIGIN_SEAM = 1,    /* a PubSubError, or a std::exception, from the seam, or the shim's own
                               refusal of an argument or of a call this build cannot serve */
     FL_ORIGIN_CODEC = 2,   /* malformed bytes: the positional reader, envelope parsing */
-    FL_ORIGIN_CALLBACK = 3 /* a caller-supplied writer or handler reported failure */
+    FL_ORIGIN_CALLBACK = 3, /* a caller-supplied writer or handler reported failure */
+    FL_ORIGIN_HANDOVER = 4  /* the shim could not hand a closed window over to a batch callback
+                               (server build; only ever in fl_batch.failure, since ABI 0.8) */
 } fl_origin;
 
 /* A failure, carried by value to the caller and owned by it.
@@ -290,6 +292,11 @@ typedef enum fl_origin {
  * Zero-initialise before the call (`fl_error err = {0};`). On FL_OK the callee
  * leaves it untouched. On failure the caller owns `message` and releases it with
  * fl_error_dispose, which is why every binding's throw site is a `finally`.
+ *
+ * ONE EXCEPTION, BORROWED: the fl_error a batch callback finds in
+ * `fl_batch.failure` (a window the shim could not hand over) is the shim's, valid
+ * for the call like the rest of the batch. Copy the message to keep it; never pass
+ * it to fl_error_dispose. The shim disposes it when the callback returns.
  *
  * ── The other direction: an fl_error a CALLBACK fills (D-BIND-32) ───────────
  * Everything above describes the SHIM filling an error for the caller. The
@@ -1017,7 +1024,8 @@ FL_ABI_EXPORT fl_status fl_subscriber_unsubscribe_schema(fl_subscriber* subscrib
  *
  * `array == NULL` (and then `schema == NULL`, `num_rows == 0`) means NO BATCH COULD
  * BE BUILT for this window (no usable schema, a rejected schema, or a failure
- * finishing it); `rows_dropped` counts the window's rows in every such case. That
+ * finishing it), or the shim could not hand it over, and then `failure` says why;
+ * `rows_dropped` counts the window's rows in every such case. That
  * differs from a zero-row batch (`array != NULL`, `num_rows == 0`), which a window
  * of only dropped rows can be. `rows_dropped` is domain 7's count, as given.
  *
@@ -1028,7 +1036,15 @@ FL_ABI_EXPORT fl_status fl_subscriber_unsubscribe_schema(fl_subscriber* subscrib
  * fl_publisher_publish_rows takes as `atts_per_row`, and it is BORROWED like the
  * rest of the batch: every set and every value is valid for the call only, a
  * program never disposes them, and keeps a value past the call only by
- * fl_blob_retain. */
+ * fl_blob_retain.
+ *
+ * `failure` is NULL unless the shim could not hand this window over (d9 L18): an
+ * allocation or export failure in the shim, after domain 7 delivered the window.
+ * The window still arrives, once, as no batch, with its own `reason` (CLOSING
+ * included) and its rows in `rows_dropped`; `failure` carries the status
+ * (FL_INTERNAL), FL_ORIGIN_HANDOVER and the message. It is BORROWED like the rest:
+ * copy the message to keep it, never dispose it. Out of memory, the message may
+ * be empty; the status and origin still cross. Since ABI 0.8. */
 typedef struct fl_batch {
     int32_t reason;             /* an FL_BATCH_* value */
     int64_t rows_dropped;       /* rows lost since the previous window; 0 == all good */
@@ -1036,6 +1052,7 @@ typedef struct fl_batch {
     struct ArrowArray* array;   /* NULL: no batch could be built */
     struct ArrowSchema* schema; /* NULL exactly when `array` is NULL */
     const fl_attachments* const* attachments; /* `num_rows` sets, none NULL; NULL iff num_rows == 0 */
+    const fl_error* failure;  /* NULL unless the hand-over failed; borrowed, never disposed */
 } fl_batch;
 
 /* Invoked once per window, on domain 7's batch thread: one batch at a time, in window

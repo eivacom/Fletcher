@@ -4,10 +4,11 @@
 // D9S-4a's forcing tests (plans/D9S-4-batches-cross.md, "Forcing-test mapping"): batched
 // subscribe through the shim's export table. Domain 9 L12, L14, L15; register BC-9, BC-10, BC-13.
 //
-// This file is compiled into THREE test executables, one per shim artefact, exactly as
+// This file is compiled into up to FOUR test executables, one per shim artefact, as
 // `test_binding_abi.cpp` is: `c_abi_tests` against the shipped shim (edge in the edge package,
-// server in the server package) and `c_abi_probe_tests` against the test-only probe shim (always
-// edge). The expectation of each is the literal `FLETCHER_EXPECTED_VARIANT` that
+// server in the server package), `c_abi_probe_tests` against the test-only probe shim (always
+// edge) and, in the server package, `c_abi_handover_tests` against the test-only hand-over fault
+// shim (D9S-6, `FLETCHER_HANDOVER_FAULT_TESTS`). The expectation of each is the literal `FLETCHER_EXPECTED_VARIANT` that
 // `tests/CMakeLists.txt` writes by its own mapping and never reads back from the shim: a test that
 // took the answer from the shim would agree with the shim whatever the shim said. Rows that are
 // about the build get ONE expected answer per artefact and never "either".
@@ -33,6 +34,7 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <string>
 #include <thread>
 #include <utility>
@@ -51,6 +53,16 @@
 #endif
 static_assert(FLETCHER_EXPECTED_VARIANT == 1 || FLETCHER_EXPECTED_VARIANT == 2,
               "FLETCHER_EXPECTED_VARIANT is one build's wire value: 1 (edge) or 2 (server)");
+
+#ifdef FLETCHER_HANDOVER_FAULT_TESTS
+static_assert(FLETCHER_EXPECTED_VARIANT == 2, "the hand-over fault shim is a server build");
+// The test-only hook's two exports (tests/handover_fault.cpp). Never in binding.h: the shipped shim
+// does not have them.
+extern "C" {
+FL_ABI_EXPORT void fl_test_handover_fault_arm(int64_t nth);
+FL_ABI_EXPORT int64_t fl_test_handover_fault_fired(void);
+}
+#endif
 
 // The reason values are part of the ABI (L14, review B2): domain 7's three reasons, numbered from
 // 1, so that a zeroed field is never a reason. Stated as literals so a renumbering is a red row.
@@ -94,6 +106,11 @@ struct Seen {
     bool had_attachments = false;  // fl_batch::attachments != NULL
     size_t null_attachment_sets = 0;
     std::vector<Entries> attachments;
+    // D9S-6: the failure a no-batch delivery carries, COPIED during the callback (it is borrowed).
+    bool had_failure = false;  // fl_batch::failure != NULL
+    int32_t failure_status = 0;
+    int32_t failure_origin = 0;
+    std::string failure_message;
 };
 
 /// The caller's side of a batched subscription: collects what arrives, from whatever thread the
@@ -146,6 +163,12 @@ class BatchSink {
             s.had_array = batch->array != nullptr;
             s.had_schema = batch->schema != nullptr;
             s.had_attachments = batch->attachments != nullptr;
+            s.had_failure = batch->failure != nullptr;
+            if (s.had_failure) {
+                s.failure_status = batch->failure->status;
+                s.failure_origin = batch->failure->origin;
+                s.failure_message = MessageOf(*batch->failure);
+            }
             if (s.had_attachments) {
                 for (int64_t row = 0; row < batch->num_rows; ++row) {
                     const fl_attachments* set = batch->attachments[row];
@@ -1428,6 +1451,99 @@ TEST(Batches, ARefusedBatchedSubscribeNeverDelivers) {
     ASSERT_FALSE(control_seen.empty());
     ExpectWindows({control_seen.front()}, published, {{FL_BATCH_ROW_LIMIT, 0, 1}});
 }
+
+#ifdef FLETCHER_HANDOVER_FAULT_TESTS
+
+// ---------------------------------------------------------------------------
+// The hand-over fault shim only (D9S-6)
+// ---------------------------------------------------------------------------
+
+/// One cell of rung 8: hand-over `k` of RL(2), RL(2), CLOSING(1) fails (P5). A helper, so that an
+/// ASSERT ends its own cell only.
+void AWindowTheShimCannotHandOverCell(int64_t k) {
+    const Window windows[] = {
+        {FL_BATCH_ROW_LIMIT, 0, 2}, {FL_BATCH_ROW_LIMIT, 2, 2}, {FL_BATCH_CLOSING, 4, 1}};
+    BatchSink sink;
+    BatchFixture fx;
+    PublishedRows published(/*first_seq=*/100, /*count=*/5);
+    const OwnedTopic topic("d9s6", k == 2 ? "row-limit" : "closing");
+    fx.DeclareTopic(topic.topic(), published);
+    const uint64_t id = SubscribeBatches(fx.subscriber(), topic.topic(), 2, INT64_MAX, sink);
+
+    fl_test_handover_fault_arm(k);  // counted from here, so armed before the rows go out
+    fx.Publish(topic.topic(), published, 0, 5);
+    CloseBatches(fx.subscriber(), id, FL_OK);  // from outside: every delivery is in when it returns
+    const std::vector<Seen> seen = sink.Snapshot();
+
+    // What a window lost in the hand-over breaks: the count, and the end signal.
+    int64_t received = 0;
+    int64_t lost = 0;
+    for (const Seen& s : seen) {
+        received += s.num_rows;
+        lost += s.rows_dropped;
+    }
+    EXPECT_EQ(received + lost, 5) << "rows received (" << received << ") + rows lost (" << lost
+                                  << ") != rows published: a window vanished uncounted";
+    EXPECT_EQ(std::count_if(seen.begin(), seen.end(),
+                            [](const Seen& s) { return s.reason == FL_BATCH_CLOSING; }),
+              1)
+        << "exactly one closing delivery";
+    EXPECT_TRUE(!seen.empty() && seen.back().reason == FL_BATCH_CLOSING)
+        << "the closing delivery comes last";
+    EXPECT_EQ(fl_test_handover_fault_fired(), 1)
+        << "the armed hand-over did not fail, so this run proves nothing";
+
+    fx.Publish(topic.topic(), published, 0, 2);
+    EXPECT_FALSE(sink.WaitForDeliveries(seen.size() + 1, seconds(2)))
+        << "a delivery came after the close";
+
+    ASSERT_EQ(seen.size(), 3U) << "every window arrives, once: ROW_LIMIT, ROW_LIMIT, CLOSING";
+    std::vector<Seen> others;
+    std::vector<Window> want;
+    for (size_t i = 0; i < seen.size(); ++i) {
+        SCOPED_TRACE("delivery " + std::to_string(i));
+        const Seen& s = seen[i];
+        EXPECT_EQ(s.reason, windows[i].reason) << "the window's reason is kept";
+        if (static_cast<int64_t>(i) + 1 != k) {
+            EXPECT_FALSE(s.had_failure) << "a window that was handed over carries no failure";
+            others.push_back(s);
+            want.push_back(windows[i]);
+            continue;
+        }
+        EXPECT_FALSE(s.had_array) << "no batch: array is NULL";
+        EXPECT_FALSE(s.had_schema) << "no batch: schema is NULL";
+        EXPECT_FALSE(s.had_attachments) << "no rows, so no attachments list (d9 L14)";
+        EXPECT_EQ(s.num_rows, 0);
+        EXPECT_EQ(s.rows_dropped, windows[i].rows) << "the window's rows are counted lost";
+        EXPECT_TRUE(s.had_failure) << "the failure crosses with its window (d9 §1, ruling :504)";
+        if (s.had_failure) {
+            EXPECT_EQ(s.failure_status, FL_INTERNAL);
+            EXPECT_EQ(s.failure_origin, FL_ORIGIN_HANDOVER);
+            EXPECT_EQ(s.failure_message, std::string(std::bad_alloc().what()));
+        }
+    }
+    ExpectWindows(others, published, want);
+}
+
+/// Rung 8; d9 L18 (D30), d9 §1 and L2; register BC-12; rulings 2026-11-13 ("a failed handoff is
+/// reported"), 2026-11-14 ("every close ends with one closing delivery") and 2026-11-14 ("a failed
+/// hand-over still carries its status and message"). One batched subscription per cell (DEBT-3):
+/// rows 100-104 in windows of two, no timeout; the test-only hook makes hand-over k throw
+/// `std::bad_alloc` after the export; then the subscription is closed from outside. k = 2 fails a
+/// row-limit window, k = 3 the closing one. Either way that window still arrives, once, as no
+/// batch: its rows counted lost, its reason kept, and the failure's status, origin and message
+/// with it (borrowed; copied in the callback). Every other delivery is what was published and
+/// carries no failure. Rows received plus rows lost equal rows published; exactly one closing
+/// arrives, last; nothing arrives after the close returns (2 s). `fired == 1` is internal: it only
+/// rules out a run in which nothing failed.
+TEST(Batches, AWindowTheShimCannotHandOverStillArrivesCounted) {
+    for (const int64_t k : {int64_t{2}, int64_t{3}}) {
+        SCOPED_TRACE(k == 2 ? "hand-over 2 fails (row limit)" : "hand-over 3 fails (closing)");
+        AWindowTheShimCannotHandOverCell(k);
+    }
+}
+
+#endif  // FLETCHER_HANDOVER_FAULT_TESTS
 
 #endif  // FLETCHER_EXPECTED_VARIANT == 2
 

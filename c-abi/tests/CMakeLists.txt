@@ -205,3 +205,67 @@ if(FLETCHER_BUILD_PROBE_SHIM)
         TEST_PREFIX "probe."
         PROPERTIES TIMEOUT 30)
 endif()
+
+# ---------------------------------------------------------------------------
+# The HAND-OVER FAULT SHIM (D9S-6, D-D9S-4; d9 L18, BC-12), server only. TEST-ONLY, and it can
+# exist only here: this directory is built with FLETCHER_BUILD_TESTS alone. It is the shipped server
+# shim rebuilt from the same four sources, plus `handover_fault.cpp`, with the same visibility,
+# version script and variant, and FLETCHER_C_ABI_HANDOVER_FAULT, which turns the fault point in
+# `batches_server.cpp` into a call and which `handover_fault.cpp` refuses to compile without. CMake
+# compiles a source once per target, so the shipped shim's `batches_server.cpp` never sees the macro.
+# Its file name matches none of `package()`'s patterns, which name the shipped stem (held by name only).
+if(FLETCHER_SHIM_VARIANT STREQUAL "server")
+    set(_c_abi_root ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    add_library(fletcher-c-abi-handover-fault SHARED
+        ${_c_abi_root}/src/binding_version.c
+        ${_c_abi_root}/src/builtins.cpp
+        ${_c_abi_root}/src/binding.cpp
+        ${_c_abi_root}/src/batches_server.cpp
+        handover_fault.cpp)
+    target_compile_features(fletcher-c-abi-handover-fault PRIVATE c_std_99 cxx_std_20)
+    set_target_properties(fletcher-c-abi-handover-fault PROPERTIES
+        C_VISIBILITY_PRESET hidden
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON)
+    target_compile_definitions(fletcher-c-abi-handover-fault PRIVATE FLETCHER_C_ABI_BUILDING
+        FLETCHER_C_ABI_VARIANT=FL_VARIANT_SERVER FLETCHER_C_ABI_HANDOVER_FAULT)
+    # The reason switch as an error, as on the shipped shim. Source properties are per directory,
+    # so the parent's setting does not reach a target made here.
+    if(MSVC)
+        set_source_files_properties(${_c_abi_root}/src/batches_server.cpp PROPERTIES
+            COMPILE_OPTIONS "/we4062")
+    else()
+        set_source_files_properties(${_c_abi_root}/src/batches_server.cpp PROPERTIES
+            COMPILE_OPTIONS "-Werror=switch")
+        target_link_options(fletcher-c-abi-handover-fault PRIVATE
+            "LINKER:--exclude-libs,ALL"
+            "LINKER:--version-script=${_c_abi_root}/cmake/exports.map")
+        set_target_properties(fletcher-c-abi-handover-fault PROPERTIES
+            LINK_DEPENDS ${_c_abi_root}/cmake/exports.map)
+    endif()
+    target_include_directories(fletcher-c-abi-handover-fault PRIVATE ${_c_abi_root}/src)
+    target_link_libraries(fletcher-c-abi-handover-fault PRIVATE
+        fletcher-c-abi-impl
+        fletcher-pubsub::fletcher-pubsub
+        fletcher-fastdds-pubsub-provider::fletcher-fastdds-pubsub-provider
+        fletcher-xrcedds-pubsub-provider::fletcher-xrcedds-pubsub-provider
+        fletcher-pubsub-arrow::fletcher-pubsub-arrow)
+
+    # The whole `Batches` suite against the fault shim: unarmed it is control C1 (the hook is inert),
+    # and the forcing test arms it. One shim per process (D-BIND-17): it links this shim and never
+    # the shipped one, and runs from this shim's directory for the loader reason given above.
+    add_executable(c_abi_handover_tests test_batches.cpp)
+    target_compile_definitions(c_abi_handover_tests PRIVATE
+        FLETCHER_EXPECTED_VARIANT=2 FLETCHER_HANDOVER_FAULT_TESTS=1)
+    target_link_libraries(c_abi_handover_tests PRIVATE
+        GTest::gtest_main
+        fletcher-c-abi-handover-fault
+        fletcher-pubsub-arrow::fletcher-pubsub-arrow
+        arrow::arrow)
+    target_include_directories(c_abi_handover_tests PRIVATE ${_c_abi_root}/include)
+    set_target_properties(c_abi_handover_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY $<TARGET_FILE_DIR:fletcher-c-abi-handover-fault>)
+    gtest_discover_tests(c_abi_handover_tests DISCOVERY_MODE PRE_TEST
+        TEST_PREFIX "handover."
+        PROPERTIES TIMEOUT 30)
+endif()
