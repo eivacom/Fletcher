@@ -8,8 +8,8 @@ reach Fletcher's one batcher exactly as given.
 
 **Forcing test:** `Batches.ClosingFromOutsideDeliversTheRestThenTheClosingBatch`. When the close
 returns, every accepted batch has arrived, the closing batch last, and nothing arrives afterwards.
-This holds whether the caller closes the subscription or destroys the subscriber, and other
-subscriptions keep running. Alongside it are an edge-build refusal check and two guards, one for
+This holds whether the caller closes the subscription or destroys the subscriber, and a close
+leaves other subscriptions running. Alongside it are an edge-build refusal check and two guards, one for
 taking a batch and one for the options (42 cells, with a timing control).
 
 ## Interfaces
@@ -54,7 +54,4 @@ check in the shim, and no change to the batcher, the encoding or C#.
 ## Numbers
 Declared net lines: production +80/−9 (≈+52/−6 counted, ≈89 touched) · tests +490/−3 · new public surface: 1 · design cycles used: 1/2
 
----
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
-<delta vs the above — actual net lines, anything retired or added the brief did
-not predict, fix cycles used>.
+*As landed:* (PM, at close)
