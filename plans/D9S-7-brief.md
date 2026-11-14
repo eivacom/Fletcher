@@ -45,6 +45,7 @@
 
 ## Numbers
 Declared net lines: **+30 / −8 (≈38 touched, 2 files)**, counting CI YAML as production by the ladder's rule; under "counts only if it ships", 0. Tests (not shipped, not counted): ≈+170 in 2 files. New public surface: 0. Design cycles used: 1/2.
+**Counted at phase B (`f1a099e`):** CI YAML +77 / −15 raw, **65 non-comment touched lines** in 2 files (vs ≈38 declared, 60 admission), so the item was **ejected to the full loop**; design `plans/D9S-7-two-builds.md`.
 
 ---
 *As landed:* (PM, at close)
