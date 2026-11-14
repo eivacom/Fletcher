@@ -29,6 +29,8 @@
 #include <cstdint>
 #include <cstring>
 #include <deque>
+#include <functional>
+#include <iostream>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -513,8 +515,9 @@ TEST(Batches, EachClosedWindowCrossesAsAnImportableBatchInWindowOrder) {
 }
 
 /// d9 L14 and d7 L6, L7: a window domain 7 could not build is not a zero-row batch, it is no batch
-/// at all, and its rows are counted (a delivery with nothing pending is never made, d7 L6, so each
-/// one here exists because of drops). The topic is never declared, so `inprocess` (as-declared mode)
+/// at all, and its rows are counted (while open, a deadline with nothing pending delivers nothing,
+/// d7 L6, so each delivery here exists because of drops; the snapshot is taken before the close,
+/// whose empty closing delivery is not this test's subject). The topic is never declared, so `inprocess` (as-declared mode)
 /// delivers raw rows with no schema and domain 7 has nothing to decode them with: every window is
 /// a null batch with its rows in `rows_dropped`.
 ///
@@ -686,7 +689,7 @@ TEST(Batches, EachBatchRowCarriesItsOwnAttachments) {
 /// subscriber, so a close that ended the whole host turns it red; a destroy ends every
 /// subscription of its subscriber, so its control is on a second one (DEBT-2). Each subscription
 /// has its own sink and every count is asserted before teardown, which closes the live ones
-/// unasserted (no test asserts what an idle close delivers).
+/// unasserted (what an idle close delivers is `EveryCloseEndsWithExactlyOneClosingDelivery`'s).
 TEST(Batches, ClosingFromOutsideDeliversTheRestThenTheClosingBatch) {
     for (const bool by_destroy : {false, true}) {
         SCOPED_TRACE(by_destroy ? "fl_subscriber_destroy" : "fl_subscriber_unsubscribe_batches");
@@ -1016,6 +1019,413 @@ TEST(Batches, EveryBatchOptionReachesDomain7AsGiven) {
     if (batch_status == FL_OK) fl_schema_arrival_dispose(batch_arrival);
     fl_error_dispose(&row_err);
     fl_error_dispose(&batch_err);
+}
+
+// ---------------------------------------------------------------------------
+// The server build only (5b)
+// ---------------------------------------------------------------------------
+
+/// How long the test thread waits for an event that is owed (one-sided), and how long a held
+/// closing delivery waits for its closer to return.
+constexpr milliseconds kAwait{1000};
+
+class Latch {
+   public:
+    void Open() {
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            open_ = true;
+        }
+        cv_.notify_all();
+    }
+    bool WaitFor(milliseconds limit) {
+        std::unique_lock<std::mutex> lock(mu_);
+        return cv_.wait_for(lock, limit, [&] { return open_; });
+    }
+
+   private:
+    std::mutex mu_;
+    std::condition_variable cv_;
+    bool open_ = false;
+};
+
+/// One raw 4-byte row, through the raw route: on an undeclared topic it has no schema, so domain 7
+/// has nothing to decode it with.
+void PublishRaw(fl_publisher* publisher, fl_topic topic) {
+    struct Writer {
+        static size_t Row(void*, uint8_t* dst, size_t room) {
+            if (room < 4) return 0;
+            std::memset(dst, 0, 4);
+            return 4;
+        }
+    };
+    fl_error err = {};
+    EXPECT_EQ(fl_publisher_publish_raw(publisher, topic, &Writer::Row, nullptr, 4, nullptr, &err),
+              FL_OK)
+        << MessageOf(err);
+    fl_error_dispose(&err);
+}
+
+/// One cell of F1: its own subscriber, its own batched subscription, and the closer that ends it,
+/// run from the test thread, from inside the subscription's own callback, or from a row delivery
+/// on another topic of the same subscriber. The callback records into `sink` and never asserts.
+class CloseCell {
+   public:
+    enum class By { kUnsubscribe, kDestroy };
+    enum class From { kOutside, kInside, kRowDelivery };
+    /// kQueued is the control: a full window queued and one row pending when closed from inside.
+    enum class State { kDecoded, kUndecoded, kNoRow, kQueued };
+
+    CloseCell(By by, From from, State state) : by_(by), from_(from), state_(state) {}
+
+    static void OnBatch(void* ctx, const fl_batch* batch) {
+        auto* self = static_cast<CloseCell*>(ctx);
+        // From inside or a row delivery the close returns first: a closing is held until it has,
+        // so a close that waited for its closing is seen at once (bounded by kAwait).
+        if (batch->reason == FL_BATCH_CLOSING && self->from_ != From::kOutside) {
+            static_cast<void>(self->closed_.WaitFor(kAwait));
+        }
+        BatchSink::OnBatch(&self->sink, batch);
+        if (self->from_ == From::kInside && !self->fired_.exchange(true)) {
+            if (self->state_ == State::kQueued) static_cast<void>(self->published.WaitFor(kAwait));
+            self->Close();
+        }
+    }
+    static void OnRow(void* ctx, uint64_t, const uint8_t*, size_t, const fl_schema*,
+                      const fl_attachments*) {
+        auto* self = static_cast<CloseCell*>(ctx);
+        if (!self->fired_.exchange(true)) self->Close();
+    }
+
+    void Close() {
+        if (by_ == By::kDestroy) {
+            destroyed = true;
+            fl_subscriber_destroy(subscriber);
+        } else {
+            fl_error err = {};
+            close_status = fl_subscriber_unsubscribe_batches(subscriber, id, &err);
+            fl_error_dispose(&err);
+        }
+        at_return = sink.Snapshot().size();
+        closed_.Open();
+    }
+    bool WaitClosed(milliseconds limit) { return closed_.WaitFor(limit); }
+
+    std::string Name() const {
+        return std::string(by_ == By::kDestroy ? "fl_subscriber_destroy" : "unsubscribe_batches") +
+               (from_ == From::kOutside  ? " from outside"
+                : from_ == From::kInside ? " inside its own callback"
+                                         : " from a row delivery (d)") +
+               (state_ == State::kDecoded     ? ", idle after a decoded row"
+                : state_ == State::kUndecoded ? ", idle after an undecodable row"
+                : state_ == State::kNoRow     ? ", before any row"
+                                              : ", a window queued and a row pending (control)");
+    }
+
+    By by() const { return by_; }
+    From from() const { return from_; }
+    State state() const { return state_; }
+
+    BatchSink sink;
+    Latch published;  // kQueued: every row has reached domain 7
+    fl_subscriber* subscriber = nullptr;
+    uint64_t id = 0;
+    std::atomic<bool> destroyed{false};
+    std::atomic<size_t> at_return{SIZE_MAX};
+    std::atomic<fl_status> close_status{FL_OK};
+
+   private:
+    const By by_;
+    const From from_;
+    const State state_;
+    std::atomic<bool> fired_{false};
+    Latch closed_;
+};
+
+/// F1, rung 6 (d9 L15, L14; d7 L6, L7, L9 for closing; ruling 2026-11-14, "every close ends with
+/// one closing delivery"). Each closer, from outside, from inside the subscription's own callback
+/// and (unsubscribe only) from a row delivery on another topic of the same subscriber (DEBT-2),
+/// on an idle window after a decoded row (1 row, max_rows 1), after an undecodable one (1 raw row
+/// on an undeclared topic, 10 ms timeout), or before any row (declared topic). Each ends with
+/// EXACTLY ONE CLOSING, last, 0 dropped. After a decoded row it is an empty table of the topic's
+/// schema (array and schema non-NULL, num_rows 0); otherwise there is no array. From outside the
+/// close returns after it (d7 L9); from inside or (d) the close returns first and it follows
+/// within kAwait. Controls, green before: from inside with a full window queued and one row
+/// pending, both closers give ROW_LIMIT, ROW_LIMIT, CLOSING(1). One shared 2 s window at the end:
+/// a row to every cell's topic reaches no cell, while a live subscription gets its ROW_LIMIT.
+TEST(Batches, EveryCloseEndsWithExactlyOneClosingDelivery) {
+    using By = CloseCell::By;
+    using From = CloseCell::From;
+    using State = CloseCell::State;
+    std::deque<CloseCell> cells;  // they and their sinks outlive the fixture
+    std::deque<OwnedTopic> topics;
+    BatchSink control;
+    BatchFixture fx;
+    PublishedRows published(/*first_seq=*/100, /*count=*/5);
+
+    for (const By by : {By::kUnsubscribe, By::kDestroy}) {
+        for (const State s : {State::kDecoded, State::kUndecoded, State::kNoRow, State::kQueued}) {
+            if (s != State::kQueued) cells.emplace_back(by, From::kOutside, s);
+            if (s != State::kNoRow) cells.emplace_back(by, From::kInside, s);
+            if (by == By::kUnsubscribe && s != State::kQueued)
+                cells.emplace_back(by, From::kRowDelivery, s);
+        }
+    }
+    std::vector<size_t> counts;
+    for (size_t i = 0; i < cells.size(); ++i) {
+        CloseCell& c = cells[i];
+        SCOPED_TRACE(c.Name());
+        fl_error err = {};
+        EXPECT_EQ(fl_subscriber_create(fx.provider(), &c.subscriber, &err), FL_OK)
+            << MessageOf(err);
+        topics.emplace_back("d9s5b-close", std::to_string(i));
+        const fl_topic topic = topics.back().topic();
+        if (c.state() != State::kUndecoded) fx.DeclareTopic(topic, published);
+        const bool undecoded = c.state() == State::kUndecoded;
+        fl_schema_arrival* arrival = nullptr;
+        EXPECT_EQ(fl_subscriber_subscribe_batches(c.subscriber, topic,
+                                                  undecoded                     ? 100
+                                                  : c.state() == State::kQueued ? 2
+                                                                                : 1,
+                                                  undecoded ? 10 : INT64_MAX, nullptr,
+                                                  &CloseCell::OnBatch, &c, &c.id, &arrival, &err),
+                  FL_OK)
+            << MessageOf(err);
+        if (arrival != nullptr) fl_schema_arrival_dispose(arrival);
+        if (c.from() == From::kRowDelivery) {
+            const OwnedTopic& other = topics.emplace_back("d9s5b-close-row", std::to_string(i));
+            fx.DeclareTopic(other.topic(), published);
+            uint64_t row_id = 0;
+            fl_schema_arrival* row_arrival = nullptr;
+            EXPECT_EQ(fl_subscriber_subscribe(c.subscriber, other.topic(), &CloseCell::OnRow, &c,
+                                              &row_id, &row_arrival, &err),
+                      FL_OK)
+                << MessageOf(err);
+            if (row_arrival != nullptr) fl_schema_arrival_dispose(row_arrival);
+        }
+        fl_error_dispose(&err);
+
+        // The trigger, and how many deliveries come before the closing.
+        size_t before = 1;
+        if (c.state() == State::kDecoded) fx.Publish(topic, published, 0, 1);
+        if (c.state() == State::kUndecoded) PublishRaw(fx.publisher(), topic);
+        if (c.state() == State::kNoRow) before = 0;
+        if (c.state() == State::kQueued) {
+            fx.Publish(topic, published, 0, 5);
+            c.published.Open();
+            before = 2;
+        }
+        if (c.from() != From::kInside) {
+            EXPECT_TRUE(c.sink.WaitForDeliveries(before, kAwait))
+                << "the trigger was not delivered";
+            if (c.from() == From::kOutside) {
+                c.Close();
+            } else {
+                fx.Publish(topics.back().topic(), published, 0, 1);  // the row delivery closes
+            }
+        }
+        EXPECT_TRUE(c.WaitClosed(kAwait)) << "the close did not return";
+        EXPECT_TRUE(c.sink.WaitForDeliveries(before + 1, kAwait)) << "no closing delivery arrived";
+        const std::vector<Seen> seen = c.sink.Snapshot();
+        counts.push_back(seen.size());
+
+        EXPECT_EQ(c.close_status.load(), FL_OK);
+        const size_t want_at_return = c.from() == From::kOutside  ? before + 1
+                                      : c.from() == From::kInside ? 1
+                                                                  : before;
+        EXPECT_EQ(c.at_return.load(), want_at_return)
+            << (c.from() == From::kOutside ? "the close returned before its closing (d7 L9)"
+                                           : "the close waited for its closing (d9 L15)");
+        if (c.state() == State::kQueued) {
+            ExpectWindows(
+                seen, published,
+                {{FL_BATCH_ROW_LIMIT, 0, 2}, {FL_BATCH_ROW_LIMIT, 2, 2}, {FL_BATCH_CLOSING, 4, 1}});
+            continue;
+        }
+        if (seen.size() != before + 1) {
+            ADD_FAILURE() << "the trigger, then exactly one closing delivery: got " << seen.size()
+                          << " deliveries";
+            continue;
+        }
+        if (c.state() == State::kDecoded) {
+            EXPECT_EQ(seen[0].reason, FL_BATCH_ROW_LIMIT);
+            EXPECT_EQ(seen[0].num_rows, 1);
+        } else if (c.state() == State::kUndecoded) {
+            EXPECT_EQ(seen[0].reason, FL_BATCH_TIMEOUT);
+            EXPECT_FALSE(seen[0].had_array);
+            EXPECT_EQ(seen[0].rows_dropped, 1);
+        }
+        const Seen& closing = seen.back();
+        EXPECT_EQ(closing.reason, FL_BATCH_CLOSING);
+        EXPECT_EQ(closing.rows_dropped, 0);
+        EXPECT_EQ(closing.num_rows, 0);
+        EXPECT_FALSE(closing.had_attachments) << "no rows, so no attachments list (d9 L14)";
+        if (c.state() == State::kDecoded) {
+            EXPECT_TRUE(closing.had_array && closing.had_schema)
+                << "after a decoded row the closing is an empty table, not \"no batch\" (d7 L7)";
+            EXPECT_TRUE(closing.imported) << closing.import_error;
+            if (closing.imported) {
+                EXPECT_EQ(closing.batch->num_rows(), 0);
+                EXPECT_TRUE(closing.batch->schema()->Equals(*published.batch().schema()))
+                    << closing.batch->schema()->ToString();
+            }
+        } else {
+            EXPECT_FALSE(closing.had_array) << "no decoder: the closing is \"no batch\" (d7 L7)";
+            EXPECT_FALSE(closing.had_schema);
+        }
+    }
+
+    // The shared window: a row to every cell's topic, and one to a live subscription.
+    const OwnedTopic live("d9s5b-close", "live");
+    fx.DeclareTopic(live.topic(), published);
+    SubscribeBatches(fx.subscriber(), live.topic(), 1, INT64_MAX, control);
+    for (size_t i = 0, t = 0; i < cells.size(); ++i, ++t) {
+        if (cells[i].state() == State::kUndecoded) {
+            PublishRaw(fx.publisher(), topics[t].topic());
+        } else {
+            fx.Publish(topics[t].topic(), published, 0, 1);
+        }
+        if (cells[i].from() == From::kRowDelivery) ++t;  // skip the cell's row topic
+    }
+    fx.Publish(live.topic(), published, 0, 1);
+    EXPECT_TRUE(control.WaitForDeliveries(1, seconds(2))) << "the live subscription got nothing";
+    std::this_thread::sleep_for(seconds(2));
+    for (size_t i = 0; i < cells.size(); ++i) {
+        EXPECT_EQ(cells[i].sink.Snapshot().size(), counts[i])
+            << cells[i].Name() << ": a delivery after its closing";
+    }
+    ExpectWindows(control.Snapshot(), published, {{FL_BATCH_ROW_LIMIT, 0, 1}});
+    for (CloseCell& c : cells) {
+        if (!c.destroyed) fl_subscriber_destroy(c.subscriber);
+    }
+}
+
+/// The flood's live subscription: counts, and keeps nothing.
+struct CountingSink {
+    static void OnBatch(void* ctx, const fl_batch*) { ++static_cast<CountingSink*>(ctx)->count; }
+    std::atomic<int64_t> count{0};
+};
+
+/// F2 (ruling 2026-11-14, "a refused batched subscribe never delivers"; d7 L1's refused clause).
+/// A publisher floods topic `busy`, where a batched subscription with no topic options is live.
+/// 200 batched subscribes to `busy` with a conflicting profile, max_rows 1, each with its own
+/// sink as `ctx`, half from the test thread and half from inside a row delivery on another topic
+/// of the same subscriber: each answers FL_INVALID_ARGUMENT, and no refused sink is ever called,
+/// through a final 2 s window. Domain 3 publishes a subscription before it refuses it, so rows
+/// the flood delivers in between reach the refused one's batcher; whether any do is a race, so
+/// the number of refused sinks called is printed, red or green. Control: during the same flood, a
+/// subscribe with the matching (no) options gets a ROW_LIMIT within 2 s, so the flood does reach a
+/// newly published subscription and a silent refused sink means something.
+TEST(Batches, ARefusedBatchedSubscribeNeverDelivers) {
+    constexpr size_t kAttempts = 200;
+    std::deque<BatchSink> refused(kAttempts);  // one ctx per attempt; they outlive the fixture
+    BatchSink control;
+    CountingSink live;
+    struct InsideAttempt {
+        std::function<void()> attempt;
+        static void OnRow(void* ctx, uint64_t, const uint8_t*, size_t, const fl_schema*,
+                          const fl_attachments*) {
+            static_cast<InsideAttempt*>(ctx)->attempt();
+        }
+    } inside;
+    BatchFixture fx;
+    PublishedRows published(/*first_seq=*/1, /*count=*/1);
+    const OwnedTopic busy("d9s5b-refused", "busy");
+    const OwnedTopic other("d9s5b-refused", "other");
+    fx.DeclareTopic(busy.topic(), published);
+    fx.DeclareTopic(other.topic(), published);
+
+    fl_error err = {};
+    uint64_t live_id = 0;
+    fl_schema_arrival* arrival = nullptr;
+    ASSERT_EQ(fl_subscriber_subscribe_batches(fx.subscriber(), busy.topic(), INT64_MAX, INT64_MAX,
+                                              nullptr, &CountingSink::OnBatch, &live, &live_id,
+                                              &arrival, &err),
+              FL_OK)
+        << MessageOf(err);
+    fl_schema_arrival_dispose(arrival);
+
+    const fl_topic_options conflicting = {Str("d9s5b-conflict"), 0};
+    std::vector<fl_status> status(kAttempts, FL_OK);
+    std::vector<char> ran(kAttempts, 0);
+    size_t next = 0;
+    const auto attempt = [&] {
+        const size_t i = next;
+        fl_error attempt_err = {};
+        uint64_t id = 0;
+        fl_schema_arrival* attempt_arrival = nullptr;
+        status[i] = fl_subscriber_subscribe_batches(fx.subscriber(), busy.topic(), 1, INT64_MAX,
+                                                    &conflicting, &BatchSink::OnBatch, &refused[i],
+                                                    &id, &attempt_arrival, &attempt_err);
+        if (status[i] == FL_OK) fl_schema_arrival_dispose(attempt_arrival);
+        fl_error_dispose(&attempt_err);
+        ran[i] = 1;
+    };
+    inside.attempt = attempt;
+    uint64_t row_id = 0;
+    ASSERT_EQ(fl_subscriber_subscribe(fx.subscriber(), other.topic(), &InsideAttempt::OnRow,
+                                      &inside, &row_id, &arrival, &err),
+              FL_OK)
+        << MessageOf(err);
+    fl_schema_arrival_dispose(arrival);
+    fl_error_dispose(&err);
+
+    std::atomic<bool> stop{false};
+    std::atomic<int64_t> flood_failures{0};
+    std::atomic<int64_t> flooded{0};
+    std::thread flood([&] {
+        while (!stop.load()) {
+            ++flooded;
+            fl_error flood_err = {};
+            if (fl_publisher_publish_rows(fx.publisher(), busy.topic(), published.rows(), 0, 1,
+                                          nullptr, &flood_err) != FL_OK) {
+                ++flood_failures;
+            }
+            fl_error_dispose(&flood_err);
+        }
+    });
+    for (next = 0; next < kAttempts; ++next) {
+        if (next % 2 == 0) {
+            attempt();
+        } else {
+            fx.Publish(other.topic(), published, 0, 1);  // the row delivery makes the attempt
+        }
+    }
+    const uint64_t control_id =
+        SubscribeBatches(fx.subscriber(), busy.topic(), 1, INT64_MAX, control);
+    const bool control_saw = control.WaitForDeliveries(1, seconds(2));
+    stop = true;
+    flood.join();
+    CloseBatches(fx.subscriber(), control_id, FL_OK);
+    std::this_thread::sleep_for(seconds(2));
+
+    size_t called_outside = 0;
+    size_t called_inside = 0;
+    std::string first_called;  // what the first refused sink that was called received
+    for (size_t i = 0; i < kAttempts; ++i) {
+        SCOPED_TRACE("attempt " + std::to_string(i) + (i % 2 == 0 ? " (outside)" : " (inside)"));
+        EXPECT_TRUE(ran[i]) << "the attempt was not made";
+        EXPECT_EQ(status[i], FL_INVALID_ARGUMENT);
+        const std::vector<Seen> got = refused[i].Snapshot();
+        if (got.empty()) continue;
+        ++(i % 2 == 0 ? called_outside : called_inside);
+        if (!first_called.empty()) continue;
+        first_called = "attempt " + std::to_string(i) + ":";
+        for (const Seen& s : got) {
+            first_called += " reason " + std::to_string(s.reason) + ", rows " +
+                            std::to_string(s.num_rows) + ", dropped " +
+                            std::to_string(s.rows_dropped) + ";";
+        }
+    }
+    std::cerr << "[ F2 ] refused sinks called: " << called_outside + called_inside << " of "
+              << kAttempts << " (outside " << called_outside << ", inside " << called_inside
+              << "); rows flooded " << flooded.load() << "; " << first_called << "\n";
+    EXPECT_EQ(called_outside + called_inside, 0U) << "a refused batched subscribe delivered";
+    EXPECT_EQ(flood_failures.load(), 0);
+    EXPECT_TRUE(control_saw) << "control: the flood never reached a newly published subscription";
+    const std::vector<Seen> control_seen = control.Snapshot();
+    ASSERT_FALSE(control_seen.empty());
+    ExpectWindows({control_seen.front()}, published, {{FL_BATCH_ROW_LIMIT, 0, 1}});
 }
 
 #endif  // FLETCHER_EXPECTED_VARIANT == 2

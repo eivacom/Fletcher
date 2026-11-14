@@ -278,7 +278,13 @@ TEST(PubSubArrowFastDdsTest, BatchedRecordBatchDeliveredAcrossDdsBoundary) {
     // mutate the vector: Unsubscribe returns after the last delivery.
     sub.Unsubscribe(result.subscription_id);
 
-    ASSERT_EQ(deliveries.size(), 1u) << "expected exactly one row-limit flush";
+    // One row-limit flush, then exactly one closing delivery, last: the window was idle, so it is
+    // empty, a zero-row batch (the subscription has a decoder; ruling 2026-11-14, d7 L7).
+    ASSERT_EQ(deliveries.size(), 2u) << "expected one row-limit flush, then exactly one closing";
+    EXPECT_EQ(deliveries[1].status.reason, BatchStatus::Reason::kClosing);
+    EXPECT_EQ(deliveries[1].status.rows_dropped, 0);
+    ASSERT_NE(deliveries[1].batch, nullptr) << "an idle closing with a decoder is never null";
+    EXPECT_EQ(deliveries[1].num_rows, 0);
     const Delivery& d = deliveries[0];
     EXPECT_EQ(d.status.reason, BatchStatus::Reason::kRowLimit);
     EXPECT_EQ(d.status.rows_dropped, 0);

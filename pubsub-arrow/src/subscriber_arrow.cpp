@@ -89,6 +89,18 @@ class SubscriberArrow::RecordBatchBatcher {
 
     bool SchemaDecided() const { return decided_.load(); }
 
+    // The subscription was accepted: Subscribe registered it and will not throw. Only from now on
+    // is anything delivered; a batcher stopped before this (a refused Subscribe) delivers nothing,
+    // and the rows it caught are discarded uncounted (L1, ruling 2026-11-14 "a refused batched
+    // subscribe never delivers").
+    void MarkRegistered() {
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            registered_ = true;
+        }
+        cv_.notify_all();
+    }
+
     // The loop has ended: every delivery this batcher owed has been made.
     bool Ended() const { return ended_.load(); }
 
@@ -234,12 +246,14 @@ class SubscriberArrow::RecordBatchBatcher {
     // The one window closer (row limit, deadline, budget, closing). Caller holds mu_, which is
     // never released here. A window with only dropped rows still yields a zero-row batch (or a
     // null one when there is no decoder: no usable schema has arrived, or the schema was
-    // rejected), so the loss is reported; an idle window yields nothing (L6). The batch is queued
-    // for the batch thread, in window order.
+    // rejected), so the loss is reported. An idle window yields nothing (L6), except the closing
+    // one of an accepted subscription: every such close ends with exactly one kClosing, zero rows
+    // with a decoder and null without (L6, L9; ruling 2026-11-14). The batch is queued for the
+    // batch thread, in window order.
     void Close(BatchStatus::Reason reason) {
         has_deadline_ = false;
         last_flush_ = std::chrono::steady_clock::now();
-        if (!HasPending()) return;
+        if (!HasPending() && !(reason == BatchStatus::Reason::kClosing && registered_)) return;
 
         // Finish() only hands the builders' buffers over — O(1) per column.
         std::shared_ptr<arrow::RecordBatch> batch;
@@ -265,11 +279,17 @@ class SubscriberArrow::RecordBatchBatcher {
     // The batch thread: the only place the callback is called (L12, D10), one batch at a time, in
     // window order, with mu_ released. It also closes a window whose deadline it reaches. It ends
     // only once closed and with nothing left to deliver, so kClosing is its last delivery (L9).
+    // Nothing is delivered before the subscription is registered: earlier windows wait in order,
+    // and a batcher stopped unregistered (a refused Subscribe) discards them and ends (L1).
     void Loop() {
         std::unique_lock<std::mutex> lk(mu_);
         loop_id_ = std::this_thread::get_id();
+        std::deque<Delivery> discarded;  // released below, outside mu_
         for (;;) {
-            if (!queue_.empty()) {
+            if (stopped_ && !registered_) {
+                discarded.swap(queue_);
+                break;
+            } else if (registered_ && !queue_.empty()) {
                 Delivery d = std::move(queue_.front());
                 queue_.pop_front();
                 lk.unlock();
@@ -298,6 +318,7 @@ class SubscriberArrow::RecordBatchBatcher {
         lk.unlock();
         cb = nullptr;
         decoder.reset();
+        discarded.clear();
         lk.lock();
         ended_ = true;
         lk.unlock();
@@ -325,6 +346,7 @@ class SubscriberArrow::RecordBatchBatcher {
     static constexpr int64_t kMaxPreSizeRows = 65536;
     bool has_deadline_ = false;
     bool stopped_ = false;
+    bool registered_ = false;  // Subscribe accepted it (MarkRegistered); guarded by mu_
     std::atomic<bool> decided_{false};
     std::atomic<bool> ended_{true};  // true until Start(), so Stop() never waits on no thread
     std::thread::id loop_id_;
@@ -447,14 +469,16 @@ SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
         batchers_[result.subscription_id] = batcher;
         sub_topic_[result.subscription_id] = key;
     }
+    batcher->MarkRegistered();        // accepted: from here on its windows are delivered
     stop_on_throw.batcher = nullptr;  // registered: the batcher is closed by the usual paths
 
     // Subscribe is non-blocking (mirrors the ArrowRow overload) and never waits for a schema
-    // (L13). The batcher is handed the schema by the first row that brings one, above. Rows that
-    // arrive before that are not decoded: they are counted dropped and reported in their window's
-    // rows_dropped, as a null batch when that window closes before a usable schema arrives (at its
-    // deadline or at close), so subscriber-first works, and its early windows are told as losses
-    // rather than held back.
+    // (L13). No batch is delivered unless this call succeeds; the first may arrive while it is
+    // returning. The batcher is handed the schema by the first row that brings one, above. Rows
+    // that arrive before that are not decoded: they are counted dropped and reported in their
+    // window's rows_dropped, as a null batch when that window closes before a usable schema arrives
+    // (at its deadline or at close), so subscriber-first works, and its early windows are told as
+    // losses rather than held back.
     return {result.subscription_id, result.schema};
 }
 

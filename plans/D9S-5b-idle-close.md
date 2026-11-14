@@ -106,20 +106,20 @@ allocation failure cannot be ruled out by type; L7 names it.* The shim fails to 
   subscription refused before it was registered are discarded uncounted (ruling 2026-11-14, `:493`)"
   (Tests: D7-2). D1 narrowed. **D18** cites `:478`, **D19** `:493`, recording the rulings only.
   Findings (c): deadline case tested (:924-929), closing case reversed. `cpp:234-238` comment.
-- **pubsub-arrow:** README :74, :114-115; `subscriber_arrow.hpp` :115, :176-177; "a batch may arrive
-  before `Subscribe` returns" becomes "never does".
+- **pubsub-arrow:** README :74, :114-115; `subscriber_arrow.hpp` :115, :176-177; add (DEBT-5): no batch
+  is delivered unless the call succeeds; the first may arrive while it is returning.
 - **binding.h** :867-877, :1091-1093: exactly one `CLOSING` (empty when idle) is the last use of
   `on_batch`/`ctx`; from inside a batch callback or a row delivery the close returns at once, and `ctx`
   may be freed in or after that delivery. Delete "idle one delivers nothing", "no reliable end
-  signal" and "must not destroy from inside". :1060-1064: no batch arrives before the call returns; a
-  refused call delivers nothing ever, so `ctx` may be freed on return.
+  signal" and "must not destroy from inside". :1060-1064 (DEBT-5): no batch unless the call succeeds; the first may
+  arrive while it returns, before `out_id` is written: correlate by `ctx`. A refused call delivers nothing ever.
 - **c-abi tests** comments `test_batches.cpp:515-517`, :689. **d9:** L1 annotation and L15 `[built]`, incl.
   the row-delivery clause (F1 (d)); §1 :48, §2 :85; BC-5. **Ladder** rung 6: "even when nothing is pending".
 
 ## Risks / Unknowns
 
-- **Visible to C++ callers:** an idle close delivers one empty `kClosing`, and no batch arrives before
-  `Subscribe` returns. A callback whose captures die before the subscriber now uses freed memory even
+- **Visible to C++ callers:** an idle close delivers one empty `kClosing`, and no batch unless `Subscribe`
+  succeeds (the first may arrive while it returns, DEBT-5). A callback whose captures die before the subscriber now uses freed memory even
   when idle (11 tests did; the README forbids it). No API change; the C# batcher is untouched.
 - **Accepted loss (`:493`):** rows a refused subscription caught are discarded uncounted. The topic's
   accepted subscriptions still get them.

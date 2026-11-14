@@ -864,17 +864,17 @@ FL_ABI_EXPORT fl_status fl_subscriber_create(fl_provider* provider, fl_subscribe
  * binding must refuse this call in its own code, with its own exception, before
  * it can reach the shim (D-BIND-18).
  *
- * BATCHED SUBSCRIPTIONS (server build; fl_subscriber_subscribe_batches). Outside a
- * batch callback this BLOCKS until running batch callbacks finish, and the queued
- * batches, then CLOSING if the last window holds rows or drops (an idle one
- * delivers nothing), are delivered on another thread before it returns: do not
- * hold across it a lock a batch callback takes. Once it returns nothing runs, so
- * `ctx` may be freed then. From INSIDE a batch callback it returns without waiting
- * for that subscription; the queued batches, then CLOSING if the last window holds
- * rows or drops, arrive afterwards, and CLOSING is NOT guaranteed, so the caller
- * gets no reliable end signal for `ctx`. A binding must not destroy from inside a
- * batch callback, or must keep `on_batch` and `ctx` valid for the life of the
- * process. */
+ * BATCHED SUBSCRIPTIONS (server build; fl_subscriber_subscribe_batches). Every
+ * batched subscription ends with EXACTLY ONE FL_BATCH_CLOSING delivery, last: the
+ * last window, or an empty one when nothing is pending (an empty table of the
+ * topic's schema once a row has been decoded; `array` NULL before). It is the last
+ * use of that subscription's `on_batch` and `ctx`. Outside a batch callback this
+ * BLOCKS until running batch callbacks finish, and the queued batches, then
+ * CLOSING, are delivered on another thread before it returns: do not hold across
+ * it a lock a batch callback takes. Once it returns nothing runs, so `ctx` may be
+ * freed then. From INSIDE a batch callback it returns without waiting for that
+ * subscription; the queued batches, then CLOSING, arrive afterwards on the batch
+ * thread, and `ctx` may be freed in or after that CLOSING delivery. */
 FL_ABI_EXPORT void fl_subscriber_destroy(fl_subscriber* subscriber);
 
 /* Delivery: raw encoded row bytes, the topic's schema, and any attachments.
@@ -1057,11 +1057,12 @@ typedef void (*fl_batch_fn)(void* ctx, const fl_batch* batch);
  * answers FL_OK without stopping its batches or releasing `ctx`. A batched
  * subscription is ended by fl_subscriber_unsubscribe_batches, or by
  * fl_subscriber_destroy with every other subscription of its subscriber. The callback is not
- * given an id, because a batch may arrive before this call returns: correlate by
- * `ctx`.
+ * given an id: no batch is delivered unless the call succeeds, but the first may arrive
+ * while it is returning, before `out_id` is written: correlate by `ctx`.
  *
  * THREADS. `on_batch` runs on domain 7's batch thread, one batch at a time, in
- * window order. A batch may arrive before this call returns.
+ * window order. A REFUSED call (any status but FL_OK) never delivers anything, so
+ * `ctx` may be freed as soon as it returns.
  *
  * OPTIONS. `max_rows` and `timeout_ms` go to domain 7 as given: INT64_MAX means no
  * timeout. A value out of range is refused by domain 7 (FL_INVALID_ARGUMENT, its
@@ -1088,11 +1089,11 @@ FL_ABI_EXPORT fl_status fl_subscriber_subscribe_batches(
 
 /* End one batched subscription. SERVER BUILD ONLY. Since ABI 0.8.
  *
- * OUTSIDE ANY BATCH CALLBACK THIS BLOCKS: every finished batch, then the closing
- * batch (FL_BATCH_CLOSING) if the last window holds rows or drops (an idle one: see
- * fl_subscriber_destroy), is delivered on domain 7's
- * batch thread before it returns, and nothing is delivered for this id afterwards,
- * so `ctx` may be freed then. Do not hold across it a lock a batch callback takes.
+ * OUTSIDE ANY BATCH CALLBACK THIS BLOCKS: every finished batch, then exactly one
+ * closing batch (FL_BATCH_CLOSING; empty when nothing is pending, as
+ * fl_subscriber_destroy describes), is delivered on domain 7's batch thread before
+ * it returns, and nothing is delivered for this id afterwards, so `ctx` may be
+ * freed then. Do not hold across it a lock a batch callback takes.
  *
  * From this subscription's own batch callback, or from a row delivery on the same
  * provider, it does not wait (d7 L9); what then arrives, and when `ctx` may be

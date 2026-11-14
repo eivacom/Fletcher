@@ -72,7 +72,7 @@ you unsubscribe.
 
 `BatchOptions::kNoTimeout` asks for no timeout at all: a batch then arrives only when it is full
 (or hits the offset budget), and whatever is left arrives, with reason `kClosing`, when you
-unsubscribe or destroy the `SubscriberArrow`. When rows are lost, see the `Subscribe` doc in the
+unsubscribe or destroy the `SubscriberArrow` (an empty `kClosing` batch when nothing is left). When rows are lost, see the `Subscribe` doc in the
 header for when the loss is reported. A timeout too long for the clock to reach means the same as
 `kNoTimeout`; a long timeout the clock can reach gives a deadline at its true time.
 
@@ -107,12 +107,18 @@ that fails to decode is counted in `rows_dropped` and contributes neither a row
 nor an attachment, so a window with only dropped rows still delivers a zero-row
 (or null) batch to report the loss. The callback target must outlive the subscription.
 
+No batch is delivered unless `Subscribe` succeeds; the first may arrive while it is returning,
+before you hold the subscription id, so correlate by what the callback captured. A `Subscribe`
+that throws never delivers anything, so what its callback uses may be freed once it returns.
+
 The callback runs on a thread the subscription owns, one batch at a time, in window order;
 never inside `Publish` or on the transport's delivery thread, so publishing never waits on it.
 A callback slower than the data lets finished batches queue up in memory.
 
-`Unsubscribe`, or destroying the `SubscriberArrow`, delivers every finished batch and then the
-partial one, with reason `kClosing`, before it returns; nothing is delivered after it. Two
+`Unsubscribe`, or destroying the `SubscriberArrow`, delivers every finished batch and then
+exactly one batch with reason `kClosing`, before it returns: the partial window, or an empty
+batch when nothing is pending (zero rows once a row has brought a usable schema, null before).
+Nothing is delivered after it, so the `kClosing` batch is always the end signal. Two
 cases do not wait for that subscription's batches: a call made from inside the subscription's
 own batch callback (`Unsubscribe`, or destroying the `SubscriberArrow`, which still waits for
 its other batched subscriptions), and an `Unsubscribe` made from a thread that is delivering

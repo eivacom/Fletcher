@@ -112,7 +112,9 @@ class SubscriberArrow {
     /// been decoded, or at the window's deadline — `options.timeout` after the previous flush, but
     /// never sooner than 1 ms after the window's first row or drop — whichever comes first. This
     /// holds whether or not a usable schema has arrived: a window of lost rows is reported at its
-    /// deadline too. A partial batch is flushed on Unsubscribe with reason kClosing.
+    /// deadline too. Every close of an accepted subscription (Unsubscribe or destruction) ends
+    /// with exactly one batch of reason kClosing, last: the pending window, or, when nothing is
+    /// pending, an empty one (zero rows once a row has brought a usable schema, null before).
     ///
     /// With `BatchOptions::kNoTimeout` there is no deadline: a window closes only when full, on the
     /// offset budget, or at Unsubscribe or destruction. A window of only lost rows (no usable
@@ -126,6 +128,11 @@ class SubscriberArrow {
     /// `callback` runs on a thread the subscription owns, one batch at a time, in window order;
     /// never inside `Publish` or on the transport's delivery thread, so publishing never waits on
     /// it. A callback slower than the data lets finished batches queue up in memory.
+    ///
+    /// No batch is delivered unless this call succeeds; the first may arrive while it is
+    /// returning, before the caller has the subscription id, so correlate by what the callback
+    /// captured. A call that throws (refused options, a conflicting `topic_options`, a transport
+    /// failure) never delivers anything, so what the callback uses may be freed once it returns.
     ///
     /// `attachments[i]` belongs to batch row `i` (parallel, in batch order).
     /// A row that fails to decode is counted in `status.rows_dropped` and
@@ -173,12 +180,13 @@ class SubscriberArrow {
         return Subscribe(segments, std::move(callback), BatchOptions{});
     }
 
-    /// For a batched subscription, every finished batch and then the partial one (reason
-    /// kClosing) is delivered before this returns; nothing is delivered after. Two calls return
-    /// at once instead: one from inside this subscription's own batch callback, and one from a
-    /// thread that is delivering rows on the subscription's own transport (e.g. inside a per-row
-    /// callback). The remaining batches, then kClosing, still arrive in order after that, so what
-    /// those callbacks use may not be freed until the kClosing batch has arrived.
+    /// For a batched subscription, every finished batch and then exactly one kClosing batch (the
+    /// pending window, or an empty one when nothing is pending) is delivered before this returns;
+    /// nothing is delivered after. Two calls return at once instead: one from inside this
+    /// subscription's own batch callback, and one from a thread that is delivering rows on the
+    /// subscription's own transport (e.g. inside a per-row callback). The remaining batches, then
+    /// kClosing, still arrive in order after that, so what those callbacks use may be freed once
+    /// the kClosing batch has arrived, and not before.
     ///
     /// Any other close made inside a batch callback waits, so two can wait on each other forever:
     /// two subscriptions whose callbacks each `Unsubscribe` the other, or one callback destroying

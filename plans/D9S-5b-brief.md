@@ -15,7 +15,7 @@ refused never receives anything, even on a busy topic and even when refused insi
 |---|---|---|
 | Server build: closing a batched subscription, and destroying the subscriber | CHANGED (behaviour; no signature) | Always ends with exactly one closing delivery; the header promises that end signal instead of warning there is none |
 | C++ batcher: unsubscribe and destruction | CHANGED (behaviour; no signature) | An idle close now delivers one empty closing batch (your ruling of 2026-11-14) |
-| Batched subscribe (server build and C++) | CHANGED (behaviour; no signature) | A refused call never delivers, so its state may be freed on return; no batch arrives before the call returns (your ruling "(a) Never") |
+| Batched subscribe (server build and C++) | CHANGED (behaviour; no signature) | A refused call never delivers, so its state may be freed on return; no batch unless the call succeeds, though the first may arrive while it is returning (your ruling "(a) Never") |
 
 ## Deleted
 - The test asserting "an idle close delivers nothing" (your ruling forbids it). The header's "no
@@ -37,8 +37,8 @@ delivery at all for a refused subscribe; a delivery during an idle stretch while
    widened the round by that one batching-rule clause ("no silent loss" gains this exception).
 
 ## Risks accepted / debt carried
-- C++ users get one extra empty closing batch on an idle close, and no batch before subscribe
-  returns. A callback whose captured state dies before the subscriber now crashes even when idle (the
+- C++ users get one extra empty closing batch on an idle close, and no batch unless subscribe
+  succeeds (the first may arrive while it is returning). A callback whose captured state dies before the subscriber now crashes even when idle (the
   README forbids it; 11 tests did it, fixed here).
 - The refused-subscribe test relies on a timing race through the shim. If it cannot be seen failing
   before the change, a deterministic batcher-level test carries that proof, and the close reports it.

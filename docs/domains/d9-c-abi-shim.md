@@ -45,7 +45,7 @@ containment.
   `[built]` (subscribe D9S-4a, close D9S-5a). Never
   carries Arrow C++, because "it needs to be able to run on embedded devices" (owner, 2026-11-12).
   Ships in the base package, `Eiva.Fletcher.Interop` (D22).
-- **Server-tier variant** `[built]` (D9S-2..5a; the in-callback and idle close are D9S-5b): the edge surface plus `pubsub-arrow`'s batched
+- **Server-tier variant** `[built]` (D9S-2..5b; the in-callback and idle close by D9S-5b): the edge surface plus `pubsub-arrow`'s batched
   subscribe (domain 7). Ships in its own .NET package, a full shim (D22). A C# app loads it only if
   it references the server package; otherwise it loads the edge build (D29, revising in place
   D19's "C# on desktop loads the server variant"; domain 10, next round).
@@ -82,7 +82,7 @@ containment.
 | **Shim** | The shared library `fletcher-c-abi` (`CMakeLists.txt:80-83`): the only Fletcher component built as a shared library; statically links pub/sub, the two DDS providers and nanoarrow. |
 | **Variant** | One of the two builds of the shim from one source: `edge` and `server`, chosen by the Conan option `variant` (default `edge`, in the package ID; D9S-2). The test-only probe shim (`CMakeLists.txt:164-211`) is a third artifact from the same sources, always edge, not a variant. |
 | **Edge variant** | Today's shim: no Arrow C++, codec on nanoarrow. Shipped in the base package. |
-| **Server(-tier) variant** | `[built]` (Windows, by hand; CI and Linux unrun) as an artefact (D9S-2: `fletcher-c-abi-server`, the edge sources answering "server", no Arrow yet); the batched subscribe and the Arrow link are `[built]` for 4a (D9S-4a: `pubsub-arrow` is linked only under `variant=server`; Windows, by hand; CI and Linux unrun); each row's attachments are `[built]` for 4b (D9S-4b; same marks); the batched close is `[built]` from outside a callback (D9S-5a; same marks), and from inside one, or of an idle subscription, is D9S-5b's (ruling 2026-11-14). Shipped in a package of its own (D22). |
+| **Server(-tier) variant** | `[built]` (Windows, by hand; CI and Linux unrun) as an artefact (D9S-2: `fletcher-c-abi-server`, the edge sources answering "server", no Arrow yet); the batched subscribe and the Arrow link are `[built]` for 4a (D9S-4a: `pubsub-arrow` is linked only under `variant=server`; Windows, by hand; CI and Linux unrun); each row's attachments are `[built]` for 4b (D9S-4b; same marks); the batched close is `[built]` from outside a callback (D9S-5a; same marks), and from inside one, from a row delivery, or of an idle subscription, each ending with exactly one closing delivery (D9S-5b; same marks; ruling 2026-11-14). Shipped in a package of its own (D22). |
 | **Variant query** | `[built]` for all three artefacts (D9S-1 edge and probe; D9S-2 server, (Windows, by hand; CI and Linux unrun)). `fl_binding_variant`: the entry point both builds export that answers which build was loaded (L16, D23). |
 | **Base package / server package** | `Eiva.Fletcher.Interop`, carrying the edge variant, and the separate .NET package carrying the server variant; each holds a full shim (D22). |
 | **Entry point** | An exported `fl_*` function. 50 today (`h`, as counted by `scripts/check_shim_exports.sh`). |
@@ -135,11 +135,13 @@ into the shim either. `[built]`
   terminates the process (`cpp:789-801`): the seam's refusal leaves a `noexcept` destructor. The shim
   deliberately does not catch it; a binding refuses the call first (D-BIND-18). This is termination,
   not an exception crossing.
-- **That exception is the row subscriber's only** `[designed-not-built]` (audit F4, D31). A batched
-  subscription (server variant) follows domain 7's L9 and D12: closing or destroying it from inside
-  its own batch callback is lawful, and the queued batches, then the closing batch, are still
-  delivered. The batch thread pushes no `DeliveryScope` (BC-6), so the shim neither terminates nor
-  refuses that call; it forwards it (BC-5, L15).
+- **That exception is the row subscriber's only** `[built]` (D9S-5b; Windows, by hand; CI and Linux
+  unrun; audit F4, D31). A batched subscription (server variant) follows domain 7's L9 and D12:
+  closing or destroying it from inside its own batch callback is lawful, and the queued batches, then
+  exactly one closing batch, are still delivered. The batch thread pushes no `DeliveryScope` (BC-6),
+  so the shim neither terminates nor refuses that call; it forwards it (BC-5, L15). Test:
+  `Batches.EveryCloseEndsWithExactlyOneClosingDelivery` (`fl_subscriber_destroy` inside its own
+  callback).
 - The other direction (`fl_writer_fn`, `fl_grow_fn`, `fl_delivery_fn`) is the caller's obligation
   (`h:702-705`, `h:858-861`); the shim cannot enforce it.
 - Tests: `Containment.AnUnknownExceptionTypeIsContainedAsInternal`,
@@ -383,7 +385,11 @@ window order for one subscription (`Batches.EachClosedWindow...`). The options p
 refusal are `[built]` as tests (D9S-5a: `Batches.EveryBatchOptionReachesDomain7AsGiven`, d7's 6 x 7 grid through the
 ABI, the message byte-equal to domain 7's; BC-8, BC-14), and so is closing as domain 7's L9 from outside a callback
 (D9S-5a: `Batches.ClosingFromOutsideDeliversTheRestThenTheClosingBatch`, by close and by destroy). **Not yet
-tested:** closing from inside a callback or a row delivery, or an idle close (D9S-5b, ruling 2026-11-14), `[designed-not-built]`. Source: d7 §4 and §6, D-D7O-1, register BC-8 and BC-9, 2026-11-12 "Refuse
+tested** before D9S-5b, now `[built]` (D9S-5b, same marks): closing from inside a callback, from a row delivery on the
+same provider (it returns at once), and an idle close, each ending with exactly one closing delivery (ruling 2026-11-14;
+`Batches.EveryCloseEndsWithExactlyOneClosingDelivery`); a refused batched subscribe delivers nothing (ruling 2026-11-14
+"a refused batched subscribe never delivers"; `Batches.ARefusedBatchedSubscribeNeverDelivers`). The shim adds no code for
+either (BC-9). Source: d7 §4 and §6, D-D7O-1, register BC-8 and BC-9, 2026-11-12 "Refuse
 both" ("the shim passes the refusal through"). `subscriber_arrow.cpp:39-46` throws
 `PubSubError(kInvalidArgument)`, which `Capture` already forwards as `FL_INVALID_ARGUMENT`
 (`containment.cpp:62-66`); a `std::invalid_argument` at a seam origin would become `FL_INTERNAL`

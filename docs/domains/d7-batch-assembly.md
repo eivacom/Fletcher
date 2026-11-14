@@ -4,7 +4,9 @@
 > an owner ruling, recorded in a decision of record. **Amended 2026-11-12** (D14, D15): L4 and L5
 > gain the no-timeout case, L15 is new, and §1 no longer lists validating `BatchOptions` as refused;
 > L15's refusal is `[built]` (D7O-1, `9abb0c7`); the no-timeout and unrepresentable-timeout cases of
-> L4 and L5 are `[built]` (D7O-2); a huge `max_rows` is `[built]` (D7O-3).
+> L4 and L5 are `[built]` (D7O-2); a huge `max_rows` is `[built]` (D7O-3). **Amended 2026-11-14**
+> (D18, D19): L6 and L9 gain the closing clause (every close of an accepted subscription ends with
+> exactly one `kClosing`) and L1 the refused clause; both `[built]` (D9S-5b).
 
 **Mode: survey, verified against the tree at `9a4780b`; the §3 "Holds at" citations were refreshed at D7F-3; every other `cpp:N` citation predates D7F-1 (`a2c8b97`), D7F-2 (`dbaa2b6`) and D7F-3, so treat those as approximate; D7O-1 shifted every `cpp:N` after line 34 down by about 9, and D7O-2 those after `ArmTimer` by about 12 more; D7O-3 rewrote `SetSchema` and added `PreSize`, so later lines moved again** (branch `feature/row-index`). The code is
 ground truth. Doc comments, READMEs and specs are claims checked against it. No spec exists for
@@ -86,6 +88,13 @@ closing and is not delivered is counted in the `rows_dropped` of a later deliver
   guard `RowsConservedAtEveryEnding`.
 - **Both violations are to be fixed before RIX** (owner ruling 2026-11-10, "2. Fix both"). Violation 1
   is fixed by D7F-1 and D7F-2 (Q1 resolved); violation 2 by D7F-3.
+- **A refused `Subscribe` delivers nothing:** rows caught by a subscription refused before it was
+  registered are discarded uncounted (owner ruling 2026-11-14, "a refused batched subscribe never
+  delivers", D19). `[built]` (D9S-5b). Holds at: `MarkRegistered` (set by `Subscribe` once it can no
+  longer throw) and `Loop`'s gate (nothing delivered before it; a batcher stopped unregistered
+  discards its queue and ends). Tests: `ARefusedSubscribeNeverDeliversWhatItCaught` (rows caught
+  inside a failing transport `Subscribe`), `FailedBatchedSubscribeReleasesItsCallback` (never
+  called); externally `Batches.ARefusedBatchedSubscribeNeverDelivers` (c-abi).
 
 **L2. Rows are conserved.** For each window, rows in the batch + `rows_dropped` = rows that reached
 the batcher in that window, with each row counted exactly once.
@@ -141,12 +150,19 @@ unrepresentable case (D14, D7O-2).
 
 **L6. Loss gets a delivery, and idleness does not.** A window that contains only drops is still
 delivered: a zero-row batch, or a null batch if there is no decoder. A window with nothing pending
-delivers nothing. With no timeout, such a window waits for closing (L1).
-`[built]`
-- Holds at: `cpp:201`, `cpp:145`, `cpp:204-213`.
-- Tests: `OnlyDroppedRowsStillDeliversEmptyBatch`; the idle case: `NoUsableSchemaIdleSubscriptionDeliversNothingAtClose` (D7F-1);
-  at the deadline with no decoder, and the idle stretch between two such windows (nothing delivered):
-  `NoUsableSchemaDropsReportedAtEachDeadlineThenLateSchemaAssembles` (D7F-2).
+delivers nothing, except at closing: every close of an accepted subscription ends with exactly one
+`kClosing` (L9), zero-row, or null if there is no decoder. With no timeout, a window of only drops
+waits for closing (L1).
+`[built]` (closing clause: D9S-5b)
+- **Amended 2026-11-14** (owner ruling, "every close ends with one closing delivery", D18): the
+  closing exception. It settles the collision between "until the closing batch arrives" (2026-11-11)
+  and the old "a window with nothing pending delivers nothing" in favour of the ruling.
+- Holds at: `Close`'s early return (idle, unless the closing of a registered subscription), `cpp:145`.
+- Tests: `OnlyDroppedRowsStillDeliversEmptyBatch`; at the deadline with no decoder, and the idle
+  stretch between two such windows (nothing delivered):
+  `NoUsableSchemaDropsReportedAtEachDeadlineThenLateSchemaAssembles` (D7F-2); the idle close:
+  `EveryCloseEndsWithExactlyOneClosingDelivery` (D9S-5b: each closer, from outside, inside its own
+  callback and a row delivery, with and without a decoder), and the tightened `DeliveryOrderStress`.
 
 **L7. A null batch means "no batch could be built for this window".** It is never "no rows".
 `[built]`
@@ -183,7 +199,8 @@ every later row is dropped, and there is no recovery.
   D7O-3: `AFailedPreSizeDoesNotMakeTheSchemaUnusable` (a decodable schema whose pre-size fails still
   has a decoder: a non-null zero-row `kClosing` batch) and `MaxRowsLargerThanAnyWindowIsUsedAsGiven`.
 
-**L9. Closing is final and reported.** The pending window is delivered once, as `kClosing`. After
+**L9. Closing is final and reported.** Exactly one `kClosing` ends an accepted subscription: the
+pending window, empty when nothing is pending (L6). After
 `Unsubscribe` or `~SubscriberArrow` returns, no further batch is delivered. **The exceptions:**
 when `Unsubscribe` is called, or the `SubscriberArrow` is destroyed, from inside the subscription's
 own batch callback, or when `Unsubscribe` is called from a thread delivering rows on the
@@ -203,6 +220,9 @@ counted.
   covers destroying the `SubscriberArrow` inside its own batch callback, and an `Unsubscribe` from a
   row-delivery thread on the same transport (domain 3's no-wait-in-delivery rule, extended to
   batches). Destroying it from a row-delivery thread stays forbidden (2026-09-05).
+- **Revised 2026-11-14** (owner ruling, "every close ends with one closing delivery", D18): "the
+  pending window is delivered once" became "exactly one `kClosing`, empty when nothing is pending",
+  so a binding always has an end signal. A refused `Subscribe` was never accepted and gets none (L1).
 - Holds at: `cpp:116-138` (`Stop`: idempotent through `stopped_`; `kClosing` queued behind the
   queue; returns at once in the exceptions, `cpp:125`), `cpp:89` (later rows ignored),
   `cpp:247-248` (the loop ends only when closed and drained), `cpp:440-465` (`Unsubscribe`: `Stop`
@@ -213,7 +233,9 @@ counted.
   `SchemaDeclaredAfterSubscribeDropsReportedAtDestruction` (the closing flush from the destructor,
   D7F-1). D7F-3: `ClosingFromAnotherThreadDeliversQueuedWindowsThenClosing` (from outside, the
   destructor, a racing cancel) and `UnsubscribeFromInsideACallbackNeverDeliversNested` (cases (a)-(c)
-  in-callback, (d) from a row-delivery thread, (e) destruction inside the callback).
+  in-callback, (d) from a row-delivery thread, (e) destruction inside the callback). D9S-5b, the
+  idle close: `EveryCloseEndsWithExactlyOneClosingDelivery`, and externally
+  `Batches.EveryCloseEndsWithExactlyOneClosingDelivery` (c-abi).
 
 **L10. Neither user code nor allocation failure can kill an internal thread.** A throw from the
 callback is swallowed. An internal failure becomes a drop.
@@ -318,7 +340,7 @@ Surface (`hpp:72-144`):
 
 | # | Decision | Source |
 |---|---|---|
-| D1 | Each window reports a reason and a drop count. A dropped row contributes neither a row nor an attachment. A window with only drops still delivers a zero-row batch. A partial window is flushed as `kClosing`. | Commit `7cd3e53` message (the domain's origin). The test comment "decision A" (test line 673) has no source in `plans/` or `docs/archive/`. |
+| D1 | Each window reports a reason and a drop count. A dropped row contributes neither a row nor an attachment. A window with only drops still delivers a zero-row batch. A partial window is flushed as `kClosing`; since D18 an idle one is too, empty. | Commit `7cd3e53` message (the domain's origin). The test comment "decision A" (test line 673) has no source in `plans/` or `docs/archive/`. |
 | D2 | The timeout is anchored to the previous flush, with a 1 ms floor. | Code comment `cpp:168-172`, with a measurement (65 ms against 33 ms at 30 Hz), introduced in `f33973c`. No owner ruling was found. |
 | D3 | This domain is specified, in its own survey round, before RIX. | Owner ruling, 2026-11-10, "3. (a)" ([RIX-rulings.md](../../plans/RIX-rulings.md)). |
 | D4 | `SubscriberArrow` is a boundary, not a domain. Batch assembly is a domain of its own. | Owner rulings, 2026-11-10 ([RIX-rulings.md](../../plans/RIX-rulings.md)). |
@@ -335,6 +357,8 @@ Surface (`hpp:72-144`):
 | D15 | Out-of-range `BatchOptions` (`max_rows < 1`, negative timeout) are refused with an invalid-argument error, never clamped (L15). Resolves Q5. | Owner ruling, 2026-11-12, "Refuse both" ([RIX-rulings.md](../../plans/RIX-rulings.md)). Applied by round D7O. |
 | D16 | There is one batch assembler, this domain's. C#'s managed batcher is deleted once C# reaches this one through the shim's server-tier variant. | Owner rulings, 2026-11-12 ([RIX-rulings.md](../../plans/RIX-rulings.md)). Explicitly supersedes the batcher half of D-BIND-25 ("Arrow tier managed … batch-first", [BIND-csharp-bindings.md](../../plans/BIND-csharp-bindings.md)); the owner was shown D-BIND-25 when ruling. Annotating D-BIND-25 is owed by the C# switch round. (D7O close, 2026-11-12, from `docs/archive/D7O/D7O-pre-round-audit.md` R-2.) |
 | D17 | L5's "a deadline is never earlier than its timeout says: a timeout too long for the clock to represent means no deadline, never an early or wrapped one" is law (it was authored by round-designer, audit LC-1). | Owner ruling, 2026-11-12, "Keep it" (LC-1) ([RIX-rulings.md](../../plans/RIX-rulings.md)). Built by D7O-2. |
+| D18 | Every close of an accepted batched subscription ends with exactly one closing delivery, even when nothing is pending (L6, L9). | Owner ruling, 2026-11-14, "D9S-5: every close ends with one closing delivery; D9S-5 splits" ([RIX-rulings.md](../../plans/RIX-rulings.md)), :478. Built by D9S-5b. |
+| D19 | A refused batched subscribe never delivers anything; the caller may free its state when the call returns. Rows caught before the refusal are discarded uncounted (L1). | Owner ruling, 2026-11-14, "D9S-5b: a refused batched subscribe never delivers" ([RIX-rulings.md](../../plans/RIX-rulings.md)), :493. Built by D9S-5b. |
 
 ## 6. Relationships
 
@@ -444,7 +468,9 @@ Surface (`hpp:72-144`):
 - ~~The early flush on the offset budget, at the batcher level (L4).~~ Tested by D7F-3 (`heavy`).
 - Timeout anchoring and the 1 ms floor (L5). (No timeout and the unrepresentable timeout: tested by
   D7O-2.)
-- No delivery for an idle window (L6).
+- ~~No delivery for an idle window (L6).~~ The deadline case is tested
+  (`NoUsableSchemaDropsReportedAtEachDeadlineThenLateSchemaAssembles`); the closing case is reversed
+  by D18 and tested by `EveryCloseEndsWithExactlyOneClosingDelivery` (D9S-5b).
 - ~~The uncounted row after the budget retry (L1, violation 2).~~ Tested by D7F-3 (`heavy`).
   Pre-schema drops are tested at close (D7F-1) and at the deadline (D7F-2).
 - The closing flush from `~SubscriberArrow` (L9): tested since D7F-1 (the two `*AtDestruction` tests).

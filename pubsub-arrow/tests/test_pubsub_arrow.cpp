@@ -811,20 +811,6 @@ TEST(SubscriberArrowBatchTest, SchemaDeclaredAfterSubscribeDropsReportedAtDestru
     ExpectOneNullClosingReportOfAllRows(sink);
 }
 
-// G1 (guard, green before and after): an idle schema-less subscription delivers nothing at
-// close. Forbids a null batch that means "no rows" (L7) and any delivery for an idle window (L6).
-TEST(SubscriberArrowBatchTest, NoUsableSchemaIdleSubscriptionDeliversNothingAtClose) {
-    auto mock = std::make_shared<MockProvider>();
-    SubscriberArrow sub(mock);
-
-    BatchSink sink;
-    auto result = sub.Subscribe(kTopic, sink.callback(), NoTriggerBatchOptions());
-    sub.Unsubscribe(result.subscription_id);
-
-    std::lock_guard<std::mutex> lk(sink.mu);
-    EXPECT_EQ(sink.deliveries.size(), 0u);
-}
-
 // ---------------------------------------------------------------------------
 // D7F-2 -- rows lost before a usable schema are reported at each deadline (L1, L5, L6, L7, L8, L13)
 //
@@ -968,9 +954,16 @@ TEST(SubscriberArrowBatchTest, SchemaDeclaredAfterSubscribeDropsReportedAtEachDe
     const size_t after_w2 = WaitForNullTimeoutReportsTotalling(sink, kWellFormedRows + 1);
     ASSERT_GT(after_w2, after_w1);
 
-    sub.Unsubscribe(result.subscription_id);  // both windows were reported; nothing is left
+    // Both windows were reported; nothing is left, so the close delivers exactly one empty closing,
+    // null (no decoder: no usable schema ever arrived), last (ruling 2026-11-14, L7).
+    sub.Unsubscribe(result.subscription_id);
     std::lock_guard<std::mutex> lk(sink.mu);
-    EXPECT_EQ(sink.deliveries.size(), after_w2);
+    ASSERT_EQ(sink.deliveries.size(), after_w2 + 1);
+    const auto& closing = sink.deliveries.back();
+    EXPECT_EQ(closing.status.reason, BatchStatus::Reason::kClosing);
+    EXPECT_EQ(closing.batch, nullptr);
+    EXPECT_EQ(closing.status.rows_dropped, 0);
+    EXPECT_TRUE(closing.attachments.empty());
 }
 
 namespace {
@@ -1039,13 +1032,20 @@ void RunAssemblyCell(AssemblyState state, Ending ending) {
     }
     sub.Unsubscribe(result.subscription_id);
 
+    // At the deadline ending every loss was reported before the close, so the close adds exactly
+    // one empty closing delivery, last (ruling 2026-11-14): zero rows lost, of the cell's shape.
+    std::vector<BatchStatus::Reason> expected_reason(
+        expected_dropped.size(), ending == Ending::kDeadline ? BatchStatus::Reason::kTimeout
+                                                             : BatchStatus::Reason::kClosing);
+    if (ending == Ending::kDeadline) {
+        expected_dropped.push_back(0);
+        expected_reason.push_back(BatchStatus::Reason::kClosing);
+    }
     std::lock_guard<std::mutex> lk(sink.mu);
     ASSERT_EQ(sink.deliveries.size(), expected_dropped.size());  // exactly these: not none, not more
     for (size_t i = 0; i < expected_dropped.size(); ++i) {
         const auto& d = sink.deliveries[i];
-        EXPECT_EQ(d.status.reason, ending == Ending::kDeadline ? BatchStatus::Reason::kTimeout
-                                                               : BatchStatus::Reason::kClosing)
-            << "delivery " << i;
+        EXPECT_EQ(d.status.reason, expected_reason[i]) << "delivery " << i;
         EXPECT_EQ(d.status.rows_dropped, expected_dropped[i]) << "delivery " << i;
         EXPECT_TRUE(d.attachments.empty()) << "delivery " << i;
         if (state == AssemblyState::kAssembling) {
@@ -1367,10 +1367,11 @@ TEST(SubscriberArrowBatchTest, FinishFailureIsReportedNotFatal) {
 }
 
 // Unsubscribe called from INSIDE a kRowLimit batch callback (L9, L11). max_rows = 1, so the first
-// row is a full window of its own and nothing is pending when the callback unsubscribes: there is
-// no closing batch to deliver, and nothing may follow. The callback signals once its Unsubscribe
-// has returned; only then are rows 2-3 published, and the count is read after ~SubscriberArrow,
-// which waits for every delivery the subscription still owes.
+// row is a full window of its own and nothing is pending when the callback unsubscribes: the close
+// still ends with exactly one closing delivery, empty (zero rows: the subscription has a decoder),
+// after the callback returns, and nothing may follow (ruling 2026-11-14). The callback signals once
+// its Unsubscribe has returned; only then are rows 2-3 published, and the deliveries are read after
+// ~SubscriberArrow, which waits for every delivery the subscription still owes.
 TEST(SubscriberArrowBatchTest, UnsubscribeFromCallbackDuringRowLimitFlushStopsDeliveryCleanly) {
     auto mock = std::make_shared<MockProvider>();
     PublisherArrow pub(mock);
@@ -1380,14 +1381,21 @@ TEST(SubscriberArrowBatchTest, UnsubscribeFromCallbackDuringRowLimitFlushStopsDe
     std::atomic<uint64_t> sub_id{0};
     std::promise<void> unsubscribed;
     std::future<void> unsubscribed_future = unsubscribed.get_future();
+    std::mutex got_mu;
+    std::vector<std::pair<BatchStatus, int64_t>> got;  // (status, rows; -1 for a null batch)
     auto sub = std::make_unique<SubscriberArrow>(mock);
     SubscriberArrow::BatchOptions opt;
     opt.max_rows = 1;  // every published row is a full window of its own
     opt.timeout = std::chrono::minutes(10);
     auto result = sub->Subscribe(
         kTopic,
-        [&](std::shared_ptr<arrow::RecordBatch>, std::vector<Attachments>, BatchStatus) {
-            if (++delivery_count != 1) return;  // counted; a second delivery fails below
+        [&](std::shared_ptr<arrow::RecordBatch> batch, std::vector<Attachments>,
+            BatchStatus status) {
+            {
+                std::lock_guard<std::mutex> lk(got_mu);
+                got.emplace_back(status, batch ? batch->num_rows() : -1);
+            }
+            if (++delivery_count != 1) return;  // recorded; judged below
             sub->Unsubscribe(sub_id.load());
             unsubscribed.set_value();
         },
@@ -1397,11 +1405,17 @@ TEST(SubscriberArrowBatchTest, UnsubscribeFromCallbackDuringRowLimitFlushStopsDe
     pub.Publish(kTopic, MakeRow(1, "a"));  // a full window -> the callback above
     ASSERT_EQ(unsubscribed_future.wait_for(std::chrono::seconds(5)), std::future_status::ready);
 
-    // No further delivery: the subscription is gone, and the process has not crashed getting here.
+    // Rows after the close reach no one, and the process has not crashed getting here.
     pub.Publish(kTopic, MakeRow(2, "b"));
     pub.Publish(kTopic, MakeRow(3, "c"));
     sub.reset();
-    EXPECT_EQ(delivery_count.load(), 1);
+    std::lock_guard<std::mutex> lk(got_mu);
+    ASSERT_EQ(got.size(), 2u) << "the full window, then exactly one closing delivery";
+    EXPECT_EQ(got[0].first.reason, BatchStatus::Reason::kRowLimit);
+    EXPECT_EQ(got[0].second, 1);
+    EXPECT_EQ(got[1].first.reason, BatchStatus::Reason::kClosing);
+    EXPECT_EQ(got[1].first.rows_dropped, 0);
+    EXPECT_EQ(got[1].second, 0) << "an empty closing is a zero-row batch, never null, here (L7)";
 }
 
 // Pins L11 (RecordBatchBatcher::Start's fix): the callback runs on the subscription's own batch
@@ -1412,35 +1426,42 @@ TEST(SubscriberArrowBatchTest, UnsubscribeFromCallbackDuringRowLimitFlushStopsDe
 // fix the thread owns a shared_ptr of its own, kept alive until its loop returns, so the object
 // outlives the thread's use of it.
 TEST(SubscriberArrowBatchTest, UnsubscribeFromInsideATimeoutFlushIsSafe) {
-    auto mock = std::make_shared<MockProvider>();
-    PublisherArrow pub(mock);
-    SubscriberArrow sub(mock);
-    pub.CreateTopic(kTopic, TestSchema());
-
+    // Declared first: what the callback captures outlives the subscriber, whose last delivery (the
+    // closing one) comes after the in-callback Unsubscribe returns.
     std::mutex id_mu;
     uint64_t sub_id = 0;
-    std::atomic<bool> unsubscribed{false};
+    std::vector<std::pair<BatchStatus, int64_t>> got;  // guarded by id_mu; rows -1 when null
     std::promise<void> delivered;
     std::future<void> delivered_future = delivered.get_future();
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+    auto sub = std::make_unique<SubscriberArrow>(mock);
+    pub.CreateTopic(kTopic, TestSchema());
 
     SubscriberArrow::BatchOptions opt;
     opt.max_rows = 100;  // never reached; only the timeout triggers the flush
     opt.timeout = std::chrono::milliseconds(20);
-    auto result = sub.Subscribe(
+    auto result = sub->Subscribe(
         kTopic,
-        [&](std::shared_ptr<arrow::RecordBatch>, std::vector<Attachments>, BatchStatus) {
-            // The one window was taken by this kTimeout delivery, so nothing is pending and the
-            // Unsubscribe below owes no closing batch. A second delivery, nested in that
-            // Unsubscribe or after it, is a failure (L9, L12).
-            const bool second = unsubscribed.exchange(true);
-            EXPECT_FALSE(second) << "a second batch was delivered";
-            if (second) return;
+        [&](std::shared_ptr<arrow::RecordBatch> batch, std::vector<Attachments>,
+            BatchStatus status) {
+            // The one window was taken by this kTimeout delivery, so nothing is pending when the
+            // Unsubscribe below runs: it still owes exactly one closing delivery, empty, after
+            // this callback returns, never nested in that Unsubscribe (L9, L12; ruling 2026-11-14).
             uint64_t id;
+            size_t index;
             {
                 std::lock_guard<std::mutex> lk(id_mu);
+                index = got.size();
+                got.emplace_back(status, batch ? batch->num_rows() : -1);
                 id = sub_id;
             }
-            sub.Unsubscribe(id);  // runs on the batch thread -- the path the fix protects
+            if (index != 0) return;
+            sub->Unsubscribe(id);  // runs on the batch thread -- the path the fix protects
+            {
+                std::lock_guard<std::mutex> lk(id_mu);
+                EXPECT_EQ(got.size(), 1u) << "a batch was delivered inside the Unsubscribe";
+            }
             delivered.set_value();
         },
         opt);
@@ -1452,8 +1473,14 @@ TEST(SubscriberArrowBatchTest, UnsubscribeFromInsideATimeoutFlushIsSafe) {
     pub.Publish(kTopic, MakeRow(1, "a"));
 
     ASSERT_EQ(delivered_future.wait_for(std::chrono::seconds(5)), std::future_status::ready);
-    // sub goes out of scope here; without the fix the batch thread would already have used freed
-    // memory well before reaching this point.
+    // Without the fix the batch thread would already have used freed memory before this point.
+    sub.reset();  // waits for the closing delivery
+    std::lock_guard<std::mutex> lk(id_mu);
+    ASSERT_EQ(got.size(), 2u) << "the kTimeout window, then exactly one closing delivery";
+    EXPECT_EQ(got[0].first.reason, BatchStatus::Reason::kTimeout);
+    EXPECT_EQ(got[1].first.reason, BatchStatus::Reason::kClosing);
+    EXPECT_EQ(got[1].first.rows_dropped, 0);
+    EXPECT_EQ(got[1].second, 0) << "an empty closing is a zero-row batch, never null, here (L7)";
 }
 
 TEST(SubscriberArrowBatchTest, BatchesAreValidArrow) {
@@ -1598,6 +1625,7 @@ struct DeliveryLog {
         int32_t last_x;    // -1 when the batch has no row
         int64_t dropped;
         std::thread::id thread;
+        std::shared_ptr<arrow::Schema> schema;  // the batch's; null for a null batch
     };
 
     std::mutex mu;
@@ -1617,8 +1645,13 @@ struct DeliveryLog {
     void OnDelivery(const std::shared_ptr<arrow::RecordBatch>& batch, BatchStatus status) {
         RaiseTo(max_in_flight, ++in_flight);
         RaiseTo(max_depth, ++t_batch_callback_depth);
-        Rec rec{status.reason, batch ? batch->num_rows() : -1, -1, -1, status.rows_dropped,
-                std::this_thread::get_id()};
+        Rec rec{status.reason,
+                batch ? batch->num_rows() : -1,
+                -1,
+                -1,
+                status.rows_dropped,
+                std::this_thread::get_id(),
+                batch ? batch->schema() : nullptr};
         if (batch && batch->num_rows() > 0 && batch->num_columns() > 0 &&
             batch->column(0)->type_id() == arrow::Type::INT32) {
             const auto x = std::static_pointer_cast<arrow::Int32Array>(batch->column(0));
@@ -1753,10 +1786,12 @@ TEST(SubscriberArrowBatchTest, EveryCallbackRunsOnTheBatchThreadInWindowOrder) {
     EXPECT_TRUE(first_released_by_publisher.load())
         << "the publisher could not finish publishing while the first callback was held: "
            "Publish ran or waited on a batch callback (D10)";
+    // sub.reset() closed an idle window: exactly one empty (zero-row) closing ends it (2026-11-14).
     ExpectDeliveredInOrderOnOneBatchThread(log,
                                            {{BatchStatus::Reason::kRowLimit, 0, 2},
                                             {BatchStatus::Reason::kRowLimit, 2, 2},
-                                            {BatchStatus::Reason::kRowLimit, 4, 2}},
+                                            {BatchStatus::Reason::kRowLimit, 4, 2},
+                                            {BatchStatus::Reason::kClosing, -1, 0}},
                                            {publisher_id, std::this_thread::get_id()});
 }
 
@@ -2099,7 +2134,8 @@ TEST(SubscriberArrowBatchTest, UnsubscribeFromInsideACallbackNeverDeliversNested
 
 // Guard (green before and after; BC-5). A batch callback unsubscribes, which reaches the in-process
 // provider's Unsubscribe, while another thread is inside Publish holding that provider's mutex (a
-// per-row delivery on another topic that dwells). Both calls return; the batch callback ran once.
+// per-row delivery on another topic that dwells). Both calls return; the batch callback ran for the
+// one window, then for exactly one empty closing delivery, last (ruling 2026-11-14).
 TEST(SubscriberArrowBatchTest, InCallbackUnsubscribeWhilePublishingDoesNotDeadlock) {
     DeliveryLog log;
     Latch entered, row_delivery_inside, unsubscribed, published;
@@ -2142,15 +2178,19 @@ TEST(SubscriberArrowBatchTest, InCallbackUnsubscribeWhilePublishingDoesNotDeadlo
 
     EXPECT_TRUE(overlapped.load());
     const auto recs = log.Snapshot();
-    ASSERT_EQ(recs.size(), 1u);
+    ASSERT_EQ(recs.size(), 2u) << "the window, then exactly one closing delivery";
     EXPECT_EQ(recs[0].reason, BatchStatus::Reason::kTimeout);
     EXPECT_EQ(recs[0].num_rows, 1);
+    EXPECT_EQ(recs[1].reason, BatchStatus::Reason::kClosing);
+    EXPECT_EQ(recs[1].num_rows, 0) << "an empty closing is a zero-row batch here (L7)";
+    EXPECT_EQ(recs[1].dropped, 0);
 }
 
 // Guard (BC-1): fixed seeds; max_rows 1-3, timeout 1 ms; a publisher thread sends rows in bursts;
 // the subscription is closed from inside a callback or from outside at a seeded point. Every
 // callback runs on one thread that is not a publishing or closing thread, never two at once,
-// windows arrive in order (first x strictly increasing), and kClosing, if any, is last.
+// windows arrive in order (first x strictly increasing), and exactly one kClosing comes, last
+// (ruling 2026-11-14: even when the close finds the window idle).
 TEST(SubscriberArrowBatchTest, DeliveryOrderStress) {
     for (uint32_t seed = 1; seed <= 16; ++seed) {
         std::mt19937 rng(seed);
@@ -2211,6 +2251,11 @@ TEST(SubscriberArrowBatchTest, DeliveryOrderStress) {
         EXPECT_LE(log.max_in_flight.load(), 1) << "two batch callbacks ran at once (L12)";
         EXPECT_LE(log.max_depth.load(), 1) << "a batch was delivered inside a batch callback";
         ASSERT_FALSE(recs.empty());
+        EXPECT_EQ(
+            std::count_if(recs.begin(), recs.end(),
+                          [](const auto& r) { return r.reason == BatchStatus::Reason::kClosing; }),
+            1)
+            << "not exactly one kClosing (L9)";
         int32_t previous_first_x = -1;
         for (size_t i = 0; i < recs.size(); ++i) {
             SCOPED_TRACE("delivery " + std::to_string(i) + " (" + ReasonName(recs[i].reason) + ")");
@@ -2302,7 +2347,9 @@ TEST(SubscriberArrowBatchTest, RowsConservedAtEveryEnding) {
 
 // Guard (code review 4b S1): a batched Subscribe that throws leaves no batch thread behind. Here
 // it is refused with kReentrantCall, made from inside a per-row delivery for a topic not yet
-// subscribed. The callback it was handed is released, so nothing it captured outlives the throw.
+// subscribed. The callback it was handed is released, so nothing it captured outlives the throw,
+// and it is never called (ruling 2026-11-14 "a refused batched subscribe never delivers"; the
+// counter is shared by value, so a late call cannot touch this frame).
 TEST(SubscriberArrowBatchTest, FailedBatchedSubscribeReleasesItsCallback) {
     auto provider = std::make_shared<InProcessPubSubProvider>();
     PublisherArrow pub(provider);
@@ -2312,14 +2359,15 @@ TEST(SubscriberArrowBatchTest, FailedBatchedSubscribeReleasesItsCallback) {
 
     std::weak_ptr<int> captured;
     std::atomic<bool> refused{false};
+    const auto calls = std::make_shared<std::atomic<int>>(0);
     static_cast<void>(sub.Subscribe(kTopic, [&](ArrowRow, const Attachments&) {
         auto token = std::make_shared<int>(0);
         captured = token;
         try {
             static_cast<void>(sub.Subscribe(
                 kOtherTopic,
-                [token](std::shared_ptr<arrow::RecordBatch>, std::vector<Attachments>,
-                        BatchStatus) {},
+                [token, calls](std::shared_ptr<arrow::RecordBatch>, std::vector<Attachments>,
+                               BatchStatus) { ++*calls; },
                 RowLimitOptions(2)));
         } catch (const PubSubError& e) {
             refused = e.status() == PubSubStatus::kReentrantCall;
@@ -2334,6 +2382,7 @@ TEST(SubscriberArrowBatchTest, FailedBatchedSubscribeReleasesItsCallback) {
     }
     EXPECT_TRUE(captured.expired())
         << "the failed Subscribe's batch thread still holds the callback it was given";
+    EXPECT_EQ(calls->load(), 0) << "the refused Subscribe's callback was called";
 }
 
 // ---------------------------------------------------------------------------
@@ -3185,5 +3234,256 @@ TEST(SubscriberArrowBatchTest, EveryBatchOptionIsRefusedExactlyWhenOutOfRange) {
         EXPECT_TRUE(refused_sinks[i].deliveries.empty())
             << "refused cell " << i << " received " << refused_sinks[i].deliveries.size()
             << " deliveries";
+    }
+}
+
+// ---------------------------------------------------------------------------
+// D9S-5b -- every close ends with exactly one closing delivery; a refused Subscribe delivers
+// nothing (d7 L6, L7, L9 for closing; L1's refused clause; rulings 2026-11-14)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+enum class CloseBy { kUnsubscribe, kDestroy };
+enum class CloseFrom { kOutside, kInsideOwnCallback, kRowDelivery };
+// What the window holds when it is closed: nothing, after a decoded row (a decoder exists);
+// nothing, after a row that could not be decoded (no decoder); nothing, before any row (no
+// decoder).
+enum class IdleState { kDecoded, kUndecoded, kNoRow };
+
+struct CloseCase {
+    CloseBy by;
+    CloseFrom from;
+    IdleState state;
+};
+
+std::string CaseName(const CloseCase& c) {
+    return std::string(c.by == CloseBy::kDestroy ? "~SubscriberArrow" : "Unsubscribe") +
+           (c.from == CloseFrom::kOutside             ? " from outside"
+            : c.from == CloseFrom::kInsideOwnCallback ? " inside its own callback"
+                                                      : " from a row delivery (D13)") +
+           (c.state == IdleState::kDecoded     ? ", idle after a decoded row"
+            : c.state == IdleState::kUndecoded ? ", idle after an undecodable row"
+                                               : ", before any row");
+}
+
+// One cell's state, shared by value with every callback, so a delivery that came too late can
+// never reach a destroyed frame: the shared observation window reports it instead.
+struct CloseCellState {
+    std::unique_ptr<SubscriberArrow> sub;
+    std::atomic<uint64_t> id{0};
+    std::atomic<bool> fired{false};
+    std::atomic<size_t> at_return{std::numeric_limits<size_t>::max()};
+    Latch closer_returned;
+
+    void Close(const CloseCase& c, DeliveryLog& log) {
+        if (c.by == CloseBy::kDestroy) {
+            sub.reset();
+        } else {
+            sub->Unsubscribe(id.load());
+        }
+        at_return = log.Count();
+        closer_returned.Open();
+    }
+};
+
+// One cell on its own in-process provider. The trigger is one row at max_rows 1 (decoded: a
+// kRowLimit window), or one raw row on an undeclared topic with a 10 ms timeout (undecodable: a
+// null kTimeout report), or nothing. Then the window is idle and the subscription is closed. It
+// must end with exactly one kClosing, last, 0 dropped: zero rows of the topic's schema with a
+// decoder, null without (L7). From outside the closing call returns after it (L9); from inside its
+// own callback or from a row delivery it returns first, and the closing follows on the batch thread
+// (D12, D13). A closing in the row-delivery cell is held until that call has returned, so a call
+// that waited for it is seen at once, not inferred from a timing.
+void RunEveryCloseCell(const CloseCase& c, DeliveryLog& log) {
+    auto st = std::make_shared<CloseCellState>();
+    if (c.from == CloseFrom::kInsideOwnCallback) {
+        log.hook = [st, c, &log](size_t index, const DeliveryLog::Rec&) {
+            if (index == 0) st->Close(c, log);
+        };
+    }
+    auto provider = std::make_shared<InProcessPubSubProvider>();
+    PublisherArrow pub(provider);
+    if (c.state != IdleState::kUndecoded) pub.CreateTopic(kTopic, TestSchema());
+    if (c.from == CloseFrom::kRowDelivery) pub.CreateTopic(kOtherTopic, TestSchema());
+    st->sub = std::make_unique<SubscriberArrow>(provider);
+    SubscriberArrow::BatchOptions opt = RowLimitOptions(1);
+    if (c.state == IdleState::kUndecoded) {
+        opt.max_rows = 100;
+        opt.timeout = std::chrono::milliseconds(10);
+    }
+    const bool hold = c.from == CloseFrom::kRowDelivery;
+    st->id = st->sub
+                 ->Subscribe(
+                     kTopic,
+                     [st, hold, &log](std::shared_ptr<arrow::RecordBatch> batch,
+                                      std::vector<Attachments>, BatchStatus status) {
+                         if (hold && status.reason == BatchStatus::Reason::kClosing) {
+                             static_cast<void>(st->closer_returned.WaitFor(kAwait));
+                         }
+                         log.OnDelivery(batch, status);
+                     },
+                     opt)
+                 .subscription_id;
+    if (c.from == CloseFrom::kRowDelivery) {
+        static_cast<void>(
+            st->sub->Subscribe(kOtherTopic, [st, c, &log](ArrowRow, const Attachments&) {
+                if (!st->fired.exchange(true)) st->Close(c, log);
+            }));
+    }
+
+    const size_t before = c.state == IdleState::kNoRow ? 0 : 1;  // deliveries before the closing
+    if (c.state == IdleState::kDecoded) pub.Publish(kTopic, MakeRow(0, "n"));
+    if (c.state == IdleState::kUndecoded) {
+        pub.PublishDirect(kTopic, [](WriteBuffer& buf) { buf.AppendByte(0x00); });
+    }
+    if (c.from != CloseFrom::kInsideOwnCallback) {
+        EXPECT_TRUE(log.WaitFor(before, kAwait)) << "the trigger was not delivered";
+        EXPECT_TRUE(log.WaitAllReturned(kAwait));
+        if (c.from == CloseFrom::kOutside) {
+            st->Close(c, log);
+        } else {
+            pub.Publish(kOtherTopic, MakeRow(-1, "trigger"));
+        }
+    }
+    EXPECT_TRUE(st->closer_returned.WaitFor(kAwait)) << "the closing call did not return";
+    EXPECT_TRUE(log.WaitFor(before + 1, kAwait)) << "no closing delivery arrived";
+    EXPECT_TRUE(log.WaitAllReturned(kAwait));
+    if (st->sub) st->sub.reset();
+
+    EXPECT_EQ(st->at_return.load(), c.from == CloseFrom::kOutside ? before + 1 : before)
+        << (c.from == CloseFrom::kOutside ? "the closing call returned before the closing (L9)"
+                                          : "the closing call waited for the closing (D12, D13)");
+    const auto recs = log.Snapshot();
+    ASSERT_EQ(recs.size(), before + 1) << "the trigger, then exactly one closing delivery";
+    if (c.state == IdleState::kDecoded) {
+        EXPECT_EQ(recs[0].reason, BatchStatus::Reason::kRowLimit);
+        EXPECT_EQ(recs[0].num_rows, 1);
+    } else if (c.state == IdleState::kUndecoded) {
+        EXPECT_EQ(recs[0].reason, BatchStatus::Reason::kTimeout);
+        EXPECT_EQ(recs[0].num_rows, -1);
+        EXPECT_EQ(recs[0].dropped, 1);
+    }
+    const auto& closing = recs.back();
+    EXPECT_EQ(closing.reason, BatchStatus::Reason::kClosing);
+    EXPECT_EQ(closing.dropped, 0);
+    if (c.state == IdleState::kDecoded) {
+        EXPECT_EQ(closing.num_rows, 0) << "with a decoder an empty closing is zero rows (L7)";
+        ASSERT_NE(closing.schema, nullptr);
+        EXPECT_TRUE(closing.schema->Equals(*TestSchema())) << closing.schema->ToString();
+    } else {
+        EXPECT_EQ(closing.num_rows, -1) << "without a decoder an empty closing is null (L7)";
+    }
+    for (const auto& r : recs) {
+        EXPECT_EQ(r.thread, recs[0].thread) << "a second callback thread (L12)";
+        EXPECT_NE(r.thread, std::this_thread::get_id()) << "a callback on the test thread (D10)";
+    }
+}
+
+}  // namespace
+
+// Leg (d7 L6 and L9 as amended for closing; L7; D12, D13; ruling 2026-11-14 "every close ends with
+// one closing delivery"). F1's cells at d7's own surface: each closer, from outside, from inside
+// the subscription's own callback, and (Unsubscribe only: a destroy there is forbidden, 2026-09-05)
+// from a row delivery on the same transport, on an idle window after a decoded row, after an
+// undecodable one, and before any row. One shared observation window at the end: no cell gets a
+// delivery after its closing.
+TEST(SubscriberArrowBatchTest, EveryCloseEndsWithExactlyOneClosingDelivery) {
+    std::deque<DeliveryLog> logs;  // declared first: every log outlives its cell
+    std::vector<CloseCase> cases;
+    for (const CloseBy by : {CloseBy::kUnsubscribe, CloseBy::kDestroy}) {
+        for (const IdleState s : {IdleState::kDecoded, IdleState::kUndecoded, IdleState::kNoRow}) {
+            cases.push_back({by, CloseFrom::kOutside, s});
+            if (s != IdleState::kNoRow) cases.push_back({by, CloseFrom::kInsideOwnCallback, s});
+            if (by == CloseBy::kUnsubscribe) cases.push_back({by, CloseFrom::kRowDelivery, s});
+        }
+    }
+    std::vector<size_t> counts;
+    for (const CloseCase& c : cases) {
+        SCOPED_TRACE(CaseName(c));
+        logs.emplace_back();
+        RunEveryCloseCell(c, logs.back());
+        counts.push_back(logs.back().Count());
+    }
+    Observe();
+    for (size_t i = 0; i < cases.size(); ++i) {
+        EXPECT_EQ(logs[i].Count(), counts[i])
+            << CaseName(cases[i]) << ": a delivery after the closing one (L9)";
+    }
+}
+
+namespace {
+
+// P6: a transport that delivers rows from inside its own Subscribe and then fails it. Domain 3 has
+// already published the new subscription (subscriber.cpp, Subscribe), so the rows reach the batched
+// subscription's batcher, and then the Subscribe is refused with the transport's error.
+class DeliverThenFailProvider : public PubSubProvider {
+   public:
+    explicit DeliverThenFailProvider(int rows) : rows_(rows) {}
+
+    void CreateTopic(const std::vector<std::string>&, OwnedSchema schema) override {
+        schema_ = std::move(schema);
+    }
+    void Publish(const std::vector<std::string>&, const RowEncoder&, const Attachments&) override {}
+    SubscriptionResult Subscribe(const std::vector<std::string>&,
+                                 SubscribeCallback callback) override {
+        const Codec codec(TestSchema());
+        for (int i = 0; i < rows_; ++i) {
+            const EncodedRow row = codec.EncodeRow(MakeRow(i, "caught"));
+            callback(row.data(), row.size(), MakeSharedSchema(OwnedSchema::DeepCopy(schema_.get())),
+                     Attachments{});
+            ++delivered_;
+        }
+        throw PubSubError(PubSubStatus::kInternal,
+                          "DeliverThenFailProvider: the transport failed after delivering");
+    }
+    void Unsubscribe(const std::vector<std::string>&) override {}
+
+    int delivered() const { return delivered_; }
+
+   private:
+    const int rows_;
+    int delivered_ = 0;
+    OwnedSchema schema_;
+};
+
+}  // namespace
+
+// Leg, deterministic (d7 L1's refused clause; ruling 2026-11-14 "a refused batched subscribe never
+// delivers"). The transport delivers three rows inside Subscribe, then fails it. With max_rows 1
+// those rows were queued as full windows; with max_rows 100 they were pending. Either way the
+// failure is rethrown as the refusal, the callback is never called, and it has been released when
+// the call returns. Nothing is waited for: a refusal from outside a delivery returns only once the
+// batch thread has ended, so the counter is final when it is read.
+TEST(SubscriberArrowBatchTest, ARefusedSubscribeNeverDeliversWhatItCaught) {
+    constexpr int kCaught = 3;
+    for (const int64_t max_rows : {int64_t{1}, int64_t{100}}) {
+        SCOPED_TRACE(max_rows == 1 ? "max_rows 1: full windows were queued"
+                                   : "max_rows 100: rows were pending");
+        auto provider = std::make_shared<DeliverThenFailProvider>(kCaught);
+        PublisherArrow pub(provider);
+        pub.CreateTopic(kTopic, TestSchema());
+        SubscriberArrow sub(provider);
+
+        const auto calls = std::make_shared<std::atomic<int>>(0);
+        std::weak_ptr<int> token;
+        SubscriberArrow::RecordBatchCallback cb;
+        {
+            auto strong = std::make_shared<int>(0);
+            token = strong;
+            cb = [strong, calls](std::shared_ptr<arrow::RecordBatch>, std::vector<Attachments>,
+                                 BatchStatus) { ++*calls; };
+        }
+        bool refused = false;
+        try {
+            static_cast<void>(sub.Subscribe(kTopic, std::move(cb), RowLimitOptions(max_rows)));
+            ADD_FAILURE() << "the Subscribe was not refused";
+        } catch (const PubSubError& e) {
+            refused = e.status() == PubSubStatus::kInternal;
+        }
+        EXPECT_TRUE(refused) << "the transport's failure did not reach the caller as the refusal";
+        EXPECT_EQ(provider->delivered(), kCaught) << "precondition: the transport delivered";
+        EXPECT_EQ(calls->load(), 0) << "the refused Subscribe delivered what it caught";
+        EXPECT_TRUE(token.expired()) << "the refused Subscribe still holds its callback";
     }
 }
