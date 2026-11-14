@@ -1,0 +1,19 @@
+# D9S-7 — step 0a test-authority audit (corpus, light lane) — HEAD 39ad366
+
+**Verdict: CLEAR**, with one plan-shape finding (PS-1) the owner must answer before design. Not BLOCKED: no ruling contradicts a law.
+**Proof of read:** `plans/RIX-rulings.md` read in full, 514 lines; highest entry, line 504: "2026-11-14 — D9S-6: a failed hand-over still carries its status and message".
+**Yardstick:** d9 §3 L5, L12, L13, L16, L17 and Q5a; register BC-10 and BC-15; rulings 2026-11-12 "one shim, two variants", 2026-11-13 "Packaging", "C# loads: Depends on package", "the server build is its own file".
+
+**Scope covered:** `c-abi/tests/test_single_copy.cpp` (5 `SingleCopy.*`), `single_copy_decoy.c` and its CMake target; `test_containment.cpp:70-125` (`APoisonedShimRefusesWithoutRunningTheCall`, `ClearingTheRefusalRestoresService`); the variant rows in `test_binding_abi.cpp` (edge, probe, server and handover executables, each linking ONE shim); `NativeLoaderTests.cs`; the binding-abi-conformance lane (csproj, recipe, workflow); `ci.c-abi.yml`, `ci.dotnet.yml`, `ci.pr.yml`; `scripts/locate_shim.sh`. All LAWFUL.
+- Nothing asserts or tolerates two working shims in one process: every test executable links one artefact, and the decoy exports only the marker. Nothing asserts a refused shim's variant answer at all, so nothing asserts a wrong one.
+- The poisoned-state rows fake the refusal through the object library's slot. LEGITIMATE-BUT-ADJACENT if rung 9 brings a real second shim: they stay, and nothing re-anchors them.
+- D9S-2 DEBT-1 (`design-debt.md:836`) schedules moving a lawful file-name lookup (`binding-abi-conformance.yml:86, :150`) to `locate_shim.sh`. It does not restore a forbidden test.
+
+**Laws with no test (build marks correct, no false green):** L17 and BC-15 across variants are `[designed-not-built]`, untested, and nothing claims them built. L5's "only the later-loaded copy is poisoned" and "the version still answers in a poisoned shim" have no real-second-shim test (D9S-1 4b n1). Rung 9 owes both.
+
+**PS-1: as written, rung 10's server half cannot go green.** The C# binding resolves only `fletcher-c-abi` (`NativeMethods.cs:79`; `NativeLoader.cs:222-230` tries only `fletcher-c-abi.dll` and `libfletcher-c-abi.so`). The lane stages its shim under the shim's own file name (`BindingAbiConformance.csproj:36-37`, `Link="%(Filename)%(Extension)"`). The server file is `fletcher-c-abi-server` (ruling 2026-11-13). So C# can never load it, and the lane goes red. Teaching C# the name is domain 10's job (Q5a; "the C# switch round teaches C# that name or renames it when packing"), and only the one `HeaderVersionMinor` line may change under `dotnet/` this round (D27).
+Cheapest lawful options for the owner:
+- (a) **Rename in the CI lane only.** The workflow copies the server file into a scratch folder as `fletcher-c-abi.{dll,so}` and passes that path as `FletcherNativeShim`. This changes YAML only, edits nothing under `dotnet/`, and needs no csproj edit. Cost: it is a test-staging rename that sits close to the "renames it when packing" choice. The owner must confirm it does not decide Q5a, or the lane becomes an UNMOORED pin of that mechanism.
+- (b) **Run the C++ emitter against the server build; C# stays on edge.** The lane gets byte evidence (the server's codec emits the corpus C# decodes) without C# ever loading the server. Rung 10's "C# against both" moves to the C# switch round. This is a plan amendment.
+- (c) **Defer rung 10's server half wholesale** to domain 10. This is also a plan amendment, and it leaves L13 checked only by the c-abi edge-surface suite (D9S-2).
+- (A csproj `Link` rename falls under `integration-tests/.../dotnet/`. Whether "nothing under dotnet/" covers that path is the owner's call. Editing the C# loader is unlawful this round.)
