@@ -42,10 +42,10 @@ containment.
 - **Edge variant** (exists; today's shim): as today, plus only the variant query and named
   not-supported answers from the batched entry points (L12, D23), and the ABI version bump both
   builds share (L6, D27). The query and the bump are `[built]` (D9S-1); the refusals are
-  `[designed-not-built]`. Never
+  `[built]` (subscribe D9S-4a, close D9S-5a). Never
   carries Arrow C++, because "it needs to be able to run on embedded devices" (owner, 2026-11-12).
   Ships in the base package, `Eiva.Fletcher.Interop` (D22).
-- **Server-tier variant** `[designed-not-built]`: the edge surface plus `pubsub-arrow`'s batched
+- **Server-tier variant** `[built]` (D9S-2..5a; the in-callback and idle close are D9S-5b): the edge surface plus `pubsub-arrow`'s batched
   subscribe (domain 7). Ships in its own .NET package, a full shim (D22). A C# app loads it only if
   it references the server package; otherwise it loads the edge build (D29, revising in place
   D19's "C# on desktop loads the server variant"; domain 10, next round).
@@ -191,7 +191,7 @@ and never consumes a caller's Arrow structure. OUT parameters are written only o
 the caller with the seam's number and message. A timeout crosses as the seam's value, untranslated:
 `INT64_MAX` ms is the unbounded form, a negative is the seam's refusal (`h:548-555`).
 `[built]`, with **one answer of its own**: the bound-rows publish check; a **second** is designed,
-the edge build's refusal of the batched subscribe (L12) `[built]` (D9S-4a).
+the edge build's refusal of the batched subscribe and close (L12) `[built]` (D9S-4a, D9S-5a).
 - Holds at: `cpp:28-39` (the six topic rules are `RequireSegments`'), `cpp:96-102` (topic options),
   `cpp:871-877` (unsubscribe's no-op and no-wait cases), `cpp:941-946` (the arrival timeout is
   forwarded; "negative means forever" belongs to C#, D-BIND-20).
