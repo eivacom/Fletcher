@@ -833,7 +833,7 @@ Review: [../../docs/archive/D7F/reviews/D7F-1-design-review.md](../../docs/archi
 - ~~DEBT-4 (step 3, docs): BC-3 gap, d7 Findings, BC-8 hint clause, bitmap residue~~ Landed in `c18e95e` (d7 Q8 and Findings (d); register BC-3, BC-8).
 
 ## D9S-2 — the shim's server build (APPROVE-WITH-DEBT(4), cycle 1 of 2) — [review](D9S-2-design-review.md)
-- ~~DEBT-1 (D9S-7): P3 fires when rung 10 creates a server package in the conformance lane. Re-anchor `ci.integration-test.binding-abi-conformance.yml:86, :150` with `locate_shim.sh` in that commit, and annotate ladder rung 9's "Builds on" with R1's 10–20 lines.~~ Landed in the D9S-7 stage commit `f1a099e` (both lookups by package identity; `plans/D9S-test-ladder.md` rung 9 annotated).
+- ~~DEBT-1 (D9S-7): P3 fires when rung 10 creates a server package in the conformance lane. Re-anchor `ci.integration-test.binding-abi-conformance.yml:86, :150` with `locate_shim.sh` in that commit, and annotate ladder rung 9's "Builds on" with R1's 10–20 lines.~~ Landed in the D9S-7 stage commit `f1a099e` (both lookups by package identity; `docs/archive/D9S/D9S-test-ladder.md` rung 9 annotated).
 - ~~DEBT-2~~ Applied to the brief before the owner read it (`fd6dcd2`).
 - ~~DEBT-3~~ Recorded at close: production +339/−74 (D9S-2 brief As landed).
 - ~~DEBT-4~~ Landed in `0a43e99` (server shim size printed on both legs, not enforced).
@@ -847,13 +847,13 @@ Review: [../../docs/archive/D7F/reviews/D7F-1-design-review.md](../../docs/archi
 - ~~DEBT-1~~ Applied in design cycle 2 (H3 says "a failed hand-over"; the catch encloses thunk steps 1–4).
 - ~~DEBT-2 (step 3, 4a): a fourth `Reason` must fail the build~~ Landed in `e766c3e` (exhaustive `switch` in `batches_server.cpp`, switch warning as error; d9 L1, `ReasonOf`).
 - ~~DEBT-3 (step 3, 4a header doc): the same-topic arrival wording~~ Landed in `e766c3e` (`binding.h` same-topic bullet; d9 Findings b2).
-- ~~DEBT-4 (PM): D-D9S-8 fPIC annotation, tracker rows~~ Landed in `5b36a63` (`plans/D9S-locked-decisions.md`, `plans/D9S-plan.md`).
+- ~~DEBT-4 (PM): D-D9S-8 fPIC annotation, tracker rows~~ Landed in `5b36a63` (`docs/archive/D9S/D9S-locked-decisions.md`, `docs/archive/D9S/D9S-plan.md`).
 
 ## D9S-5a — close from outside, borrow-and-move, options as given (APPROVE-WITH-DEBT(4), cycle 1 of 2) — [review](D9S-5a-design-review.md)
 - ~~DEBT-1 (step 3, docs): BC-13 / d9 L14 marks, the untagged id, the row-delivery clause~~ Landed in `ea49aa3` and `640e8cd` (register BC-13, d9 L14 and §4, `binding.h`).
 - ~~DEBT-2 (step 3, tests): one sink per subscription, counts before teardown~~ Test item, landed with `ea49aa3` (`test_batches.cpp`).
 - ~~DEBT-3 (PM): trim the brief~~ Process item, landed in `c7220e2`.
-- ~~DEBT-4 (step 3, close): shared truth-table body, table-driven G2, test-line report~~ Test and process item, reported at close (`ad69f4a`, `plans/D9S-progress-log.md`).
+- ~~DEBT-4 (step 3, close): shared truth-table body, table-driven G2, test-line report~~ Test and process item, reported at close (`ad69f4a`, `docs/archive/D9S/D9S-progress-log.md`).
 
 ## D9S-5b — every close ends with one closing delivery (cycle 1 NEEDS-REWORK, B1 answered by ruling :493; cycle 2 APPROVE-WITH-DEBT(3)) — [review](D9S-5b-design-review.md)
 - ~~**DEBT-1**~~ Resolved in cycle 2: brief :8-9 and :40-42, design :22.

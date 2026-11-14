@@ -388,7 +388,7 @@ C#'s per-row subscribe must work on the edge build without a batcher.
 **Rulings:** (1) **A batch the shim cannot hand over is reported, never lost silently**: the binding
 receives a "no batch could be built" delivery for that window with its rows counted as dropped and
 its reason kept; one site in the shim (register BC-12); domain 7 untouched. (2) **The tier-2 text
-corrections listed in `plans/D9S-pre-round-audit.md` are approved** and applied before the round.
+corrections listed in `docs/archive/D9S/D9S-pre-round-audit.md` are approved** and applied before the round.
 **Applies to:** d9 (a new law or an L14 clause), register BC-12, the audit's F-rows.
 *Ingested (D9S pre-round, 2026-11-13): (1) d9 law L18 (a new law, not an L14 clause: its own question, site and test), D30, §2 "Hand-over", register BC-12; (2) d9 D31 and the F-rows: d9 (F1, F3, F4, F6, F7, F9, F15), BIND annotations (F17–F19), `binding.h` comments (F10, F22, F23), `c-abi/README.md` (F24–F26), these ledger notes (F27); register BC-10 to BC-15 and notes on BC-5, BC-8, BC-9.*
 
@@ -492,7 +492,7 @@ needs a small domain-7 change, which this round's config forbids, so you authori
 Settles the collision between the 2026-11-11 entry (1)/(2) ("then the closing batch … until the closing batch arrives") and
 d7 L6 ("A window with nothing pending delivers nothing") in favour of the ruling. d7 L6 is amended for closing, and the round is
 widened to that one domain-7 law and its code. The split: D9S-5a (move/release, options, close from outside a callback) proceeds
-now; D9S-5b carries the d7 L6 amendment, the domain-7 change and the in-callback close. Trigger: `plans/reviews/D9S-5-audit-0a.md`.
+now; D9S-5b carries the d7 L6 amendment, the domain-7 change and the in-callback close. Trigger: `docs/archive/D9S/reviews/D9S-5-audit-0a.md`.
 Still live: the empty delivery's exact shape (zero-row vs null batch) is D9S-5b's design and may need its own owner question.
 `binding.h:867-877`'s "no reliable end signal" text is superseded once 5b lands.
 *Ingested (D9S close, 2026-11-14): d7 D18, L6 ("Amended 2026-11-14") and L9 ("Revised 2026-11-14"), each cited :478; d9 L15 (the shim forwards, adds nothing), cited :478, with d9 L1 and §2 pointing at it. The split of D9S-5 into 5a/5b: process-only. `binding.h`'s "no reliable end signal" text is gone (D9S-5b). The empty delivery's shape (zero-row, or null with no decoder) stands in d7 L6 as D9S-5b's design; no separate owner question was asked.*
@@ -506,7 +506,7 @@ caught rows are discarded uncounted), so the round widens by one more domain-7 c
 **Ruling:** **a refused batched subscribe never delivers anything; the caller may free its state when the call returns.**
 Binds: d7 L1 gains a clause for rows caught by a subscription refused before it was registered (they are discarded uncounted). The
 round's widening grows by that one d7 L1 clause, in D9S-5b. Supersedes nothing; it narrows the 2026-11-14 "every close ends with one
-closing delivery" ruling to subscriptions that were accepted. Trigger: `plans/reviews/D9S-5b-design-review.md` B1; brief Decision 1.
+closing delivery" ruling to subscriptions that were accepted. Trigger: `docs/archive/D9S/reviews/D9S-5b-design-review.md` B1; brief Decision 1.
 *Ingested (D9S close, 2026-11-14): d7 D19 and L1 ("A refused `Subscribe` delivers nothing"), cited :493; d7 D18 and L6/L9 carry the narrowing to accepted subscriptions; d9 L15, cited :493.*
 
 ## 2026-11-14 — D9S-6: a failed hand-over still carries its status and message
@@ -519,7 +519,7 @@ no new status number. Amends only the plan's layout line."
 **Ruling:** **d9 §1 holds for a failed hand-over: the no-batch delivery carries the failure's status and message, borrowed for the callback.**
 Binds: `fl_batch` gains a failure field and the origin list gains a hand-over code. d9 L2 gains a borrowed-for-the-callback clause; that is a
 d9 law change authorised by this ruling, in D9S-6. Ladder rung 8 and the plan's "no batch-layout change after stage 4" line are amended.
-d9 Q12's origin half is settled (the new code). Trigger: `plans/reviews/D9S-6-design-review.md` B2; brief Decision 1.
+d9 Q12's origin half is settled (the new code). Trigger: `docs/archive/D9S/reviews/D9S-6-design-review.md` B2; brief Decision 1.
 *Ingested (D9S close, 2026-11-14): d9 D32, cited :504; d9 L2 (borrowed-for-the-callback clause) and L18 ("Settled"), each cited :504; §2 "Hand-over", §4 `failure`, §6 domain 10 (origin 4), §7 Q12 (hand-over half). The ladder's layout line was amended in D9S-6.*
 
 ## 2026-11-14 — D9S-7: CI proves C# against the server build through a renamed copy
@@ -530,5 +530,5 @@ runs did (11/11). Architecture: serves the round purpose ('C# can get batches fr
 test staging only, so Q5a (how packing names files) stays domain 10's."
 **Ruling:** **the C# conformance lane runs against the server build by CI staging a copy of the server shim under the edge file name.**
 Binds: D9S-7, rung 10's server half. Test staging only; it decides nothing about packing or which file a binding loads (d9 Q5a stays
-domain 10's). No dotnet/ edit. Trigger: `plans/reviews/D9S-7-audit-0a.md` PS-1.
+domain 10's). No dotnet/ edit. Trigger: `docs/archive/D9S/reviews/D9S-7-audit-0a.md` PS-1.
 *Ingested (D9S close, 2026-11-14): d9 L13 Tests (the conformance lane against both builds; the staging only), cited :516; d9 §6 domain-10 list (the staging retires once Q5a is settled), cited :516; `integration-tests/binding-abi-conformance/README.md` "Against both builds", cited :516. Keeping the edge corpus is recorded there as a design choice, not part of the ruling.*

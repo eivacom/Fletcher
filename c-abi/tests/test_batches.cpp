@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-// D9S-4a's forcing tests (plans/D9S-4-batches-cross.md, "Forcing-test mapping"): batched
+// D9S-4a's forcing tests (docs/archive/D9S/D9S-4-batches-cross.md, "Forcing-test mapping"): batched
 // subscribe through the shim's export table. Domain 9 L12, L14, L15; register BC-9, BC-10, BC-13.
 //
 // This file is compiled into up to FOUR test executables, one per shim artefact, as
@@ -347,7 +347,7 @@ class BatchFixture {
 };
 
 // ---------------------------------------------------------------------------
-// D9S-5a helpers (plans/D9S-5a-close-release-options.md, "Forcing-test mapping")
+// D9S-5a helpers (docs/archive/D9S/D9S-5a-close-release-options.md, "Forcing-test mapping")
 // ---------------------------------------------------------------------------
 
 constexpr uint64_t kBatchedIdTag = uint64_t{1} << 63;
