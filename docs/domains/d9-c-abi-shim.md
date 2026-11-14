@@ -580,6 +580,7 @@ in its own .NET package (D22); the NuGet-level name stays domain 10's (Q5a).
     D-BIND-148's exact DLL allow-list and D-BIND-149's floors apply to the server shim as they stand
     or with lists and floors of its own, and whether the server package gets a size ceiling of its
     own (D-BIND-157 stays on the base package, D22).
+    Once settled, CI's D9S-7 staging of the server shim under the edge file name (ruling 2026-11-14, ledger :516) retires.
 - **Domain 5 (gateway).** Not a consumer: `Eiva.Fletcher.GatewayClient` has its own managed codec
   and batcher (D-BIND-1's one exception; BC-9).
 

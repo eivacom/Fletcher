@@ -868,3 +868,9 @@ Review: [../../docs/archive/D7F/reviews/D7F-1-design-review.md](../../docs/archi
 - ~~DEBT-3~~ Applied in cycle 2: design l.103-104 (one batched subscription per cell).
 - **DEBT-4 (step 3, docs; PM):** (a) `binding.h`'s `fl_error` paragraph (h:271-292: "owned by it", "a `finally`") gains L2's clause: `fl_batch.failure` is borrowed, and never passed to `fl_error_dispose`. (b) d9 §5 gains D32 for ruling :504 (d9 l.7: a law change is recorded in a decision of record), cited from L2 and L18. (c) d9 §6, domain 10: the C# switch round mirrors `FL_ORIGIN_HANDOVER` (`FletcherException.cs:62-75` stops at 3) and never disposes `failure`. (PM) The ruling's "layout line" is the ladder's l.93 and rung 4 (l.59).
 - **DEBT-5 (step 3, code):** if `make_shared` throws mid-loop, `fl_attachments`' constructor leaks its `BlobOwner` blocks (`handles.hpp:117-119`, and no destructor runs). So design step 1's "what the attempt built is released" is false for a half-built set. It is a leak on OOM, not a loss. Hold each block in a `unique_ptr` until `push_back`, and drop the earlier blocks on a throw (~5 lines, adds `handles.hpp`), or register it.
+
+## D9S-7 — two builds in one process; C# against both (APPROVE-WITH-DEBT(4), cycle 1 of 2) — [review](D9S-7-design-review.md)
+- ~~DEBT-1~~ landed `157d3c3` (`env -u LD_LIBRARY_PATH`).
+- **DEBT-2 (round close or a later d9 stage):** the twin is a fourth hand-copied shim recipe. One CMake function should build every shim from its variant. Until then, change `c-abi/tests/CMakeLists.txt:285` from "catches recipe drift" to "catches only the variant define".
+- ~~DEBT-3~~ landed `157d3c3` (dead line and design paragraph deleted).
+- ~~DEBT-4~~ landed: d9 §6 domain-10 list notes the staging retires with Q5a; ladder rung 10 credits :516 for the staging only.
