@@ -500,3 +500,15 @@ caught rows are discarded uncounted), so the round widens by one more domain-7 c
 Binds: d7 L1 gains a clause for rows caught by a subscription refused before it was registered (they are discarded uncounted). The
 round's widening grows by that one d7 L1 clause, in D9S-5b. Supersedes nothing; it narrows the 2026-11-14 "every close ends with one
 closing delivery" ruling to subscriptions that were accepted. Trigger: `plans/reviews/D9S-5b-design-review.md` B1; brief Decision 1.
+
+## 2026-11-14 — D9S-6: a failed hand-over still carries its status and message
+> "(b) Keep the promise (Rec.)"
+
+*(Chosen option.)* Its text: "Users: the program also gets why, e.g. 'internal error: …' with origin 'hand-over', so an operator can
+tell a shim failure from a batcher failure. Architecture: keeps d9 §1 and L2 ('a failure is a status plus its message'). The message
+arrives inside the batch, borrowed for the callback (L11), so L2 gains a clause. Adds 1 field and 1 origin code (2 of 3 surface slots),
+no new status number. Amends only the plan's layout line."
+**Ruling:** **d9 §1 holds for a failed hand-over: the no-batch delivery carries the failure's status and message, borrowed for the callback.**
+Binds: `fl_batch` gains a failure field and the origin list gains a hand-over code. d9 L2 gains a borrowed-for-the-callback clause; that is a
+d9 law change authorised by this ruling, in D9S-6. Ladder rung 8 and the plan's "no batch-layout change after stage 4" line are amended.
+d9 Q12's origin half is settled (the new code). Trigger: `plans/reviews/D9S-6-design-review.md` B2; brief Decision 1.

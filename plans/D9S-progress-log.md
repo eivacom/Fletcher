@@ -213,3 +213,5 @@ scope). Record: d9 L8 / design said `run_tests` leaves the package ID — false 
 - 4b record: the comments at cpp:476 ("closing needs the id"; the destructor also closes) and cpp:136 ("gets none" means nothing at all) are imprecise.
 - 4b nits N1/N2: F2's header comment; a positive control for D7-2.
 - The implementer's runner once deleted the clean cache package; it was rebuilt from identical source.
+
+**D9S-6, 2026-11-14:** design review cycle 1 NEEDS-REWORK (B1: an out-of-memory escape; B2: the Decision was a principle against a detail). Cycle 2 re-framed it. Owner: "(b) Keep the promise (Rec.)" (ledger). The d9 L2 clause is authorised; config updated.
