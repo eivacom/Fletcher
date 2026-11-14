@@ -417,6 +417,7 @@ stages close."
 owner opens a draft PR from `feature/shim-server-variant`**; from then on each stage close records the
 CI run IDs, and the "Windows, by hand; CI and Linux unrun" marks are lifted once a green run covers them.
 **Applies to:** D9S-2 close finding; the D9S evidence ledger; d9 and register marks narrowed at D9S-2.
+*Ingested (D9S close, 2026-11-14): (1) process-only, no corpus home (a ceiling ruling about D9S-2's own records); (2) d9 header note: the "Windows, by hand; CI and Linux unrun" marks lift only once a green CI run on the owner's draft PR covers them, cited :408 (2). No CI run had happened by D9S close.*
 
 ## 2026-11-13 — D9S-3: a test-only Arrow dependency of the edge build is refused too
 > "Narrow the docs (Recommended)"
@@ -429,6 +430,7 @@ exemption logic."
 **Ruling:** **with tests off, the edge build's graph may hold no Arrow package at all, test-only or
 not**; Arrow reaches test binaries only through dependencies added when tests are built.
 **Applies to:** register BC-11, ladder rung 3, d9 L8's "How it is enforced"; `check_edge_arrow_free.sh` unchanged.
+*Ingested (D9S close, 2026-11-14): d9 L8 "Holds at" (with tests off, no Arrow package in the edge graph, test-only or not), cited :421; register BC-11 structural test, cited :421. Ladder rung 3 already annotated; `check_edge_arrow_free.sh` unchanged.*
 
 ## 2026-11-13 — D9S-4: position-independent code for pubsub-arrow and arrow-bridge
 > "Allow the build option (Recommended)"
@@ -441,6 +443,7 @@ untouched. Serves the round purpose (batches through the shim on Linux)."
 `pubsub-arrow/conanfile.py` and `arrow-bridge/conanfile.py`**, exactly as `pubsub` has it — a named
 scope exception; no other edit to domains 7 or 2.
 **Applies to:** D9S-4 design branch (a); D-D9S-8's out-of-scope list (this one exception).
+*Ingested (D9S close, 2026-11-14): process-only, no corpus home (a named, build-only scope exception for D9S-4; the `fPIC` option itself stands in `pubsub-arrow/conanfile.py` and `arrow-bridge/conanfile.py`, and the round's D-D9S-8 records it). No d7 §5 note added.*
 
 ## 2026-11-13 — D9S-4: one subscriber object; the interim handoff gap accepted
 > Decision 1: "(a) One object, documented (Rec.)"
@@ -457,6 +460,7 @@ in stage 6."
 collision is documented, not refused; the provider difference is registered for domains 3/4. (2) **a
 failed conversion is lost uncounted during D9S-4/5 only**; L18 is built and proven red-first in D9S-6.
 **Applies to:** D9S-4a design; d9 L4, L18; register (d3/d4 finding).
+*Ingested (D9S close, 2026-11-14): (1) d9 D33 (one `fl_subscriber` holds both kinds; the same-topic collision documented, not refused; the provider difference registered for domains 3/4), cited :445 (1), and d9 Findings (b2), which points at D33; (2) process-only, no corpus home: expired at D9S-6, when L18 was built.*
 
 ## 2026-11-13 — D9S-4a: ceiling overrun from documentation accepted
 > "Accept, as explained (Rec.)"
@@ -466,6 +470,7 @@ a batch, when it is released, what each reason means). Architecture: the overrun
 work — code is ~192 lines, within the ceiling's intent; recorded as an accepted close finding like D9S-2's."
 **Ruling:** **D9S-4a's ~312 counted production lines (≈192 code) over the 250 ceiling are accepted.**
 **Applies to:** D9S-4a close finding.
+*Ingested (D9S close, 2026-11-14): process-only, no corpus home (a ceiling ruling about D9S-4a's own records).*
 
 ## 2026-11-13 — D9S: tighter document caps for the remaining stages
 > "Tighter caps (Recommended)"
@@ -474,6 +479,7 @@ work — code is ~192 lines, within the ceiling's intent; recorded as an accepte
 the round's purpose by spending effort on code, not prose."
 **Ruling:** **D9S's remaining full-loop stages run with a 150-line design and 60-line reviews.** Light-lane caps are unchanged.
 **Applies to:** D9S-5, D9S-6 (and any ejection). Trigger: the words-per-stage tripwire (log, D9S-4a close).
+*Ingested (D9S close, 2026-11-14): process-only, no corpus home (document caps for the round's remaining stages).*
 
 ## 2026-11-14 — D9S-5: every close ends with one closing delivery; D9S-5 splits
 > Idle close: "Always a final delivery (Rec.)"
@@ -489,6 +495,7 @@ widened to that one domain-7 law and its code. The split: D9S-5a (move/release, 
 now; D9S-5b carries the d7 L6 amendment, the domain-7 change and the in-callback close. Trigger: `plans/reviews/D9S-5-audit-0a.md`.
 Still live: the empty delivery's exact shape (zero-row vs null batch) is D9S-5b's design and may need its own owner question.
 `binding.h:867-877`'s "no reliable end signal" text is superseded once 5b lands.
+*Ingested (D9S close, 2026-11-14): d7 D18, L6 ("Amended 2026-11-14") and L9 ("Revised 2026-11-14"), each cited :478; d9 L15 (the shim forwards, adds nothing), cited :478, with d9 L1 and §2 pointing at it. The split of D9S-5 into 5a/5b: process-only. `binding.h`'s "no reliable end signal" text is gone (D9S-5b). The empty delivery's shape (zero-row, or null with no decoder) stands in d7 L6 as D9S-5b's design; no separate owner question was asked.*
 
 ## 2026-11-14 — D9S-5b: a refused batched subscribe never delivers
 > "(a) Never (Rec.)"
@@ -500,6 +507,7 @@ caught rows are discarded uncounted), so the round widens by one more domain-7 c
 Binds: d7 L1 gains a clause for rows caught by a subscription refused before it was registered (they are discarded uncounted). The
 round's widening grows by that one d7 L1 clause, in D9S-5b. Supersedes nothing; it narrows the 2026-11-14 "every close ends with one
 closing delivery" ruling to subscriptions that were accepted. Trigger: `plans/reviews/D9S-5b-design-review.md` B1; brief Decision 1.
+*Ingested (D9S close, 2026-11-14): d7 D19 and L1 ("A refused `Subscribe` delivers nothing"), cited :493; d7 D18 and L6/L9 carry the narrowing to accepted subscriptions; d9 L15, cited :493.*
 
 ## 2026-11-14 — D9S-6: a failed hand-over still carries its status and message
 > "(b) Keep the promise (Rec.)"
@@ -512,6 +520,7 @@ no new status number. Amends only the plan's layout line."
 Binds: `fl_batch` gains a failure field and the origin list gains a hand-over code. d9 L2 gains a borrowed-for-the-callback clause; that is a
 d9 law change authorised by this ruling, in D9S-6. Ladder rung 8 and the plan's "no batch-layout change after stage 4" line are amended.
 d9 Q12's origin half is settled (the new code). Trigger: `plans/reviews/D9S-6-design-review.md` B2; brief Decision 1.
+*Ingested (D9S close, 2026-11-14): d9 D32, cited :504; d9 L2 (borrowed-for-the-callback clause) and L18 ("Settled"), each cited :504; §2 "Hand-over", §4 `failure`, §6 domain 10 (origin 4), §7 Q12 (hand-over half). The ladder's layout line was amended in D9S-6.*
 
 ## 2026-11-14 — D9S-7: CI proves C# against the server build through a renamed copy
 > "CI stages a renamed copy (Rec.)"
@@ -522,3 +531,4 @@ test staging only, so Q5a (how packing names files) stays domain 10's."
 **Ruling:** **the C# conformance lane runs against the server build by CI staging a copy of the server shim under the edge file name.**
 Binds: D9S-7, rung 10's server half. Test staging only; it decides nothing about packing or which file a binding loads (d9 Q5a stays
 domain 10's). No dotnet/ edit. Trigger: `plans/reviews/D9S-7-audit-0a.md` PS-1.
+*Ingested (D9S close, 2026-11-14): d9 L13 Tests (the conformance lane against both builds; the staging only), cited :516; d9 §6 domain-10 list (the staging retires once Q5a is settled), cited :516; `integration-tests/binding-abi-conformance/README.md` "Against both builds", cited :516. Keeping the edge corpus is recorded there as a design choice, not part of the ruling.*

@@ -93,7 +93,7 @@ in the `rows_dropped` of a later delivered batch, except rows caught by a refuse
   is fixed by D7F-1 and D7F-2 (Q1 resolved); violation 2 by D7F-3.
 - **A refused `Subscribe` delivers nothing:** rows caught by a subscription refused before it was
   registered are discarded uncounted (owner ruling 2026-11-14, "a refused batched subscribe never
-  delivers", D19). `[built]` (D9S-5b). Holds at: `MarkRegistered` (set by `Subscribe` once it can no
+  delivers", ledger :493, D19). `[built]` (D9S-5b). Holds at: `MarkRegistered` (set by `Subscribe` once it can no
   longer throw) and `Loop`'s gate (nothing delivered before it; a batcher stopped unregistered
   discards its queue and ends). Tests: `ARefusedSubscribeNeverDeliversWhatItCaught` (rows caught
   inside a failing transport `Subscribe`), `FailedBatchedSubscribeReleasesItsCallback` (never
@@ -157,7 +157,7 @@ delivers nothing, except at closing: every close of an accepted subscription end
 `kClosing` (L9), zero-row, or null if there is no decoder. With no timeout, a window of only drops
 waits for closing (L1).
 `[built]` (closing clause: D9S-5b)
-- **Amended 2026-11-14** (owner ruling, "every close ends with one closing delivery", D18): the
+- **Amended 2026-11-14** (owner ruling, "every close ends with one closing delivery", ledger :478, D18): the
   closing exception. It settles the collision between "until the closing batch arrives" (2026-11-11)
   and the old "a window with nothing pending delivers nothing" in favour of the ruling.
 - Holds at: `Close`'s early return (idle, unless the closing of a registered subscription), `cpp:145`.
@@ -223,7 +223,7 @@ counted.
   covers destroying the `SubscriberArrow` inside its own batch callback, and an `Unsubscribe` from a
   row-delivery thread on the same transport (domain 3's no-wait-in-delivery rule, extended to
   batches). Destroying it from a row-delivery thread stays forbidden (2026-09-05).
-- **Revised 2026-11-14** (owner ruling, "every close ends with one closing delivery", D18): "the
+- **Revised 2026-11-14** (owner ruling, "every close ends with one closing delivery", ledger :478, D18): "the
   pending window is delivered once" became "exactly one `kClosing`, empty when nothing is pending",
   so a binding always has an end signal. A refused `Subscribe` was never accepted and gets none (L1).
 - Holds at: `cpp:116-138` (`Stop`: idempotent through `stopped_`; `kClosing` queued behind the
