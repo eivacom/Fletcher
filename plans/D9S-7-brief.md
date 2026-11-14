@@ -48,4 +48,5 @@ Declared net lines: **+30 / −8 (≈38 touched, 2 files)**, counting CI YAML as
 **Counted at phase B (`f1a099e`):** CI YAML +77 / −15 raw, **65 non-comment touched lines** in 2 files (vs ≈38 declared, 60 admission), so the item was **ejected to the full loop**; design `plans/D9S-7-two-builds.md`.
 
 ---
-*As landed:* (PM, at close)
+*As landed — 7, 2026-11-14:* CI YAML has 65 non-comment touched lines in 2 files, against ~38 declared, so the item was **ejected from the light lane** (full loop run after implementation). There are no shipped code lines. Tests +262 (new test file and test CMake).
+Ruling :516 (staged renamed copy) settled PS-1. Fix 1 made the cmp control able to go red (4b S1). DEBT-2 (a shared shim-recipe CMake function) is carried. Cycles: design 1 (post-ejection), fix 1, implementer launches 1 (resumed twice).

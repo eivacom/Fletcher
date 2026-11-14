@@ -260,3 +260,29 @@ Resumed the same day. PS-1: owner chose "CI stages a renamed copy (Rec.)" (ledge
 ## D9S-7 — ejected from the light lane (2026-11-14)
 
 At phase B, CI YAML measured **65 non-comment touched lines** (+77/−15 raw in 2 files). The brief declared ~38 touched lines, and admission is 60. Ejected to the full loop: a design doc, the architecture review and a compliance review are dispatched; phase A/B work (`f1a099e`) is carried forward unchanged. The overrun is mostly comments, plus the Linux `bash -c` block that must carry the same steps.
+
+## D9S-7 — Two builds in one process give one working shim; the C# lane runs against both builds — 🟢 2026-11-14
+
+**Landed:**
+- Phase A/B in `f1a099e`, fix `157d3c3`, records `1547efc`.
+- Rung 9: a test-only edge twin and two load orders. The later build refuses, naming both; the first keeps working; the refused build still answers its variant and version.
+- Rung 10: the conformance lane builds the server shim, stages it under the edge name (ruling :516), and checks it with a cmp guard plus a control.
+- D9S-2 DEBT-1 (locate_shim) and D9S-1 4b n1 are closed.
+
+**Steps:**
+- 0a CLEAR with PS-1, answered by the owner as "CI stages a renamed copy (Rec.)".
+- Light brief, then phase A (guards green, 4 mutations red), then 0b CLEAR (N1 qualifier).
+- Phase B, then **ejected** (65 touched CI lines against 60). The design doc was written afterwards.
+- Design review: APPROVE-WITH-DEBT(4). DEBT-1/3/4 landed; DEBT-2 (a shared shim CMake function) is carried.
+- 4b: approve, with S1 (the control could never go red). Fixed in fix 1; 4b cycle 2 approve.
+- 4a: PASS, with 8 RECORD items, fixed by the PM.
+
+**Verification:**
+- c-abi server 126/126 and edge+probe 116/116.
+- The local CI-lane steps were green; the cmp guard and the control were both shown red when they should be.
+- **Linux leg and CI unrun.**
+
+**Numbers:**
+- CI YAML: 65 touched, against ~38 declared.
+- Tests: +262 (+56 in CMake).
+- Design cycles 1, fix cycles 1, implementer launches 1. Owner touches 1 (PS-1).
