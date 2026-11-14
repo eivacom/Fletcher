@@ -48,4 +48,5 @@ Declared net lines: production +50 / −16; test-only fault shim +75; tests +130
 New public surface: 2. Design cycles used: 2/2.
 
 ---
-*As landed:* (PM, at close)
+*As landed — 6, 2026-11-14:* production has 67 touched non-comment lines in 3 files (`batches_server.cpp`, `handles.hpp` for DEBT-5, `binding.h`), against a declared +50/−16. Tests and the seam: +236/−3, against a declared +205.
+Decision 1 was ruled "(b) Keep the promise" (:504). The record fix deleted an unruled "throwing callback is swallowed" clause from L18 (4a F1). The fault hook stays test-only (M6 does not link the shipped shim). Cycles: design 2, fix 0, implementer launches 1 (resumed once).

@@ -215,3 +215,36 @@ scope). Record: d9 L8 / design said `run_tests` leaves the package ID — false 
 - The implementer's runner once deleted the clean cache package; it was rebuilt from identical source.
 
 **D9S-6, 2026-11-14:** design review cycle 1 NEEDS-REWORK (B1: an out-of-memory escape; B2: the Decision was a principle against a detail). Cycle 2 re-framed it. Owner: "(b) Keep the promise (Rec.)" (ledger). The d9 L2 clause is authorised; config updated.
+
+## D9S-6 — A failed hand-over arrives as a counted no-batch with its status and message — 🟢 2026-11-14
+
+**Landed:** `abc0776`, with the record fix in `d16347f`.
+- The thunk is split: the batch is built inside a try; the fallback delivers a no-batch carrying the reason domain 7 gave and the rows counted as lost. Its `fl_batch.failure` holds `FL_INTERNAL`, `FL_ORIGIN_HANDOVER` (4) and the message, borrowed for the callback. `on_batch` is called exactly once, outside the try.
+- `ReasonOf` became `noexcept`, ending in `abort`.
+- DEBT-5: the partial-attachment-set leak in `handles.hpp` is fixed.
+- The test-only fault shim (`fletcher-c-abi-handover-fault`) is never packaged.
+- d9 L2 gained the borrowed clause (:504); D32 added; L18, BC-12 and Q12 settled.
+
+**Steps:**
+- 0a CLEAR.
+- Design cycle 1: NEEDS-REWORK. B1: an out-of-memory error could escape. B2: the Decision was a principle against a detail, and its default broke the principle.
+- Design cycle 2: re-framed. Owner chose "(b) Keep the promise (Rec.)". APPROVE-WITH-DEBT(2); the PM amended ladder l.93.
+- Phase A: red (4 deviations accepted). 0b CLEAR, and the design's arm-before-publish line was corrected.
+- Green.
+- 4a ISSUES: F1, an L18 clause no ruling grants. Fixed by the PM, together with 5 RECORD items.
+- 4b APPROVE: 4 nits.
+
+**Verification:**
+- c-abi server 122/122, edge+probe 116/116; exports 50=50=50, with no `fl_test_*` names shipped.
+- M1–M9 red.
+- Conformance 11/11 and 11/11; fastdds 4/4.
+- CI and Linux unrun.
+
+**Numbers:**
+- Production: 67 touched non-comment lines in 3 files, against a declared +50/−16. Tests and seam +236/−3.
+- Design cycles 2, fix cycles 0, implementer launches 1. Owner touches 1.
+- The design and the 4a review each landed at exactly their caps (150 and 60).
+
+**Logged:**
+- 4b nits: the fault fires only after the export, so the real failure points and the DEBT-5 catch are untested; no cell covers a window domain 7 already delivered as no-batch whose hand-over then fails; a stale "noexcept calls" comment.
+- 4a: the `batches_server.cpp:79` comment cites L1 where L18/D-D9S-4 is meant.
