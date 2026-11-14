@@ -37,3 +37,31 @@ Fix: at the top of `Close`, add `if (reason == kClosing && !registered_) return;
 
 ## RECORD:
 - `plans/D9S-5b-idle-close.md` rule 3 and m4 describe a discard in `Stop` that the tree does in `Loop` (moot if S1 lands as proposed).
+
+## Cycle 2
+
+`60ff057..f140eb3`. **Verdict: APPROVE.** 0 blocking · 0 should-fix · 0 nits. S1 is closed. Read only, nothing was built.
+
+**S1 fix (cpp:257).**
+- The lock is right. `Close` has three callers (`Stop`, `AddRow`, `Loop`), and each holds `mu_`. `registered_` is written only under `mu_` in `MarkRegistered`.
+- The terminate path is closed. While unwinding, `StopOnThrow` now leads to `Stop`, then `Close(kClosing)`, which returns before `Finish()` and `queue_.push_back`. Nothing allocates on the way.
+- The rows that were pending stay where they are. `decoder_` is freed at the end of `Loop`, outside `mu_`, and `atts_` goes when the batcher does.
+- The rewritten idle test (`reason != kClosing`) is equivalent: past the new line, `kClosing` implies `registered_`.
+- Loop's discard is unchanged. A refused batcher can still have windows in `queue_` that closed earlier (`kRowLimit` from `AddRow`, `kTimeout` from `Loop`). The `stopped_ && !registered_` branch still swaps them out and frees them outside `mu_`.
+- Skipping `has_deadline_ = false` is harmless, because `Loop` takes the discard branch first.
+
+**Two gates: acceptable, keep both.** They do not overlap in purpose.
+- `Loop`'s gate is the only one that matters for correctness. It holds back windows that closed before registration, and it discards them on refusal. The `max_rows 1` cell kills m3, as the design says.
+- The `Close` gate exists so that nothing allocates during unwind. Its only observable difference is under `bad_alloc`, so deleting it is an equivalent mutant for every delivery-observing test. That is the nature of a no-throw guard, not a design flaw. Do not write a test for it.
+- The `max_rows 100` cell now guards the pair: it goes red only if both gates are gone. Keep it.
+- Step 3 / close should record this mutant as equivalent so nobody expects it to go red.
+
+**N3 comment (cpp:476).** Accurate for `Unsubscribe`. Losing an idle closing there is still unreachable under P5.
+
+**Stop comment (cpp:134).** Matches the code: exactly one `kClosing`, behind what is already queued; none when unregistered; idempotent.
+
+## RECORD:
+- cpp:476: the destructor also closes, and it does so without an id. It is excluded only because destroying the object during a member call breaks the contract. The comment names only "closing needs the id".
+- cpp:136: "gets none" reads as "no kClosing". An unregistered batcher gets nothing at all, because its queued windows are discarded too.
+- d7 L1: the "except rows caught by a refused `Subscribe` (below; D19)" clause appears twice, once in the headline and once in the sentence after it.
+- Plan: list "delete the `Close` kClosing gate" as an equivalent mutant (only reachable under `bad_alloc`).

@@ -67,7 +67,8 @@ in the `rows_dropped` of a later delivered batch, except rows caught by a refuse
 `[built]` (violation 1: closing D7F-1, deadline D7F-2; violation 2: D7F-3)
 - Holds at: `cpp:95-99` (no decoder), `cpp:149-163` (`TryAppend`: malformed, internal),
   `cpp:100-105` (over budget: close, retry, count), `cpp:170-177` (`DiscardPending`),
-  `cpp:225-226` (`Close` hands the count to the queued batch).
+  `cpp:225-226` (`Close` hands the count to the queued batch); refused clause: `Close`'s unregistered-closing guard
+  (`cpp:257`) and `Loop`'s registration gate.
 - **With no timeout (L5, D7O-2),** a window of only lost rows never counts toward `max_rows` (it
   reads `decoder_->num_rows()`), so it is reported only in the `kClosing` batch; the header says so, and the README points to it.
 - **Violation 1.** While no usable schema exists (none decided yet, or an import that threw, which
