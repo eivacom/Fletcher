@@ -115,7 +115,7 @@ catch delivers the window.
 
 **Mutations, each red:** M1, restore the empty catch: both cells. M2, drop `+ offered`: Σ and k's
 `rows_dropped`. M3, a constant `FL_BATCH_ROW_LIMIT` in the fallback: k=3 has no CLOSING. M4, keep `out.array`
-in the fallback: k's `had_array`. M5, build the fault shim without the macro: `fired == 0`. M6, put the macro
+in the fallback: k's `had_array`. M5, the macro off `batches_server.cpp` alone: `fired == 0`. M6, put the macro
 on the shipped target: a link error, or `check_shim_exports.sh` once the hook source is added as well.
 
 **Controls:** **C1**, the whole `Batches` suite also runs unarmed in `c_abi_handover_tests` and stays green,
