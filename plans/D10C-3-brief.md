@@ -51,4 +51,5 @@ None:
 Declared net lines: production about +130–160 / −3 in 2 files (restated from +85 at design review, DEBT 3; not light-lane). Tests about +160 · new public surface: 0 · design cycles used: 1/2
 
 ---
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
+**As landed (2026-11-15):**
+Prod +164/−9 in 2 files; net 125 excl. doc comments (declared 130–160). Tests +343 vs ~+160: 3-arm forcing test + fixture checks, 2 guards, leg, and the 4b S1 release-count test in `ReentrancyTests.cs` (outside the design's file list). Not predicted: the arm-4 promise was unreachable (spec §7 cl. 1), so it is recorded as defensive with no test; the codec release carries a must-not-throw contract, not a catch (4a F1). Design cycles 1, fix cycles 1 (4a F1–F3, 4b S1), implementer launches 1 (resumed through 4 phases).

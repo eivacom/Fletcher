@@ -85,12 +85,12 @@ C# idiom laid over it (domain-map row 10; owner ruling 2026-11-12, "Shim only", 
 | **Loader** | `NativeLoader` (`NL:25-273`): installs the per-assembly resolver, probes beside the assembly then the application, and explains a failure by RID or platform floor (D-BIND-172). |
 | **Handshake** | `NativeMethods`' type initializer: install the resolver, then compare `fl_binding_abi_version()` with `HeaderVersion` before any other import can run (`NM:72-79`, `NL:253-272`). |
 | **Variant check** | `[designed-not-built]` The binding asking the loaded shim `fl_binding_variant` (d9 L16). Imported since D10C-2, with no caller until the loader uses it. |
-| **Thunk** | An `[UnmanagedCallersOnly]` static method native calls: the delivery thunk (`Subscriber.cs:812-865`), the writer and grow thunks. One containment site per direction (D-BIND-19 rule 2). |
+| **Thunk** | An `[UnmanagedCallersOnly]` static method native calls: the delivery thunk (`Subscriber.cs:824-877`), the writer and grow thunks. One containment site per direction (D-BIND-19 rule 2). |
 | **Absorbed failure** | A managed handler exception caught at a thunk, counted in `AbsorbedCallbackFailures` and `Diagnostics.AbsorbedTotal`, and raised as `HandlerFaulted` (D-BIND-18, -19 rule 5). |
 | **Managed batcher** | `SubscriberArrow.Batcher` (`SA:353-827`): today's C# copy of batch assembly. Deleted by the switch (d7 D16). |
 | **Window (C#)** | In the managed batcher, the raw rows, their end offsets and attachments since the last flush (`SA:365-368`). D-BIND-68's "framed window". After the switch the word means domain 7's window only. |
 | **Batch handler** | `RecordBatchHandler(RecordBatch? batch, IReadOnlyList<AttachmentsBuilder> attachments, BatchStatus status)` (`SA:113`). |
-| **Per-row Arrow subscribe** | `SubscriberArrow.Subscribe`: today `SubscribeBatched` with `MaxRows = 1` (`SA:206-207`, D-BIND-59 (1)); after the switch the native per-row path on both packages (ledger :536 (1), D20). Distinct from `Subscriber.Subscribe`, which hands the borrowed raw row to a `RowHandler`. |
+| **Per-row Arrow subscribe** | `SubscriberArrow.Subscribe`: the native per-row path, no batcher (`RowDelivery`, D10C-3; ledger :536 (1), D20); on the edge shim now, on the server package from rung 4. Distinct from `Subscriber.Subscribe`, which hands the borrowed raw row to a `RowHandler`. |
 | **Switch** | This round's change: `SubscriberArrow`'s batches come from domain 7 through the server shim's `fl_subscriber_subscribe_batches`, and the managed batcher is deleted. |
 
 **Naming findings:**
@@ -237,13 +237,14 @@ reference the server package publishes, subscribes per row and decodes as it doe
 - Source: ruling 2026-11-13 (4), consequence: "C#'s per-row subscribe must work on the edge build
   without a batcher" (ledger :363; d9 D29, §6 R-3).
 - Holds today at: `Subscriber.cs` (`fl_subscriber_subscribe`), `FletcherCodec.cs:260`
-  (`fl_decode_rows`). `SubscriberArrow.Subscribe` rides on the managed batcher (`SA:206-207`).
+  (`fl_decode_rows`). `SubscriberArrow.Subscribe` and its `RowDelivery` (D10C-3), no batcher.
 - **Settled 2026-11-15 (ledger :536 (1), D20):** `SubscriberArrow.Subscribe` moves to the native
   per-row path (`fl_subscriber_subscribe`, then the shim's per-row decode) and works on both
   packages. This arbitrates :246 (2) (whose "per-row is batched with `MaxRows = 1`" premise is
   amended) against :363 (4). The per-row path decodes each row natively and adds no window, count
   or timer (L4). **What it reports for a row it cannot decode is ruled (ledger :575 (3), D30):** a
-  null batch with `RowsDropped = 1` (L9; register BC-16). `[designed-not-built]`
+  null batch with `RowsDropped = 1` (L9; register BC-16). `[built on the edge shim]` (D10C-3;
+  `SubscriberArrowTests.PerRowDeliversEachRowAloneOrCountsItAsOneDrop`); the server leg is rung 4's.
 
 **L8. A batch handed to the binding is borrowed for its callback; the binding keeps it only by
 moving it.** Inside the batch callback the binding takes the array and schema by the C Data
@@ -262,8 +263,8 @@ counted and raised; every row domain 7 or the shim reports lost reaches the hand
 message.
 `[built for handler failures on the row and managed-batcher paths; designed-not-built for the
 batch thunk and the hand-over]`
-- Holds at: `Subscriber.cs:812-865` (catch, `ReportAbsorbed`), `SA:335-350` and `SA:729-736`
-  (handler failures counted and raised), `Diagnostics.cs`.
+- Holds at: `Subscriber.cs:824-877` (catch, `ReportAbsorbed`), `SA:352-367`, `SA:442-449` (per row)
+  and `SA:867-874` (handler failures counted and raised), `Diagnostics.cs`.
 - Source: D-BIND-18, D-BIND-19 rule 5; ruling 2026-11-12, "Shim only" (2) (ledger :246): BC-7 is
   not a prerequisite because "a managed handler's exception is caught, and counted, in C#'s own
   trampoline"; ruling 2026-11-13, "Lost handoff: Report it as lost" (ledger :383; d9 L18); ruling
@@ -274,9 +275,10 @@ batch thunk and the hand-over]`
 - **Per-row Arrow (ledger :575 (3), D30):** a row `SubscriberArrow.Subscribe` cannot decode (no schema
   yet, a schema that cannot be opened, malformed bytes) reaches the handler as a null batch with
   `RowsDropped = 1`, from one classify-and-count site (register BC-16); never skipped silently, as
-  C++'s per-row `Subscribe` does (BC-2's registered gap). `[designed-not-built]` on the native
-  per-row path; today's equivalent outcome rides the managed batcher.
-- Tests: `SubscriberArrowTests.AHandlerThatThrowsIsAbsorbedCountedAndRaised`,
+  C++'s per-row `Subscribe` does (BC-2's registered gap). `[built on the edge shim]` on the native
+  per-row path (D10C-3, `RowDelivery.OnRow`); the server leg is rung 4's.
+- Tests: `SubscriberArrowTests.PerRowDeliversEachRowAloneOrCountsItAsOneDrop`,
+  `SubscriberArrowTests.AHandlerThatThrowsIsAbsorbedCountedAndRaised`,
   `ProcessWideTests.AbsorbedTotalMovesByExactlyWhatTheSubscribersAbsorbed`,
   `ThunkDisciplineTests.EveryUnmanagedCallersOnlyMethodIsWrapped`.
 
@@ -284,7 +286,7 @@ batch thunk and the hand-over]`
 thunk catches everything, including failures of its own bookkeeping. A managed exception that
 caused a native failure is rethrown as itself.
 `[built]`
-- Holds at: `Subscriber.cs:812-865`, `Errors.cs:44-75` (rule 3 first: `captured?.Throw()`).
+- Holds at: `Subscriber.cs:824-877`, `Errors.cs:44-75` (rule 3 first: `captured?.Throw()`).
 - Source: D-BIND-19 rules 2 and 3; d9 L1 ("a caller's callback must not throw into the shim";
   `fl_batch_fn` "must not throw", `h:1058-1060`). A batch thunk added by the switch is in the scope
   of the reflection test.
@@ -296,8 +298,8 @@ native serves, the binding does not refuse.** Disposing a `Subscriber` or `Subsc
 delivery on the same provider is refused with a managed exception; closing or disposing a batched
 subscription from inside its own batch callback is served.
 `[built for row deliveries; designed-not-built for batch callbacks]`
-- Holds at: `Subscriber.cs:692-700` (provider-keyed frame stack, D-BIND-51), `SA:310-316`
-  (`SubscriberArrow.Dispose`), `Subscriber.cs:384-400` (re-entrant `Subscribe`, naming
+- Holds at: `Subscriber.cs:704-712` (provider-keyed frame stack, D-BIND-51), `SA:327-333`
+  (`SubscriberArrow.Dispose`), `Subscriber.cs:395-411` (re-entrant `Subscribe`, naming
   `DispatchAfterDelivery`).
 - Source: D-BIND-18, -50, -51; d9 L1 (the row subscriber's termination is the only one); d7 L9,
   D12, D13 (ledger :174: destruction inside the batch callback is lawful; an `Unsubscribe` from a
@@ -306,8 +308,9 @@ subscription from inside its own batch callback is served.
 - After the switch a batch callback runs on domain 7's batch thread, where no delivery frame is
   pushed (BC-6), so the existing refusal does not fire there: the served case needs no new code,
   only a test.
-- Tests: `ReentrancyTests.*`, `CallerTierArmTests.*`, for a `Subscriber`. **No test covers
-  `SubscriberArrow.Dispose`'s refusal (`SA:310-316`)**; the served batch-callback case is testable only
+- Tests: `ReentrancyTests.*`, `CallerTierArmTests.*`, for a `Subscriber`;
+  `SubscriberArrowTests.DisposingInsideAPerRowDeliveryIsRefusedAndNothingIsTornDown` for
+  `SubscriberArrow.Dispose`'s refusal (D10C-3). The served batch-callback case is testable only
   after the switch.
 
 **L12. A C# idiom is translated at one site, before the call.** `Timeout.InfiniteTimeSpan` (−1)
@@ -431,7 +434,8 @@ a source build whatever is staged beside the tests (CI's dotnet lane stages the 
   thunk that moves the batch (L8) and calls the handler on domain 7's batch thread (L13). Closing by
   `fl_subscriber_unsubscribe_batches` (bit-63 ids, `h:1121-1127`). On the edge shim it throws a
   named NotSupported (L6, D25). Dictionary columns arrive re-folded (D24).
-- `SubscriberArrow.Subscribe` on the native per-row path, on both packages (L7, D20).
+- `SubscriberArrow.Subscribe` on the native per-row path, on both packages (L7, D20): ~~the edge
+  package~~ `[built]` (D10C-3); the server package, rung 4.
 - One `fl_subscriber` holds both a `SubscriberArrow`'s row and batched subscriptions; a same-topic
   mix through one provider collides (d9 D33, ledger :448 (1)), so `SubscriberArrow` refuses it (L3,
   D33, ledger :575 (6)).
@@ -599,6 +603,7 @@ former Q10 (doc comments lagging D28) is work the round owes (Findings (a)2). Nu
 
 **(c) Behaviour with no test**
 - ~~`FletcherStatus`/`FletcherOrigin`/`BatchReason` against `binding.h` (L2).~~ Tested (D10C-2).
-- `SubscriberArrow.Dispose`'s refusal inside a row delivery (L11).
+- ~~`SubscriberArrow.Dispose`'s refusal inside a row delivery (L11).~~ Tested (D10C-3,
+  `SubscriberArrowTests.DisposingInsideAPerRowDeliveryIsRefusedAndNothingIsTornDown`).
 - ~~Origin 4 reaching C# (L2), unreachable today.~~ Origin 4 maps to `Handover` (D10C-2, `ErrorTests.OriginFourIsHandover`); reaching it from a real batch is the switch's.
 - A C# handler disposing its `SubscriberArrow` from a batch callback (L11), until the switch.

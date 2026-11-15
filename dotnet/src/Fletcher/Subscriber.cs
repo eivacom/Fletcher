@@ -370,6 +370,16 @@ public sealed unsafe class Subscriber : IDisposable
     /// one with null options, which mean empty.
     /// </remarks>
     public SubscribeResult Subscribe(TopicPath topic, RowHandler handler, TopicOptions? options)
+        => Subscribe(topic, handler, options, release: null);
+
+    /// <summary>
+    /// As the public form, and <paramref name="release"/> is disposed once no delivery of the
+    /// subscription can run any more: at its one free (<c>SubscriptionState.TryFree</c>), or
+    /// at once if the subscribe fails. How SubscriberArrow's per-row path keeps its codec
+    /// alive past an in-handler Unsubscribe without counting deliveries of its own.
+    /// <paramref name="release"/>'s Dispose MUST NOT THROW, as a callback into native must not.
+    /// </summary>
+    internal SubscribeResult Subscribe(TopicPath topic, RowHandler handler, TopicOptions? options, IDisposable? release)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(handler);
@@ -405,7 +415,7 @@ public sealed unsafe class Subscriber : IDisposable
         FlStr* segments = stackalloc FlStr[topic.Segments.Count];
         FlTopic native = MarshalTopic(topic, buffer, segments);
 
-        var state = new SubscriptionState(this, handler);
+        var state = new SubscriptionState(this, handler) { Release = release };
 
         // Allocated BEFORE the subscription can deliver, and freed by whoever
         // retires it last. If the subscribe itself fails there is no delivery and
@@ -439,6 +449,7 @@ public sealed unsafe class Subscriber : IDisposable
         if (status != (int)FletcherStatus.Ok)
         {
             state.Self.Free();
+            state.Release?.Dispose();
             Errors.ThrowIfFailed(status, ref err);
         }
 
@@ -882,6 +893,9 @@ public sealed unsafe class Subscriber : IDisposable
 
         internal GCHandle Self;
 
+        /// <summary>Disposed once, at the free (after the handle) or on a failed subscribe.</summary>
+        internal IDisposable? Release { get; init; }
+
         internal Subscription? Subscription { get; set; }
 
         internal ulong Id => Subscription?.Id ?? 0;
@@ -971,6 +985,9 @@ public sealed unsafe class Subscriber : IDisposable
             {
                 Self.Free();
             }
+
+            // After the handle, so a release can never cost the free.
+            Release?.Dispose();
         }
     }
 }

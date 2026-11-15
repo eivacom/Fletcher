@@ -40,8 +40,7 @@
 // counts: a list of bit-packed booleans can hold 2^31 elements in 256 MiB. That
 // window fails to decode and is dropped whole, and reported - not silent.
 //
-// Per-row delivery is the same thing with MaxRows = 1 (D-BIND-59): a row
-// arrives as a one-row batch, flushed on the delivery thread as it lands.
+// Per-row delivery (Subscribe) does not use the batcher: see RowDelivery.
 //
 // ── Decoding N rows at a time, and a corrupt one among them ─────────────────
 // The window is decoded with ONE fl_decode_rows_framed call (D-BIND-68), which
@@ -106,7 +105,9 @@ namespace Eiva.Fletcher;
 /// <param name="batch">
 /// The decoded rows, which the handler OWNS and disposes. Zero rows when the window
 /// held only dropped rows; NULL only when the topic's schema could not be opened, in
-/// which case every row is dropped for the life of the subscription.
+/// which case every row is dropped for the life of the subscription. Per row
+/// (<see cref="SubscriberArrow.Subscribe"/>): NULL when this one row could not be
+/// decoded, with RowsDropped = 1.
 /// </param>
 /// <param name="attachments">Row <c>i</c>'s attachments at index <c>i</c>, owned copies.</param>
 /// <param name="status">Why the batch was flushed, and how many rows were lost since the last one.</param>
@@ -115,7 +116,10 @@ public delegate void RecordBatchHandler(RecordBatch? batch, IReadOnlyList<Attach
 /// <summary>Why a batch was flushed.</summary>
 public enum BatchReason
 {
-    /// <summary><see cref="BatchOptions.MaxRows"/> was reached.</summary>
+    /// <summary>
+    /// <see cref="BatchOptions.MaxRows"/> was reached; per row, on every call: the window is
+    /// the one row offered, delivered or dropped.
+    /// </summary>
     RowLimit = 1,
 
     /// <summary>The window's deadline passed.</summary>
@@ -198,13 +202,26 @@ public sealed class SubscriberArrow : IDisposable
     /// <summary>Raised for each absorbed batch-handler failure.</summary>
     public event EventHandler<HandlerFaultedEventArgs>? HandlerFaulted;
 
-    /// <summary>Per-row Arrow delivery: every row arrives as a one-row batch (D-BIND-59).</summary>
+    /// <summary>Per-row Arrow delivery: each row offered is exactly one handler call (d10 L7, L9; BC-16).</summary>
     /// <remarks>
-    /// Exactly <see cref="SubscribeBatched"/> with <see cref="BatchOptions.MaxRows"/> = 1:
-    /// each row is flushed on the delivery thread as it lands.
+    /// The native per-row path, with no window, count or timer, so it works on every shim.
+    /// A row that decodes arrives on the delivery thread as a one-row batch with its own
+    /// attachments; one that cannot be decoded - malformed, schema-less, or of a schema the
+    /// codec cannot open - arrives alone as a null batch with RowsDropped = 1 and no
+    /// attachments. The reason is <see cref="BatchReason.RowLimit"/> on every call, and
+    /// nothing is delivered after <see cref="Unsubscribe"/>.
     /// </remarks>
     public SubscribeResult Subscribe(TopicPath topic, RecordBatchHandler handler, TopicOptions? topicOptions = null)
-        => SubscribeBatched(topic, handler, new BatchOptions { MaxRows = 1 }, topicOptions);
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(handler);
+
+        var delivery = new RowDelivery(this, handler);
+        SubscribeResult result = _subscriber.Subscribe(topic, delivery.OnRow, topicOptions, delivery);
+        delivery.SubscriptionId = result.Subscription.Id;
+        result.Subscription.Canceller = Unsubscribe;
+        return result;
+    }
 
     /// <summary>Batched RecordBatch delivery - the primary shape (D-BIND-25).</summary>
     /// <exception cref="ArgumentOutOfRangeException">
@@ -346,6 +363,127 @@ public sealed class SubscriberArrow : IDisposable
             // A listener threw. Counted already; nothing may leave this frame.
             Interlocked.Increment(ref _absorbed);
             Diagnostics.CountAbsorbed();
+        }
+    }
+
+    /// <summary>A delivery's attachments as an owned copy, empty keys included; a partial copy is disposed and the failure rethrown.</summary>
+    private static AttachmentsBuilder CopyAttachments(AttachmentsView view)
+    {
+        var copy = new AttachmentsBuilder();
+        try
+        {
+            for (int i = 0; i < view.Count; i++)
+            {
+                copy.AppendDelivered(view.KeyAt(i), view.ValueAt(i));
+            }
+
+            return copy;
+        }
+        catch (Exception)
+        {
+            copy.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>One per-row subscription: its handler and its codec decision (d10 L7, L9; BC-16).</summary>
+    /// <remarks>
+    /// The inner Subscriber disposes it at the subscription's one free, after which no
+    /// delivery of it can run, so the codec outlives every decode - an in-handler
+    /// Unsubscribe included - with no count of its own (D-BIND-50).
+    /// </remarks>
+    private sealed class RowDelivery : IDisposable
+    {
+        private readonly SubscriberArrow _owner;
+        private readonly RecordBatchHandler _handler;
+
+        // Under _gate, never held across a decode or the handler.
+        private readonly object _gate = new();
+        private FletcherCodec? _codec;
+        private bool _decided;
+
+        internal RowDelivery(SubscriberArrow owner, RecordBatchHandler handler)
+        {
+            _owner = owner;
+            _handler = handler;
+        }
+
+        internal ulong SubscriptionId { get; set; }
+
+        /// <summary>THE classify-and-count site: every row offered reaches exactly one handler call.</summary>
+        internal void OnRow(ReadOnlySpan<byte> row, SchemaHandle schema, AttachmentsView view)
+        {
+            AttachmentsBuilder? attachments = null;
+            RecordBatch? batch = null;
+            IReadOnlyList<AttachmentsBuilder> delivered = [];
+            try
+            {
+                attachments = CopyAttachments(view);
+                FletcherCodec? codec = Codec(schema);
+                if (codec is not null)
+                {
+                    // Domain 2's answer: a bad or trailing byte is refused, never repaired.
+                    batch = codec.Decode(row);
+                    delivered = [attachments];
+                }
+            }
+            catch (Exception)
+            {
+                // Refused, unopenable, or an allocation that failed: this row is one drop (D30).
+                batch?.Dispose();
+                batch = null;
+            }
+
+            if (batch is null)
+            {
+                attachments?.Dispose();
+            }
+
+            var status = new BatchStatus(BatchReason.RowLimit, batch is null ? 1 : 0);
+            try
+            {
+                _handler(batch, delivered, status);
+            }
+            catch (Exception e)
+            {
+                _owner.ReportAbsorbed(e, SubscriptionId);
+            }
+        }
+
+        /// <summary>
+        /// The codec, decided once by the first row that carries a schema (d7 L8, L13; ruling
+        /// :258 (3)): a schema-less row decides nothing; a schema the codec cannot open
+        /// decides "none" for the subscription's life.
+        /// </summary>
+        private FletcherCodec? Codec(SchemaHandle schema)
+        {
+            lock (_gate)
+            {
+                if (!_decided && !schema.IsNull)
+                {
+                    _decided = true;
+                    try
+                    {
+                        _codec = new FletcherCodec(schema.ToArrowSchema());
+                    }
+                    catch (Exception)
+                    {
+                        _codec = null;
+                    }
+                }
+
+                return _codec;
+            }
+        }
+
+        public void Dispose()
+        {
+            lock (_gate)
+            {
+                _decided = true;
+                _codec?.Dispose();
+                _codec = null;
+            }
         }
     }
 

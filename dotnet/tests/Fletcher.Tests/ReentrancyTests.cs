@@ -540,6 +540,47 @@ public class ReentrancyTests : IDisposable
         result.Subscription.Dispose();
     }
 
+    /// <summary>
+    /// The internal overload's release (D10C-3, the per-row codec's lifetime) is disposed exactly
+    /// once wherever the subscription is freed - a drained cancel, a self-cancel (only after the
+    /// handler returns), Subscriber.Dispose - and at once on a refused subscribe.
+    /// </summary>
+    [Fact]
+    public void TheReleaseRunsExactlyOnceWhereverTheSubscriptionIsFreed()
+    {
+        var drained = new Counted();
+        _subscriber.Subscribe(Declare("releasedrained"), (_, _, _) => { }, null, drained).Subscription.Dispose();
+
+        var selfCancelled = new Counted();
+        int seenInHandler = -1;
+        Subscription? self = null;
+        TopicPath topic = Declare("releaseself");
+        self = _subscriber.Subscribe(topic, (_, _, _) =>
+        {
+            self!.Dispose();
+            seenInHandler = selfCancelled.Count;
+        }, null, selfCancelled).Subscription;
+        _publisher.Publish(topic, _rows, 0);
+
+        var disposed = new Counted();
+        var other = new Subscriber(_provider);
+        other.Subscribe(Declare("releasedisposed"), (_, _, _) => { }, null, disposed);
+        other.Dispose();
+
+        var refused = new Counted();
+        Assert.Throws<FletcherException>(() => _subscriber.Subscribe(
+            Declare("releaserefused"), (_, _, _) => { }, new TopicOptions { MaxPayloadBytes = 8192 }, refused));
+
+        Assert.Equal([1, 0, 1, 1, 1], [drained.Count, seenInHandler, selfCancelled.Count, disposed.Count, refused.Count]);
+    }
+
+    private sealed class Counted : IDisposable
+    {
+        public int Count { get; private set; }
+
+        public void Dispose() => Count++;
+    }
+
     /// <summary>Poll <paramref name="condition"/> until it holds or a generous deadline passes.</summary>
     private static async Task<bool> Eventually(Func<bool> condition)
     {

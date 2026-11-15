@@ -36,3 +36,21 @@ Session directive (2026-11-15): run from D10C-1 onward, item by item, until a st
 **Owner decisions this stage:** none
 **Debt carried:** none. Inner loop needs `-p:FletcherProbeShim`; `locate_shim.sh` refuses with 19 cached edge packages (shims picked by mtime, paths in evidence).
 **Records corrected:** brief :63 variant-proof claim (0b); d10 NM citations shifted +11 (4b RECORD).
+
+## D10C-3 — per-row Subscribe on the edge shim; a bad row is one drop (2026-11-15)
+
+**Forcing test:** `SubscriberArrowTests.PerRowDeliversEachRowAloneOrCountsItAsOneDrop` (arms mixed, subscribedFirst, unopenable) → 🔴 → 🟢
+**Lane:** full · **Design:** `plans/D10C-3-per-row-edge.md` · **Brief:** `plans/D10C-3-brief.md`
+**What landed:** per-row `SubscriberArrow.Subscribe` runs on the inner `Subscriber` + `fl_decode_rows`, no batcher, so it works on the edge shim. One BC-16 site (`RowDelivery.OnRow`): every row is one handler call, decoded or null with `RowsDropped = 1` (:575 (3)). Codec released at the subscription's exactly-once free. One static `CopyAttachments` for rung 7 to reuse.
+**Interfaces:** no public change; one internal `Subscriber.Subscribe` overload taking a release.
+**Deleted:** none (the managed batcher goes at rung 8).
+**Files touched:** `Subscriber.cs`, `SubscriberArrow.cs`; tests `SubscriberArrowTests.cs`, `ReentrancyTests.cs`; d10 doc, the bounded-context register.
+**Reviews:** 0a CLEAR · 0b CLEAR · design APPROVE-WITH-DEBT(3) (all resolved) · compliance 2 blocking → PASS at cycle 2 · code review 0 blocking / 1 should-fix (S1 done) / 4 nits
+**Verification:** dotnet 1492/1492 (net8+net10); pubsub-transport-conformance 34/34 (incl. `ASubscriberArrowForwardsItsReaderProfileOnBothForms`); binding-abi-conformance 11/11 ×2; pubsub-arrow-fastdds 4/4; gateway-dotnet-crosslang 11/11. **Not run:** `check_dotnet_packages.sh` and preview-bundle-consumer (both need the Linux shim; Docker down).
+**Close gate:** PASS (full)
+**Cycle meter:** design 1/2 · fix 1 · implementer launches 1/5 (one agent resumed: red, gaps, green, fix, comment) · stage words 6000
+**Numbers:** declared prod 130–160 net (restated from +85) · actual +164/−9, net 125 excluding doc comments · tests +343 vs ~+160 · new public surface 0
+**PM decisions:** (1) T38 not applicable here. (2) Per-row reason = `RowLimit` by elimination under L2 (0b: no ruling sets it). (3) Schema-less-first-row handling is defensive: spec §7 cl. 1 makes it unreachable, so no promise and no test (the internal-only leg was refused under law b). (4) The FastDDS test missed by the plans: its per-row half goes to rung 3, its batched half to rung 7.
+**Owner decisions this stage:** none
+**Debt carried:** none.
+**Records corrected:** brief :18 (unreachable change), brief RowLimit basis, design :117 leg mapping and :142 numbers; d10 L9/§2/§4 marks and citations (4a RECORD, by the implementer).

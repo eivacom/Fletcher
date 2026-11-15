@@ -71,6 +71,7 @@
 // ceiling (D-BIND-63), which C++ enforces at 2 GiB and no C++ case can reach.
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Threading;
 
 using Apache.Arrow;
@@ -271,6 +272,11 @@ public sealed class SubscriberArrowTests : IDisposable
     // ── Round trips ─────────────────────────────────────────────────────────
 
     /// <summary>Mirrors PubSubArrowTest.PublishSubscribeRoundtripWithArrowRow.</summary>
+    /// <remarks>
+    /// RowLimit is the reason on every per-row call: d10 L2 lets C# carry only a reason
+    /// the C surface publishes, and of those only "the window is full" is true of a
+    /// window of one row (Closing would claim the last delivery, Timeout a deadline).
+    /// </remarks>
     [Fact]
     public void ARowRoundTripsAsAOneRowBatch()
     {
@@ -346,6 +352,302 @@ public sealed class SubscriberArrowTests : IDisposable
         result.Subscription.Dispose();
         Publish(topic, 2, "b");
         Assert.Single(_sink.Snapshot());
+    }
+
+    // ── Per row, on the native per-row path (D10C-3) ────────────────────────
+    //
+    // d10 L7, L9, L11, D20, D30, D32; register BC-16; ruling :575 (3). A per-row
+    // subscription has no window: each row offered is exactly one handler call,
+    // carrying that row alone or a null batch with RowsDropped = 1 - never skipped,
+    // never folded into another call. These rely on inprocess delivering before
+    // Publish returns, as the whole file does.
+
+    private enum RowKind
+    {
+        Good,
+        OneByte,
+        Truncated,
+    }
+
+    private static byte[] Bytes(RowKind kind, int i) => kind switch
+    {
+        RowKind.Good => Encoded(i, "r" + i),
+        RowKind.OneByte => [0x00],
+        _ => Encoded(i, "r" + i)[..^3],
+    };
+
+    /// <summary>A schema C#'s codec refuses by name: a dictionary whose value type is a struct.</summary>
+    private static Schema DictionaryOfStructs()
+    {
+        var nested = new StructType([new Field("x", Int32Type.Default, nullable: true)]);
+        return new Schema(
+            [new Field("category", new DictionaryType(Int32Type.Default, nested, ordered: false), nullable: true)],
+            metadata: null);
+    }
+
+    /// <summary>
+    /// BC-16's conservation, over three ways a per-row row goes bad: <c>mixed</c>, malformed
+    /// raw rows (one byte, and an encoding cut short) among good ones on a declared topic;
+    /// <c>subscribedFirst</c>, a subscription made before the declaration on the default
+    /// inprocess loopback, so no row carries a schema; <c>unopenable</c>, a schema the codec
+    /// refuses (a dictionary of structs, as ASchemaTheCodecCannotOpenDropsEveryRow).
+    /// </summary>
+    /// <remarks>
+    /// Every handler call is one row with RowsDropped = 0 - its value in publish order and
+    /// exactly its own attachments - or a null batch with RowsDropped = 1 and no attachments
+    /// (ruling :575 (3), d10 D30); every reason is RowLimit (d10 L2, see
+    /// ARowRoundTripsAsAOneRowBatch); calls = rows offered = Σ rows + Σ RowsDropped; and
+    /// nothing arrives after Unsubscribe.
+    /// </remarks>
+    [Theory]
+    [InlineData("mixed")]
+    [InlineData("subscribedFirst")]
+    [InlineData("unopenable")]
+    public void PerRowDeliversEachRowAloneOrCountsItAsOneDrop(string arm)
+    {
+        TopicPath topic = Topic("perrow" + arm);
+        Schema declared = arm == "unopenable" ? DictionaryOfStructs() : TwoColumns;
+        SubscribeResult result;
+        if (arm == "subscribedFirst")
+        {
+            result = _subscriber.Subscribe(topic, _sink.Handler);
+            _publisher.CreateTopic(topic, declared);
+        }
+        else
+        {
+            _publisher.CreateTopic(topic, declared);
+            result = _subscriber.Subscribe(topic, _sink.Handler);
+        }
+
+        result.Schema.Dispose();
+
+        // The offer, seeded so a failure replays. Only the mixed arm sends malformed
+        // rows; in the other two not even a well-formed row can be decoded.
+        const int Offered = 16;
+        var random = new Random(20261115);
+        var kinds = new RowKind[Offered];
+        var blobs = new byte[]?[Offered];
+        for (int i = 0; i < Offered; i++)
+        {
+            int roll = random.Next(5);
+            kinds[i] = arm != "mixed" || roll >= 2 ? RowKind.Good : roll == 0 ? RowKind.OneByte : RowKind.Truncated;
+            blobs[i] = random.Next(2) == 0 ? [(byte)i, (byte)(i * 7)] : null;
+        }
+
+        // The fixture, checked: domain 2's decode refuses exactly the rows meant to be
+        // malformed, and the mixed arm holds both kinds, each followed by a good row.
+        using (var reference = new FletcherCodec(TwoColumns))
+        {
+            for (int i = 0; i < Offered; i++)
+            {
+                byte[] bytes = Bytes(kinds[i], i);
+                if (kinds[i] == RowKind.Good)
+                {
+                    reference.Decode(bytes).Dispose();
+                }
+                else
+                {
+                    Assert.ThrowsAny<Exception>(() => reference.Decode(bytes).Dispose());
+                }
+            }
+        }
+
+        // ...and the unopenable arm's schema really is one the codec refuses, so its
+        // drops cannot come from the rows' bytes alone.
+        if (arm == "unopenable")
+        {
+            Assert.ThrowsAny<Exception>(() => new FletcherCodec(declared).Dispose());
+        }
+
+        if (arm == "mixed")
+        {
+            foreach (RowKind bad in new[] { RowKind.OneByte, RowKind.Truncated })
+            {
+                bool followed = false;
+                for (int i = 0; i + 1 < Offered; i++)
+                {
+                    followed |= kinds[i] == bad && kinds[i + 1] == RowKind.Good;
+                }
+
+                Assert.True(followed, $"the seed gives no {bad} row followed by a good one");
+            }
+        }
+
+        for (int i = 0; i < Offered; i++)
+        {
+            using AttachmentsBuilder? attachments = blobs[i] is null ? null : new AttachmentsBuilder();
+            attachments?.Set("blob", blobs[i]);
+            _publisher.PublishRaw(topic, Bytes(kinds[i], i), attachments);
+        }
+
+        List<Delivery> seen = _sink.Snapshot();
+
+        // Each call alone: one row and no drop, or no row and one drop.
+        for (int c = 0; c < seen.Count; c++)
+        {
+            Delivery d = seen[c];
+            Assert.True(
+                (d.Rows == 1 && d.Status.RowsDropped == 0) || (d.Batch is null && d.Status.RowsDropped == 1),
+                $"call {c} carries {d.Rows} row(s) and {d.Status.RowsDropped} drop(s); a per-row call is one row or one drop");
+            Assert.Equal(BatchReason.RowLimit, d.Status.Reason);
+        }
+
+        // One call per row offered, and the books balance.
+        Assert.Equal(Offered, seen.Count);
+        long rows = 0;
+        long dropped = 0;
+        foreach (Delivery d in seen)
+        {
+            rows += Math.Max(0, d.Rows);
+            dropped += d.Status.RowsDropped;
+        }
+
+        Assert.Equal(Offered, rows + dropped);
+
+        // Call i is row i: its value and exactly its attachments, or its drop.
+        for (int i = 0; i < Offered; i++)
+        {
+            Delivery d = seen[i];
+            if (arm == "mixed" && kinds[i] == RowKind.Good)
+            {
+                Assert.Equal(i, ((Int32Array)d.Batch!.Column(0)).GetValue(0));
+                Assert.Equal("r" + i, ((StringArray)d.Batch!.Column(1)).GetString(0));
+                AttachmentsBuilder arrived = Assert.Single(d.Attachments);
+                if (blobs[i] is null)
+                {
+                    Assert.Equal(0, arrived.Count);
+                }
+                else
+                {
+                    Assert.Equal(1, arrived.Count);
+                    Assert.True(arrived.TryFind("blob"u8, out ReadOnlySpan<byte> value));
+                    Assert.Equal(blobs[i], value.ToArray());
+                }
+            }
+            else
+            {
+                Assert.Null(d.Batch);
+                Assert.Equal(1, d.Status.RowsDropped);
+                Assert.Empty(d.Attachments);
+            }
+        }
+
+        _subscriber.Unsubscribe(result.Subscription);
+        _publisher.PublishRaw(topic, Bytes(RowKind.Good, Offered));
+        Assert.Equal(Offered, _sink.Snapshot().Count);
+    }
+
+    /// <summary>
+    /// Disposing the SubscriberArrow from inside its own per-row delivery is refused before
+    /// anything is torn down (d10 L11, Findings (c)): the subscription stays live, the next
+    /// row still arrives, and Dispose from outside the delivery then works. A declared guard:
+    /// green before and after D10C-3.
+    /// </summary>
+    [Fact]
+    public void DisposingInsideAPerRowDeliveryIsRefusedAndNothingIsTornDown()
+    {
+        TopicPath topic = Declared("disposeinside");
+        Exception? refused = null;
+        int calls = 0;
+        SubscribeResult result = _subscriber.Subscribe(topic, (batch, attachments, status) =>
+        {
+            if (++calls == 1)
+            {
+                refused = Record.Exception(() => _subscriber.Dispose());
+            }
+
+            _sink.Handler(batch, attachments, status);
+        });
+        result.Schema.Dispose();
+
+        Publish(topic, 1, "a");
+
+        Assert.IsType<InvalidOperationException>(refused);
+        Assert.True(result.Subscription.IsLive);
+
+        Publish(topic, 2, "b");
+        List<Delivery> seen = _sink.Snapshot();
+        Assert.Equal(2, seen.Count);
+        Assert.Equal(2, ((Int32Array)seen[1].Batch!.Column(0)).GetValue(0));
+        Assert.Equal(0UL, _subscriber.AbsorbedCallbackFailures);
+
+        _subscriber.Dispose();
+        Assert.False(result.Subscription.IsLive);
+    }
+
+    /// <summary>
+    /// A per-row dictionary column arrives as its value type (d10 D32, ruling :575 (5)): the
+    /// per-row decode hands over the values, in order, and C# converts nothing. A different
+    /// subject from the batched ADictionaryColumnArrivesAsItsValueType, which follows domain 7
+    /// from rung 7. A declared guard: green before and after D10C-3.
+    /// </summary>
+    [Fact]
+    public void APerRowDictionaryColumnArrivesAsItsValueType()
+    {
+        using RecordBatch source = CodecFixtures.Dictionary();
+        TopicPath topic = Topic("perrowdictionary");
+        _publisher.CreateTopic(topic, source.Schema);
+        _subscriber.Subscribe(topic, _sink.Handler).Schema.Dispose();
+
+        using var codec = new FletcherCodec(source.Schema);
+        using BoundRows rows = codec.Bind(source);
+        _publisher.Publish(topic, rows);
+
+        List<Delivery> seen = _sink.Snapshot();
+        Assert.Equal(3, seen.Count);
+        string[] expected = ["gamma", "alpha", "beta"];
+        for (int i = 0; i < 3; i++)
+        {
+            Assert.Equal(1, seen[i].Rows);
+            var category = Assert.IsType<StringArray>(seen[i].Batch!.Column(1));
+            Assert.Equal(expected[i], category.GetString(0));
+        }
+    }
+
+    /// <summary>
+    /// A leg (mechanism, not the proof of a promise): a per-row handler that unsubscribes
+    /// itself is served - no fault, nothing after, and a later Dispose is clean.
+    /// </summary>
+    /// <remarks>
+    /// The inner Subscriber frees a self-cancelled subscription on the departing delivery's
+    /// way out (TryFree's delivery branch), never on D-BIND-50's deferred branch, which only
+    /// a sibling's cancel reaches (ReentrancyTests). The two counts bracket which branch freed;
+    /// they do not observe the codec's release, which
+    /// ReentrancyTests.TheReleaseRunsExactlyOnceWhereverTheSubscriptionIsFreed does.
+    /// </remarks>
+    [Fact]
+    public void APerRowHandlerThatUnsubscribesItselfStopsCleanly()
+    {
+        TopicPath topic = Declared("perrowselfcancel");
+        var inner = (Subscriber)typeof(SubscriberArrow)
+            .GetField("_subscriber", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(_subscriber)!;
+        long byDelivery = inner.FreedByDeliveryCount;
+        long deferred = inner.FreedDeferredCount;
+        int calls = 0;
+        Exception? failure = null;
+        Subscription? self = null;
+        SubscribeResult result = _subscriber.Subscribe(topic, (batch, _, _) =>
+        {
+            batch?.Dispose();
+            calls++;
+            failure = Record.Exception(() => _subscriber.Unsubscribe(self!));
+        });
+        self = result.Subscription;
+        result.Schema.Dispose();
+
+        Publish(topic, 1, "a");
+        Publish(topic, 2, "b");
+
+        Assert.Equal(1, calls);
+        Assert.Null(failure);
+        Assert.False(self.IsLive);
+        Assert.Equal(0UL, _subscriber.AbsorbedCallbackFailures);
+        Assert.Equal(1, inner.FreedByDeliveryCount - byDelivery);
+        Assert.Equal(0, inner.FreedDeferredCount - deferred);
+
+        Assert.Null(Record.Exception(() => _subscriber.Dispose()));
+        Assert.Equal(1, calls);
     }
 
     // ── Batching ────────────────────────────────────────────────────────────

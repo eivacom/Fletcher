@@ -6,55 +6,47 @@
 the domain-7 port tests" (:595)**. Also: design, brief, design review, debt D10C-3, 0a, 0b, d10 §3/§5, register BC-2/BC-16. Ran: `SubscriberArrowTests|ReentrancyTests|ThunkDiscipline`, edge shim, 62/62 on net8.0 and net10.0.
 
 ## Blocking
+**F1. `DisposeRelease` swallows uncounted (`Subscriber.cs:997-1007`): a new silent absorption site.** Not in the design.
+DEBT-2 asked for an ORDER (after `Self.Free()` or in a `finally`), not a catch. It breaks d10 L9's principle ("Nothing is
+lost or absorbed silently") and D-BIND-19: (5) "never silent"; (2) one containment site per direction, a second →
+STOP-AND-ASK (d10 D18; L10). On `Exit` it duplicates L10's thunk catch; on every other path it hides a failure from a
+managed caller. Dead code today: the only release is a lock + SafeHandle over `void fl_codec_close`. d10 L3 not engaged.
+*Fix:* delete the try/catch, keep the call after `Self.Free()`, and state on the internal overload that `release.Dispose`
+must not throw (as `fl_batch_fn` must not). If containment is wanted anyway, that is D-BIND-19 (2)'s STOP-AND-ASK, to the owner.
 
-**F1. `DisposeRelease` swallows uncounted (`Subscriber.cs:997-1007`): a new silent absorption site.** Not in the design;
-DEBT-2 asked for an ORDER ("after `Self.Free()`, or in a `finally`"), not a catch. Against: d10 L9's principle, "Nothing is
-lost or absorbed silently" (the principle governs, not only its handler-failure clause); D-BIND-19 (5) "never silent" and
-(2) "exactly one containment site" per direction, "a second containment site → STOP-AND-ASK" (d10 D18 keeps D-BIND-19; L10).
-On the `Exit` path it duplicates L10's thunk catch (`:867`). On `Unsubscribe`, `Dispose` and the failed subscribe it hides
-a failure from a managed caller. In-file precedent counts what it swallows (`SA:362-366`). Dead code today: the only
-release is `RowDelivery.Dispose` = a lock + `FletcherCodec.Dispose` → SafeHandle → `void fl_codec_close`. d10 L3 is not
-engaged today (no native answer to forward), but a catch-all would eat one if a release ever had it.
-*Fix:* delete the try/catch. Keep the call after `Self.Free()` (that half of DEBT-2 is met). State on the internal
-overload: "`release.Dispose` must not throw", as `fl_batch_fn` must not. A throwing release then shows up, never silently.
-If the architect wants containment anyway, that is D-BIND-19 (2)'s STOP-AND-ASK and goes to the owner, not kept.
-
-**F2. Survived: `SA:43-44`, "Per-row delivery is the same thing with MaxRows = 1 (D-BIND-59): a row arrives as a one-row
-batch, flushed on the delivery thread as it lands."** It is the delegation's own remark (Files-to-delete: "`Subscribe`'s
-delegation … and its remarks"). It states the premise :536 (1) amended (D20), and it became false at this rung, not at
-the switch: d10 Findings (a)3 does not list it under rung 7's `SA:4-94`. Tier 3 against tier 1 means it changes.
-*Fix:* replace both lines with "Per-row delivery (`Subscribe`) does not use the batcher: see `RowDelivery`." Not counted.
+**F2. Survived: `SA:43-44`, "Per-row delivery is the same thing with MaxRows = 1 (D-BIND-59)…".** It is the delegation's
+own remark (Files-to-delete: "… and its remarks"). It states the premise :536 (1) amended (D20), it is false from this
+rung, and it is not in d10 Findings (a)3's rung-7 list. *Fix:* replace with "Per-row delivery (`Subscribe`) does not use the batcher: see `RowDelivery`."
 
 ## Non-blocking (fix in the same cycle)
-
-**F3. One exit from `OnRow` still skips the handler (`SA:445`).** `delivered = [attachments!]` allocates outside the
-guarded `try`. On OOM after a good decode, the row gets no call and no `RowsDropped`, its batch leaks, and the throw is
-counted on the hidden inner `Subscriber` (SUB:857). The design calls both outcomes unrepresentable (:69, :76-77); its
-residue (:82-83) makes an allocation failure a counted drop. *Fix:* build `delivered` inside the first `try`, after
-`Decode`; the catch then disposes a non-null `batch` before nulling it.
+**F3. One exit from `OnRow` skips the handler (`SA:445`).** `delivered = [attachments!]` allocates outside the guarded
+`try`. On OOM after a good decode: no call, no `RowsDropped`, a leaked batch, and a throw counted on the hidden inner
+`Subscriber` (SUB:857). The design calls both unrepresentable (:69, :76-77; residue :82-83 makes this a counted drop).
+*Fix:* build `delivered` inside the first `try`, after `Decode`; the catch disposes a non-null `batch`.
 
 ## Pressure-tested, conforms
-
-- Design shape: one `OnRow`; `batch is null` ⇔ (RowLimit, 1) with `[]`, else (RowLimit, 0) with `[copy]`; a handler
-  throw goes to `SubscriberArrow.ReportAbsorbed` (L9); the codec is decided once under the gate by the first non-null
-  schema, and the gate is never held across decode or handler; release at `TryFree` and the failed subscribe; no
-  `SubscribeBatched` call, nothing in `_batchers`; `Canceller` kept, as `SubscribeBatched` sets it.
-- :575 (3) / D30 a null batch, `RowsDropped = 1`, alone. :575 (5) / D32 domain 2's value type, nothing converted.
-  :536 (1) / D20 edge proven, server leg rung 4. BC-16: one classify-and-count site; the `MaxRows = 1` route is gone
-  from code. :258 (3) / :551 (4): a null schema decides nothing (untested by recorded PM decision).
-- Implementer (3), `RowDelivery.Dispose` sets `_decided`: lawful. Unreachable under P2 (the GCHandle is freed first). It
-  stops an undecided subscription opening a codec never released, and matches the design review's accepted "late
-  decode → counted drop". No recovery path for a forbidden state.
-- Implementer (4), two `CopyAttachments`: predicted (design :45-48, :127-128; ladder rung 3), not a drift; `Batcher`'s copy
-  unedited (D3). DEBT-1 resolved (leg: delivery +1, deferred 0; design corrected `7104ae5`). DEBT-2: order met,
-  containment is F1. DEBT-3: restated. Tests: 3-arm forcing theory with 0b's fixture checks, 2 guards, 1 leg, T8 comment
-  only. Nothing deleted; the twelve re-anchored tests are unchanged.
+- Design shape: one `OnRow`; null ⇔ (RowLimit, 1) with `[]`, else (RowLimit, 0) with `[copy]`. A handler throw goes to
+  `SubscriberArrow.ReportAbsorbed` (L9). The codec is decided once under the gate by the first non-null schema; the gate
+  is never held across decode or handler. Release at `TryFree` and the failed subscribe. No `SubscribeBatched`, nothing in `_batchers`.
+- Rulings: :575 (3)/D30; :575 (5)/D32 (nothing converted); :536 (1)/D20 (edge; server rung 4); BC-16 one site;
+  :258 (3)/:551 (4) (a null schema decides nothing; untested by recorded PM decision).
+- Implementer (3), `_decided` on Dispose: lawful. Unreachable under P2, it prevents an unreleased codec; no recovery path.
+  (4), two `CopyAttachments`: predicted (design :45-48, :127-128); `Batcher`'s copy is unedited (D3).
+- DEBT-1 resolved (leg: delivery +1, deferred 0). DEBT-2: order met, containment is F1. DEBT-3: restated. Tests: 3-arm
+  forcing theory, 2 guards, 1 leg, T8 comment; nothing deleted; the twelve re-anchored tests are unchanged.
 
 ## RECORD
-- RECORD: "177 net" counts 40 doc-comment lines; by the ladder's rule production is +144/−2 = **142 net**, inside 130–160.
-- RECORD: d10 L9's per-row mark reads `[built]`; L7 and BC-16 read `[built on the edge shim]` (server leg rung 4). Match L9.
-- RECORD: d10 §4 strikes "…on both packages" whole while the server half is open; strike only the edge half.
-- RECORD: d10 §2 "Per-row Arrow subscribe" row still says "today `SubscribeBatched` with `MaxRows = 1` (`SA:206-207`)".
-- RECORD: d10 citations drifted by this edit: L9 `SA:335-350`→`:353-367`, `SA:729-736`; L11 `SA:310-316`; `Subscriber.cs:812-865`.
-- RECORD: no D10C-3 evidence row yet for `TopicOptionsOverFastDdsTests…OnBothForms`'s per-row half (design :118-119).
-- RECORD: the brief says "the laws settle" RowLimit; 0b classed it UNMOORED (a PM decision under L2, not a ruling).
+- RECORD: "177 net" counts 40 doc-comment lines; by the ladder's rule production is 142 net, inside 130–160.
+- RECORD: d10 L9's mark `[built]` vs L7/BC-16's `[built on the edge shim]`; §4 struck whole; §2 row "today `MaxRows = 1`";
+  citations drifted (L9, L11, `Subscriber.cs:812-865`). No evidence row for the FastDDS per-row half (design :118-119).
+  The brief's "the laws settle" RowLimit vs 0b's UNMOORED.
+
+## Cycle 2
+**Verdict: PASS.** Working tree against `5b311af`. Ledger unchanged: 603 lines, 45 entries, last :595. Same filter, 63/63 on net8.0 and net10.0.
+- F1 closed. `DisposeRelease` and its catch are gone (grep finds no hit). `Release?.Dispose()` runs after `Self.Free()` in `TryFree` (`SUB:991`) and directly on the failed subscribe (`:453`). The overload states "MUST NOT THROW" (`:380`). No new silent or second containment site.
+- F2 closed. `SA:43` now points to `RowDelivery`. No per-row `MaxRows = 1` claim is left in `dotnet/src`; d10 keeps it only as the amended premise (L7, D20).
+- F3 closed. `delivered` is built inside the first `try`, after `Decode` (`SA:427`), and the catch disposes a decoded batch (`:433`). Outside the `try` remain only `AttachmentsBuilder.Dispose` (cannot throw) and a struct.
+- New leg `ReentrancyTests.TheReleaseRunsExactlyOnceWhereverTheSubscriptionIsFreed` (4b S1). It covers the drained, self-cancel (none during the handler), `Dispose` and refused paths, each exactly once. A lawful leg on the internal overload, not the rung's proof.
+- Cycle-1 RECORD fixed in d10: L9 mark, §4 server half left open, §2 row; the citations checked (`SUB:824-877`, `SA:352-367`, `:442-449`, `:327-333`). Brief basis fixed (`779dbda`).
+- RECORD: `ReentrancyTests.cs` is outside the design's Files-to-touch (a 4b-requested leg). Production is now +129/−4 = 125 net (doc comments excluded), under the declared 130–160. The FastDDS per-row evidence is still owed at close.
+- Note (non-blocking): the overload's "a throw would surface on whichever path freed" is not so on the departing delivery's `Exit`, where L10's thunk catch absorbs it. The contract conforms; only that wording is loose.
