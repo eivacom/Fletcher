@@ -114,7 +114,7 @@ per row, then one null `Closing` carrying N at `Unsubscribe`.
 **Guards (green both ways, declared):** `DisposingInsideAPerRowDeliveryIsRefusedAndNothingIsTornDown` (L11,
 d10 Findings (c)); `APerRowDictionaryColumnArrivesAsItsValueType` (D32; distinct subject from the batched
 test rung 7 deletes). **Leg (mechanism, not sole proof):** `APerRowHandlerThatUnsubscribesItselfStopsCleanly`
-drives the codec release through the carve-out's deferred free (no fault, nothing after, `Dispose` clean).
+drives the codec release on the departing delivery's exit, not the deferred branch (DEBT-1; 0b) (no fault, nothing after, `Dispose` clean).
 **Re-anchored, text unchanged** (they now ride the native path): T1-T5, T8-T11, T29, T32, T41; T7's and
 `TopicOptionsOverFastDdsTests.ASubscriberArrowForwardsItsReaderProfileOnBothForms`'s per-row halves (lawful,
 0a; batched halves are rung 7's). T8's doc comment cites L2. **Internal observation dropped:** the ladder's
