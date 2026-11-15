@@ -532,3 +532,18 @@ test staging only, so Q5a (how packing names files) stays domain 10's."
 Binds: D9S-7, rung 10's server half. Test staging only; it decides nothing about packing or which file a binding loads (d9 Q5a stays
 domain 10's). No dotnet/ edit. Trigger: `docs/archive/D9S/reviews/D9S-7-audit-0a.md` PS-1.
 *Ingested (D9S close, 2026-11-14): d9 L13 Tests (the conformance lane against both builds; the staging only), cited :516; d9 §6 domain-10 list (the staging retires once Q5a is settled), cited :516; `integration-tests/binding-abi-conformance/README.md` "Against both builds", cited :516. Keeping the edge corpus is recorded there as a design choice, not part of the ruling.*
+
+## 2026-11-15 — D10C pre-round: per-row on edge, packaging, option refusal, the .NET split
+> Per-row edge: "Native per-row path (Rec.)"
+> Packaging: "Distinct names, loader prefers (Rec.)"
+> Bad options: "Pass domain 7's refusal (Rec.)"
+> .NET split: "Keep the split (Rec.)"
+
+*(Chosen options; full texts in the D10C kickoff question set, 2026-11-15.)*
+**Rulings:** (1) **C#'s per-row Arrow subscribe runs on the native per-row path and works on both packages**; arbitrates the
+collision between 2026-11-12 (:246 (2), its MaxRows-1-on-the-batcher premise is amended) and 2026-11-13 (:363 (4)). (2) **Distinct
+native file names; the server package depends on the base one; NativeLoader prefers the server shim when present** (settles d9 Q5a;
+CI's renamed-copy staging, :525, retires when it lands). (3) **An out-of-range batch option raises domain 7's refusal, passed through
+as FletcherException(InvalidArgument); the 49.7-day cap goes**; supersedes D-BIND-19 rule 4 / D-BIND-20's pre-check for batch options.
+(4) **C# keeps the edge/server split**; D-BIND-1a rider i ("a .NET process is never the microcontroller") is revised by :363 (4).
+**Applies to:** d10 L3, L5, L7, L14, D9, Q1, Q2, Q4; d9 Q5a; register BC-2, BC-8, BC-10.
