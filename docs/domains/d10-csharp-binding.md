@@ -81,10 +81,10 @@ C# idiom laid over it (domain-map row 10; owner ruling 2026-11-12, "Shim only", 
 | **Binding** | This domain: the managed packages over the shim. `binding.h` calls the C surface "the binding ABI"; that surface is domain 9's (d9 §2 "Binding"). |
 | **Base package** | `Eiva.Fletcher.Interop`, which packs the edge shim under `runtimes/<rid>/native/` for `win-x64` and `linux-x64` (`Fletcher.Interop.csproj:52-55`, D-BIND-27, -134). `Eiva.Fletcher` references it. |
 | **Server package** | `[designed-not-built]` The separate .NET package carrying the server shim (d9 D22) under its own file name, depending on the base package (ledger :536 (2), D21). Its NuGet id is the packaging stage's choice. |
-| **Edge shim / server shim** | The two builds of the one shim (d9 L12): `fletcher-c-abi` and `fletcher-c-abi-server` (ruling 2026-11-13, ledger :395). C# today loads only the first (`NM:79`). |
+| **Edge shim / server shim** | The two builds of the one shim (d9 L12): `fletcher-c-abi` and `fletcher-c-abi-server` (ruling 2026-11-13, ledger :395). C# today loads only the first (`NM:90`). |
 | **Loader** | `NativeLoader` (`NL:25-273`): installs the per-assembly resolver, probes beside the assembly then the application, and explains a failure by RID or platform floor (D-BIND-172). |
-| **Handshake** | `NativeMethods`' type initializer: install the resolver, then compare `fl_binding_abi_version()` with `HeaderVersion` before any other import can run (`NM:61-68`, `NL:253-272`). |
-| **Variant check** | `[designed-not-built]` The binding asking the loaded shim `fl_binding_variant` (d9 L16). Not imported today. |
+| **Handshake** | `NativeMethods`' type initializer: install the resolver, then compare `fl_binding_abi_version()` with `HeaderVersion` before any other import can run (`NM:72-79`, `NL:253-272`). |
+| **Variant check** | `[designed-not-built]` The binding asking the loaded shim `fl_binding_variant` (d9 L16). Imported since D10C-2, with no caller until the loader uses it. |
 | **Thunk** | An `[UnmanagedCallersOnly]` static method native calls: the delivery thunk (`Subscriber.cs:812-865`), the writer and grow thunks. One containment site per direction (D-BIND-19 rule 2). |
 | **Absorbed failure** | A managed handler exception caught at a thunk, counted in `AbsorbedCallbackFailures` and `Diagnostics.AbsorbedTotal`, and raised as `HandlerFaulted` (D-BIND-18, -19 rule 5). |
 | **Managed batcher** | `SubscriberArrow.Batcher` (`SA:353-827`): today's C# copy of batch assembly. Deleted by the switch (d7 D16). |
@@ -113,7 +113,7 @@ C# idiom laid over it (domain-map row 10; owner ruling 2026-11-12, "Shim only", 
 the loaded shim's ABI version is compared with the version the binding was built against; before
 1.0 the minor must match exactly, and a mismatch refuses with a message naming both versions.
 `[built]`
-- Holds at: `NM:61-68` (the type initializer installs the resolver, then verifies, before any
+- Holds at: `NM:72-79` (the type initializer installs the resolver, then verifies, before any
   other import resolves), `NL:253-272` (`VerifyAbiVersion`), `NL:31-37` (`HeaderVersionMajor` 0,
   `HeaderVersionMinor` 8: the one line D9S edited under d9 D27, ledger :363 (2)).
 - Both builds share one version (d9 L6, D27), so the handshake cannot tell them apart; L6 does.
@@ -124,24 +124,26 @@ the loaded shim's ABI version is compared with the version the binding was built
 are a mechanical mirror of `binding.h`: same names, same parameters, blittable layouts. Every
 number the shim hands out (`fl_status`, `fl_origin`, `FL_BATCH_*`, `fl_variant`) has a C# value
 equal to it, never renumbered.
-`[built for fl_status (0-10) and fl_origin 0-3; violated on FL_ORIGIN_HANDOVER (4) and on FL_BATCH_* (C# 0-2, C 1-3)]`
-- Holds at: `NM:1-43` (the mirror rule), `AbiTypes.cs:1-193` (blittable by construction;
-  `LibraryImport` refuses otherwise), `FE:18-52` (`FletcherStatus` 0-10), `FE:62-75`
-  (`FletcherOrigin` 0-3).
-- **The violation:** `h:264-269` declares `FL_ORIGIN_HANDOVER = 4` (d9 D32, ABI 0.8); C# stops at
+`[built]` (D10C-2): `fl_status` 0-10, `fl_origin` 0-4, `FL_BATCH_*` 1-3 and `fl_variant` 1-2 each equal their C# mirror, by test.
+- Holds at: `NM:1-54` (the mirror rule), `AbiTypes.cs:1-193` (blittable by construction;
+  `LibraryImport` refuses otherwise), `FE:18-52` (`FletcherStatus` 0-10), `FE:62-78`
+  (`FletcherOrigin` 0-4), `SA:116-126` (`BatchReason` 1-3), `NM:37-47` (`FlVariant`).
+- **The violation (closed by D10C-2):** `h:264-269` declares `FL_ORIGIN_HANDOVER = 4` (d9 D32, ABI 0.8); C# stops at
   3. It is unreachable today, because C# never calls a batched entry point, and `Errors.ThrowIfFailed`
   would cast 4 to an unnamed enum value (`Errors.cs:65-67`). The switch adds
   `FletcherOrigin.Handover = 4` (d9 D32, "Forward note (domain 10)"; ledger :551 (3), D26).
-- **The second violation:** `BatchReason {RowLimit, Timeout, Closing}` is 0-based (`SA:116-126`);
+- **The second violation (closed by D10C-2):** `BatchReason {RowLimit, Timeout, Closing}` is 0-based (`SA:116-126`);
   `FL_BATCH_ROW_LIMIT/TIMEOUT/CLOSING` are 1-3 (`h:1013-1015`). **Decided (D34, PM decision under this
   law, 2026-11-15):** the switch renumbers `BatchReason` to 1-3, equal to the C values. A visible change
   (a cast or persisted value shifts by one; `default(BatchReason)` is no longer a named member),
-  accepted because the batched API has not reached `main` (D4). `[designed-not-built]`
-- The mirror imports what the binding calls, not every export: 47 of the 50 entry points
-  (`fl_binding_variant`, `fl_subscriber_subscribe_batches`, `fl_subscriber_unsubscribe_batches` are
-  not imported). That is not a violation.
-- Tests: `ErrorTests.*` cover origin 1 and 2 only. **No test compares `FletcherStatus`, `FletcherOrigin`,
-  `BatchReason` or the variant with the published table** (d9 Findings a7, confirmed here: none under `dotnet/tests`).
+  accepted because the batched API has not reached `main` (D4). `[built]` (D10C-2).
+- The mirror imports what the binding calls, not every export: 48 of the 50 entry points
+  (`fl_subscriber_subscribe_batches` and `fl_subscriber_unsubscribe_batches` are
+  not imported; `fl_binding_variant` is, since D10C-2). That is not a violation.
+- Tests: `AbiNumberTableTests.EveryNumberTheShimHandsOutHasTheSameValueInCSharp` (one row per table, both
+  directions; closes Q11), `ErrorTests.OriginFourIsHandover`, `AbiNumberTableTests.BindingVariantAnswersADefinedMember`.
+  While `FlVariant` is internal, its row is the sole proof of the variant's numbers; rung 4 re-proves it from
+  outside if it makes the variant public.
 
 **L3. The binding forwards a lower layer's answer; it does not answer again.** A refusal from the
 shim reaches the caller with its number and verbatim message. The binding checks a rule itself only
@@ -194,7 +196,7 @@ package brings it); otherwise the edge shim; never both, and never the edge shim
 server shim that will not load.** Which file loads is decided at one site in the binding, from what is
 present, not from what the application calls (revised 2026-11-15 by ledger :575 (1), D28; it read
 "only if it references the server package").
-`[designed-not-built]`; today one name only, `fletcher-c-abi` (`NM:79`, `NL:60-87`, `NL:218-232`).
+`[designed-not-built]`; today one name only, `fletcher-c-abi` (`NM:90`, `NL:60-87`, `NL:218-232`).
 - Source: ruling 2026-11-13, "C# loads: Depends on package" (ledger :363 (4); d9 D29, revising
   D19); d9 L5, L17 (one shim per process; a second loaded is refused by the marker); ruling
   2026-11-13, "the server build is its own file" (ledger :395): "the C# switch round teaches C#
@@ -392,14 +394,14 @@ are checked when it is packed.** Every other managed package is asset-free.
 with `RowHandler`, `SubscribeSchema`, `Unsubscribe`, `DispatchAfterDelivery`,
 `AbsorbedCallbackFailures`, `HandlerFaulted`), `SubscriberArrow` (`Subscribe`, `SubscribeBatched`,
 `Unsubscribe`, `SubscribeSchema`, `Dispose`), `BatchOptions {MaxRows = 8000, Timeout = 1 min,
-MaxTimeout}`, `BatchStatus {Reason, RowsDropped}`, `BatchReason {RowLimit, Timeout, Closing}`
-(0-based; the C values are 1-3, `h:1013-1015`), `RecordBatchHandler`, `FletcherCodec`,
+MaxTimeout}`, `BatchStatus {Reason, RowsDropped}`, `BatchReason {RowLimit = 1, Timeout = 2, Closing = 3}`
+(the C values, `h:1013-1015`; D10C-2), `RecordBatchHandler`, `FletcherCodec`,
 `BoundRows`, `SchemaArrival`, `TopicPath`, `TopicOptions`, `AttachmentsBuilder`/`AttachmentsView`,
 `FletcherException`/`FletcherFormatException`, `FletcherStatus`, `FletcherOrigin`, `Diagnostics`.
 `Eiva.Fletcher.Interop` is internal to `Eiva.Fletcher` (`Fletcher.Interop.csproj:41-47`).
 
 **C# entry points into the shim (survey).** Every import resolves the one name
-`NativeMethods.LibraryName = "fletcher-c-abi"` (`NM:79`), so every one loads `fletcher-c-abi.dll`
+`NativeMethods.LibraryName = "fletcher-c-abi"` (`NM:90`), so every one loads `fletcher-c-abi.dll`
 (`win-x64`) or `libfletcher-c-abi.so` (`linux-x64`): in a package the base package's edge shim; in
 a source build whatever is staged beside the tests (CI's dotnet lane stages the edge build,
 `.github/workflows/ci.dotnet.yml`, `locate_shim.sh fletcher-c-abi variant=edge`). 47 entry points:
@@ -422,7 +424,7 @@ a source build whatever is staged beside the tests (CI's dotnet lane stages the 
 **What the switch adds** `[designed-not-built]`:
 - Imports of the three server entry points and of `fl_batch`/`fl_batch_fn`, against the server shim
   (and answered `FL_NOT_SUPPORTED` by the edge shim, L6).
-- `FletcherOrigin.Handover = 4` (L2), and the failure in `BatchStatus` (L9, D26).
+- ~~`FletcherOrigin.Handover = 4` (L2)~~ `[built]` (D10C-2); and the failure in `BatchStatus` (L9, D26).
 - `SubscriberArrow.SubscribeBatched` over `fl_subscriber_subscribe_batches`: `MaxRows` as `int64`
   unchanged, `Timeout` through the one translation site (L12), refusals passed through as
   `FletcherException(InvalidArgument)` (L3, D22), `BatchOptions.MaxTimeout` removed; a batch
@@ -433,7 +435,7 @@ a source build whatever is staged beside the tests (CI's dotnet lane stages the 
 - One `fl_subscriber` holds both a `SubscriberArrow`'s row and batched subscriptions; a same-topic
   mix through one provider collides (d9 D33, ledger :448 (1)), so `SubscriberArrow` refuses it (L3,
   D33, ledger :575 (6)).
-- `BatchReason` renumbered to 1-3 (L2, D34).
+- ~~`BatchReason` renumbered to 1-3 (L2, D34)~~ `[built]` (D10C-2).
 - The loader's preference for the server shim, failing loudly with no fallback (L5, D21, D28); the
   server package (L15, D21, Q7).
 
@@ -522,7 +524,7 @@ former Q10 (doc comments lagging D28) is work the round owes (Findings (a)2). Nu
 | Q7 | Do D-BIND-148's allow-list and D-BIND-149's floors apply to the server shim as they stand, and what packed-size ceiling does the server package get (D-BIND-157 stays on the base package)? Proposed default: the same lists and floors, failing by name if the server shim needs more; a ceiling of its own set from the first measured pack plus the same margin D-BIND-157 left. Owner only if the measured shim breaks a list or floor. **Default stands unless the owner objects.** | domain 10 (packaging stage), then owner on a breach |
 | Q8 | Does `fl_decode_rows_framed` stay after the switch (d9 Q9)? Its one consumer is deleted. Proposed default: it stays; removing an entry point is domain 9's, at a later d9 stage, recorded as d9 debt. Owner only to remove it in this round. **Default stands unless the owner objects.** | domain 9, after this round |
 | Q9 | Which managed-batcher tests carry cases domain 7's suite lacks (§8)? **Answered by the D10C pre-round audit (part C): four cases, listed in §8 rule 6;** the test-authority step re-checks before the deletion stage; each is ported by a domain-7 round or dropped by the owner. | D10C, stage before deletion |
-| Q11 | No C# test compares `FletcherStatus`/`FletcherOrigin`/`BatchReason`/the variant with `binding.h`'s numbers (L2; d9 Findings a7). Proposed: the switch adds one. | D10C |
+| Q11 | ~~No C# test compares `FletcherStatus`/`FletcherOrigin`/`BatchReason`/the variant with `binding.h`'s numbers (L2; d9 Findings a7). Proposed: the switch adds one.~~ **Closed (D10C-2):** `AbiNumberTableTests.EveryNumberTheShimHandsOutHasTheSameValueInCSharp`. | D10C |
 
 ## 8. How to extend this domain
 
@@ -581,9 +583,9 @@ former Q10 (doc comments lagging D28) is work the round owes (Findings (a)2). Nu
    states, and `scripts/check_dotnet_packages.sh:12-13` and `:108` enforce, "Interop is the only
    package that carries native assets"; ruling 2026-11-13 (ledger :337 (1), d9 D22) made it false,
    and D21 adds the server package beside it. Not changed by this document.
-2. **Owed by the round (tier 3).** `FE:38` (`FletcherStatus.NotSupported`, "This provider does not
-   implement the requested behaviour") and `FE:67` (`FletcherOrigin.Seam`) lag d9 D28 ("this
-   provider or this build cannot do this") and `h:265`. Not changed by this document.
+2. ~~**Owed by the round (tier 3).** `FE:38` (`FletcherStatus.NotSupported`) and `FE:67`
+   (`FletcherOrigin.Seam`) lag d9 D28 and `h:265`.~~ **Done (D10C-2):** `FE:38` now reads "This provider or
+   this build cannot do this" and `FE:67` includes the library's own refusal.
 3. `SA:4-94` and `SA:106-110` describe D-BIND-64's concurrency and "NULL only when the schema could
    not be opened"; both become false at the switch (V1, V11).
 4. D-BIND-25, -63, -66 and -68 carry no annotation yet (D19); D-BIND-1a rider i, -8, -19, -20,
@@ -596,7 +598,7 @@ former Q10 (doc comments lagging D28) is work the round owes (Findings (a)2). Nu
    row), with different dictionary answers (V12) and different whole-window failure answers (V10).
 
 **(c) Behaviour with no test**
-- `FletcherStatus`/`FletcherOrigin`/`BatchReason` against `binding.h` (L2).
+- ~~`FletcherStatus`/`FletcherOrigin`/`BatchReason` against `binding.h` (L2).~~ Tested (D10C-2).
 - `SubscriberArrow.Dispose`'s refusal inside a row delivery (L11).
-- Origin 4 reaching C# (L2), unreachable today.
+- ~~Origin 4 reaching C# (L2), unreachable today.~~ Origin 4 maps to `Handover` (D10C-2, `ErrorTests.OriginFourIsHandover`); reaching it from a real batch is the switch's.
 - A C# handler disposing its `SubscriberArrow` from a batch callback (L11), until the switch.

@@ -19,3 +19,20 @@ Session directive (2026-11-15): run from D10C-1 onward, item by item, until a st
 **Owner decisions this stage:** none
 **Debt carried:** none. Accepted risk: no CI job runs `heavy` (:140, :595 (2)).
 **Records corrected:** none
+
+## D10C-2 — every C-surface number has the same value in C# (2026-11-15)
+
+**Forcing test:** `AbiNumberTableTests.EveryNumberTheShimHandsOutHasTheSameValueInCSharp` (4 rows) → 🔴 (origin 4, all 3 reasons, variant) → 🟢; `fl_status` row a guard
+**Lane:** light · **Brief:** `plans/D10C-2-brief.md` (no design doc)
+**What landed:** C# names origin 4 (`FletcherOrigin.Handover`); `BatchReason` renumbered to the header's 1–3 (visible, D34); internal `FlVariant` + `fl_binding_variant` import for rungs 4/7. The table test reads `binding.h` from the repo and refuses entries it cannot parse. d10 L2 → `[built]`, Q11 closed.
+**Interfaces:** NEW `FletcherOrigin.Handover`; CHANGED `BatchReason` values; internal `FlVariant`, `fl_binding_variant`.
+**Deleted:** none.
+**Files touched:** `NativeMethods.cs`, `FletcherException.cs`, `SubscriberArrow.cs`; tests `AbiNumberTableTests.cs` (new), `ErrorTests.cs`, `Fletcher.Tests.csproj`; `docs/domains/d10-csharp-binding.md`
+**Reviews:** 0a CLEAR · 0b CLEAR (note: while `FlVariant` is internal the row is the sole proof of its numbers; brief corrected) · code-review blocking 0 / should-fix 2 / nit 3 (S1, S2, N1 fixed)
+**Verification:** dotnet 1478/1478 (net8+net10, edge + probe shims); binding-abi-conformance 11/11 ×2; pubsub-arrow-fastdds 4/4; no dotnet integration lane touches the changed enums. **Not run:** `check_dotnet_packages.sh` (Docker down).
+**Close gate:** PASS (--light)
+**Cycle meter:** design 1/2 · fix 1 · implementer launches 1/5 (one agent, resumed for red → green → fix) · stage words 2258
+**Numbers:** declared prod ~+20/−5 · actual +28/−5 (33 touched, 3 files) · tests ~+200 vs ~+95 declared · new public surface 1
+**Owner decisions this stage:** none
+**Debt carried:** none. Inner loop needs `-p:FletcherProbeShim`; `locate_shim.sh` refuses with 19 cached edge packages (shims picked by mtime, paths in evidence).
+**Records corrected:** brief :63 variant-proof claim (0b); d10 NM citations shifted +11 (4b RECORD).

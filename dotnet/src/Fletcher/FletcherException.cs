@@ -35,7 +35,7 @@ public enum FletcherStatus
     /// <summary>The transport refused or failed.</summary>
     TransportFailure = 5,
 
-    /// <summary>This provider does not implement the requested behaviour.</summary>
+    /// <summary>This provider or this build cannot do this.</summary>
     NotSupported = 6,
 
     /// <summary>The catch-all: anything with no better home.</summary>
@@ -64,7 +64,7 @@ public enum FletcherOrigin
     /// <summary>No failure.</summary>
     None = 0,
 
-    /// <summary>The seam: a PubSubError or a std::exception.</summary>
+    /// <summary>The seam: a PubSubError or a std::exception, or the library's own refusal.</summary>
     Seam = 1,
 
     /// <summary>Malformed bytes: the positional reader, envelope parsing.</summary>
@@ -72,6 +72,9 @@ public enum FletcherOrigin
 
     /// <summary>A caller-supplied writer or handler reported failure.</summary>
     Callback = 3,
+
+    /// <summary>The library could not hand a closed batch over to the handler.</summary>
+    Handover = 4,
 }
 
 /// <summary>A failure that crossed the binding ABI.</summary>

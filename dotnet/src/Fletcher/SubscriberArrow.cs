@@ -116,13 +116,13 @@ public delegate void RecordBatchHandler(RecordBatch? batch, IReadOnlyList<Attach
 public enum BatchReason
 {
     /// <summary><see cref="BatchOptions.MaxRows"/> was reached.</summary>
-    RowLimit,
+    RowLimit = 1,
 
     /// <summary>The window's deadline passed.</summary>
-    Timeout,
+    Timeout = 2,
 
     /// <summary>The subscription is being torn down.</summary>
-    Closing,
+    Closing = 3,
 }
 
 /// <summary>Why a batch was flushed and whether rows were lost.</summary>

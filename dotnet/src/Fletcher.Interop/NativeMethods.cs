@@ -34,6 +34,17 @@ using System.Runtime.InteropServices;
 
 namespace Eiva.Fletcher.Interop;
 
+/// <summary>Which build of the shim is loaded: `fl_variant` in `binding.h`, number for number.</summary>
+/// <remarks>Values are only appended and 0 is never a build.</remarks>
+internal enum FlVariant
+{
+    /// <summary>The embedded-capable build: no Arrow C++.</summary>
+    Edge = 1,
+
+    /// <summary>The server build, which adds batched subscribe.</summary>
+    Server = 2,
+}
+
 /// <summary>Raw entry points of the Fletcher binding ABI.</summary>
 /// <remarks>
 /// Internal on purpose: the shim's surface is not a supported API. Applications
@@ -91,6 +102,15 @@ internal static partial class NativeMethods
     [LibraryImport(LibraryName)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial uint fl_binding_abi_version();
+
+    /// <summary>Which build of the shim is loaded (d9 L16).</summary>
+    /// <remarks>
+    /// Like the version probe: callable first, no arguments, no state, no error path.
+    /// Both builds export it. Nothing calls it yet; the loader will ask it (d10 L6).
+    /// </remarks>
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial FlVariant fl_binding_variant();
 
     /// <summary>The single-copy marker text (D-BIND-17).</summary>
     /// <remarks>

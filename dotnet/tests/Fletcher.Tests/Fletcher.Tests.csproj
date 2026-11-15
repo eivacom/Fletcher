@@ -105,6 +105,18 @@
           CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- The C header, staged beside the test binary (D10C-2).
+       AbiNumberTableTests reads the REPO's binding.h, not the package's copy and not
+       the Conan cache's, and compares every status, origin, batch reason and build
+       variant it publishes with its C# mirror. Copied for the same reason as the
+       goldens above: the dependency is declared where a build can see it, and a header
+       that moves breaks the build here instead of letting the test skip. -->
+  <ItemGroup>
+    <None Include="../../../c-abi/include/fletcher/abi/binding.h"
+          Link="binding.h"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="[18.10.0]" />
     <PackageReference Include="xunit" Version="[2.9.3]" />

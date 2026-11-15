@@ -9,7 +9,7 @@ Status: ⚪ not started · 🔴 in progress · 🟢 done. Lane: **L** marks a li
 | Item | Subject (ladder rung) | Rung | Inherits | Est. lines / files | Lane | Status |
 |---|---|---|---|---|---|---|
 | D10C-1 | Domain 7's own suite proves the four behaviours only C#'s batcher tested | 1 | d10 Q9 port list (audit part B); ruling :595 (test-only exception; the big-row case runs as a heavy test) | 0 prod (tests only) | L | 🟢 |
-| D10C-2 | Every number the C surface hands out has the same value in C# (`Handover = 4`, `BatchReason` 1-3) | 2 | d10 L2, D34, Q11 | 15–30 / 2–3 | L | ⚪ |
+| D10C-2 | Every number the C surface hands out has the same value in C# (`Handover = 4`, `BatchReason` 1-3) | 2 | d10 L2, D34, Q11 | 15–30 / 2–3 | L | 🟢 |
 | D10C-3 | Per-row `Subscribe` runs on the edge shim with no batcher; an undecodable row arrives as a null batch with `RowsDropped = 1` | 3 | BC-16 (DEFINE); :536 (1), :575 (3), (5); BC-2 note | 60–110 / 1–2 | F | ⚪ |
 | D10C-4 | The loader loads the server shim when present, fails loudly if it won't load, never both; CI gains a server leg and the renamed copy retires | 4 | BC-10 (EXTEND-AND-NARROW); :536 (2), :575 (1); retires :525's staging | 80–155 / 3–4 | F | ⚪ |
 | D10C-5 | A server package carries exactly the server shim, depends on the base package, and the package rules check it | 5 | BC-17 (DEFINE); d10 L15, Q7 default; audit F (Interop-only rule) | 110–200 / 5–7 (split 5a/5b if over) | F | ⚪ |

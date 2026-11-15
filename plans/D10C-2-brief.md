@@ -55,6 +55,5 @@ None. The stop checks are clear:
 Declared net lines: production about +20 / −5 in 3 files; tests about +95 in 3 files. New public surface: 1. Design cycles used: 1/2.
 
 ---
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
-<delta vs the above — actual net lines, anything retired or added the brief did
-not predict, fix cycles used>.
+**As landed (2026-11-15):**
+Prod +28/−5 = 33 touched in 3 files (declared ~+20/−5; light-lane admission held). Tests ~+200 (AbiNumberTableTests 169, ErrorTests 19, csproj 12) vs ~+95 declared: the S1 fail-on-unreadable parser and its messages. Public surface: `Handover` only. Not predicted: the inner loop needs `-p:FletcherProbeShim` too; d10 NM citations shifted +11 (corrected). Fix cycles 1 (S1 parser refuses what it cannot read, S2 no reflection, N1). 0a CLEAR, 0b CLEAR.
