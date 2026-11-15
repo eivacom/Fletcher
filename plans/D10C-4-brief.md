@@ -12,7 +12,8 @@ NuGet `runtimes/` layouts) has the server file loaded, and only that one. Its co
 |---|---|---|
 | Which native library a C# app loads | CHANGED | server if its file is beside the app, else edge (ruling 2026-11-15, "Presence; fail loudly") |
 | A present but broken server file | CHANGED | the app stops, naming the file and the OS's reason; today it is ignored and edge loads |
-| Finding the library via the system search path (PATH, LD_LIBRARY_PATH) | **DELETED** | only the app's own folders are searched (Decision 1) |
+| Finding the library via the system search path (PATH, LD_LIBRARY_PATH) | **DELETED** | only the app's own folders are searched (disclosure below) |
+| Finding a packaged app's library on a distro's own .NET (Ubuntu, RHEL) | kept | the package's folder is named from OS and processor, not from the runtime's distro name |
 | CI: C# test lane / conformance lane | CHANGED | builds the server library and runs the whole C# suite again with both files present / drops the renamed copy |
 
 New public API: none; which build is loaded stays internal, and the tests watch which file the process loaded.
@@ -30,17 +31,13 @@ from a broken edge copy to another edge copy (this used to work and now stops th
 process, or a choice that changes later · loading the library outside the one decision site (a source scan checks it).
 **Handled:** an app with no assembly folder (NativeAOT, single-file) is searched in its app folder only (unchanged; NativeAOT is supported).
 
+**Disclosed (settled, not asked):** an app with no copy of the library beside it, which relied on PATH or LD_LIBRARY_PATH
+to find one, now stops at start-up; the message lists the folders searched. Packaged and published apps, including those
+on a distro's own .NET, are unaffected. Settled by your ruling 2026-11-15 "Presence; fail loudly" (one resolver site,
+no fallback branch), domain 10's L5/D28 ("in every route… its default probing included") and register row BC-10.
+
 ## Decisions for you
-1. **Should a C# app still find Fletcher's native library through the system search path, or only in its own folders?**
-   - **(a) Own folders only.** User/operator: packaged and published apps are unaffected; an app relying on PATH or
-     LD_LIBRARY_PATH, with no copy beside it, stops at start-up and lists the folders searched. Architecture: serves
-     d10 L5 and your ruling that presence decides, in every route, from one site (BC-10).
-   - **(b) Keep the system search as the edge build's last resort.** User/operator: such apps keep running on edge; a
-     server file on the system path is silently ignored. Architecture: strains L5 and BC-10, because a second route
-     loads by name and cannot see a broken file.
-   **Recommendation:** (a). It follows L5, "Presence; fail loudly" and this rung's purpose: one visible rule decides
-   which build an app runs on. **Default if you don't answer:** (a).
-   *Background (skippable): the route deleted is `NativeLibrary.TryLoad` by name, `NativeLoader.cs:73`.*
+None.
 
 ## Risks accepted / debt carried
 The C# CI lane also builds Arrow C++ on both OSes, so it is slower; the next stage (packing the server package) needs
@@ -48,7 +45,7 @@ that build anyway. A refused load reaches the app inside the runtime's "type ini
 failure does today; the named reason is the inner exception.
 
 ## Numbers
-Declared net lines: +113 / −39 (net ≈ +74) counted production; tests ≈ +285 / −10 · new public surface: 0 · design cycles used: 1/2
+Declared net lines: +125 / −48 (net ≈ +77) counted production; tests ≈ +295 / −10 · new public surface: 0 · design cycles used: 2/2
 
 ---
 *As landed (<date>, appended by the PM at close, ≤5 lines):*
