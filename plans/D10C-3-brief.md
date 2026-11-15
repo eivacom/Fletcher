@@ -48,7 +48,7 @@ None:
 - An unreadable layout is decided once per subscription. A decoder that fails from lack of memory, rather than refusing the layout, therefore counts as unreadable for good, the same gap domain 7 has registered.
 
 ## Numbers
-Declared net lines: production about +85 / −3 in 2 files (about 88 touched, so not light-lane). Tests about +160 · new public surface: 0 · design cycles used: 1/2
+Declared net lines: production about +130–160 / −3 in 2 files (restated from +85 at design review, DEBT 3; not light-lane). Tests about +160 · new public surface: 0 · design cycles used: 1/2
 
 ---
 *As landed (<date>, appended by the PM at close, ≤5 lines):*

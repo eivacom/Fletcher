@@ -874,3 +874,8 @@ Review: [../../docs/archive/D7F/reviews/D7F-1-design-review.md](../../docs/archi
 - ~~DEBT-2 (round close or a later d9 stage): one CMake function for every shim~~ Migrated to d9 §7 Q13 (D9S close, 2026-11-14); `c-abi/tests/CMakeLists.txt` points there.
 - ~~DEBT-3~~ landed `157d3c3` (dead line and design paragraph deleted).
 - ~~DEBT-4~~ landed: d9 §6 domain-10 list notes the staging retires with Q5a; ladder rung 10 credits :516 for the staging only.
+
+## D10C-3 — per-row `SubscriberArrow.Subscribe` on the native path (APPROVE-WITH-DEBT(3), cycle 1 of 2) — [review](D10C-3-design-review.md)
+- DEBT-1 (step 3, test): the self-unsubscribe leg frees on `TryFree(Delivery)`, not the deferred branch (`ReentrancyTests.cs:135-143`). Restate it as that branch; the deferred one needs a sibling's cancel (`:378-402`).
+- DEBT-2 (step 3, code): put the release after `Self.Free()` (or in a `finally`), so a throwing release can neither skip the GCHandle free nor abort `Subscriber.Dispose`'s loop (SUB:720-729).
+- DEBT-3 (PM, brief): re-book the declared +85/−3 at about 130-160 (still inside 250) before the owner reads it, so the close is not an overrun (:313, :408, :465).
