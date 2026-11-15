@@ -33,7 +33,9 @@ process, or a choice that changes later · loading the library outside the one d
 
 **Disclosed (settled, not asked):** an app with no copy of the library beside it, which relied on PATH or LD_LIBRARY_PATH
 to find one, now stops at start-up; the message lists the folders searched. Packaged and published apps, including those
-on a distro's own .NET, are unaffected. Settled by your ruling 2026-11-15 "Presence; fail loudly" (one resolver site,
+on a distro's own .NET, are unaffected, except single-file apps published with the opt-in
+`IncludeNativeLibrariesForSelfExtract=true` (shim extracted outside the app folder): they now stop loudly. Never documented,
+declared or tested, so a defect closure, not a break (standing exception, 2026-09-11; DEBT-6). Settled by your ruling 2026-11-15 "Presence; fail loudly" (one resolver site,
 no fallback branch), domain 10's L5/D28 ("in every route… its default probing included") and register row BC-10.
 
 ## Decisions for you

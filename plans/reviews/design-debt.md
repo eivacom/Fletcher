@@ -880,8 +880,10 @@ Review: [../../docs/archive/D7F/reviews/D7F-1-design-review.md](../../docs/archi
 - ~~DEBT-2~~ resolved: release after `Self.Free()`, no catch, must-not-throw contract (`Subscriber.cs:380`, 4a F1) (D10C-3 close).
 - ~~DEBT-3~~ resolved: brief/design restated to 130–160 (commits 5b311af, 779dbda); landed net 125 excl. comments.
 
-## D10C-4 — the loader picks the shim (cycle 1 NEEDS-REWORK, 1 BLOCKER) — [review](D10C-4-design-review.md)
-- DEBT-1 (brief, PM): Decision 1 is settled by :575 (1) (R-1 (a): "one resolver site, no fallback branch"), d10 L5/D28 and BC-10's "delete the runtime's default probing … `NativeLoader.cs:73`"; make it a disclosure, keep P1's STOP.
-- DEBT-2 (CI): when conformance `:123`'s rename goes, keep `env -u LD_LIBRARY_PATH` (D9S-7 DEBT-1, `157d3c3`); `conanrun.sh` would otherwise hide a P2 breach in that lane.
-- DEBT-3 (doc): "one decision per process" is per `AssemblyLoadContext`; two ALCs can choose differently and meet d9 L17's marker (loud). Reword design row 3 and the `NativeLoader` comment.
-- DEBT-4 (docs): `README.md:324`, `docs/architecture-overview.md:354`, `dotnet/README.md:83` gain `-p:FletcherServerShim=`; `ci.dotnet.yml:115-117, :253-255` ("arrow-bridge is NOT in the loop") rewritten.
+## D10C-4 — the loader picks the shim (cycle 1 NEEDS-REWORK, 1 BLOCKER; cycle 2 APPROVE-WITH-DEBT(2)) — [review](D10C-4-design-review.md)
+- ~~DEBT-1~~ resolved: Decision 1 became a disclosure (brief :34-40; PM decision).
+- ~~DEBT-2~~ resolved: `env -u LD_LIBRARY_PATH` kept on the conformance server pass (design :61-62, :148).
+- ~~DEBT-3~~ resolved: one decision per `AssemblyLoadContext`, with d9 L17 across contexts (design :18-22, :80).
+- ~~DEBT-4~~ resolved: the full-suite commands and the `ci.dotnet.yml` comments are listed under docs (design :135-137).
+- DEBT-5 (tests, binding; law b): the distro-RID promise (brief :16, :35-36) needs a proof other than the leg at :115. Stage the theory's `runtimes` arm at the literal `runtimes/linux-x64|win-x64/native/`, and extend `NoNativeLoadOutsideTheResolver` to fail on `RuntimeInformation.RuntimeIdentifier` in `dotnet/src/Fletcher.Interop` (vacuity control: it finds `PackageRid`). 4a/4b refuse close without both.
+- DEBT-6 (disclosure): single-file apps published with `IncludeNativeLibrariesForSelfExtract=true` (opt-in) extract the shim outside the app folder and now stop, loudly. Name the exception at brief :35 or list it as unsupported in P1; no code change.
