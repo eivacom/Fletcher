@@ -591,3 +591,13 @@ batched subscription to the same topic** (a ruled exception under d10 L3; revise
 (7) **D-BIND-25, D-BIND-63, D-BIND-66 (batched half), D-BIND-68 (scope, put-back) and BIND-5's acceptance clauses are annotated as
 retired for SubscriberArrow.**
 **Applies to:** d10 L3, L5, L7, L9, L14; register BC-10, BC-16 (new); plans/BIND-*.
+
+## 2026-11-15 — D10C ladder: the domain-7 port tests
+> Port tests: "Yes, test-only (Rec.)"
+> Big-row case: "Heavy test, ~128 MiB (Rec.)"
+
+*(Chosen options; full texts in `plans/D10C-test-ladder.md` Q-A, Q-B.)*
+**Rulings:** (1) **D10C adds the four domain-7 port cases to pubsub-arrow's test suite, test files only** — a named scope exception;
+no domain-7 code or law changes, and d7's document picks up the test names at its next round (revises d10 §8's "by a domain-7 round").
+(2) **The overflow-then-next-window case is proven as a `heavy`-labelled test (~128 MiB rows)**; no test hook in domain 7's code.
+**Applies to:** D10C rung 1; d10 §8.
