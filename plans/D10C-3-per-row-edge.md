@@ -139,7 +139,7 @@ drives the codec release on the departing delivery's exit, not the deferred bran
 - `dotnet/tests/Fletcher.Tests/SubscriberArrowTests.cs` (forcing test, two guards, one leg, T8 comment);
   d10 and the register (marks, not counted).
 
-**Declared net lines (production):** about **+85 / −3** in 2 files (≈88 touched: over the light lane's 60).
+**Declared net lines (production):** about **+130–160 / −3** in 2 files (restated at design review, DEBT 3; was +85).
 Tests about +160. New public surface: **0**.
 
 ## Files-to-delete
