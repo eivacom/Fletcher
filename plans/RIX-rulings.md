@@ -562,3 +562,12 @@ status, origin `Handover` (4) and message**; C#'s origin enum gains code 4. (4) 
 D-BIND-59 (3) (null batch = schema not opened only) and C#'s schema-less first-row latch are revised by 2026-11-12 (:203)**; C#
 follows domain 7 (d7 L7, L9, L12).
 **Applies to:** d10 L2, L6, L9, L13, L14, Q3, Q5, Q6; BIND-locked-decisions annotations.
+
+## 2026-11-15 — D10C: domain 10 confirmed; the round's purpose
+> Confirm d10: "Confirm (Rec.)"
+> Purpose: "Yes (Rec.)"
+
+*(Chosen options.)* Purpose text confirmed verbatim: "A C# app gets its batches from Fletcher's one batcher, the C++ one, and
+C#'s own copy is gone, while an app that does not need batches still runs on the small, Arrow-free shim."
+**Ruling:** **domain 10 (`docs/domains/d10-csharp-binding.md`, at `74bf308`) is `specified`; its Q7 and Q8 defaults stand.**
+**Applies to:** the domain map row 10; the D10C config's `round_purpose`.

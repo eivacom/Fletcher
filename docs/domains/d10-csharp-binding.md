@@ -1,10 +1,7 @@
 # Domain 10: The C# binding
 
-> **Draft for owner confirmation** (round D10C, the C# switch round, first deliverable). Nothing
-> here is `specified` until the owner confirms the laws. A law that restates an existing ruling or
-> locked decision carries that authority now; a law that is new is a proposal until confirmed. No
-> stage is designed from this document before then (domain map, status meanings: no round may run
-> in a domain until it is `specified`; d9 D25 is the precedent).
+> **`specified`: owner-confirmed 2026-11-15** ("Confirm (Rec.)", round D10C, the C# switch round, first
+> deliverable). Survey mode for what exists in `dotnet/` (verified at `fb0f5bf`); round mode for the switch.
 > **D10C pre-round rulings (2026-11-15) applied:** ledger :536 (per-row Arrow on the native per-row
 > path, on both packages; distinct file names, the server package depends on the base one, the
 > loader prefers the server shim; domain 7's option refusal passed through and the cap dropped; the

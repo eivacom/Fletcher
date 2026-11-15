@@ -42,7 +42,7 @@ Status meanings:
 | 6 | **Protocol driver ABI** | loading providers across the ABI boundary | [protocol-driver-abi-spec.md](protocol-driver-abi-spec.md) | `draft` |
 | 7 | **Batch assembly** | turning a stream of rows into columnar batches: when windows close (row count, timeout, offset overflow), loss accounting, row-aligned side data (`RecordBatchBatcher`, [pubsub-arrow/src/subscriber_arrow.cpp](../pubsub-arrow/src/subscriber_arrow.cpp)) | [domains/d7-batch-assembly.md](domains/d7-batch-assembly.md) | **`specified`** 2026-11-10; L1 and L12 fixed by D7F; L4/L5 amended and L15 added 2026-11-12, built by D7O |
 | 9 | **C ABI shim** | the C ABI (`c-abi/`) that language bindings load, in two variants built from one source: the edge variant (no Arrow C++, ever: it must run on embedded devices) and a server-tier variant that adds domain 7's batched subscribe (owner rulings, 2026-11-12); both answer a variant query, and the edge build refuses a batched subscribe by name; the server variant ships in its own .NET package; it hosts domain 2's row codec (owner rulings, 2026-11-13) | [domains/d9-c-abi-shim.md](domains/d9-c-abi-shim.md); `c-abi/include/fletcher/abi/binding.h`; BIND decisions in [plans/BIND-csharp-bindings.md](../plans/BIND-csharp-bindings.md). The two-variant shim partially supersedes BIND Decision 6 (a shim without Arrow C++): the server variant carries Arrow C++, a cost the owner was told when ruling; the shim round annotates Decision 6 (D7O close, 2026-11-12, from `docs/archive/D7O/D7O-pre-round-audit.md` R-4), and D-BIND-13 and -17 (revised 2026-11-13) | **`specified`** 2026-11-13; the server variant, the variant query and the edge refusals built by the shim round (D9S; Windows, by hand; CI and Linux unrun, d9 header; D9S, 2026-11-14) |
-| 10 | **C# binding** | the C# packages that load the shim (`Eiva.Fletcher`, `.Interop`, `.Model`). The C# gateway client stays with domain 5, generated C# with domain 1 (owner ruling 2026-11-12: each language binding is its own domain) | [domains/d10-csharp-binding.md](domains/d10-csharp-binding.md); [plans/BIND-csharp-bindings.md](../plans/BIND-csharp-bindings.md) | `draft` — document written, awaiting owner confirmation (D10C, 2026-11-15) |
+| 10 | **C# binding** | the C# packages that load the shim (`Eiva.Fletcher`, `.Interop`, `.Model`). The C# gateway client stays with domain 5, generated C# with domain 1 (owner ruling 2026-11-12: each language binding is its own domain) | [domains/d10-csharp-binding.md](domains/d10-csharp-binding.md); [plans/BIND-csharp-bindings.md](../plans/BIND-csharp-bindings.md) | `specified` — owner-confirmed 2026-11-15 ("Confirm (Rec.)", D10C) |
 | 8 | **Row bookkeeping** | per-row information that is not business data, starting with Surge's row index: its declaration at topic creation, its single writer, its delivery beside the batch | [plans/RIX-row-index.md](../plans/RIX-row-index.md) (plan, not a spec) | `draft`: not built. Created by round RIX |
 
 The numbers are labels, not a ranking. They differ from the first proposal: the application tier
@@ -72,7 +72,7 @@ domain 1 is specified (owner ruling, 2026-11-10).
 
 ## Where this map is incomplete
 
-- **Only domains 2, 7 and 9 are `specified`** (9 since 2026-11-13). The other existing documents predate this map and state their rules as
+- **Only domains 2, 7, 9 and 10 are `specified`** (9 since 2026-11-13, 10 since 2026-11-15). The other existing documents predate this map and state their rules as
   prose or as spec clauses, not as numbered laws marked with build state. Until one of those
   domains is promoted, no round may run in it.
 - **Schema metadata keys are split between two owners.** Keys that are not data model
@@ -80,7 +80,7 @@ domain 1 is specified (owner ruling, 2026-11-10).
   `proto_message`, `field_number`, `metadata_from_option` keys) stay with domain 1 (confirmed
   2026-11-10). Domain 3 transports all of them and compares their bytes, without owning what any
   key means.
-- **Language bindings are only named.** Domain 10 is `anticipated` (2026-11-12); domain 9, the shim
+- **Language bindings are only named.** Domain 10 is `specified` (2026-11-15, D10C); domain 9, the shim
   under them, is `specified` (2026-11-13). The C#
   binding now lives in this repo (`dotnet/`, merged at `ff5be3e`). Rust has only generated
   accessors. The C# gateway client batches on its own (register BC-9), unassigned until domain 5 is
