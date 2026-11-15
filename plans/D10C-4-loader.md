@@ -53,7 +53,7 @@ production call at rung 7, and rung 2's table row stays the proof of `FlVariant`
   - **edge leg:** as today;
   - **server leg:** afterwards, copy `$SERVER` under its own name into every `Fletcher.Tests` TFM output folder
     (fail if there are none), then `dotnet test tests/Fletcher.Tests --no-build`.
-- Conformance lane (T47 re-anchored, `aud0a` (b)): the server pass builds with `-p:FletcherNativeShim=$SERVER`,
+- Conformance lane (T47 re-anchored, `aud0a` T47 row): the server pass builds with `-p:FletcherNativeShim=$SERVER`,
   whose `Link` keeps the file's own name. The renaming `cp` and every `cmp` line on both OSes are deleted. They are
   replaced by `test -f "$OUT/<server file>"` and the observation row below.
 - `Fletcher.Tests.csproj` bakes three `AssemblyMetadata` values: the `FletcherServerShim` path, the test host's
@@ -105,13 +105,13 @@ tests **fail** and name the property.
 | Test | Green by | Red at `b317201`, for the right reason |
 |---|---|---|
 | `TheServerShimLoadsWhenPresentBesideTheApp`, theory: edge ∈ {flat, runtimes} × server ∈ {flat, runtimes} | server-first list, one load | the host prints `module <edge file>` (`NL:73`) |
-| `AnUnloadableServerShimStopsTheAppAndLoadsNoShim`: **control** (`aud0a` (d)), {valid edge, server = non-library bytes} | first present, no loop, loud refusal | exit 0 with the edge loaded: the forbidden fallback |
+| `AnUnloadableServerShimStopsTheAppAndLoadsNoShim`: **control** (`aud0a` (b)), {valid edge, server = non-library bytes} | first present, no loop, loud refusal | exit 0 with the edge loaded: the forbidden fallback |
 | `AnAppWithOnlyTheEdgeShimRunsOnIt` | unchanged | **guard**, green both ways (L7) |
-| ci.dotnet server leg + `NativeLoaderTests.TheLoadedShimIsTheServerExactlyWhenItIsBesideTheTests` (leg: one module; variant `Server` ⇔ a server file is beside) | resolver; CI staging | edge loaded beside a server file (`aud0a` (c)) |
+| ci.dotnet server leg + `NativeLoaderTests.TheLoadedShimIsTheServerExactlyWhenItIsBesideTheTests` (leg: one module; variant `Server` ⇔ a server file is beside) | resolver; CI staging | edge loaded beside a server file (`aud0a` (a)) |
 | Conformance server pass + `TheShimBesideTheTestsIsTheOneLoaded` (both passes, same rule, by module) | own-name staging | a server-only folder finds no shim |
-| T42 rewritten (`aud0a` (a)): every server candidate before every edge one, in directory order; counts 8/4/4 | candidate list | 4 candidates, edge only |
+| T42 rewritten (`aud0a` T42 row): every server candidate before every edge one, in directory order; counts 8/4/4 | candidate list | 4 candidates, edge only |
 | leg `OnlyTheFirstPresentFileIsTried`: [refused A, refused B] names A, never B | no loop | HEAD lists both |
-| guard `NoNativeLoadOutsideTheResolver` (BC-10 scan of the baked `dotnet/src`) | — | green at HEAD (`aud0a` (e)). Control: it fails as vacuous unless it finds `NativeLoader.cs`'s own `NativeLibrary.Load` |
+| guard `NoNativeLoadOutsideTheResolver` (BC-10 scan of the baked `dotnet/src`) | — | green at HEAD (`aud0a` "Laws vs tests"). Control: it fails as vacuous unless it finds `NativeLoader.cs`'s own `NativeLibrary.Load` |
 | T43 (`:44-:239`), unchanged, on both legs (L1 handshake rows included) | — | kept |
 
 ## Risks / Unknowns

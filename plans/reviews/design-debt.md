@@ -879,3 +879,9 @@ Review: [../../docs/archive/D7F/reviews/D7F-1-design-review.md](../../docs/archi
 - ~~DEBT-1~~ resolved: leg remarks name the delivery-exit free; release observed by `ReentrancyTests.TheReleaseRunsExactlyOnceWhereverTheSubscriptionIsFreed` (D10C-3 close).
 - ~~DEBT-2~~ resolved: release after `Self.Free()`, no catch, must-not-throw contract (`Subscriber.cs:380`, 4a F1) (D10C-3 close).
 - ~~DEBT-3~~ resolved: brief/design restated to 130–160 (commits 5b311af, 779dbda); landed net 125 excl. comments.
+
+## D10C-4 — the loader picks the shim (cycle 1 NEEDS-REWORK, 1 BLOCKER) — [review](D10C-4-design-review.md)
+- DEBT-1 (brief, PM): Decision 1 is settled by :575 (1) (R-1 (a): "one resolver site, no fallback branch"), d10 L5/D28 and BC-10's "delete the runtime's default probing … `NativeLoader.cs:73`"; make it a disclosure, keep P1's STOP.
+- DEBT-2 (CI): when conformance `:123`'s rename goes, keep `env -u LD_LIBRARY_PATH` (D9S-7 DEBT-1, `157d3c3`); `conanrun.sh` would otherwise hide a P2 breach in that lane.
+- DEBT-3 (doc): "one decision per process" is per `AssemblyLoadContext`; two ALCs can choose differently and meet d9 L17's marker (loud). Reword design row 3 and the `NativeLoader` comment.
+- DEBT-4 (docs): `README.md:324`, `docs/architecture-overview.md:354`, `dotnet/README.md:83` gain `-p:FletcherServerShim=`; `ci.dotnet.yml:115-117, :253-255` ("arrow-bridge is NOT in the loop") rewritten.
