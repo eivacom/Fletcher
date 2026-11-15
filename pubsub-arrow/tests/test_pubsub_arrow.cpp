@@ -27,6 +27,7 @@
 #include <mutex>
 #include <optional>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -3486,4 +3487,149 @@ TEST(SubscriberArrowBatchTest, ARefusedSubscribeNeverDeliversWhatItCaught) {
         EXPECT_EQ(calls->load(), 0) << "the refused Subscribe delivered what it caught";
         EXPECT_TRUE(token.expired()) << "the refused Subscribe still holds its callback";
     }
+}
+
+// ---------------------------------------------------------------------------
+// D10C-1 -- domain 7's own proof of four behaviours only C#'s batcher was tested for (ruling
+// 2026-11-15, "D10C ladder: the domain-7 port tests", ledger :595 (1)). Guards, expected green on
+// arrival: each is driven through PublisherArrow and the batched SubscriberArrow::Subscribe only.
+// The fourth (a row that would overflow a window closes it and arrives in the next) runs at real
+// size, so it is `heavy` and lives in test_pubsub_arrow_heavy.cpp.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+std::vector<uint8_t> BlobBytes(const Blob* blob) {
+    return blob == nullptr ? std::vector<uint8_t>{}
+                           : std::vector<uint8_t>(blob->data(), blob->data() + blob->size());
+}
+
+Attachments OneAttachment(const std::string& key, std::vector<uint8_t> value) {
+    Attachments att;
+    att.Set(key, Blob{std::move(value)});
+    return att;
+}
+
+}  // namespace
+
+// L1, L2, L3. Two valid rows cut at a non-boundary and sent as two messages: each message is
+// malformed alone, so each is refused and counted, and nothing shifts: the good row after them
+// arrives with its own attachment at index 0, not with a split message's.
+TEST(SubscriberArrowBatchTest, RowsSplitAcrossMessagesAreDroppedNotMisaligned) {
+    BatchSink sink;  // declared first: it outlives the subscriber (d7 L9 closing)
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
+    pub.CreateTopic(kTopic, TestSchema());
+    const auto result = sub.Subscribe(kTopic, sink.callback(), NoTriggerBatchOptions());
+
+    Codec codec(TestSchema());
+    const EncodedRow first = codec.EncodeRow(MakeRow(1, "aaaa"));
+    const EncodedRow second = codec.EncodeRow(MakeRow(2, "bbbb"));
+    EncodedRow joined = first;
+    joined.insert(joined.end(), second.begin(), second.end());
+    const size_t cut = first.size() + 3;  // 3 bytes into the second row
+    ASSERT_LT(cut, joined.size());
+
+    pub.PublishDirect(
+        kTopic, [&](WriteBuffer& buf) { buf.Append(joined.data(), cut); },
+        OneAttachment("head", {0x01}));
+    pub.PublishDirect(
+        kTopic, [&](WriteBuffer& buf) { buf.Append(joined.data() + cut, joined.size() - cut); },
+        OneAttachment("tail", {0x02}));
+    pub.Publish(kTopic, MakeRow(3, "good"), OneAttachment("good", {0x03}));
+    sub.Unsubscribe(result.subscription_id);
+
+    std::lock_guard<std::mutex> lk(sink.mu);
+    ASSERT_EQ(sink.deliveries.size(), 1u);
+    const auto& d = sink.deliveries[0];
+    EXPECT_EQ(d.status.reason, BatchStatus::Reason::kClosing);
+    EXPECT_EQ(d.num_rows, 1);
+    EXPECT_EQ(d.status.rows_dropped, 2);
+    ASSERT_EQ(d.attachments.size(), 1u);
+    EXPECT_EQ(d.attachments[0].size(), 1u);
+    EXPECT_EQ(BlobBytes(d.attachments[0].Find("good")), std::vector<uint8_t>{0x03});
+    EXPECT_EQ(d.attachments[0].Find("head"), nullptr);
+    EXPECT_EQ(d.attachments[0].Find("tail"), nullptr);
+    ASSERT_NE(d.batch, nullptr);
+    EXPECT_EQ(std::static_pointer_cast<arrow::Int32Array>(d.batch->column(0))->Value(0), 3);
+    EXPECT_EQ(std::static_pointer_cast<arrow::StringArray>(d.batch->column(1))->GetString(0),
+              "good");
+}
+
+// L3. An empty attachment key is a key like any other (the local `Set` refuses only a zero byte):
+// the row arrives with it, beside a named key, and the next row's empty set stays its own.
+TEST(SubscriberArrowBatchTest, AnEmptyAttachmentKeyArrivesWithItsRow) {
+    BatchSink sink;  // declared first: it outlives the subscriber (d7 L9 closing)
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
+    pub.CreateTopic(kTopic, TestSchema());
+    SubscriberArrow::BatchOptions opt = NoTriggerBatchOptions();
+    opt.max_rows = 2;
+    static_cast<void>(sub.Subscribe(kTopic, sink.callback(), opt));
+
+    Attachments with_empty_key;
+    with_empty_key.Set("", Blob{std::vector<uint8_t>{7, 8}});
+    with_empty_key.Set("named", Blob{std::vector<uint8_t>{9}});
+    pub.Publish(kTopic, MakeRow(1, "a"), with_empty_key);
+    pub.Publish(kTopic, MakeRow(2, "b"));
+
+    ASSERT_TRUE(sink.WaitFor(1, std::chrono::seconds(5)));
+    std::lock_guard<std::mutex> lk(sink.mu);
+    ASSERT_EQ(sink.deliveries.size(), 1u);
+    const auto& d = sink.deliveries[0];
+    EXPECT_EQ(d.num_rows, 2);
+    EXPECT_EQ(d.status.rows_dropped, 0);
+    ASSERT_EQ(d.attachments.size(), 2u);
+    EXPECT_EQ(d.attachments[0].size(), 2u);
+    ASSERT_NE(d.attachments[0].Find(""), nullptr);
+    EXPECT_EQ(BlobBytes(d.attachments[0].Find("")), (std::vector<uint8_t>{7, 8}));
+    EXPECT_EQ(BlobBytes(d.attachments[0].Find("named")), std::vector<uint8_t>{9});
+    EXPECT_TRUE(d.attachments[1].empty());
+}
+
+// L10, L12. A callback that throws (a std exception, then a value that is not one) neither stops
+// the batch thread nor loses a later batch: the three row-limit batches arrive in order, then
+// exactly one closing batch.
+TEST(SubscriberArrowBatchTest, AThrowingCallbackDoesNotStopTheNextBatch) {
+    BatchSink sink;             // declared first: it outlives the subscriber (d7 L9 closing)
+    std::atomic<int> calls{0};  // likewise: the closing batch calls back from ~SubscriberArrow
+    auto mock = std::make_shared<MockProvider>();
+    PublisherArrow pub(mock);
+    SubscriberArrow sub(mock);
+    pub.CreateTopic(kTopic, TestSchema());
+    SubscriberArrow::BatchOptions opt = NoTriggerBatchOptions();
+    opt.max_rows = 1;
+
+    auto record = sink.callback();
+    const auto result = sub.Subscribe(
+        kTopic,
+        [&calls, record](std::shared_ptr<arrow::RecordBatch> batch, std::vector<Attachments> att,
+                         BatchStatus status) {
+            const int call = ++calls;
+            record(std::move(batch), std::move(att), status);
+            if (call == 1) throw std::runtime_error("the first callback throws a std exception");
+            if (call == 2) throw 42;  // not derived from std::exception
+        },
+        opt);
+
+    for (int x = 1; x <= 3; ++x) pub.Publish(kTopic, MakeRow(x, "n"));
+    ASSERT_TRUE(sink.WaitFor(3, std::chrono::seconds(5)));
+    sub.Unsubscribe(result.subscription_id);
+
+    std::lock_guard<std::mutex> lk(sink.mu);
+    ASSERT_EQ(sink.deliveries.size(), 4u);
+    for (int i = 0; i < 3; ++i) {
+        const auto& d = sink.deliveries[static_cast<size_t>(i)];
+        EXPECT_EQ(d.status.reason, BatchStatus::Reason::kRowLimit) << "batch " << i;
+        EXPECT_EQ(d.status.rows_dropped, 0) << "batch " << i;
+        ASSERT_EQ(d.num_rows, 1) << "batch " << i;
+        EXPECT_EQ(std::static_pointer_cast<arrow::Int32Array>(d.batch->column(0))->Value(0), i + 1)
+            << "batch " << i;
+    }
+    EXPECT_EQ(sink.deliveries[3].status.reason, BatchStatus::Reason::kClosing);
+    EXPECT_EQ(sink.deliveries[3].num_rows, 0);
+    EXPECT_EQ(sink.deliveries[3].status.rows_dropped, 0);
+    EXPECT_EQ(calls.load(), 4);
 }

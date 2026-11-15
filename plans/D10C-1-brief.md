@@ -40,6 +40,5 @@ None. Where the ports land and how case 4 is proven were both ruled at :595.
 Declared net lines: production +0 / −0 (0 files; light-lane admission met) · tests about +190 / −0 in 2 files (plus at most 3 comment lines in `tests/CMakeLists.txt` if the cap moves) · new public surface: 0 · design cycles used: 1/2
 
 ---
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
-<delta vs the above — actual net lines, anything retired or added the brief did
-not predict, fix cycles used>.
+**As landed (2026-11-15):**
+Production +0/−0 (light-lane admission held). Tests +280/−11 in the 2 named files vs ~+190 declared (+47%, under the 50% flag; extra assertions + banners, review N1 removed the duplicate helper). Added beyond the brief: none; control 4c as declared; `tests/CMakeLists.txt` unchanged (heavy label 0.92 s). Fix cycles 1 (review S1 lifetime, N1 dedupe; non-blocking). 0a MUST-DELETE(1) = C# T38, deletion stays at rung 7 per :203; 0b CLEAR.
