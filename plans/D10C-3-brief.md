@@ -15,7 +15,7 @@ No new public type or member.
 ## What a user will notice
 - **A bad row is reported when it arrives.** Today a corrupt row on a readable topic produces no call; its loss is added to the next good row's delivery. A topic C# cannot read, or a subscription made before the topic existed, today produces nothing until a one-minute timer fires or the app unsubscribes, then one combined "N lost". After this stage each such row is its own call with 1 lost.
 - **Unsubscribing a per-row subscription delivers nothing further.** Today it could deliver one final "closing" call holding pending losses. Now nothing is ever pending.
-- **A first row with no layout no longer disables the subscription for good.** On transports that send the layout with the data, later rows decode (ruling :258 (3)).
+- **No visible change for a first row with no layout.** Spec §7 cl. 1 (PDA-DEC-3) never mixes schema-less and schema-carrying rows in one subscription, so no lawful transport produces the case. C#'s no-latch handling (:258 (3)) is defensive, not a promise, and has no test (0b gap (b); PM decision 2026-11-15).
 - **Every per-row delivery is labelled "row limit", losses included.** The laws settle this rather than a choice. C# may not invent a reason the native library does not have (d10 L2). "Closing" means "this is the last delivery" and "timeout" means "a deadline passed", so both would be false here. A one-row delivery is a full window of one.
 
 ## Deleted

@@ -127,7 +127,7 @@ drives the codec release on the departing delivery's exit, not the deferred bran
 - **Coexistence (ladder-declared):** `Batcher`'s copy duplicates the new one until rung 8; `SubscribeBatched`
   stays managed until rung 7. No bridge routes per-row to it.
 - **Visible changes (brief):** a bad row is reported at once, alone; a per-row subscription never delivers a
-  final closing call; a schema-less first row no longer latches the subscription undecodable (rul:258 (3)).
+  final closing call; a schema-less first row does not latch (defensive only: spec §7 cl. 1 makes it unreachable; no test).
 - **Inherited gap:** a codec failing on allocation, not rejection, decides "unopenable" (as d7 BC-3's gap).
 - **No STOP-AND-ASK.** No tier-1 disagreement: L2, L7, L9, L11, BC-16, D20, D30, D32 and rul:536 (1),
   :575 (3) agree. No d7/d9 edit; no new public member; no lower-layer re-check; nothing skipped.
