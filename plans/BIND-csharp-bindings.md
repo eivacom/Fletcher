@@ -1346,8 +1346,10 @@ codec step.
   native call, `RecordBatch` delivered with parallel attachments and a
   `BatchStatus {Reason, RowsDropped}`; `BatchOptions {MaxRows = 8000, Timeout =
   1 min}`; per-row Arrow delivery is `MaxRows = 1`.
+  *Revised 2026-11-15 by ledger :575 (D10C): retired for SubscriberArrow.*
 - `PublisherArrow` folds into `Publisher` (already Arrow-typed via `BoundRows`).
 - Dictionary re-folding deferred to DICT (D-BIND-8).
+  *Revised 2026-11-15 by ledger :575 (D10C): retired for SubscriberArrow.*
 - **The `test_pubsub_arrow` file set** ported over `inprocess` - 33 cases at D-BIND-57,
   which re-derived it from 15 after #128; the options and schema-watch cases among them
   use what D-BIND-57 added.
@@ -1400,14 +1402,17 @@ codec step.
   * **Found by the C++/C# sequence review during 5b's CI, and fixed (D-BIND-63):** the 5a batcher
     had no byte ceiling. Its window now splits where C++'s does (`Array.MaxLength`, just under C++'s
     2^31-2), and a row alone past the ceiling is a counted drop.
+    *Revised 2026-11-15 by ledger :575 (D10C): retired for SubscriberArrow.*
   * **Handler calls are not serialised (D-BIND-64, from the BIND-5 review's Q2):** as in C++,
     handlers may run concurrently and batches may complete out of order, and `Stop` waits for an
     in-flight timer flush. This replaces 5a's lock across the handler, which deadlocked.
+    *Revised 2026-11-15 by ledger :575 (D10C): retired for SubscriberArrow.*
   * **The D-BIND-60 check compares wire layout (D-BIND-65, from the review's Q1):** the codecs'
     field plans, so names, metadata and nullability do not refuse, and dictionary schemas are checked
     rather than skipped. The verdict is cached per (rows, topic).
   * **No row is lost uncounted (D-BIND-66, from the review's Q3):** the intake and the flush contain
     their own failures and count them in `RowsDropped`, as C++'s `AddRow` does.
+    *Revised 2026-11-15 by ledger :575 (D10C): retired for SubscriberArrow (the batched half).*
   * **Bound rows need this publisher's declaration (D-BIND-67, from the review's Q4):** the fused
     publishes refuse `TopicNotDeclared` otherwise, as C++ `PublisherArrow` does; the raw paths stay
     unchecked.
@@ -1415,6 +1420,7 @@ codec step.
     window whose row boundaries are known, skipping and reporting each bad or misframed row, in one
     native call. Only good rows count toward `MaxRows`. Three cases were added; managed is
     now **316/316**, and two mutations are each caught.
+    *Revised 2026-11-15 by ledger :575 (D10C): retired for SubscriberArrow.*
   * **After close, 2026-09-29: the oracle's scope note.** BIND-3 handed BIND-5 the statement
     that the UTF-16↔UTF-8 transcode (D-BIND-1b) happens in `Apache.Arrow`, outside what the
     oracle scores. The close-out missed it. It is now in the header of `CopyOracleTests.cs` and

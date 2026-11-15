@@ -30,6 +30,11 @@ test-authority step reading it as live would build or keep what a law forbids). 
 comments, READMEs) that contradicts a law is a FINDING "owed by the round", as in the D9S audit, since
 tier 3 always complies. Laws are d10's unless prefixed. "Same" repeats a numbered finding.
 
+**Status (2026-11-15):** B1 and R-1 to R-6 were **ruled** by the owner, each with the recommended
+option (ledger :575), and applied to d10 (D28-D34, L3, L5, L7, L9, L12, §8), the register (BC-16,
+BC-17, notes on BC-2, -8, -9, -10, -12, -13, -14) and the BIND annotations. The verdicts below are as
+audited, before the rulings.
+
 **Totals:** **145 rows** (A: 121 clause rows, B: 24 pair rows): **86 OK, 54 FINDING, 5 BLOCKER**. The
 five BLOCKER rows are **one blocker, B1** (un-annotated BIND oracle text that prescribes the managed
 batcher and per-row-as-a-batch-of-one). Distinct findings F1–F27. **Six tier-1 collisions for the
@@ -248,7 +253,7 @@ D32's, not :512's); **F7** (D8 and BC-2 keep a conclusion whose cited premise :5
 **Part B pair rows: 24 (12 OK, 12 FINDING; LL-1, LL-3 and R-10 carry F1, F2, F11).** Grand
 total 145: 86 OK, 54 FINDING, 5 BLOCKER.
 
-### B1 (BLOCKER): un-annotated oracle text prescribing the managed batcher
+### B1 (BLOCKER): un-annotated oracle text prescribing the managed batcher — ruled :575 (7), annotations applied
 
 D-BIND-25's per-row half (A61), D-BIND-63 (A66), D-BIND-66's batched half (A68), D-BIND-68's Scope and
 B3 bullets (A69) and BIND-5's acceptance bullets (A86) state as locked what L4, L7, L13 and D24 now
@@ -260,7 +265,7 @@ batches come from domain 7 (d10 L4) and whose per-row form is the native per-row
 ruled*". D-BIND-68: "the entry point stays (d10 Q8 default); its consumer is deleted". D-BIND-66: keep
 the per-row half live until R-3 is ruled. BIND-5: one annotation after the acceptance list.
 
-### Owner questions (tier-1 collisions)
+### Owner questions (tier-1 collisions) — all ruled 2026-11-15 (ledger :575), recommended options
 
 **R-1 — When does a C# app load the server shim?** (a) **Presence decides; a present server shim that
 will not load fails loudly, naming it** (no fallback). User: adding the package is enough; a stale
@@ -444,17 +449,17 @@ dictionary type mapping (`DecodedSchema.cs:47-100`); package rules (`check_dotne
 
 | # | Context (one right answer) | Disposition | Site / copies | Structural test | Register |
 |---|---|---|---|---|---|
-| D1 | **Which shim is loaded?** | **EXTEND-AND-NARROW** | Single site `NativeLoader.Resolve`, server candidates first in BOTH routes. Copies to delete: the runtime's default probing deciding by the edge name (`NL:73`, F14); CI's renamed-copy staging (:525, T47). Behaviour on a present-but-unloadable server shim per R-1. | Both files staged: `fl_binding_variant() == SERVER` and exactly one `fletcher-c-abi*` module in the process; edge only: `EDGE`; a scan finds no `NativeLibrary.Load*`/`TryLoad` outside `NativeLoader` | BC-10: deferred half → "d10 L5, `NativeLoader.Resolve`" |
-| D2 | **Is this a server build?** (does a batched subscribe work) | **REUSE** BC-10 | The shim (`fl_binding_variant`, `RequireServerBuild`, `binding.cpp:228-238`). C# forwards the shim's `FL_NOT_SUPPORTED` (L3, L6); a public variant property may read the query, never refuse from it (R-2 (c) needs a ruling) | On the edge shim `SubscribeBatched` throws `FletcherException(NotSupported, Seam)` whose message contains the shim's text verbatim; `fl_binding_variant` is called from one site in `dotnet/src` | BC-10: add the C# note |
+| D1 | **Which shim is loaded?** | **EXTEND-AND-NARROW** | Single site `NativeLoader.Resolve`, server candidates first in BOTH routes. Copies to delete: the runtime's default probing deciding by the edge name (`NL:73`, F14); CI's renamed-copy staging (:525, T47). Present-but-unloadable server shim: fails loudly, no fallback (**ruled** :575 (1)). | Both files staged: `fl_binding_variant() == SERVER` and exactly one `fletcher-c-abi*` module in the process; edge only: `EDGE`; a scan finds no `NativeLibrary.Load*`/`TryLoad` outside `NativeLoader` | BC-10: deferred half → "d10 L5, `NativeLoader.Resolve`" (**applied**) |
+| D2 | **Is this a server build?** (does a batched subscribe work) | **REUSE** BC-10 | The shim (`fl_binding_variant`, `RequireServerBuild`, `binding.cpp:228-238`). C# forwards the shim's `FL_NOT_SUPPORTED` plus one binding sentence naming the server package (**ruled** :575 (2)); a public variant property may read the query, never refuse from it | On the edge shim `SubscribeBatched` throws `FletcherException(NotSupported, Seam)` whose message starts with the shim's text verbatim and adds exactly one sentence; `fl_binding_variant` is called from one site in `dotnet/src` | BC-10: add the C# note |
 | D3 | **Are these batch options acceptable?** | **EXTEND-AND-NARROW** BC-8 | Domain 7's constructor. Copies to delete: `SA:228-235` (check + `MaxTimeout` cap), `SA:237` (clamp), `SA:157` (`MaxTimeout`), `SA:147` (doc). `GatewayBatch.cs` stays domain 5's | BC-8's 6 x 7 grid driven from C# through the server shim: refused ⇔ out of range, `FletcherException(InvalidArgument)` with domain 7's message byte-equal, nothing delivered, nothing left; a scan of `dotnet/src/Fletcher` finds no comparison or clamp on `MaxRows`/`Timeout` | BC-8: "C#: passes through (d10 L3, D22)" |
 | D4 | **How does a C# timeout cross?** | **EXTEND-AND-NARROW** BC-14 | One internal site lifted from `SchemaArrival.ToMilliseconds`; for batch options it forwards negatives and never rounds a negative to 0 (today `(long)total` truncates: −1 tick would cross as 0 and be accepted); delete `SA:512-523` | −1 tick on a batched subscribe is refused by domain 7 (not accepted as 0); `InfiniteTimeSpan` → `INT64_MAX`; `TimeSpan.MaxValue` never flushes early; the arrival unchanged; one `TimeSpan`→ms site in `dotnet/src/Fletcher` | BC-14: "C#: one internal site, shared by the arrival and the batched subscribe" |
 | D5 | **Is this batch the caller's to keep?** | **DEFINE** | One batch-thunk function moves array and schema (C Data move), imports with the batch's own schema, then calls the handler; never releases what it did not move (L8). Incumbents are other lifetimes: `FletcherCodec.cs:272, 325` (owned decode output), `SchemaHandle.cs:127-134` | A handler that keeps the batch past the callback reads it intact; the shim's "unmoved, released by the shim" count is 0 for every moved batch; allocation baseline after disposal | BC-13: "C#: the batch thunk's move, one site" |
 | D6 | **How does a status, origin or reason number map to C#?** | **REUSE** (extend) | `Errors.ThrowIfFailed` and the `FletcherStatus`/`FletcherOrigin` enums; add `Handover = 4`, renumber `BatchReason` 1..3 (F2), mirror `fl_variant` | Q11: a test that reads `binding.h`'s enums and `#define`s and compares every C# value by name and number | none (L2) |
 | D7 | **How does a failed hand-over surface?** | **DEFINE** | One branch of the batch thunk: null batch, `RowsDropped` as given, reason kept, `BatchStatus` failure {status, origin 4, message copied by length via `Errors`' decoder}; never `fl_error_dispose` (borrowed) | d9's test-only hand-over fault shim driven from C#: Σ rows + Σ dropped = rows offered; origin `Handover`; message; reason | BC-12: add the C# half |
-| D8 | **Per-row Arrow: is this row delivered or dropped?** | **DEFINE** (pending R-3) | One classify-and-count function in `SubscriberArrow`'s per-row handler. Copies to delete: the managed batcher's drop paths (`SA:398-465`, `Resolve`). C++'s per-row gap (BC-2) is not reused | Conservation on the per-row path, edge and server shims: good, malformed and schema-less rows; rows offered = delivered + Σ `RowsDropped` | **BC-16 (new)** |
-| D9 | **Which .NET package may carry native assets?** | **EXTEND-AND-NARROW** | One rule list in `check_dotnet_packages.sh` (`:74`, `:108-113`, `:119`); delete the "only Interop" text in `Fletcher.Interop.csproj:6-10` and the READMEs | The check over five packages, with controls: a `runtimes/` entry injected into `Eiva.Fletcher` fails; a GatewayClient dependency on the server package fails; the server package with other than its two shims fails | **BC-17 (new)** |
+| D8 | **Per-row Arrow: is this row delivered or dropped?** | **DEFINE** (R-3 **ruled** :575 (3): null batch, `RowsDropped = 1`) | One classify-and-count function in `SubscriberArrow`'s per-row handler. Copies to delete: the managed batcher's drop paths (`SA:398-465`, `Resolve`). C++'s per-row gap (BC-2) is not reused | Conservation on the per-row path, edge and server shims: good, malformed and schema-less rows; rows offered = delivered + Σ `RowsDropped` | **BC-16 (new)** |
+| D9 | **Which .NET package may carry native assets?** | **EXTEND-AND-NARROW** | One rule list in `check_dotnet_packages.sh` (`:74`, `:108-113`, `:119`) (BC-17 **added**); delete the "only Interop" text in `Fletcher.Interop.csproj:6-10` and the READMEs | The check over five packages, with controls: a `runtimes/` entry injected into `Eiva.Fletcher` fails; a GatewayClient dependency on the server package fails; the server package with other than its two shims fails | **BC-17 (new)** |
 | D10 | **What limits does the server shim meet?** (DLL list, floors, ceiling) | **DEFER-BUT-REGISTER** (Q7 default) | `check_shim_dependencies.sh` and `check_dotnet_packages.sh`, per package | Same lists and floors fail by name; ceiling from the first measured pack | in BC-17's text |
-| D11 | **What Arrow type does a dictionary column arrive as?** | **REUSE** domain 2 | `BatchDecoder` re-folds (batches), `NanoarrowCodec` gives the value type (per-row). C# converts neither; batches never go through `DecodedSchema.cs:100` | Batched: `DictionaryArray` (mirror of d7's `DictionaryColumnRefoldedToDictionaryArray`); per-row: value type (R-5) | none (d2) |
+| D11 | **What Arrow type does a dictionary column arrive as?** | **REUSE** domain 2 | `BatchDecoder` re-folds (batches), `NanoarrowCodec` gives the value type (per-row). C# converts neither; batches never go through `DecodedSchema.cs:100` | Batched: `DictionaryArray` (mirror of d7's `DictionaryColumnRefoldedToDictionaryArray`); per-row: value type (R-5 **ruled** :575 (5)) | none (d2) |
 | D12 | **When, on which thread and in what order does a batch reach the handler?** | **REUSE** BC-1; **EXTEND-AND-NARROW** BC-9 | Domain 7. Copy to delete: the managed `Batcher` (`SA:353-827`) | L4's scan of `dotnet/src/Fletcher` (no `System.Threading.Timer`, `Stopwatch` deadline, row buffer in `SubscriberArrow`); C# replay of `EveryCallbackRunsOnTheBatchThreadInWindowOrder` | BC-9: the C# copy deleted |
 | D13 | **Is a handler failure counted?** | **REUSE** (narrow) | D-BIND-19 rule 5: the per-object count and `Diagnostics`. Copy: `SA:335-350` duplicates `Subscriber.cs:770`; one helper | A throwing batch handler: count +1, event raised, next batch arrives; the reflection test | BC-7: "C# counts (d10 L9)" |
 | D14 | **May a `SubscriberArrow` be disposed or closed here?** | **REUSE** BC-6 | `Subscriber.InDeliveryOnThisProvider` (`SA:310`); a batch callback pushes no frame, so it is served (L11) | Dispose from a batch callback: queued batches then one `Closing`; dispose from a row delivery: refused | BC-5: C# note |
@@ -463,29 +468,35 @@ dictionary type mapping (`DecodedSchema.cs:47-100`); package rules (`check_dotne
 | D17 | **Is another shim already loaded?** | **REUSE** BC-15 | The shim's marker scan; the loader loads one file (D1) | D1's single-module assertion | BC-15: C# note |
 | D18 | **Can this binding use this shim's version?** | **REUSE** | `NativeLoader.VerifyAbiVersion`; one version for both builds (d9 D27) | `NativeLoaderTests` handshake rows | none |
 
-### Proposed register rows (text for `bounded-context-register.md`; not edited)
+### Register rows (proposed here; **added** 2026-11-15 with the C# notes on BC-2, -8, -9, -10, -12, -13, -14)
 
 | ID | Question | Single site | Structural test | Status | Domain |
 |---|---|---|---|---|---|
 | BC-16 | On C#'s per-row Arrow subscribe, is this row delivered or dropped, and is the drop reported? | One classify-and-count function in `SubscriberArrow`'s per-row handler (over `fl_subscriber_subscribe` and `fl_decode_rows`); answer per R-3 (default: a null batch with `RowsDropped = 1`) | Per-row conservation over good, malformed and schema-less rows on both shims | `[designed-not-built]` (D10C); owner R-3 owed | d10 (L7, L9) |
 | BC-17 | Which .NET package may carry a native shim, and what limits does each shim meet? | `scripts/check_dotnet_packages.sh` (one rule list: Interop and the server package, each exactly its two shims; every other package none; GatewayClient depends on neither) with `check_shim_dependencies.sh` per shim; D-BIND-157 on Interop; the server ceiling per Q7 | The check over five packages with three red controls | `[built]` for four packages under the old rule; five `[designed-not-built]` | d10 (L15) |
 
-Amendments: BC-2 (drop the C# premise; point at BC-16), BC-8, BC-9, BC-10 (deferred half settled),
-BC-12, BC-13, BC-14 (C# site text), as in D1–D7, D12.
+Amendments (applied): BC-2 (the C# premise; points at BC-16), BC-8, BC-9, BC-10 (deferred half
+settled), BC-12, BC-13, BC-14 (C# site text), as in D1–D7, D12. A sixth row, the same-topic refusal
+(R-6), is d10 L3's ruled exception, held by the object itself, and needs no register row.
 
-## Owner-level items (one line each)
+## Owner-level items: all ruled 2026-11-15 (ledger :575), each with the recommended option
 
-- **B1 (BLOCKER)**: annotate D-BIND-25 (per-row half), -63, -66 (batched half), -68 (Scope, B3) and
-  BIND-5's acceptance as retired for `SubscriberArrow` (tier 2, approval), before the deletion stage.
-- **R-1**: server shim chosen by presence (fail loudly if unloadable) or by reference. Default (a).
-- **R-2**: the edge refusal = shim message + one sentence naming the package. Default (a).
-- **R-3**: per-row Arrow reports an undecodable row (null batch, `RowsDropped = 1`). Default (a).
-- **R-4**: bad batch option → `FletcherException(InvalidArgument)`; :536 (3) supersedes :235's "as it
-  does today". Default (a).
-- **R-5**: per-row value type vs batched `DictionaryArray` accepted. Default (a).
-- **R-6**: same-topic row + batched mix in one `SubscriberArrow`: document (a) or refuse (b).
-  Recommended (b), default (a).
-- **Q9**: four cases to port to domain 7 (or drop by ruling), before the deletion stage.
+- **B1 (BLOCKER) — RULED (7) "Approve as listed"**: D-BIND-25 (per-row half), -63, -66 (batched half),
+  -68 (Scope, B3) and BIND-5's acceptance clauses annotated "retired for `SubscriberArrow`" (applied).
+- **R-1 — RULED (1) "Presence; fail loudly"**: a present server shim is loaded; a present but
+  unloadable one stops the load, naming it; no fallback (d10 L5, D28; BC-10).
+- **R-2 — RULED (2) "Shim text + package"**: the shim's message verbatim plus one binding sentence
+  naming the server package (d10 L3, L6, D29).
+- **R-3 — RULED (3) "Counted as dropped"**: an undecodable per-row Arrow row is a null batch with
+  `RowsDropped = 1` (d10 L7, L9, D30; BC-16).
+- **R-4 — RULED (4) "FletcherException"**: `FletcherException(InvalidArgument)`; :235's "as it does
+  today" revised (d10 L3, D22, D31).
+- **R-5 — RULED (5) "Accept both types"**: per-row value type, batched `DictionaryArray`; C# converts
+  nothing (d10 L14 V12, D32).
+- **R-6 — RULED (6) "Refuse the mix"**: `SubscriberArrow` refuses a row and a batched subscription to
+  one topic, a ruled exception under d10 L3; revises :448 (1) for C# (d10 D33).
+- **PM decision (under d10 L2)**: `BatchReason` renumbered to 1-3 (d10 D34; F2 closed).
+- **Q9**: four cases to port to domain 7 (or drop by ruling), before the deletion stage (open).
 
 ## Tier-2 corrections needing approval (suggested, not applied)
 

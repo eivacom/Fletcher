@@ -559,6 +559,7 @@ is a copy-paste from the RBA feature; the ADO text is corrected to say what is m
   A managed scalar tree (`IReadOnlyList<object?>` or a Fletcher scalar hierarchy) would box
   every value and re-create on the receive side the per-value shape D-BIND-1a rejected on the
   send side → STOP-AND-ASK.
+  *Revised 2026-11-15 by ledger :575 (D10C): retired for SubscriberArrow (the per-row half, "a one-row batch (`BatchOptions.MaxRows = 1`)").*
 
 - **D-BIND-26 — Temporal values are LOSSLESS by default in generated C#.** *LOCKED BY THE
   MAINTAINER 2026-09-11 (Q5).* `DateTime`/`DateTimeOffset` ticks are 100 ns; an Arrow
@@ -2139,6 +2140,7 @@ and keeps `Metadata(key)` as a shortcut.)*
   **Declined:** a public `BatchOptions.MaxBytes` (a knob with no C++ counterpart, and a surface
   change); documenting the limit only (rows lost as handler faults, and C++ behaving differently for
   the same topic).
+  *Revised 2026-11-15 by ledger :575 (D10C): retired for SubscriberArrow.*
 
 - **D-BIND-64 - `SubscriberArrow` does not serialise its handler calls, matching C++; `Stop` waits
   for an in-flight timer flush, so no handler call runs after `Unsubscribe` or `Dispose` returns.**
@@ -2224,6 +2226,7 @@ and keeps `Metadata(key)` as a shortcut.)*
   **Declined:** surfacing the losses as handler faults (a fault in code the caller did not write,
   with `RowsDropped` still undercounting); reporting through both channels (one lost row reported
   twice, with two meanings).
+  *Revised 2026-11-15 by ledger :575 (D10C): retired for SubscriberArrow (the batched half; the per-row half governs the native per-row path, :575 (3)).*
 
 - **D-BIND-67 - the bound-rows publishes refuse a topic THIS publisher did not declare,
   `FL_TOPIC_NOT_DECLARED`, as C++ `PublisherArrow` does.** *LOCKED BY THE MAINTAINER 2026-09-29,* in
@@ -2285,6 +2288,7 @@ and keeps `Metadata(key)` as a shortcut.)*
   **Declined:** decoding each row alone with today's call (N native calls and N arrays per window,
   undoing D-BIND-25); fixing B3 alone and documenting B4 (a publisher of malformed data could
   misalign rows and attachments silently).
+  *Revised 2026-11-15 by ledger :575 (D10C): retired for SubscriberArrow (Scope and B3 put-back; the entry point stays, d10 Q8).*
 
 - **D-BIND-69 - generated C# takes its namespace and nesting from Fletcher's backends, and its
   identifiers from protoc's C# rule.** *LOCKED BY THE MAINTAINER 2026-09-29,* in one question, at
