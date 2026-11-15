@@ -547,3 +547,18 @@ CI's renamed-copy staging, :525, retires when it lands). (3) **An out-of-range b
 as FletcherException(InvalidArgument); the 49.7-day cap goes**; supersedes D-BIND-19 rule 4 / D-BIND-20's pre-check for batch options.
 (4) **C# keeps the edge/server split**; D-BIND-1a rider i ("a .NET process is never the microcontroller") is revised by :363 (4).
 **Applies to:** d10 L3, L5, L7, L14, D9, Q1, Q2, Q4; d9 Q5a; register BC-2, BC-8, BC-10.
+
+## 2026-11-15 — D10C pre-round: batched API on edge, dictionaries, hand-over in C#, the old BIND batcher decisions
+> API on edge: "Yes; throws NotSupported (Rec.)"
+> Dictionaries: "As domain 7 delivers (Rec.)"
+> Hand-over: "Status carries the failure (Rec.)"
+> Old BIND: "Revise all three (Rec.)"
+
+*(Chosen options; full texts in the D10C kickoff question set, 2026-11-15.)*
+**Rulings:** (1) **C#'s batched subscribe exists on every package; on the edge shim it throws a named NotSupported naming the
+server package.** (2) **A batched dictionary column reaches C# re-folded, as domain 7 delivers it**; D-BIND-8 / D-BIND-59's
+"value type" is revised. (3) **A failed hand-over reaches a C# handler with a null batch, its rows counted, and the failure's
+status, origin `Handover` (4) and message**; C#'s origin enum gains code 4. (4) **D-BIND-64 (concurrent, out-of-order handlers),
+D-BIND-59 (3) (null batch = schema not opened only) and C#'s schema-less first-row latch are revised by 2026-11-12 (:203)**; C#
+follows domain 7 (d7 L7, L9, L12).
+**Applies to:** d10 L2, L6, L9, L13, L14, Q3, Q5, Q6; BIND-locked-decisions annotations.
