@@ -571,3 +571,23 @@ follows domain 7 (d7 L7, L9, L12).
 C#'s own copy is gone, while an app that does not need batches still runs on the small, Arrow-free shim."
 **Ruling:** **domain 10 (`docs/domains/d10-csharp-binding.md`, at `74bf308`) is `specified`; its Q7 and Q8 defaults stand.**
 **Applies to:** the domain map row 10; the D10C config's `round_purpose`.
+
+## 2026-11-15 — D10C pre-round audit: six collisions and the BIND annotations
+> Which loads: "Presence; fail loudly (Rec.)"
+> Edge message: "Shim text + package (Rec.)"
+> Bad row: "Counted as dropped (Rec.)"
+> Option error: "FletcherException (Rec.)"
+> Two types: "Accept both types (Rec.)"
+> Same topic: "Refuse the mix (Rec.)"
+> BIND notes: "Approve as listed (Rec.)"
+
+*(Chosen options; full texts in `plans/D10C-pre-round-audit.md` R-1..R-6 and B1.)*
+**Rulings:** (1) **A server shim present beside the app is loaded; one present but unloadable stops the app loudly; no fallback**
+(revises :363 (4)'s "references" and refines :536 (2)). (2) **The edge refusal is the shim's text plus one binding sentence naming the
+server package** (d10 L3 gains that clause). (3) **An undecodable per-row Arrow row arrives as a null batch with RowsDropped = 1.**
+(4) **A bad batch option raises FletcherException(InvalidArgument)**; :235's "throws as it does today" is revised. (5) **Per-row and
+batched may deliver different Arrow types for one dictionary column; C# converts nothing.** (6) **SubscriberArrow refuses a row and a
+batched subscription to the same topic** (a ruled exception under d10 L3; revises :448 (1)'s "documented, not refused" for C#).
+(7) **D-BIND-25, D-BIND-63, D-BIND-66 (batched half), D-BIND-68 (scope, put-back) and BIND-5's acceptance clauses are annotated as
+retired for SubscriberArrow.**
+**Applies to:** d10 L3, L5, L7, L9, L14; register BC-10, BC-16 (new); plans/BIND-*.
