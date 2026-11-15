@@ -91,6 +91,7 @@ commit.
      edge/server split exists because MCUs cannot link Arrow C++, and **a .NET
      process is never the microcontroller** — so the two-tier split may not need
      mirroring in C# at all, possibly collapsing `Core` + `Arrow`.
+     *Revised 2026-11-15 by ledger :536 (D10C pre-round): C# keeps the edge/server split (an edge base package, a server package), revised by :363 (4); the rider's "may not need mirroring in C#" no longer holds.*
   2. **The native artifact links nanoarrow only, not Arrow C++.**
      `arrow-bridge/codec.hpp` includes `<arrow/api.h>`, so wrapping *that* codec
      would drag full Arrow C++ into `Eiva.Fletcher.Interop`. GIR-8's
@@ -246,6 +247,7 @@ commit.
   value type), so implementing it invents nothing. **DICT still owns** re-folding
   decoded values into a `DictionaryArray` and anything involving dictionary IPC.
   The enum half of this decision is untouched.
+  *Revised 2026-11-15 by ledger :551 (D10C pre-round): a batched dictionary column reaches C# re-folded as a `DictionaryArray`, as domain 7 delivers it; per-row decode still gives the value type.*
 
 - **D-BIND-9 — The accessor emitter builds on the IR, not on `FieldKind`.** RBA
   stays on the thin `FieldKind` projection this round (GIR-3) and round **RIR**
@@ -477,6 +479,7 @@ is a copy-paste from the RBA feature; the ADO text is corrected to say what is m
   AND raised as a `HandlerFaulted` event, never silent and never escaping. A second containment
   site, a wrapped user exception, a per-thread error slot, or a fixed-size message buffer →
   STOP-AND-ASK.
+  *Revised 2026-11-15 by ledger :536 (D10C pre-round): rule 4's managed pre-check does not apply to batch options; an out-of-range one raises domain 7's refusal passed through as `FletcherException(InvalidArgument)` (topics and selectors unchanged).*
 
 - **D-BIND-20 — The two mapping details are code, not comments.** *LOCKED BY THE MAINTAINER
   2026-09-11.* `Timeout.Infinite` / `Timeout.InfiniteTimeSpan` (−1) map to `INT64_MAX`, the
@@ -489,6 +492,7 @@ is a copy-paste from the RBA feature; the ADO text is corrected to say what is m
   over UTF-8 differs from C#'s ordinal UTF-16 order (U+FF5E sorts before U+10000 in one and
   after it in the other). A managed comparer or a `Length` check standing in for a byte bound →
   STOP-AND-ASK.
+  *Revised 2026-11-15 by ledger :536 (D10C pre-round): for batch options the timeout is not pre-checked in managed code; `Timeout.InfiniteTimeSpan` still maps to `INT64_MAX`, any other value goes to domain 7, which refuses out-of-range ones, and the 49.7-day `MaxTimeout` cap goes.*
 
 - **D-BIND-21 — Toolchain: .NET 10 LTS SDK; libraries multi-target `net8.0;net10.0`.**
   *LOCKED BY THE MAINTAINER 2026-09-11 (Q7).* The SDK is pinned in `.devcontainer/Dockerfile`
@@ -1980,6 +1984,7 @@ and keeps `Metadata(key)` as a shortcut.)*
 
   **Declined:** a second delegate for the per-row form (two shapes for one window rule); a new
   owned-attachments type (the builder already holds exactly an owned key/value set).
+  *Revised 2026-11-15 by ledger :536 and :551 (D10C pre-round): (1) per-row Arrow delivery is no longer a batch of one but the native per-row path, on both packages (:536 (1)); a batched dictionary column arrives re-folded, as domain 7 delivers it (:551 (2)); (3) a null batch means "no batch could be built" as in d7 L7 (and a failed hand-over), and a schema-less first row no longer makes a subscription undecodable for life (:551 (4)); the handler still owns the batch.*
 
 - **D-BIND-60 — the shim refuses rows bound under a schema other than the topic's.** *LOCKED BY THE
   MAINTAINER 2026-09-28,* in two questions, when BIND-5a's port found the defect.
@@ -2167,6 +2172,7 @@ and keeps `Metadata(key)` as a shortcut.)*
   closing flush (breaks `UnsubscribeFromInsideATimeoutFlushIsSafe`, which C++ requires to work);
   dropping the lock without the wait (a timer handler could run after `Unsubscribe` returned, which
   C++ does not allow).
+  *Revised 2026-11-15 by ledger :551 (D10C pre-round): handlers are no longer concurrent or out of order and an in-handler closing is no longer nested; C# follows domain 7 (one batch thread, window order, d7 L9, L12), by :203.*
 
 - **D-BIND-65 - the D-BIND-60 publish check compares WIRE LAYOUT, not IPC bytes.** *LOCKED BY THE
   MAINTAINER 2026-09-29,* in one question, answering the BIND-5 review's Q1.
