@@ -110,9 +110,6 @@ public sealed class BatchOptions
     /// for never; a negative one is refused by domain 7 (<see cref="FletcherStatus.InvalidArgument"/>).
     /// </summary>
     public TimeSpan Timeout { get; init; } = TimeSpan.FromMinutes(1);
-
-    /// <summary>About 49.7 days. No longer a limit: a longer finite <see cref="Timeout"/> is used as given (ruling 2026-11-15, :536 (3)); removed at rung 10.</summary>
-    public static TimeSpan MaxTimeout { get; } = TimeSpan.FromMilliseconds(uint.MaxValue - 1);
 }
 
 /// <summary>A subscriber that delivers RecordBatches (D-BIND-25).</summary>

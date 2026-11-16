@@ -99,11 +99,6 @@ public sealed class ManagedBatcherGoneTests
     [Fact]
     public void TheBindingSourceHoldsNoTimerClockOrRowBuffer()
     {
-        string src = typeof(ManagedBatcherGoneTests).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
-            .FirstOrDefault(a => a.Key == "FletcherDotnetSrc")?.Value ?? string.Empty;
-        string fletcher = Path.GetFullPath(Path.Combine(src, "Fletcher"));
-        Assert.True(Directory.Exists(fletcher), $"the baked dotnet/src/Fletcher folder '{fletcher}' does not exist.");
-
         var timer = new Regex(@"\b\w*Timer\b");
         var stopwatch = new Regex(@"\bStopwatch\b");
         var rowBuffer = new Regex(@"\bArrayBufferWriter<byte>\??\s+_\w+|\bDecodeBatchFramed\b|\bfl_decode_rows_framed\b");
@@ -115,12 +110,7 @@ public sealed class ManagedBatcherGoneTests
         Assert.Matches(rowBuffer, "private ArrayBufferWriter<byte> _rows = new();");
         Assert.Matches(rowBuffer, "batch = codec.DecodeBatchFramed(rows.WrittenSpan, ends, valid);");
 
-        (string File, int Line, string Text)[] code = Directory
-            .EnumerateFiles(fletcher, "*.cs", SearchOption.AllDirectories)
-            .Where(f => !Path.GetRelativePath(fletcher, f).Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-                .Any(part => part is "bin" or "obj"))
-            .SelectMany(f => CodeLines(f).Select(l => (File: f, l.Line, l.Text)))
-            .ToArray();
+        (string File, int Line, string Text)[] code = FletcherCode();
         static bool IsSchemaArrival(string file) => Path.GetFileName(file) == "SchemaArrival.cs";
         string[] Hits(Regex pattern, Func<string, bool> fileFilter) => code
             .Where(l => fileFilter(l.File) && pattern.IsMatch(l.Text))
@@ -301,8 +291,23 @@ public sealed class ManagedBatcherGoneTests
         return tokens;
     }
 
+    /// <summary>The code lines of every file of the baked <c>dotnet/src/Fletcher</c> folder (not bin or obj), comments skipped.</summary>
+    internal static (string File, int Line, string Text)[] FletcherCode()
+    {
+        string src = typeof(ManagedBatcherGoneTests).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
+            .FirstOrDefault(a => a.Key == "FletcherDotnetSrc")?.Value ?? string.Empty;
+        string fletcher = Path.GetFullPath(Path.Combine(src, "Fletcher"));
+        Assert.True(Directory.Exists(fletcher), $"the baked dotnet/src/Fletcher folder '{fletcher}' does not exist.");
+        return Directory
+            .EnumerateFiles(fletcher, "*.cs", SearchOption.AllDirectories)
+            .Where(f => !Path.GetRelativePath(fletcher, f).Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                .Any(part => part is "bin" or "obj"))
+            .SelectMany(f => CodeLines(f).Select(l => (File: f, l.Line, l.Text)))
+            .ToArray();
+    }
+
     /// <summary>Each line of <paramref name="file"/> that is code, numbered from 1, trimmed.</summary>
-    private static (int Line, string Text)[] CodeLines(string file) => File.ReadAllLines(file)
+    internal static (int Line, string Text)[] CodeLines(string file) => File.ReadAllLines(file)
         .Select((text, index) => (Line: index + 1, Text: text.Trim()))
         .Where(l => l.Text.Length > 0
             && !l.Text.StartsWith("//", StringComparison.Ordinal)

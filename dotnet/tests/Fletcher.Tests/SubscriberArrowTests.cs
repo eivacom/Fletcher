@@ -159,19 +159,19 @@ public sealed class SubscriberArrowTests : IDisposable
     /// (d10 L5; NativeLoaderTests.TheLoadedShimIsTheServerExactlyWhenItIsBesideTheTests).
     /// Read from outside, never from NativeMethods (design P5).
     /// </summary>
-    private static bool ServerLeg { get; } =
+    internal static bool ServerLeg { get; } =
         File.Exists(Path.Combine(AppContext.BaseDirectory, LoadedShim.ServerFileName));
 
     /// <summary>
     /// The edge build's refusal of a batched entry point, verbatim (d9 L12, L16; the one door,
     /// <c>c-abi/src/binding.cpp</c> <c>RequireServerBuild</c>).
     /// </summary>
-    private const string EdgeShimText =
+    internal const string EdgeShimText =
         "fl_subscriber_subscribe_batches: the edge build of the shim carries no batcher; load the server build " +
         "(fletcher-c-abi-server) for batched subscriptions";
 
     /// <summary>The server package a C# app adds for batches (ruling :605 (1); d10 L15).</summary>
-    private const string ServerPackage = "Eiva.Fletcher.Server";
+    internal const string ServerPackage = "Eiva.Fletcher.Server";
 
     /// <summary>
     /// The edge leg's truth table for one batched subject (BC-10; d10 L3, L6, D29; ruling :551 (1),
@@ -1504,6 +1504,134 @@ public sealed class SubscriberArrowTests : IDisposable
         Assert.True(SpinWait.SpinUntil(() => !self.IsLive, Await), "the subscription is still live");
     }
 
+    // ── Dispose from inside a batch handler (D10C-9, rung 9; d10 L11; ruling :174 (1)) ──
+
+    /// <summary>
+    /// Holds the first window's handler while <paramref name="queued"/> more rows are published behind
+    /// it, then has it run <paramref name="close"/> and raise a flag when that returns. The flag is
+    /// waited for at most <paramref name="limit"/>, so a close that waits for its own Closing (which the
+    /// blocked batch thread could never deliver) is a failed assertion, not a hang; when it did return,
+    /// the harness waits for <paramref name="deliveries"/> deliveries.
+    /// </summary>
+    /// <remarks>
+    /// The handler runs on domain 7's batch thread, where no delivery frame is open, so the
+    /// close is the in-callback close the shim serves, not the row-delivery refusal. The events are
+    /// not disposed: a control's slow handler outlives this frame.
+    /// </remarks>
+    private (bool Returned, List<Delivery> Seen) CloseInsideTheFirstHandler(
+        string name, BatchOptions options, int queued, Action<SubscriberArrow> close, TimeSpan limit, int deliveries)
+    {
+        TopicPath topic = Declared(name);
+        var closer = new SubscriberArrow(_provider);
+        try
+        {
+            var entered = new ManualResetEventSlim(false);
+            var release = new ManualResetEventSlim(false);
+            var returned = new ManualResetEventSlim(false);
+            int calls = 0;
+            closer.SubscribeBatched(topic, (batch, attachments, status) =>
+            {
+                _sink.Handler(batch, attachments, status);
+                if (Interlocked.Increment(ref calls) == 1)
+                {
+                    entered.Set();
+                    release.Wait(Await);
+                    close(closer);
+                    returned.Set();
+                }
+            }, options).Schema.Dispose();
+
+            Publish(topic, 1, "a");
+            Assert.True(entered.Wait(Await), "the first window never arrived");
+            for (int x = 2; x < 2 + queued; x++)
+            {
+                Publish(topic, x, "queued");
+            }
+
+            release.Set();
+            bool done = returned.Wait(limit);
+            if (done)
+            {
+                _sink.WaitFor(deliveries, Await);
+            }
+
+            return (done, _sink.Snapshot());
+        }
+        finally
+        {
+            closer.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// A batch handler that disposes its own SubscriberArrow is served (d10 L11; ruling :174 (1); d7 L9;
+    /// V14's row-limit case and its timeout twin): Dispose returns inside the handler, the queued
+    /// row-limit windows still arrive, then exactly one Closing, then nothing. A declared guard:
+    /// green before and after D10C-9.
+    /// </summary>
+    /// <remarks>
+    /// The timeout case holds a 1-row timeout window (MaxRows = 2, so the first window can be one),
+    /// queues 4 rows as two full windows. Control: TheDisposeReturnedFlagCanFail. Edge leg: the BC-10 truth table.
+    /// </remarks>
+    [Theory]
+    [InlineData("rowlimit")]
+    [InlineData("timeout")]
+    public void DisposingTheSubscriberInsideABatchHandlerIsServed(string window)
+    {
+        bool timeout = window == "timeout";
+        // 200 ms, not less: rows 2-5 are published while the first handler is held, and must all arrive
+        // inside one window's deadline of the first flush for the windows to be exactly [1], [2,3], [4,5].
+        BatchOptions options = timeout ? Options(2, TimeSpan.FromMilliseconds(200)) : Options(1, Long);
+        if (!ServerLeg)
+        {
+            TopicPath edge = Declared("disposebatch" + window);
+            EdgeRefuses(edge, handler => _subscriber.SubscribeBatched(edge, handler, options));
+            return;
+        }
+
+        (bool returned, List<Delivery> seen) = CloseInsideTheFirstHandler(
+            "disposebatch" + window, options, queued: timeout ? 4 : 2, closer => closer.Dispose(), Await, deliveries: 4);
+
+        Assert.True(returned, "Dispose inside a batch handler did not return: it waited for its own Closing");
+        Assert.Equal(
+            [timeout ? BatchReason.Timeout : BatchReason.RowLimit, BatchReason.RowLimit, BatchReason.RowLimit, BatchReason.Closing],
+            seen.Select(d => d.Status.Reason).ToArray());
+        int[] firstX = timeout ? [1, 2, 4] : [1, 2, 3];
+        for (int i = 0; i < 3; i++)
+        {
+            Assert.Equal(firstX[i], ((Int32Array)seen[i].Batch!.Column(0)).GetValue(0));
+        }
+
+        Assert.Equal(1, seen[0].Rows);
+        Assert.Equal(timeout ? 2 : 1, seen[1].Rows);
+        Assert.Equal(timeout ? 2 : 1, seen[2].Rows);
+        Assert.True(seen[3].Batch is null || seen[3].Rows == 0, "the Closing carried rows");
+
+        Publish(Topic("disposebatch" + window), 99, "after");
+        Assert.False(_sink.WaitFor(5, Quiet), "a delivery after the Closing");
+    }
+
+    /// <summary>
+    /// Control for DisposingTheSubscriberInsideABatchHandlerIsServed: the same harness, with a stand-in
+    /// that does not return within the limit (a close waiting for its own Closing), reports
+    /// Returned = false, so the guard's assertion fails instead of the test hanging.
+    /// </summary>
+    [Fact]
+    public void TheDisposeReturnedFlagCanFail()
+    {
+        if (!ServerLeg)
+        {
+            TopicPath edge = Declared("disposeflag");
+            EdgeRefuses(edge, handler => _subscriber.SubscribeBatched(edge, handler, Options(1, Long)));
+            return;
+        }
+
+        (bool returned, _) = CloseInsideTheFirstHandler(
+            "disposeflag", Options(1, Long), queued: 2, _ => Thread.Sleep(1500), TimeSpan.FromMilliseconds(200), deliveries: 4);
+
+        Assert.False(returned, "the flag said a close that outlived the limit had returned");
+    }
+
     // ── The framed decode (D-BIND-68) ───────────────────────────────────────
 
     private static byte[] Encoded(int x, string name)
@@ -1611,19 +1739,26 @@ public sealed class SubscriberArrowTests : IDisposable
         Assert.True(own.Subscription.IsLive);
     }
 
-    /// <summary>At the timer's maximum a window does NOT flush early: it waits, and closes on Unsubscribe.</summary>
-    /// <remarks>D10C-7 (audit 0a M1): its edge leg is the truth table from rung 7; MaxTimeout itself goes at rung 10.</remarks>
-    [Fact]
-    public void AWindowAtTheMaximumTimeoutWaits()
+    /// <summary>A very long finite timeout never fires early (d7 L5): the window waits, and closes on Unsubscribe.</summary>
+    /// <remarks>
+    /// Re-anchored at D10C-9 (audit 0a T31; ruling :536 (3), "the 49.7-day cap goes"): no limit exists to
+    /// sit at, so the two long values are 100 years and TimeSpan.MaxValue, each used as given.
+    /// Its edge leg is the truth table from rung 7.
+    /// </remarks>
+    [Theory]
+    [InlineData("100years")]
+    [InlineData("TimeSpan.MaxValue")]
+    public void AWindowWithAVeryLongTimeoutWaits(string which)
     {
-        TopicPath topic = Declared("maxtimeout");
+        TimeSpan timeout = which == "100years" ? TimeSpan.FromDays(36525) : TimeSpan.MaxValue;
+        TopicPath topic = Declared("longtimeout" + which.Length);
         if (!ServerLeg)
         {
-            EdgeRefuses(topic, handler => _subscriber.SubscribeBatched(topic, handler, Options(100, BatchOptions.MaxTimeout)));
+            EdgeRefuses(topic, handler => _subscriber.SubscribeBatched(topic, handler, Options(100, timeout)));
             return;
         }
 
-        SubscribeResult result = _subscriber.SubscribeBatched(topic, _sink.Handler, Options(100, BatchOptions.MaxTimeout));
+        SubscribeResult result = _subscriber.SubscribeBatched(topic, _sink.Handler, Options(100, timeout));
         result.Schema.Dispose();
 
         Publish(topic, 1, "a");
@@ -2359,13 +2494,13 @@ public sealed class SubscriberArrowTests : IDisposable
 
     // ── The sink ────────────────────────────────────────────────────────────
 
-    private sealed record Delivery(RecordBatch? Batch, IReadOnlyList<AttachmentsBuilder> Attachments, BatchStatus Status)
+    internal sealed record Delivery(RecordBatch? Batch, IReadOnlyList<AttachmentsBuilder> Attachments, BatchStatus Status)
     {
         public int Rows => Batch?.Length ?? -1;
     }
 
     /// <summary>Collects deliveries and disposes the batches it was handed, which it owns.</summary>
-    private sealed class Sink : IDisposable
+    internal sealed class Sink : IDisposable
     {
         private readonly object _gate = new();
         private readonly List<Delivery> _deliveries = [];

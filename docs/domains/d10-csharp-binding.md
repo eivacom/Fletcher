@@ -151,8 +151,9 @@ equal to it, never renumbered.
 shim reaches the caller with its number and verbatim message. The binding checks a rule itself only
 where a ruling accepts the duplication, and then native re-checks it.
 `[built for the arrival timeout, topics and selectors and the same-topic refusal (D10C-6); for the edge refusal's
-sentence (D10C-7; Windows, by hand; CI and Linux unrun); for batch options, built (passed as given, the clamp and managed refusal deleted) but
-untested until rung 10, whose BC-8 grid from C# is their only test and which removes `BatchOptions.MaxTimeout`]`.
+sentence (D10C-7; Windows, by hand; CI and Linux unrun); for batch options, built and tested (D10C-9: passed as given; the clamp, the managed refusal and
+`BatchOptions.MaxTimeout` deleted; `BatchOptionsTests.EveryBatchOptionReachesDomain7AsGiven`, BC-8's 6 x 7 grid, and the source scan
+`NoBatchOptionIsCheckedOrClampedInCSharp`; Windows, by hand; CI and Linux unrun)]`.
 - Holds at: `Errors.cs:44-75` (one throw site; number and message cross, D-BIND-19 rules 1-3).
 - **Accepted duplications, by ruling:** topic segments and the provider selector are checked in
   managed code in UTF-8 bytes and re-checked natively (Q17 of 2026-09-11, D-BIND-19 rule 4,
@@ -164,7 +165,7 @@ untested until rung 10, whose BC-8 grid from C# is their only test and which rem
   2026-11-12, "Refuse both" (ledger :235): "C# callers passing MaxRows < 1 now get an exception
   instead of 1". **Settled 2026-11-15 (ledger :536 (3), D22):** the exception is domain 7's refusal
   passed through, `FletcherException(InvalidArgument)` with domain 7's message; the `MaxTimeout`
-  cap goes; D-BIND-19 rule 4's and D-BIND-20's managed pre-check no longer applies to batch options
+  cap goes (deleted by D10C-9); D-BIND-19 rule 4's and D-BIND-20's managed pre-check no longer applies to batch options
   (it still applies to topics and selectors). **Confirmed 2026-11-15 (ledger :575 (4), D31):** the type
   is `FletcherException(InvalidArgument)`, not an `ArgumentException`; :235's "C# throws as it does
   today" is revised. Visible change: code catching `ArgumentOutOfRangeException` stops catching it.
@@ -320,8 +321,8 @@ caused a native failure is rethrown as itself.
 native serves, the binding does not refuse.** Disposing a `Subscriber` or `SubscriberArrow` from a
 delivery on the same provider is refused with a managed exception; closing or disposing a batched
 subscription from inside its own batch callback is served.
-`[built for row deliveries; designed-not-built for batch callbacks]`
-- Holds at: `Subscriber.cs:704-712` (provider-keyed frame stack, D-BIND-51), `SA:428-434`
+`[built for row deliveries; built for batch callbacks (D10C-9: no new code, the guard is the test; Windows, by hand; CI and Linux unrun)]`
+- Holds at: `Subscriber.cs:704-712` (provider-keyed frame stack, D-BIND-51), `SA:376-393`
   (`SubscriberArrow.Dispose`), `Subscriber.cs:395-411` (re-entrant `Subscribe`, naming
   `DispatchAfterDelivery`).
 - Source: D-BIND-18, -50, -51; d9 L1 (the row subscriber's termination is the only one); d7 L9,
@@ -330,11 +331,12 @@ subscription from inside its own batch callback is served.
   stays forbidden (2026-09-05).
 - After the switch a batch callback runs on domain 7's batch thread, where no delivery frame is
   pushed (BC-6), so the existing refusal does not fire there: the served case needs no new code,
-  only a test.
+  only a test (V14).
 - Tests: `ReentrancyTests.*`, `CallerTierArmTests.*`, for a `Subscriber`;
   `SubscriberArrowTests.DisposingInsideAPerRowDeliveryIsRefusedAndNothingIsTornDown` for
-  `SubscriberArrow.Dispose`'s refusal (D10C-3). The served batch-callback case is testable only
-  after the switch.
+  `SubscriberArrow.Dispose`'s refusal (D10C-3); the served batch-callback case (D10C-9, the row-limit
+  and timeout windows): `SubscriberArrowTests.DisposingTheSubscriberInsideABatchHandlerIsServed`, whose
+  control is `TheDisposeReturnedFlagCanFail`.
 
 **L12. A C# idiom is translated at one site, before the call.** `Timeout.InfiniteTimeSpan` (−1)
 becomes `INT64_MAX`; any other negative is refused; bounds are UTF-8 bytes, never `string.Length`.
@@ -347,7 +349,10 @@ audit, F1.)
 `[built for the arrival; for batch options the one site is built (D10C-7; Windows, by hand; CI and Linux unrun)]`:
 `SchemaArrival.ToNativeMilliseconds` (infinite as INT64_MAX; truncated when non-negative, FLOORED when
 negative, so −1 tick crosses as −1), reached by the arrival behind its managed refusal of negatives and
-by `SubscribeBatched` as given. Its −1-tick and BC-14 scan arms are rung 10's.
+by `SubscribeBatched` as given. Tested (D10C-9): the −1-tick arm in the BC-8 grid (−1 tick crosses as −1, the
+literal "got -1 ms"; mutating that literal turns the grid red), and BC-14's scan
+`BatchOptionsTests.EveryTicksToMillisecondsConversionIsOnePlace` (every ticks-to-milliseconds expression is inside
+`ToNativeMilliseconds`, which `SubscribeBatched` calls).
 - Holds at: `SchemaArrival.ToNativeMilliseconds` (the one site; `ToMilliseconds` keeps the arrival's managed
   refusal of negatives in front of it), `TopicPath.cs` (byte bounds).
 - Source: D-BIND-20; register BC-14 ("each binding translates its own idiom at one site (C#:
@@ -357,7 +362,7 @@ by `SubscribeBatched` as given. Its −1-tick and BC-14 scan arms are rung 10's.
 - ~~Today the batch path has its own conversion (`SA:751-762`, `TotalSeconds * Frequency`), bounded
   by the `MaxTimeout` cap.~~ Deleted with the managed batcher (D10C-7). The cap goes (ledger :536 (3),
   D22): a finite timeout crosses as given and domain 7 decides (d7 L5, L15); `MaxTimeout` itself is
-  removed at rung 10.
+  deleted (D10C-9).
 
 **L13. Batches reach a C# handler one at a time, in window order, on domain 7's batch thread.**
 The binding adds no thread, queue, reordering or lock held across the handler.
@@ -376,7 +381,7 @@ accepted subscription, empty when idle; nothing after it), a refused subscribe (
 delivered), a late schema (losses reported, assembly once it arrives) and out-of-range options
 (refused) are domain 7's, mapped one to one.
 `[built for the reasons, loss counts, null batches, closing, late schemas, dictionaries and order (D10C-7; Windows, by hand; CI and Linux unrun);
-built but untested for out-of-range options (V5-V8: rung 10's grid); designed-not-built for the hand-over's
+built and tested for out-of-range options (V5-V8: D10C-9's grid); designed-not-built for the hand-over's
 failure in BatchStatus (rung 11)]`. C# forwards domain 7's batches, reasons and counts as given: the closing
 (`AnIdleCloseDeliversOneEmptyClosing`, T25, `ClosingASiblingFromABatchHandlerWaitsForItsClosing`), late schemas
 (T12, T13), null batches (T24) and dictionaries (T21, T36) are tested on the server leg.
@@ -434,8 +439,7 @@ are checked when it is packed.** Every other managed package is asset-free.
 `Publisher` (declare, publish `BoundRows`, `PublishRaw`, `RowWriter`), `Subscriber` (`Subscribe`
 with `RowHandler`, `SubscribeSchema`, `Unsubscribe`, `DispatchAfterDelivery`,
 `AbsorbedCallbackFailures`, `HandlerFaulted`), `SubscriberArrow` (`Subscribe`, `SubscribeBatched`,
-`Unsubscribe`, `SubscribeSchema`, `Dispose`), `BatchOptions {MaxRows = 8000, Timeout = 1 min,
-MaxTimeout}`, `BatchStatus {Reason, RowsDropped}`, `BatchReason {RowLimit = 1, Timeout = 2, Closing = 3}`
+`Unsubscribe`, `SubscribeSchema`, `Dispose`), `BatchOptions {MaxRows = 8000, Timeout = 1 min}`, `BatchStatus {Reason, RowsDropped}`, `BatchReason {RowLimit = 1, Timeout = 2, Closing = 3}`
 (the C values, `h:1013-1015`; D10C-2), `RecordBatchHandler`, `FletcherCodec`,
 `BoundRows`, `SchemaArrival`, `TopicPath`, `TopicOptions`, `AttachmentsBuilder`/`AttachmentsView`,
 `FletcherException`/`FletcherFormatException`, `FletcherStatus`, `FletcherOrigin`, `Diagnostics`.
@@ -468,7 +472,7 @@ a source build whatever is staged beside the tests (CI's dotnet lane stages the 
 - ~~`FletcherOrigin.Handover = 4` (L2)~~ `[built]` (D10C-2); and the failure in `BatchStatus` (L9, D26).
 - `SubscriberArrow.SubscribeBatched` over `fl_subscriber_subscribe_batches`: `MaxRows` as `int64`
   unchanged, `Timeout` through the one translation site (L12), refusals passed through as
-  `FletcherException(InvalidArgument)` (L3, D22), `BatchOptions.MaxTimeout` removed (rung 10, not yet); a batch
+  `FletcherException(InvalidArgument)` (L3, D22), `BatchOptions.MaxTimeout` removed (D10C-9); a batch
   thunk that moves the batch (L8) and calls the handler on domain 7's batch thread (L13). Closing by
   `fl_subscriber_unsubscribe_batches` (bit-63 ids, `h:1121-1127`). On the edge shim it throws a
   named NotSupported (L6, D25). Dictionary columns arrive re-folded (D24).
@@ -590,8 +594,8 @@ former Q10 (doc comments lagging D28) is work the round owes (Findings (a)2). Nu
      `OnlyDroppedRowsStillDeliverAnEmptyBatch`, `ACorruptRowIsDroppedAndTheBatchStaysAligned`,
      `ACorruptRowDoesNotCountTowardMaxRows`, `AFixedSizeListArrivesNonNull`,
      `ASchemaTheCodecCannotOpenDropsEveryRow`, `UnsubscribingFromInsideATimeoutFlushIsSafe`,
-     `UnsubscribeWaitsForATimerHandlerStillRunning`, `AWindowAtTheMaximumTimeoutWaits` (without
-     `MaxTimeout`), `OnACarryingTransportASubscriberThatSubscribedFirstStillDecodes`,
+     `UnsubscribeWaitsForATimerHandlerStillRunning`, `AWindowWithAVeryLongTimeoutWaits` (was
+     `AWindowAtTheMaximumTimeoutWaits`; 100 years and `TimeSpan.MaxValue`, D10C-9), `OnACarryingTransportASubscriberThatSubscribedFirstStillDecodes`,
      `OnTheDefaultInProcessLoopbackASubscriberThatSubscribedFirstDropsAndCountsEveryRow` (its assertions
      are d7's `SchemaDeclaredAfterSubscribeDropsReportedAtUnsubscribe` outcome),
      `ATimerHandlerThatCancelsDuringADeliveryDoesNotDeadlock` (holds under d7; may be dropped as a

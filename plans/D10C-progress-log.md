@@ -157,3 +157,19 @@ Session directive (2026-11-15): run from D10C-1 onward, item by item, until a st
 **Owner decisions this stage:** T30/V12 amended; the T46 red window; D10C-8 merged.
 **Debt carried:** CI run IDs (with D10C-4 DEBT-5). No NativeAOT lane runs a batched subscribe (D-BIND-81).
 **Records corrected:** d10 citations and marks; register BC-9, BC-10, BC-13, BC-14.
+
+## D10C-9 — Dispose from a batch handler is served; bad batch options pass through (2026-11-16)
+
+**Forcing test:** `BatchOptionsTests.TheTimeoutCapIsGoneFromThePublicSurface` → 🔴 (MaxTimeout present) → 🟢. Guards: the BC-8 grid (server: domain 7's message byte-equal as `FletcherException(InvalidArgument, Seam)`; edge: NotSupported); Dispose from a batch handler served (with a control); the BC-8 and BC-14 scans; T31 re-anchored as `AWindowWithAVeryLongTimeoutWaits`.
+**Lane:** light · **Brief:** `plans/D10C-9-brief.md`
+**What landed:** `BatchOptions.MaxTimeout` deleted (:536 (3)). Rungs 9 and 10's behaviours were already served after D10C-7, so they are now pinned as guards. d10 L3, L11, L12 and L14 are marked built; register BC-8 and BC-14 likewise.
+**Interfaces:** DELETED `BatchOptions.MaxTimeout` (ruled).
+**Deleted:** none; T31 re-anchored.
+**Reviews:** 0a CLEAR · 0b CLEAR · code review 0 blocking / 2 should-fix (done) / 4 nits
+**Verification:** edge 1566/1566 and server 484/484 per TFM (Windows), both re-run after the fix. The −1-tick mutation run is recorded. Linux not re-run: the production change is a 3-line deletion.
+**Close gate:** PASS (--light)
+**Cycle meter:** design 1/2 · fix 1 · implementer launches 1 (3 passes) · stage words 2883
+**Numbers:** declared prod −2 · actual −3 · tests about +625 vs +230–300 (about 2x; disclosed) · new public surface −1
+**Owner decisions this stage:** none
+**Debt carried:** none
+**Records corrected:** the d10 L11 citation; the evidence size note.

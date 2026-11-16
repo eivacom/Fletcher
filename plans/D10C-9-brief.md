@@ -49,6 +49,5 @@ Declared net lines:
 New public surface: 0 (1 member retired) · design cycles used: 1/2
 
 ---
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
-<delta vs the above — actual net lines, anything retired or added the brief did
-not predict, fix cycles used>.
+**As landed (2026-11-16):**
+Prod +0/−3 in 1 file (MaxTimeout deleted; the third line is a blank). Tests about +625 vs +230–300 priced (grid, scans, rung-9 guard plus control). Rungs 9/10 behaviours were already served by D10C-7, so they land as guards. Fix cycle 1: the BC-8 scan narrowed to SubscribeBatched and BatchOptions; padding trimmed. Light lane held.
