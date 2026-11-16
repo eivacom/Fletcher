@@ -100,3 +100,5 @@ Releases are cut by maintainers by pushing a component-prefixed git tag (`<compo
 ## License
 
 By submitting a contribution you agree that your work will be distributed under the [LGPL-3.0-or-later](LICENSE) license and that you are entitled to make it available under those terms. Add your name or organisation to [`AUTHORS`](AUTHORS) in your first PR if you would like to be listed.
+
+A contribution to `dotnet/src/`, `protoc/` or `protoc/include/fletcher/options.proto` is also made under the Fletcher Linking Exception in [`LICENSE-EXCEPTION`](LICENSE-EXCEPTION) and under any later version of it that EIVA A/S publishes, so that the exception can cover your contribution once it is in force. The exception is a draft awaiting review by EIVA A/S legal counsel and is not yet in force; it takes effect only as its own section 9 says. Until then, Fletcher, your contribution included, is available under the LGPL alone. A code sample you add to the Markdown documentation is also made under [MIT-0](https://spdx.org/licenses/MIT-0.html) (see the README's licence section).

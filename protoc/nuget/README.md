@@ -123,3 +123,9 @@ version (`-alpha`) is taken only when the reference names one, or with
 LGPL-3.0-or-later (`LICENSE`, with the GPL text it incorporates in `COPYING`). The plugin links
 protobuf and zlib statically and compiles in nanoarrow; their licences are in
 `THIRD-PARTY-LICENSES.txt`.
+
+Fletcher's C++ libraries and `@eiva/fletcher-gateway-client`, which the code the plugin
+generates for C++ and TypeScript uses at run time, stay under the LGPL alone. An application
+that links them statically or bundles them must meet LGPL section 4(d)(0), and 4(e), for them.
+The draft Fletcher Linking Exception in the repository (`LICENSE-EXCEPTION`, not in force) does
+not change that.

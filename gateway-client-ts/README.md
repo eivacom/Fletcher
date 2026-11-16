@@ -185,3 +185,10 @@ of earlier versions is still accepted and ignored.
 ## License
 
 LGPL-3.0-or-later © The Fletcher Authors
+
+This package, like Fletcher's C++ libraries, stays under the LGPL alone. An application that
+bundles it (for example with a JavaScript bundler) or otherwise combines it into one file must
+meet LGPL section 4(d)(0), and 4(e), for it: convey the Minimal Corresponding Source and the
+Corresponding Application Code in a form that lets the user recombine the application with a
+modified version of this package. The draft Fletcher
+Linking Exception in the repository (`LICENSE-EXCEPTION`, not in force) does not change that.
