@@ -76,7 +76,7 @@ the switch and the deletion land together. The `SA:4-94` header is rewritten for
 forcing tests):** (i) a metadata scan (`System.Reflection.Metadata`) of `Eiva.Fletcher.dll` and `Eiva.Fletcher.Interop.dll`: no type
 in `SubscriberArrow` references `System.Threading.Timer` or `Stopwatch`, and no `fl_decode_rows_framed` import; run on the build output
 in the dotnet lane and on the assemblies unzipped from the packed `.nupkg`s in the pack job (one step); (ii) L4's source scan of
-`SubscriberArrow.cs` (BC-9's structural test): no `Timer`, `Stopwatch` deadline arithmetic or row buffer. Both red today.
+`SubscriberArrow.cs` (BC-9's structural test): no `Timer`, `Stopwatch` deadline arithmetic or row buffer. Both red today. *(Widened by review C2-1: all of `Fletcher.dll` and `dotnet/src/Fletcher`, `Stopwatch` allowed only in `SchemaArrival`.)*
 
 ## Corner cases forbidden
 - **A refused subscribe that delivers or leaks its context; a live one freed early** — unrepresentable: freed only when `!accepted` (D2).
