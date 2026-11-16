@@ -646,3 +646,13 @@ not an Independent Module) carries m6. Strong-naming and a separate test build w
 *(Chosen option.)* **Ruling:** **D10C-5 lands whole at net +260 counted production lines (ceiling 250; adds 60% over declared)**; the
 growth is the union-notice check (:615) and BC-17 hardening from review. Not split, not trimmed.
 **Applies to:** D10C-5 close; the round's stage_size_ceiling stays 250 for later stages.
+
+## 2026-11-16 — D10C-7 pre-design: T30 in d10; the preview-consumer red window
+> d10 T30: "Amend detail: delete (Rec.)"
+> Red window: "Declare red window (Rec.)"
+
+*(Chosen options; audit `plans/reviews/D10C-7-audit-0a.md` R1, M3.)*
+**Rulings:** (1) **d10 L3's Tests line and V12 are amended to match §8 rule 6 and :536 (3)/:575 (4): T30 is deleted, not re-anchored;
+V12 drops its T20 citation.** (2) **The preview-bundle consumer's batched path (T46) is a declared red window from D10C-7 until D10C-11**,
+which re-anchors it from packages; nothing ships mid-round.
+**Applies to:** d10 L3, V12; D10C-7..D10C-11; T46.
