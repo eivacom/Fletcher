@@ -1,0 +1,50 @@
+<!-- SPDX-License-Identifier: LGPL-3.0-or-later
+     Copyright (C) 2026 The Fletcher Authors
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The server package (D10C-5, d10 L15): exactly the server shim, `fletcher-c-abi-server`, for
+       linux-x64 and win-x64, and no assembly; it depends on Eiva.Fletcher.Interop. Each target
+       framework gets its dependency group and a lib/<tfm>/_._ placeholder (otherwise NU5128). -->
+  <PropertyGroup>
+    <PackageId>Eiva.Fletcher.Server</PackageId>
+    <Description>The server shim for Fletcher: the native build with batched Arrow subscriptions. Add it beside Eiva.Fletcher.</Description>
+    <PackageTags>fletcher;arrow;native;server</PackageTags>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <IncludeSymbols>false</IncludeSymbols>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Fletcher.Interop/Fletcher.Interop.csproj" />
+  </ItemGroup>
+
+  <!-- The shims' file names are what the loader probes for under runtimes/<rid>/native/
+       (NativeLoader's server name); never the edge shim, never the test-only probe. -->
+  <ItemGroup Condition="'$(FletcherServerShimLinuxX64)' != '' And '$(FletcherServerShimWinX64)' != ''">
+    <None Include="$(FletcherServerShimLinuxX64)" Pack="true" PackagePath="runtimes/linux-x64/native/libfletcher-c-abi-server.so" Visible="false" />
+    <None Include="$(FletcherServerShimWinX64)" Pack="true" PackagePath="runtimes/win-x64/native/fletcher-c-abi-server.dll" Visible="false" />
+  </ItemGroup>
+
+  <!-- Stricter than Interop's "both or none": this package has no shim-less form, so a pack
+       without both shims (or with a path that does not exist) is refused. -->
+  <Target Name="FletcherCheckServerShims" BeforeTargets="GenerateNuspec">
+    <Error Condition="'$(FletcherServerShimLinuxX64)' == '' Or '$(FletcherServerShimWinX64)' == ''"
+           Text="Eiva.Fletcher.Server packs both server shims: set FletcherServerShimLinuxX64 and FletcherServerShimWinX64 together." />
+    <Error Condition="!Exists('$(FletcherServerShimLinuxX64)')" Text="FletcherServerShimLinuxX64 does not exist: $(FletcherServerShimLinuxX64)" />
+    <Error Condition="!Exists('$(FletcherServerShimWinX64)')" Text="FletcherServerShimWinX64 does not exist: $(FletcherServerShimWinX64)" />
+  </Target>
+
+  <!-- The placeholder, one per target framework: an empty file written here, because a
+       tracked empty file could not carry the licence header every tracked file has. Pack
+       collects files in the outer build, where $(TargetFramework) is empty, so the
+       frameworks come from the list. -->
+  <Target Name="FletcherServerPlaceholder" BeforeTargets="_GetPackageFiles">
+    <WriteLinesToFile File="$(IntermediateOutputPath)_._" Lines="" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <ItemGroup>
+      <_FletcherServerTfm Include="$(TargetFrameworks)" />
+      <None Include="$(IntermediateOutputPath)_._" Pack="true" PackagePath="lib/%(_FletcherServerTfm.Identity)/_._" Visible="false" />
+    </ItemGroup>
+  </Target>
+
+</Project>

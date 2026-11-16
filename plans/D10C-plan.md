@@ -12,7 +12,7 @@ Status: ⚪ not started · 🔴 in progress · 🟢 done. Lane: **L** marks a li
 | D10C-2 | Every number the C surface hands out has the same value in C# (`Handover = 4`, `BatchReason` 1-3) | 2 | d10 L2, D34, Q11 | 15–30 / 2–3 | L | 🟢 |
 | D10C-3 | Per-row `Subscribe` runs on the edge shim with no batcher; an undecodable row arrives as a null batch with `RowsDropped = 1` | 3 | BC-16 (DEFINE); :536 (1), :575 (3), (5); BC-2 note | 60–110 / 1–2 | F | 🟢 |
 | D10C-4 | The loader loads the server shim when present, fails loudly if it won't load, never both; CI gains a server leg and the renamed copy retires | 4 | BC-10 (EXTEND-AND-NARROW); :536 (2), :575 (1); retires :525's staging | 80–155 / 3–4 | F | 🟢 |
-| D10C-5 | A server package carries exactly the server shim, depends on the base package, and the package rules check it | 5 | BC-17 (DEFINE); d10 L15, Q7 default; audit F (Interop-only rule) | 110–200 / 5–7 (split 5a/5b if over) | F | ⚪ |
+| D10C-5 | A server package carries exactly the server shim, depends on the base package, and the package rules check it | 5 | BC-17 (DEFINE); d10 L15, Q7 default; audit F (Interop-only rule) | 110–200 / 5–7 (split 5a/5b if over) | F | 🟢 |
 | D10C-6 | `SubscriberArrow` refuses a row and a batched subscription to the same topic | 6 | :575 (6); d10 L3 ruled exception | 25–50 / 1 | L? | ⚪ |
 | D10C-7 | The switch: batches come from domain 7 on the server shim; the edge shim gives the named NotSupported | 7 | BC-12/13 extensions, BC-8, BC-9; :551 (1)–(3), :575 (2), (5); D24 Arrow-import risk (stop if false) | +195–255 / −25, 4–5 files (split 7a/7b if over) | F | ⚪ |
 | D10C-8 | C#'s own batcher is gone from the packed assemblies | 8 | d10 L4; audit MUST-DELETE (6 tests); BC-9 narrowing | −470 to −520 / 3 | F | ⚪ |

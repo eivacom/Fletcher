@@ -2,7 +2,7 @@
 
 **Trying the bindings before they are released:** see [PREVIEW-TESTERS.md](PREVIEW-TESTERS.md).
 
-Fletcher's C# binding: four NuGet packages, built from one solution at one version. The native
+Fletcher's C# binding: five NuGet packages, built from one solution at one version. The native
 half is [`c-abi/`](../c-abi/README.md), the shim these packages call; the C# for a user's own
 messages comes from the code generator, `protoc-gen-fletcher`, which the `Eiva.Fletcher.Protoc`
 package brings (built in [`protoc/`](../protoc/README.md), not here).
@@ -11,6 +11,7 @@ package brings (built in [`protoc/`](../protoc/README.md), not here).
 |---|---|---|---|
 | `Eiva.Fletcher` | Publishers and subscribers over a provider chosen by name (`inprocess`, `fastdds`, `xrce`): `ProviderRegistry`, `Publisher`, `Subscriber`, `SubscriberArrow`, `SchemaArrival`; the codec (`FletcherCodec`, `BoundRows`); attachments; `FletcherException` | through `Interop` | `Interop`, `Apache.Arrow` |
 | `Eiva.Fletcher.Interop` | The P/Invoke surface over the shim, and the shim itself for `linux-x64` and `win-x64`; it has no public types and is used only by `Eiva.Fletcher` | **yes**, `runtimes/{rid}/native/` | — |
+| `Eiva.Fletcher.Server` | The server build of the shim (`fletcher-c-abi-server`, with Arrow C++ and the batcher) for `linux-x64` and `win-x64`, and nothing else: no assembly (D10C-5); added beside `Eiva.Fletcher` by an app that wants it | **yes**, `runtimes/{rid}/native/` | `Interop` |
 | `Eiva.Fletcher.GatewayClient` | `FletcherClient`, a managed WebSocket client for the Fletcher gateway, with its own managed codec | none | `Apache.Arrow` |
 | `Eiva.Fletcher.Model` | What generated C# refers to: the lossless `Timestamp` and `Duration`, the `ListView` and `MapView` windows and the element readers of the generated Arrow view and accessor | none | `Apache.Arrow` |
 
@@ -18,10 +19,11 @@ Each package's namespace is its own name (`Eiva.Fletcher`, `Eiva.Fletcher.Intero
 `Eiva.Fletcher.GatewayClient`, `Eiva.Fletcher.Model`), and its assembly is that name without
 `Eiva.` (`Fletcher.dll`, …).
 
-Four, not six (D-BIND-14′, amended by D-BIND-74): with `Apache.Arrow` a base dependency there is
-no dependency-free tier left for a `Core`/`Arrow`/`PubSub` split to protect. `Interop` is the only
-package carrying native assets, which isolates the RID matrix, the packed-size ceiling (12 MB,
-D-BIND-157) and the LGPL relinking route to one artifact. `GatewayClient` loads no native code: it
+Four managed packages, not six (D-BIND-14′, amended by D-BIND-74): with `Apache.Arrow` a base
+dependency there is no dependency-free tier left for a `Core`/`Arrow`/`PubSub` split to protect. Only
+`Interop` and `Server` carry native assets, one shim each (d10 L15, BC-17), which isolates the RID
+matrix, the packed-size ceilings (12 MB for `Interop`, D-BIND-157; the server's own, d10 Q7) and the
+LGPL relinking route to one artifact per shim. `GatewayClient` loads no native code: it
 is the managed port of `@eiva/fletcher-gateway-client` and the one documented exception to "there
 is exactly one codec", held to the C++ goldens by both test projects (through
 `tests/Shared/CoverageFixture.cs`) and to the native codec, byte for byte, by
@@ -31,7 +33,7 @@ would be defined once per assembly and collide in an application that references
 takes `Apache.Arrow` only, so a gateway or WASM application can use the generated model without
 native assets (D-BIND-72). User-defined messages are not in it.
 
-All four target **`net8.0;net10.0`** and pin `Apache.Arrow` **exactly** (`[23.0.0]`): that is
+All five target **`net8.0;net10.0`**. The three that use Arrow pin `Apache.Arrow` **exactly** (`[23.0.0]`; `Interop` and `Server` take no Arrow package): that is
 the version `tests/Fletcher.Tests/ArrowCDataInterfaceTests.cs` proved carries every Arrow type the
 wire-format mapping produces across the Arrow C Data Interface (16 types, `struct`,
 `list<struct>`, `map<utf8,int32>`, a timezone-carrying timestamp and a duration among them, and
@@ -39,7 +41,7 @@ schema and field metadata; risk N-9), and a bump re-runs that proof.
 
 ## Getting the packages
 
-Released versions are on [nuget.org](https://www.nuget.org/packages/Eiva.Fletcher): the four
+Released versions are on [nuget.org](https://www.nuget.org/packages/Eiva.Fletcher): the five
 packages above, pushed by `cd.dotnet` when a `dotnet-v*` tag is cut, and the code generator
 `Eiva.Fletcher.Protoc`, pushed by `cd.protoc` from a `protoc-v*` tag (D-BIND-176). The generator's
 version has the packages' `MAJOR.MINOR` and a `PATCH` of its own. Every version so far is a
@@ -53,14 +55,14 @@ lockfile the package README's relinking route rebuilds the native shim with (D-B
 ```
 dotnet/
   Fletcher.slnx              XML solution (it can carry a licence header; .sln cannot)
-  Directory.Build.props      the single <VersionPrefix> for all four packages
+  Directory.Build.props      the single <VersionPrefix> for all five packages
   Directory.Build.targets    the AOT toolchain packs, pinned with global.json (D-BIND-81), and the
-                             package README packed into all four (README.package.md, D-BIND-142)
+                             package README packed into all five (README.package.md, D-BIND-142)
   README.package.md          that README: what each package is, a walkthrough whose code CI runs,
                              the platform floors and the relinking route
   global.json                the SDK band, pinned to the devcontainer's
   .editorconfig              what `dotnet format --verify-no-changes` enforces
-  src/…                      the four packages
+  src/…                      the five packages
   tests/Fletcher.Tests/      Eiva.Fletcher's and Interop's tests, against the real shim
   tests/Fletcher.Model.Tests/  Model's tests; references Model ALONE, which shows it is Arrow-only
   tests/Fletcher.GatewayClient.Tests/  the gateway client's tests; no shim, no gateway
@@ -119,7 +121,7 @@ The cross-language matrix as a whole, with every lane, is in the root README's
 
 *The facts are D-BIND-81's; the package README (`README.package.md`) carries the short form.*
 
-All four packages are marked `IsAotCompatible` and raise no trim or AOT warnings
+The four packages with an assembly are marked `IsAotCompatible` and raise no trim or AOT warnings
 (`Eiva.Fletcher.GatewayClient` since BIND-8d). Whether an application uses NativeAOT is the
 **application's** choice, not the packages': set `<PublishAot>true</PublishAot>` in
 the app's project, or don't, and the packages behave the same either way. Generated

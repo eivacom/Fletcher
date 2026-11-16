@@ -3484,7 +3484,9 @@ public.
   test-only probe shim (`fletcher-c-abi-probe`) is never packed; `THIRD-PARTY-LICENSES.txt` lists
   the libraries linked into the shim. **Declined:** `GatewayClient` and `Model` alone first (the
   managed pair, ready today).
+  *Extended 2026-11-16 (D10C-5, ledger :605 (2)) to five packages / two shims (:337 (1)): the server package `Eiva.Fletcher.Server` carries the server shim and depends on `Eiva.Fletcher.Interop`; text kept.*
 
+  *Annotated 2026-11-16 (ruling :615): the server package's notice lists the union of both platforms' server graphs, so on Windows it also lists libbacktrace, which only the Linux shim links.*
 - **D-BIND-135 - testers get a gateway that speaks to the C# client as gateway BINARIES in the
   per-push preview bundle (D-BIND-139), built from this branch exactly as `cd.gateway.yml` would
   release them (`gateway-linux.tar.gz`, `gateway-windows.zip`); no gateway release before the
@@ -3544,6 +3546,7 @@ public.
   merge removes the bundle job (tracker, BIND-9). **Declined:** a rolling GitHub prerelease as the
   carrier; building the bundle on request only (`workflow_dispatch` or a label); a NuGet-only bundle
   (testers need the gateway and the plugin).
+  *Extended 2026-11-16 (D10C-5, ledger :605 (2)) to five packages / two shims (:337 (1)): the server package `Eiva.Fletcher.Server` carries the server shim and depends on `Eiva.Fletcher.Interop`; text kept.*
 
 - **D-BIND-140 - LGPL, for the preview: the shared-shim relinking route.** *LOCKED BY THE MAINTAINER
   2026-10-20 (BIND-9a Q7; answers Q9 for the preview).* The shim is a shared library the .NET
@@ -3556,6 +3559,7 @@ public.
   named commit, with the command) and the NativeAOT static-linking caveat (N-8); the artifact names
   its commit. An engineering route chosen by the maintainer, not a legal opinion. **Declined:**
   managed packages only until a legal answer exists.
+  *Extended 2026-11-16 (D10C-5, ledger :605 (2)) to five packages / two shims (:337 (1)): the server package `Eiva.Fletcher.Server` carries the server shim and depends on `Eiva.Fletcher.Interop`; text kept.*
 
 - **D-BIND-141 - the shim ships as CI builds it, and the package README states both floors:
   linux-x64 needs glibc 2.38 (measured by `ci.c-abi` at `e268f1a`) and libstdc++ `GLIBCXX_3.4.32`,
@@ -3579,6 +3583,7 @@ Three more, ruled 2026-10-21 while slices 9a-2 and 9a-4 were built:
   the commit (`-p:FletcherSourceCommit`); `scripts/check_dotnet_packages.sh` refuses a package
   without the README, with a placeholder left, without the floors and the relinking route, or
   naming another commit. **Declined:** four READMEs, one per package (the shared text repeated).
+  *Extended 2026-11-16 (D10C-5, ledger :605 (2)) to five packages / two shims (:337 (1)): the server package `Eiva.Fletcher.Server` carries the server shim and depends on `Eiva.Fletcher.Interop`; text kept.*
 
 - **D-BIND-143 - a preview bundle names the commit it was built from, or is not made.** *LOCKED
   BY THE MAINTAINER 2026-10-21 (BIND-9a-2).* A `pull_request` run builds the PR head MERGED into
@@ -4011,6 +4016,7 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   README's commands are single lines and it holds no backslash, the stamping target says why, and the comparison stays the guard; escaping `\` as `%5C`
   in `Directory.Build.targets` was the alternative, not taken (untestable here: Windows does not
   convert).
+  *Extended 2026-11-16 (D10C-5, ledger :605 (2)) to five packages / two shims (:337 (1)): the server package `Eiva.Fletcher.Server` carries the server shim and depends on `Eiva.Fletcher.Interop`; text kept.*
 - **D-BIND-174 - 9b-8 is the fresh-context review of BIND-9b and a merge runbook; the
   `0.6.0-alpha` bump and the preview retirement are the last two commits before the merge.**
   *LOCKED BY THE MAINTAINER 2026-10-27 (BIND-9b-8, option A of two).* BIND-T and BIND-10 still

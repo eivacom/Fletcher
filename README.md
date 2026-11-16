@@ -422,7 +422,7 @@ Releases are cut by maintainers by pushing a **component-prefixed git tag** (`<c
 | `protoc/` (also `@eiva/protoc-gen-fletcher` on npm and `Eiva.Fletcher.Protoc` on nuget.org) | `protoc-v` | `protoc/conanfile.py` |
 | `gateway/` | `gateway-v` | `gateway/VERSION` |
 | `gateway-client-ts/` | `gateway-client-v` | `gateway-client-ts/package.json` |
-| `dotnet/` (the four NuGet packages, with the C ABI shim) | `dotnet-v` | `dotnet/Directory.Build.props` |
+| `dotnet/` (the five NuGet packages, with the C ABI shims) | `dotnet-v` | `dotnet/Directory.Build.props` |
 
 For the Conan, gateway and dotnet components the tag version **must match** the version source (CI verifies and fails fast otherwise). Pre-release suffixes (`-alpha`, `-beta`, `-rc1`, …) are part of the version and, for the npm client, select the dist-tag.
 

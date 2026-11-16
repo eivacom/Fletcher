@@ -47,9 +47,9 @@ C# idiom laid over it (domain-map row 10; owner ruling 2026-11-12, "Shim only", 
 - **`Eiva.Fletcher.Model`**: the lossless `Timestamp`/`Duration` and the collection views that
   generated code uses (D-BIND-74); domain 10 owns the package, domain 1 owns what is generated
   against it.
-- **The server package** `[designed-not-built]`: the separate .NET package carrying the server
-  build of the shim (d9 D22) under its own file name, depending on the base package; the loader
-  prefers the server shim when it is present (ledger :536 (2), D21; settles d9 Q5a and register
+- **The server package**, `Eiva.Fletcher.Server` (ledger :605 (1)) `[built for both shim packages (D10C-5; Linux devcontainer and Windows by hand, CI unrun)]`: the separate .NET package
+  carrying the server build of the shim (d9 D22) under its own file name, depending on the base
+  package; the loader prefers the server shim when it is present (ledger :536 (2), D21; settles d9 Q5a and register
   BC-10's deferred half).
 - **Mapping each C ABI answer onto a C# idiom at one site**: a status to an exception, an origin
   to a typed exception, `Timeout.InfiniteTimeSpan` to `INT64_MAX`, a borrowed C structure to a
@@ -80,7 +80,7 @@ C# idiom laid over it (domain-map row 10; owner ruling 2026-11-12, "Shim only", 
 |---|---|
 | **Binding** | This domain: the managed packages over the shim. `binding.h` calls the C surface "the binding ABI"; that surface is domain 9's (d9 §2 "Binding"). |
 | **Base package** | `Eiva.Fletcher.Interop`, which packs the edge shim under `runtimes/<rid>/native/` for `win-x64` and `linux-x64` (`Fletcher.Interop.csproj:52-55`, D-BIND-27, -134). `Eiva.Fletcher` references it. |
-| **Server package** | `[designed-not-built]` The separate .NET package carrying the server shim (d9 D22) under its own file name, depending on the base package (ledger :536 (2), D21). Its NuGet id is the packaging stage's choice. |
+| **Server package** | `Eiva.Fletcher.Server` (ledger :605 (1)) `[built for both shim packages (D10C-5; Linux devcontainer and Windows by hand, CI unrun)]`. The separate .NET package carrying the server shim (d9 D22) under its own file name, and nothing else (no assembly), depending on the base package (ledger :536 (2), D21). |
 | **Edge shim / server shim** | The two builds of the one shim (d9 L12): `fletcher-c-abi` and `fletcher-c-abi-server` (ruling 2026-11-13, ledger :395). C# loads the server file when it is present in the app's folders, else the edge file (L5, D21, D28; `NativeLoader.CandidatePaths`, D10C-4). |
 | **Loader** | `NativeLoader` (`NL:27-340`): installs the per-assembly resolver, probes beside the assembly then the application (every server candidate before every edge candidate, D10C-4), and explains a failure by RID, by the refused file and its build, or by platform floor (D-BIND-172). |
 | **Handshake** | `NativeMethods`' type initializer: install the resolver, then compare `fl_binding_abi_version()` with `HeaderVersion` before any other import can run (`NM:72-79`, `NL:320-339`). |
@@ -99,9 +99,10 @@ C# idiom laid over it (domain-map row 10; owner ruling 2026-11-12, "Shim only", 
   subscribe must work on the edge build without a batcher" (ledger :363 (4)) did not say which;
   ledger :536 (1) settles it as `SubscriberArrow.Subscribe` (D20).
 - **"Window"** has the three meanings d9 lists, plus C#'s framed window.
-- **"Interop is the only package with native assets"** is still stated in code
+- ~~**"Interop is the only package with native assets"** is still stated in code
   (`Fletcher.Interop.csproj:6-10`) and checked (`scripts/check_dotnet_packages.sh:12-13`, `:108`);
-  D22 made it false by ruling.
+  D22 made it false by ruling.~~ **Done (D10C-5):** the comment says L15 and the check is one rule list
+  over five packages.
 - **`FletcherStatus.NotSupported`** is documented as "This provider does not implement the requested
   behaviour" (`FE:38`); D28 widened the meaning to "this provider or this build cannot do this".
   **`FletcherOrigin.Seam`** reads "a PubSubError or a std::exception" (`FE:67`); `h:265` now adds
@@ -381,16 +382,21 @@ delivered), a late schema (losses reported, assembly once it arrives) and out-of
 
 **L15. Native code ships only in shim packages, one shim per package, and each package's limits
 are checked when it is packed.** Every other managed package is asset-free.
-`[built for the base package; designed-not-built for the server package]`
-- Holds at: `Fletcher.Interop.csproj:52-63` (both RIDs or none), `scripts/check_dotnet_packages.sh`
-  (no `runtimes/` outside Interop, `:12-13`; the 12 MB ceiling on Interop, `:103-107`, D-BIND-157),
+`[built for both shim packages (D10C-5; Linux devcontainer and Windows by hand, CI unrun)]`
+- Holds at: `Fletcher.Interop.csproj:52-63` (both RIDs or none), `Fletcher.Server.csproj:30-56` (both
+  server shims or no pack; no assembly), `scripts/check_dotnet_packages.sh:118-203` (one rule list,
+  BC-17: the exact `runtimes/` entries and Fletcher dependencies per target-framework group of each
+  package, the server package's entry allow-list, the notices' `arrow`; the ceilings `:49`, `:56`:
+  12 MB on Interop, D-BIND-157, and 18 MB on the server package, Q7), and its fourteen controls in
+  `scripts/test_check_dotnet_packages.py` (the server notice's one-for-both-platforms rule, ruling
+  2026-11-16, is `scripts/check_notice_covers.sh`),
   `scripts/check_shim_dependencies.sh` (the exact DLL allow-list, D-BIND-148; the linux-x64 floors,
   D-BIND-149), `NL:226-233` (the floors stated where a load failure is explained, D-BIND-172).
 - Source: D-BIND-13 as revised by ruling 2026-11-13 "Packaging: Separate server package" (ledger
-  :337 (1); d9 D22): "two packages, each a full shim"; D-BIND-157 stays on the base package.
-- Today's check enforces the pre-D22 rule ("no other package carries a `runtimes/` entry"); the
-  server package needs it widened (Findings (a)1). Whether D-BIND-148/-149 apply as they stand, and
-  what ceiling the server package has, carry a proposed default (§7 Q7).
+  :337 (1); d9 D22): "two packages, each a full shim"; D-BIND-157 stays on the base package; the
+  package's id is ruled (ledger :605 (1)).
+- D-BIND-148/-149 apply to the server shim as they stand (Q7's default, measured in D10C-5: the same
+  DLL list and floors); its ceiling is the first measured pack plus 4.3 MB, rounded up (Q7).
 
 ## 4. The interface
 
@@ -443,7 +449,7 @@ a source build whatever is staged beside the tests (CI's dotnet lane stages the 
   D33, ledger :575 (6)).
 - ~~`BatchReason` renumbered to 1-3 (L2, D34)~~ `[built]` (D10C-2).
 - ~~The loader's preference for the server shim, failing loudly with no fallback (L5, D21, D28)~~
-  `[built]` (D10C-4; Windows, by hand; CI and Linux unrun); the server package (L15, D21, Q7).
+  `[built]` (D10C-4; Windows, by hand; CI and Linux unrun); the server package `[built]` (D10C-5, L15).
 
 **Who calls, and on which thread (after the switch):** a row delivery on the transport's thread
 (unchanged); a batch on domain 7's batch thread, one at a time, in window order (L13);
@@ -527,7 +533,7 @@ former Q10 (doc comments lagging D28) is work the round owes (Findings (a)2). Nu
 
 | # | Question | Owner |
 |---|---|---|
-| Q7 | Do D-BIND-148's allow-list and D-BIND-149's floors apply to the server shim as they stand, and what packed-size ceiling does the server package get (D-BIND-157 stays on the base package)? Proposed default: the same lists and floors, failing by name if the server shim needs more; a ceiling of its own set from the first measured pack plus the same margin D-BIND-157 left. Owner only if the measured shim breaks a list or floor. **Default stands unless the owner objects.** | domain 10 (packaging stage), then owner on a breach |
+| Q7 | Do D-BIND-148's allow-list and D-BIND-149's floors apply to the server shim as they stand, and what packed-size ceiling does the server package get (D-BIND-157 stays on the base package)? Proposed default: the same lists and floors, failing by name if the server shim needs more; a ceiling of its own set from the first measured pack plus the same margin D-BIND-157 left. Owner only if the measured shim breaks a list or floor. **Default stands unless the owner objects.** **Measured (D10C-5, 2026-11-16):** the server shim passes the same list and floors; the first pack is 12,848,400 bytes, so the ceiling is 18,000,000 (12.85 + 4.3 MB, rounded up). | domain 10 (packaging stage), then owner on a breach |
 | Q8 | Does `fl_decode_rows_framed` stay after the switch (d9 Q9)? Its one consumer is deleted. Proposed default: it stays; removing an entry point is domain 9's, at a later d9 stage, recorded as d9 debt. Owner only to remove it in this round. **Default stands unless the owner objects.** | domain 9, after this round |
 | Q9 | Which managed-batcher tests carry cases domain 7's suite lacks (§8)? **Answered by the D10C pre-round audit (part C): four cases, listed in §8 rule 6;** the test-authority step re-checks before the deletion stage; each is ported by a domain-7 round or dropped by the owner. | D10C, stage before deletion |
 | Q11 | ~~No C# test compares `FletcherStatus`/`FletcherOrigin`/`BatchReason`/the variant with `binding.h`'s numbers (L2; d9 Findings a7). Proposed: the switch adds one.~~ **Closed (D10C-2):** `AbiNumberTableTests.EveryNumberTheShimHandsOutHasTheSameValueInCSharp`. | D10C |
@@ -585,10 +591,11 @@ former Q10 (doc comments lagging D28) is work the round owes (Findings (a)2). Nu
 ## Findings (reported, not fixed)
 
 **(a) Documents that disagree with the code or with a later ruling**
-1. **Owed by the round (tier 3: code and checks behind a ruling).** `Fletcher.Interop.csproj:6-10`
+1. ~~**Owed by the round (tier 3: code and checks behind a ruling).** `Fletcher.Interop.csproj:6-10`
    states, and `scripts/check_dotnet_packages.sh:12-13` and `:108` enforce, "Interop is the only
    package that carries native assets"; ruling 2026-11-13 (ledger :337 (1), d9 D22) made it false,
-   and D21 adds the server package beside it. Not changed by this document.
+   and D21 adds the server package beside it.~~ **Done (D10C-5):** the comment says L15, and the check
+   is one rule list over five packages.
 2. ~~**Owed by the round (tier 3).** `FE:38` (`FletcherStatus.NotSupported`) and `FE:67`
    (`FletcherOrigin.Seam`) lag d9 D28 and `h:265`.~~ **Done (D10C-2):** `FE:38` now reads "This provider or
    this build cannot do this" and `FE:67` includes the library's own refusal.

@@ -1,7 +1,7 @@
 # D10C-5 — Stage Brief (2026-11-16)
 **In one sentence:** an app can add one package beside `Eiva.Fletcher` to get the server shim (the build with the C++
 batcher); an app that does not keeps the small, Arrow-free shim; packing refuses any package breaking that split (batches flow from stage 7).
-**Forcing test:** the package check over all five packed packages, plus seven breakages it must refuse — the
+**Forcing test:** the package check over all five packed packages, plus fourteen breakages it must refuse (seven designed; C8–C14 added by 0b and review) — the
 server package holds exactly the server shim (Linux, Windows) and needs the base package; the base package
 still holds only the edge shim within 12 MB; nothing else holds native code. **Server package size limit:** its
 first measured size (devcontainer pack, CI's image) + 4.3 MB (the margin the base package's 12 MB left), rounded up to a whole MB.
@@ -51,5 +51,5 @@ Linux; a server package past its limit. Different native interface versions are 
 ## Numbers — declared net lines: +210 / −55 (net ≈ +155; no split) · new public surface: 1 (the package) · design cycles: 2/2
 
 ---
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
-<delta vs the above — actual net lines, anything retired or added the brief did not predict, fix cycles used>.
+**As landed (2026-11-16):**
+Counted prod +337/−77, net +260 (declared ~+155; ceiling 250; owner accepted the overrun, ledger 2026-11-16). Tests: 14 controls (+339). Server pack 12,848,432 B, so `SERVER_CEILING` = 18,000,000. Not predicted: P4 breached (Linux-only libbacktrace), resolved by the union-notice ruling and `check_notice_covers.sh`; README rebuild route fixed and rehearsed from an empty Conan home. Design cycles 2, fix cycles 1. CI unrun.

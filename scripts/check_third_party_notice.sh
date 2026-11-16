@@ -12,7 +12,9 @@
 #   * where nanoarrow is listed, the Apache-2.0 NOTICE files it carries are in the text too:
 #     nanoarrow's own and the one of the flatcc it bundles (Apache-2.0 section 4(d)), and the
 #     licences of flatcc's portable headers (the folder's LICENSE, and LICENSES.txt for the four
-#     files under BSD-3-Clause and MIT).
+#     files under BSD-3-Clause and MIT);
+#   * D10C-5: where arrow (Arrow C++, linked by the server shim) is listed, Arrow's Apache NOTICE
+#     is in the text too (Apache-2.0 section 4(d)).
 # One script for every lane that writes a notice: the shim's (ci.dotnet), the gateway's
 # (ci.gateway) and the plugin's (ci.protoc).
 set -euo pipefail
@@ -31,6 +33,9 @@ if grep -q "^  \* nanoarrow " <<< "$listed"; then
   for portable in flatcc/portable/LICENSE flatcc/portable/LICENSES.txt; do
     grep -q "^--- $portable ---" "$NOTICE" || { echo "::error::$NOTICE lists nanoarrow without $portable, the licences of the flatcc portable headers"; fail=1; }
   done
+fi
+if grep -q "^  \* arrow " <<< "$listed"; then
+  grep -q "^Apache Arrow$" "$NOTICE" || { echo "::error::$NOTICE lists arrow without Arrow's Apache NOTICE"; fail=1; }
 fi
 [ "$fail" -eq 0 ] || exit 1
 echo "$NOTICE covers: $*"

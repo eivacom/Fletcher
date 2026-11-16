@@ -7,6 +7,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Fletcher.Interop/Fletcher.Interop.csproj" />
+    <Project Path="src/Fletcher.Server/Fletcher.Server.csproj" />
     <Project Path="src/Fletcher/Fletcher.csproj" />
     <Project Path="src/Fletcher.GatewayClient/Fletcher.GatewayClient.csproj" />
     <Project Path="src/Fletcher.Model/Fletcher.Model.csproj" />

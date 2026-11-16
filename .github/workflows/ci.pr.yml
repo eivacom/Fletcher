@@ -175,6 +175,7 @@ jobs:
               - 'scripts/check_shim_dependencies.sh'
               - 'scripts/locate_shim.sh'
               - 'scripts/check_dotnet_packages.sh'
+              - 'scripts/test_check_dotnet_packages.py'
               - 'scripts/shim_floors.env'
               # BIND-9b-7 (D-BIND-173): and its lockfile by this one.
               - 'scripts/check_conan_lockfile.sh'
@@ -195,6 +196,7 @@ jobs:
               - 'fastdds-pubsub-provider/**'
               - 'xrcedds-pubsub-provider/**'
               - 'scripts/check_third_party_notice.sh'
+              - 'scripts/check_notice_covers.sh'
               - '.github/workflows/ci.pr.yml'
               - '.github/workflows/ci.dotnet.yml'
               - '.github/workflows/ci.setup-devcontainer-image.yml'

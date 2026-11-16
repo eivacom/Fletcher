@@ -7,19 +7,30 @@
 # dotnet/README.package.md rebuilds the third-party packages the release was built with
 # instead of ConanCenter's newest recipe revisions.
 #
-#   check_conan_lockfile.sh <lockfile> <profile>
+#   check_conan_lockfile.sh <lockfile> <profile> [server]
 #
 #   * it locks third-party packages only: no fletcher-* (the commit pins those, and their
 #     recipe revisions hash the checkout, line endings included);
 #   * in an empty Conan home holding only this checkout's five fletcher recipes, the shim's
 #     graph, resolved from ConanCenter with the lockfile passed as the README passes it
 #     (--lockfile-partial), has exactly the locked third-party packages, recipe revisions
-#     included: none resolved that the lockfile leaves open, none locked that the graph lacks.
+#     included: none resolved that the lockfile leaves open, none locked that the graph lacks;
+#   * D10C-5 (D-BIND-140): given `server`, the same for the SERVER shim's graph (the server
+#     variant, which also links arrow-bridge and pubsub-arrow: seven fletcher recipes), the
+#     lockfile the server package's relinking route uses.
 # A graph, not a build: ci.dotnet's own build is the shim's build test (D-BIND-171).
 set -euo pipefail
 
-LOCK=${1:?usage: check_conan_lockfile.sh <lockfile> <profile>}
-PROFILE=${2:?usage: check_conan_lockfile.sh <lockfile> <profile>}
+LOCK=${1:?usage: check_conan_lockfile.sh <lockfile> <profile> [server]}
+PROFILE=${2:?usage: check_conan_lockfile.sh <lockfile> <profile> [server]}
+# The server variant's recipes and option, or nothing for the edge shim.
+COMPONENTS="core pubsub fastdds-pubsub-provider xrcedds-pubsub-provider c-abi"
+VARIANT=()
+case "${3:-}" in
+  "") ;;
+  server) COMPONENTS="$COMPONENTS arrow-bridge pubsub-arrow"; VARIANT=(-o "&:variant=server") ;;
+  *) echo "::error::unknown shim variant '${3}': only 'server' is one"; exit 1 ;;
+esac
 [ -s "$LOCK" ] || { echo "::error::$LOCK is missing or empty"; exit 1; }
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 # The first Python that runs (on Windows, python3 may be the Store's stub).
@@ -37,11 +48,11 @@ mkdir "$WORK/home"
 export CONAN_HOME
 CONAN_HOME=$(native "$WORK/home")
 
-for component in core pubsub fastdds-pubsub-provider xrcedds-pubsub-provider c-abi; do
+for component in $COMPONENTS; do
   conan export "$ROOT/$component" > /dev/null 2>> "$WORK/conan.log" \
     || { cat "$WORK/conan.log"; echo "::error::conan export $component failed"; exit 1; }
 done
-conan graph info "$ROOT/c-abi" --lockfile="$LOCK" --lockfile-partial -pr:a="$PROFILE" \
+conan graph info "$ROOT/c-abi" --lockfile="$LOCK" --lockfile-partial -pr:a="$PROFILE" "${VARIANT[@]}" \
   --format=json > "$WORK/graph.json" 2>> "$WORK/conan.log" \
   || { cat "$WORK/conan.log"; echo "::error::the shim's graph does not resolve with $LOCK"; exit 1; }
 

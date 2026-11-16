@@ -152,22 +152,32 @@ jobs:
               # (with_probe_shim, as built above: it adds only first-party packages),
               # and both handed to the pack job.
               NATIVE=/workspace/dotnet/native/linux-x64
-              mkdir -p "$NATIVE"
+              mkdir -p "$NATIVE/server"
               cp "$SHIM" "$NATIVE/"
+              # D10C-5 (BC-17): the server shim, its notice and its lockfile belong to the
+              # server package, in a folder of their own.
+              cp "$SERVER" "$NATIVE/server/"
               # BIND-9b-1 (D-BIND-157): the packaged copy ships without its symbol table
               # (3.5 MB of 14.6 MB that nothing loads); the exported C ABI must be exactly
               # what it was, and from here on the tests, the AOT smoke and the checks all
               # use this copy, the one that ships. The Conan package keeps its symbols.
-              EXPORTS_BEFORE=$(nm -D --defined-only "$NATIVE/libfletcher-c-abi.so" | cut -d" " -f3 | sort)
-              strip --strip-unneeded "$NATIVE/libfletcher-c-abi.so"
-              EXPORTS_AFTER=$(nm -D --defined-only "$NATIVE/libfletcher-c-abi.so" | cut -d" " -f3 | sort)
-              if [ -z "$EXPORTS_AFTER" ] || [ "$EXPORTS_BEFORE" != "$EXPORTS_AFTER" ]; then
-                echo "::error::stripping changed the shim exports"
-                exit 1
-              fi
-              echo "stripped: $(stat -c %s "$SHIM") -> $(stat -c %s "$NATIVE/libfletcher-c-abi.so") bytes, $(echo "$EXPORTS_AFTER" | wc -l) exports unchanged"
+              # The server copy is stripped the same way (D10C-5, d10 Q7): the tested file
+              # is the shipped file.
+              for SO in "$NATIVE/libfletcher-c-abi.so" "$NATIVE/server/libfletcher-c-abi-server.so"; do
+                BYTES_BEFORE=$(stat -c %s "$SO")
+                EXPORTS_BEFORE=$(nm -D --defined-only "$SO" | cut -d" " -f3 | sort)
+                strip --strip-unneeded "$SO"
+                EXPORTS_AFTER=$(nm -D --defined-only "$SO" | cut -d" " -f3 | sort)
+                if [ -z "$EXPORTS_AFTER" ] || [ "$EXPORTS_BEFORE" != "$EXPORTS_AFTER" ]; then
+                  echo "::error::stripping changed the exports of $SO"
+                  exit 1
+                fi
+                echo "stripped $SO: $BYTES_BEFORE -> $(stat -c %s "$SO") bytes, $(echo "$EXPORTS_AFTER" | wc -l) exports unchanged"
+              done
               SHIM="$NATIVE/libfletcher-c-abi.so"
+              SERVER="$NATIVE/server/libfletcher-c-abi-server.so"
               bash /workspace/scripts/check_shim_dependencies.sh "$SHIM"
+              bash /workspace/scripts/check_shim_dependencies.sh "$SERVER"
               # BIND-9b-7 (review L14, D-BIND-173): the lockfile of the same graph, third-party
               # packages only, which a release attaches for the relinking route; checked to
               # resolve exactly that graph from ConanCenter in an empty Conan home.
@@ -178,6 +188,15 @@ jobs:
               test -s "$NATIVE/THIRD-PARTY-LICENSES.txt"
               conan lock remove --requires="fletcher-*/*" --lockfile="$LOCK" --lockfile-out="$LOCK"
               bash /workspace/scripts/check_conan_lockfile.sh "$LOCK" "$PROFILE"
+              # D10C-5 (D-BIND-140, -173): the same for the server graph, which has Arrow C++
+              # in it, so the server package carries its own notice and relinking route.
+              SLOCK="$NATIVE/server/fletcher-shim-server-linux-x64.conan.lock"
+              conan install --requires="fletcher-c-abi/[*, include_prerelease]" -o "fletcher-c-abi/*:variant=server" \
+                --deployer=/workspace/gateway/deployers/third_party_licenses.py --deployer-folder="$NATIVE/server" \
+                -c tools.graph:skip_binaries=False -pr:a=$PROFILE --lockfile-out="$SLOCK"
+              test -s "$NATIVE/server/THIRD-PARTY-LICENSES.txt"
+              conan lock remove --requires="fletcher-*/*" --lockfile="$SLOCK" --lockfile-out="$SLOCK"
+              bash /workspace/scripts/check_conan_lockfile.sh "$SLOCK" "$PROFILE" server
 
               cd /workspace/dotnet
               echo "::group::dotnet --info"
@@ -222,7 +241,7 @@ jobs:
             '
 
       # Handed to the pack job, which packs once for both RIDs (BIND-9a-0).
-      - name: Upload the Linux shim, its notice and its lockfile
+      - name: Upload the Linux shims, their notices and lockfiles
         uses: actions/upload-artifact@v7.0.1
         with:
           name: dotnet-native-linux-x64
@@ -337,8 +356,21 @@ jobs:
           test -s "$NATIVE/THIRD-PARTY-LICENSES.txt"
           conan lock remove --requires="fletcher-*/*" --lockfile="$LOCK" --lockfile-out="$LOCK"
           bash scripts/check_conan_lockfile.sh "$LOCK" "$PWD/.conan-profiles/Windows-msvc194-x86_64-Release"
+          # D10C-5 (BC-17, d10 Q7): the server shim, with the same DLL list, and its notice and
+          # lockfile, for the server package.
+          bash scripts/check_shim_dependencies.sh "${{ steps.shim.outputs.server }}" "$DUMPBIN"
+          mkdir -p "$NATIVE/server"
+          cp "${{ steps.shim.outputs.server }}" "$NATIVE/server/"
+          SLOCK="$NATIVE/server/fletcher-shim-server-win-x64.conan.lock"
+          conan install --requires="fletcher-c-abi/[*, include_prerelease]" -o "fletcher-c-abi/*:variant=server" \
+            --deployer=gateway/deployers/third_party_licenses.py --deployer-folder="$NATIVE/server" \
+            -c tools.graph:skip_binaries=False -pr:a="$PWD/.conan-profiles/Windows-msvc194-x86_64-Release" \
+            --lockfile-out="$SLOCK"
+          test -s "$NATIVE/server/THIRD-PARTY-LICENSES.txt"
+          conan lock remove --requires="fletcher-*/*" --lockfile="$SLOCK" --lockfile-out="$SLOCK"
+          bash scripts/check_conan_lockfile.sh "$SLOCK" "$PWD/.conan-profiles/Windows-msvc194-x86_64-Release" server
 
-      - name: Upload the Windows shim, its notice and its lockfile
+      - name: Upload the Windows shims, their notices and lockfiles
         uses: actions/upload-artifact@v7.0.1
         with:
           name: dotnet-native-win-x64
@@ -441,39 +473,54 @@ jobs:
           image: ${{ inputs.devcontainer-image }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Download the Linux shim, its notice and its lockfile
+      - name: Download the Linux shims, their notices and lockfiles
         uses: actions/download-artifact@v8.0.1
         with:
           name: dotnet-native-linux-x64
           path: dotnet/native/linux-x64
 
-      - name: Download the Windows shim, its notice and its lockfile
+      - name: Download the Windows shims, their notices and lockfiles
         uses: actions/download-artifact@v8.0.1
         with:
           name: dotnet-native-win-x64
           path: dotnet/native/win-x64
 
-      - name: Stage one notice, the LICENSE and COPYING
+      - name: Stage one notice per shim, the LICENSE and COPYING
         shell: bash
         run: |
           set -e
           # The notice's own list of libraries: the bullets between its first two rules,
           # not the licence texts after them, which have bullets of their own.
           listed() { awk '/^=+$/ {n++; next} n == 1 && /^  \* / {print}' "$1" | sort; }
+          # One notice per package (D10C-5): the edge shim's for four, the server shim's for the
+          # server package. The edge notice is one for both platforms, so the two legs must agree.
           if ! diff <(listed dotnet/native/linux-x64/THIRD-PARTY-LICENSES.txt) <(listed dotnet/native/win-x64/THIRD-PARTY-LICENSES.txt); then
-            echo "::error::the Linux and Windows shims are built from different third-party libraries (above); one notice cannot cover both"
+            echo "::error::the Linux and Windows edge shims are built from different third-party libraries (above); one notice cannot cover both"
             exit 1
           fi
-          mkdir -p dotnet/native/licences
+          # The server notice is ONE too, and lists the UNION of the two graphs (ruling
+          # 2026-11-16: Linux adds libbacktrace, through Boost), so the lists may differ. Ship
+          # the notice of the platform whose list holds the other's, and require each platform's
+          # list to be inside it; neither holding the other is a stop (a notice to merge by hand).
+          SLINUX=dotnet/native/linux-x64/server/THIRD-PARTY-LICENSES.txt
+          SWIN=dotnet/native/win-x64/server/THIRD-PARTY-LICENSES.txt
+          SHIPPED=$SLINUX
+          if ! bash scripts/check_notice_covers.sh $SLINUX $SLINUX $SWIN > /dev/null 2>&1; then SHIPPED=$SWIN; fi
+          bash scripts/check_notice_covers.sh $SHIPPED $SLINUX $SWIN
+          mkdir -p dotnet/native/licences dotnet/native/licences-server
           cp dotnet/native/linux-x64/THIRD-PARTY-LICENSES.txt dotnet/native/licences/
+          cp $SHIPPED dotnet/native/licences-server/THIRD-PARTY-LICENSES.txt
           cp LICENSE COPYING dotnet/native/licences/
+          cp LICENSE COPYING dotnet/native/licences-server/
           listed dotnet/native/licences/THIRD-PARTY-LICENSES.txt
           # Compiled into the shim from source, so not in the Conan graph: their texts
           # come from the fletcher-* packages that vendor them, and must be here; since
           # BIND-9b-7 (D-BIND-166) also what Fast DDS compiles in from its own thirdparty/,
           # and nanoarrow's and flatcc's Apache NOTICE files.
-          bash scripts/check_third_party_notice.sh dotnet/native/licences/THIRD-PARTY-LICENSES.txt \
-            nanoarrow micro-cdr micro-xrce-dds-client fast-dds nlohmann-json filewatch taocpp-pegtl "boost 1.73.0"
+          EDGE=(nanoarrow micro-cdr micro-xrce-dds-client fast-dds nlohmann-json filewatch taocpp-pegtl "boost 1.73.0")
+          bash scripts/check_third_party_notice.sh dotnet/native/licences/THIRD-PARTY-LICENSES.txt "${EDGE[@]}"
+          # The server notice: the same, plus Arrow C++ and its NOTICE (D10C-5, d9 L8).
+          bash scripts/check_third_party_notice.sh dotnet/native/licences-server/THIRD-PARTY-LICENSES.txt "${EDGE[@]}" arrow
 
       # The commit the packages name in their README and nuspec (BIND-9a-2, D-BIND-145): the one
       # checked out, `ref` when ci.pr passes the PR head for the preview bundle (whose
@@ -495,23 +542,40 @@ jobs:
                   -p:FletcherLicenceDir=/workspace/dotnet/native/licences \
                   -p:FletcherSourceCommit=$SOURCE_COMMIT
               done
-              # BIND-9b-7 (review L14, D-BIND-173): the two lockfiles travel with the packages,
-              # so a release attaches them and a preview bundle carries them in nuget/.
+              # D10C-5: the server package, with the server shims and its own notice.
+              dotnet pack src/Fletcher.Server/Fletcher.Server.csproj -c Release --no-restore -o /workspace/dotnet/artifacts $VERSION_ARG \
+                -p:FletcherServerShimLinuxX64=/workspace/dotnet/native/linux-x64/server/libfletcher-c-abi-server.so \
+                -p:FletcherServerShimWinX64=/workspace/dotnet/native/win-x64/server/fletcher-c-abi-server.dll \
+                -p:FletcherLicenceDir=/workspace/dotnet/native/licences-server \
+                -p:FletcherSourceCommit=$SOURCE_COMMIT
+              # BIND-9b-7 (review L14, D-BIND-173): the lockfiles, the edge and the server
+              # one per platform, travel with the packages, so a release attaches them and a
+              # preview bundle carries them in nuget/.
               for RID in linux-x64 win-x64; do
-                cp /workspace/dotnet/native/\$RID/fletcher-shim-\$RID.conan.lock /workspace/dotnet/artifacts/
+                cp /workspace/dotnet/native/\$RID/fletcher-shim-\$RID.conan.lock /workspace/dotnet/native/\$RID/server/fletcher-shim-server-\$RID.conan.lock /workspace/dotnet/artifacts/
               done
             "
 
-      # D-BIND-13 and D-BIND-134 on the PACKED packages: Interop carries exactly the two
-      # shims, nothing else carries native assets or depends on a package that does (the
-      # gateway client's former Package.GatewayClientHasNoRuntimesFolder step), no probe
-      # shim, both licence files in every package, and (BIND-9a-2) a README naming the
+      # BC-17 (d10 L15; D-BIND-13 and D-BIND-134, extended by D10C-5) on the PACKED packages, now
+      # five: Interop carries exactly the two edge shims, the server package exactly the two
+      # server shims, no other package carries native assets; Eiva.Fletcher and the server package
+      # depend on Interop and on nothing else with a shim, and nothing depends on the server
+      # package (the gateway client's former Package.GatewayClientHasNoRuntimesFolder step). Also
+      # no probe shim, both licence files in every package, and (BIND-9a-2) a README naming the
       # floors, the relinking route and this commit.
       - name: Check the packages
         shell: bash
         env:
           SOURCE_COMMIT: ${{ inputs.ref || github.sha }}
         run: bash scripts/check_dotnet_packages.sh dotnet/artifacts "$SOURCE_COMMIT"
+
+      # D10C-5 (BC-17): the check must also REFUSE what it is there for. The fourteen breakages,
+      # each made in a copy of the folder just checked, each refused for its own reason.
+      - name: Check that the package check refuses what it should
+        shell: bash
+        env:
+          SOURCE_COMMIT: ${{ inputs.ref || github.sha }}
+        run: python3 scripts/test_check_dotnet_packages.py dotnet/artifacts "$SOURCE_COMMIT"
 
       - name: Upload packages
         uses: actions/upload-artifact@v7.0.1

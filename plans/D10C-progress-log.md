@@ -78,3 +78,30 @@ Session directive (2026-11-15): run from D10C-1 onward, item by item, until a st
 **Owner decisions this stage:** the Linux evidence route ("I'll start Docker").
 **Debt carried:** DEBT-5 still owes its CI run ID. d9 :370 and :600 still describe the renamed copy (d9 is read-only; this goes to round close).
 **Records corrected:** NativeFileName in the design; d10 L5/§2/§4 marks and NL references; BC-10 tense (4a RECORD, by the implementer).
+
+## D10C-5 — the server package: Eiva.Fletcher.Server carries exactly the server shim (2026-11-16)
+
+**Forcing test:** `scripts/test_check_dotnet_packages.py`, the check over the five packed packages plus 14 breakages it must refuse. C2–C14 were red first; C1 is a guard.
+**Lane:** full · **Design:** `plans/D10C-5-server-package.md` · **Brief:** `plans/D10C-5-brief.md`
+**What landed:**
+- A fifth NuGet package, `Eiva.Fletcher.Server` (owner ruling). It carries only the server shim for linux-x64 and win-x64, has `_._` per TFM and no assembly, and depends on Interop.
+- `check_dotnet_packages.sh` is BC-17's one rule list: exact native files, exact dependencies per framework group, arrow only in the server notice, and `SERVER_CEILING` = 18 MB (first pack + 4.3 MB).
+- The server notice is the union of both platforms' lists (owner ruling); `check_notice_covers.sh` checks it.
+- Server lockfiles and the README rebuild route are in place.
+**Interfaces:** NEW package `Eiva.Fletcher.Server` (new public surface 1, named by ruling).
+**Deleted:** the "only Interop" rule wording. No test deleted; T48 re-anchored, T49 extended.
+**Reviews:**
+- 0a CLEAR · 0b CLEAR (C8/C9 added).
+- Design NEEDS-REWORK (B1, the Q7 formula), then APPROVE-WITH-DEBT(1) at cycle 2.
+- Compliance: 4 blocking (F1–F4; F3 went to the owner), then PASS at cycle 2.
+- Code review: 0 blocking, 4 should-fix (done), 6 nits.
+**Verification:**
+- Devcontainer: five-package pack, `check_dotnet_packages.sh` and C1–C14 green; README route rehearsed from an empty Conan home.
+- Windows: edge 1518/1518, server 460/460 per TFM, conformance 12/12 ×2, no NU5xxx.
+- CI unrun.
+**Close gate:** PASS (full)
+**Cycle meter:** design 2/2 · fix 1 · implementer launches 1/5 · owner touches 4 · stage words 6176
+**Numbers:** declared net ~+155 · actual net +260 (owner accepted; ceiling 250) · tests +339 · new public surface 1
+**Owner decisions this stage:** the package id; the BIND annotations; the union notice (P4); the size overrun.
+**Debt carried:** the CI re-confirmation of `SERVER_CEILING` and the Windows server notice (with D10C-4 DEBT-5). The Arrow licence written as a tuple repr in the deployer is a separate item. D-BIND-14′ is not annotated (needs the owner). The test row in `architecture-overview.md:392` still says "four".
+**Records corrected:** the control count; the d10 L15 citation; the architecture-overview :77 wording; the D-BIND-134 union note.

@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 # Copyright (C) 2026 The Fletcher Authors
 #
-# Release orchestration for the four Eiva.Fletcher NuGet packages (BIND-9b-6; D-BIND-159,
+# Release orchestration for the five Eiva.Fletcher NuGet packages (BIND-9b-6; D-BIND-159,
 # D-BIND-162, D-BIND-164, D-BIND-176), the Conan CD shape with a gate before anything leaves the
 # run:
 #
 #   setup-devcontainer
 #       │
-#       ├── dotnet  (ci.dotnet.yml)       the four packages, packed once from both shims
+#       ├── dotnet  (ci.dotnet.yml)       the five packages, packed once from both shims
 #       ├── gateway (ci.gateway.yml)      the gateway archives  ┐ built from the same tree, only
 #       └── protoc  (ci.protoc.yml)       Eiva.Fletcher.Protoc  ┘ for the gate (D-BIND-162)
 #               │
@@ -17,7 +17,7 @@
 #               ▼
 #         release                         tag == Directory.Build.props version; the .nupkg and
 #               │                         .snupkg attached to the GitHub Release, with the
-#               │                         shim's two Conan lockfiles (D-BIND-173)
+#               │                         shims' four Conan lockfiles (D-BIND-173, D10C-5)
 #               ▼
 #         nuget-org                       the same packages to nuget.org, by Trusted Publishing
 #                                         in the environment nuget-org (D-BIND-176)
@@ -109,9 +109,16 @@ jobs:
               [ -s "packages/$id.$VERSION.$ext" ] || { echo "::error::missing release asset $id.$VERSION.$ext"; ls -l packages; exit 1; }
             done
           done
-          # BIND-9b-7 (review L14, D-BIND-173): the shim's lockfiles, for the relinking route.
+          # D10C-5: the server package is its shims and nothing else, so it has a .nupkg and no
+          # .snupkg (there is no assembly to take symbols from).
+          [ -s "packages/Eiva.Fletcher.Server.$VERSION.nupkg" ] || { echo "::error::missing release asset Eiva.Fletcher.Server.$VERSION.nupkg"; ls -l packages; exit 1; }
+          [ ! -e "packages/Eiva.Fletcher.Server.$VERSION.snupkg" ] || { echo "::error::Eiva.Fletcher.Server has a .snupkg: it has no assembly"; exit 1; }
+          # BIND-9b-7 (review L14, D-BIND-173): the shims' lockfiles, for the relinking route;
+          # the server shim has its own (D10C-5).
           for rid in linux-x64 win-x64; do
-            [ -s "packages/fletcher-shim-$rid.conan.lock" ] || { echo "::error::missing release asset fletcher-shim-$rid.conan.lock"; ls -l packages; exit 1; }
+            for lock in "fletcher-shim-$rid.conan.lock" "fletcher-shim-server-$rid.conan.lock"; do
+              [ -s "packages/$lock" ] || { echo "::error::missing release asset $lock"; ls -l packages; exit 1; }
+            done
           done
           ls -l packages
 
@@ -162,8 +169,9 @@ jobs:
         with:
           user: ${{ vars.NUGET_USER }}
 
-      # Eiva.Fletcher.Interop before Eiva.Fletcher, which depends on it. dotnet nuget push sends
-      # each .snupkg beside its .nupkg to nuget.org's symbol server.
+      # Eiva.Fletcher.Interop first, then the server package that depends on it, then Eiva.Fletcher,
+      # which does too. dotnet nuget push sends each .snupkg beside its .nupkg to nuget.org's
+      # symbol server (the server package has none).
       - name: Push the packages
         shell: bash
         env:
@@ -171,7 +179,7 @@ jobs:
         run: |
           set -euo pipefail
           VERSION=${GITHUB_REF_NAME#dotnet-v}
-          for id in Eiva.Fletcher.Interop Eiva.Fletcher Eiva.Fletcher.Model Eiva.Fletcher.GatewayClient; do
+          for id in Eiva.Fletcher.Interop Eiva.Fletcher.Server Eiva.Fletcher Eiva.Fletcher.Model Eiva.Fletcher.GatewayClient; do
             dotnet nuget push "packages/$id.$VERSION.nupkg" --source https://api.nuget.org/v3/index.json \
               --api-key "$NUGET_API_KEY" --skip-duplicate
           done
