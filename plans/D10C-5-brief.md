@@ -1,29 +1,21 @@
 # D10C-5 — Stage Brief (2026-11-16)
-
-**In one sentence:** an app can add one package beside `Eiva.Fletcher` to get the server shim (the build with
-the C++ batcher); an app that does not keeps the small, Arrow-free shim, and packing refuses any package that
-breaks that split. Batches flow from stage 7; until then the server shim loads and works per row as today.
+**In one sentence:** an app can add one package beside `Eiva.Fletcher` to get the server shim (the build with the C++
+batcher); an app that does not keeps the small, Arrow-free shim; packing refuses any package breaking that split (batches flow from stage 7).
 **Forcing test:** the package check over all five packed packages, plus seven breakages it must refuse — the
 server package holds exactly the server shim (Linux, Windows) and needs the base package; the base package
-still holds only the edge shim within 12 MB; nothing else holds native code. **Server package size limit:**
-its first measured size (devcontainer pack, CI's image) + 4.3 MB (the margin the base package's 12 MB left), rounded up to a whole MB.
-
+still holds only the edge shim within 12 MB; nothing else holds native code. **Server package size limit:** its
+first measured size (devcontainer pack, CI's image) + 4.3 MB (the margin the base package's 12 MB left), rounded up to a whole MB.
 ## Interfaces
 | Surface | Change | Why |
 |---|---|---|
 | NuGet package `Eiva.Fletcher.Server` (name: Decision 1) | NEW | what an app adds to get batches (ruling 2026-11-13, "Separate server package") |
 | Release assets (two server lockfiles); package README | NEW / CHANGED | a user can rebuild the server shim they were shipped (LGPL route); README lists five packages |
-
-## Deleted
-Only wording ("only `Eiva.Fletcher.Interop` may carry native code"), replaced by the five-package rule.
+## Deleted: only wording ("only `Eiva.Fletcher.Interop` may carry native code"), replaced by the five-package rule
 ## Corner cases forbidden vs handled
-**Forbidden** (packing refuses): a server package missing a platform's shim or holding anything else; either
-shim in the other's package; a server package not needing the base one; **any package bringing the server shim
-to an app that did not ask for it**; the wrong licence notice in either shim package; Linux and Windows server
-shims from different libraries; a server shim needing more than the stated system libraries and Linux; a server
-package past its limit. Server and base packages speaking different native interface versions are refused at
-load, as today; same-interface version skew loads (compatible by design). **Handled:** none.
-
+**Forbidden** (packing refuses): a server package missing a shim or holding anything else; either shim in the other's
+package; a server package not needing the base one; **any package bringing the server shim to an app that did not ask
+for it**; a wrong licence notice (platforms: Decision 3); a server shim needing more than the stated system libraries and
+Linux; a server package past its limit. Different native interface versions are refused at load; same-interface skew loads. **Handled:** none.
 ## Decisions for you
 1. **What do users type to get batches?**
    (a) **`Eiva.Fletcher.Server`.** Users: add it beside `Eiva.Fletcher`; matches "server build" in the loader's
@@ -40,15 +32,23 @@ load, as today; same-interface version skew loads (compatible by design). **Hand
    Architecture: in step with ruling 2026-11-13 (:337 (1)), trail intact. (b) **Leave them; a close finding.** Users:
    none; maintainers read "four" meanwhile. Architecture: tier 2 out of step with the ruling for the round.
    **Recommendation:** (a), the ruling governs and an annotation loses nothing. **Default:** (a).
-
+3. **Linux's server shim is built from one library Windows's is not (libbacktrace, BSD-3-Clause, via Boost). How
+   does the package's licence notice cover both platforms?** (a) **One notice per platform.** Users: two notices in
+   the server package, each exact for its platform. Architecture: most exact for D-BIND-134 ("lists the libraries
+   linked into the shim"); strains D-BIND-140/-142's one notice at the root; the server package departs from the base's shape.
+   (b) **One notice listing both platforms' libraries.** Users: one notice, as in every package; Windows users also read
+   libbacktrace's licence for code their shim lacks. Architecture: serves D-BIND-140 (one graph-derived notice per
+   package) and the notice tool's rule that it lists the dependency graph, not only what is linked; omits no text
+   D-BIND-152/-166 require. (c) **Build the server shim without Boost's backtrace.** Users: identical notices; no visible
+   change unless the shim uses Boost's backtrace stack traces (not verified). Architecture: a domain-9 recipe or shared-profile
+   edit this round forbids, so your named scope exception (as :435); a CI-only switch makes the shipped shim differ
+   from what the relinking route rebuilds (strains D-BIND-140, -173).
+   **Recommendation:** (b): D-BIND-140's one notice stays, no licence text is lost, domain 9 untouched. **Default:** (b).
+   *Background: Linux-only `boost/1.90.0` → `libbacktrace/cci.20210118`; under (b) the pack job's identical-list check
+   (`ci.dotnet.yml:497-502`) becomes "each platform's list ⊆ the shipped list"; compliance F3.*
 ## Risks accepted / debt carried
-- **Stops and asks you** if the server shim needs a library or Linux floor beyond the stated ones, or Arrow C++'s
-  notice is missing. Licence-exception wiring must skip the server package. A new id's first nuget.org push is unproven.
-- Verification: devcontainer (`fletcher-build:latest`, volumes `fletcher-d10c4-conan`/`-ws`) and Windows by hand:
-  `check_shim_dependencies.sh` on both shims; pack five packages; `check_dotnet_packages.sh` + the seven breakages
-  (`scripts/test_check_dotnet_packages.py`); then CI on your draft PR, which re-confirms the size limit.
-## Numbers
-Declared net lines: +210 / −55 (net ≈ +155; no split) · new public surface: 1 (the package) · design cycles: 2/2
+- **Stops and asks you** on a library or Linux floor beyond the stated ones, or a missing Arrow notice. Licence-exception wiring skips the server package. Verification: devcontainer + Windows by hand, five packs, the check + seven breakages; CI re-confirms the limit.
+## Numbers — declared net lines: +210 / −55 (net ≈ +155; no split) · new public surface: 1 (the package) · design cycles: 2/2
 
 ---
 *As landed (<date>, appended by the PM at close, ≤5 lines):*

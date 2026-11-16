@@ -611,3 +611,12 @@ no domain-7 code or law changes, and d7's document picks up the test names at it
 `Eiva.Fletcher.Interop` (d10 L15). (2) **D-BIND-134, -139, -140, -142 and -173 are annotated "extended to five packages / two
 shims (:337 (1))", text kept.**
 **Applies to:** d10 L15, §2; register BC-17; plans/BIND-locked-decisions.md.
+
+## 2026-11-16 — D10C-5: one licence notice for the server package across platforms
+> Notice: "One notice, both lists (Rec.)"
+
+*(Chosen option; full text in `plans/D10C-5-brief.md` Decision 3; compliance F3.)*
+**Ruling:** **the server package carries ONE third-party notice listing the union of both platforms' server graphs** (Linux adds
+libbacktrace via Boost); D-BIND-140's one notice per package stands. CI's identical-list comparison becomes "each platform's
+list ⊆ the shipped list". Design P4 is recorded as breached and resolved by this ruling.
+**Applies to:** D10C-5; `ci.dotnet.yml` notice step; D-BIND-134/-140.
