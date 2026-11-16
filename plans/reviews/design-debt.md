@@ -898,3 +898,6 @@ Review: [../../docs/archive/D7F/reviews/D7F-1-design-review.md](../../docs/archi
   beside it. CI re-confirms rather than gates close (bytes and run ID go to the evidence ledger with D10C-4 DEBT-5); the
   constant changes only if CI's bytes round to a different whole MB. Strike design :65-66 "replaced from CI before close",
   brief :9 "CI-measured" and brief :49 "which also fixes the size limit".
+
+## D10C-6 → D10C-7 (forward note from the D10C-6 brief, PM)
+- FWD-1 (rung 7, tests): re-anchor `ARowAndABatchedSubscriptionToOneTopicAreRefusedWhicheverComesSecond`'s batched-first arms on the edge leg (SubscribeBatched throws NotSupported there: the refused batched call leaves no claim, and a per-row subscribe to the topic is accepted). Rung 7 keeps releasing the same-topic claim only after the native close returns (hold it longer if an in-handler close returns before the transport subscription is gone).
