@@ -130,8 +130,8 @@ profile (M2): batched arm on the server shim (7a by hand, 7b in CI), edge arm th
   tests; second `dotnet test`), light lane. The ladder's cut (attachments to 7b) saves ~10 lines and leaves four tests red, so it does
   not relieve the ceiling. Window: for one stage the Fast DDS batched-profile arm runs by hand only (no red window). Owner: brief D1.
 - **D24 is unverified by execution at design** (P1). It is the stage's first gate.
-- **Plan shape:** the batcher's deletion is scheduled for the very next stage (D7). Merging 7 and 8 would be net-negative but a large
-  review; the PM ruled it separate. Recorded, not re-opened.
+- **Plan shape:** the batcher's deletion is scheduled for the very next stage (D7). Merging rung 8 in (net ≈ −160 to −310; D7 and P5
+  vanish; rung 8's scans and T40 move in) is offered to the owner as brief Decision 1 (d), recommended; 7a priced +215-245 (review DEBT-3).
 - **D5 lengthens a ruled refusal** (L3 :575 (6)): after a quiet close the other kind is refused until `Dispose`. Same subject, longer
   duration; the alternative is the silent loss the ruling exists to prevent. Disclosed in the brief. BC-10's scan must allow D2's call.
 

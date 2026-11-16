@@ -656,3 +656,12 @@ growth is the union-notice check (:615) and BC-17 hardening from review. Not spl
 V12 drops its T20 citation.** (2) **The preview-bundle consumer's batched path (T46) is a declared red window from D10C-7 until D10C-11**,
 which re-anchors it from packages; nothing ships mid-round.
 **Applies to:** d10 L3, V12; D10C-7..D10C-11; T46.
+
+## 2026-11-16 — D10C-7: the switch and the deletion are one stage
+> Switch shape: "(d) Merge D10C-8 in (Rec.)"
+
+*(Chosen option; full text in `plans/D10C-7-brief.md` Decision 1.)*
+**Ruling:** **D10C-8 merges into D10C-7: the switch, the CI server-shim lane and deleting C#'s own batcher land in one stage** (net about
+−160 to −310); rung 8's forcing scans, its sixth forbidden test (T40) and BC-9's narrowing move with it. The round drops to 10 stages;
+D10C-8's tracker row closes as merged.
+**Applies to:** D10C-7, D10C-8; ladder rungs 7–8; plan tracker; d10 L4.
