@@ -887,3 +887,13 @@ Review: [../../docs/archive/D7F/reviews/D7F-1-design-review.md](../../docs/archi
 - ~~DEBT-4~~ resolved: the full-suite commands and the `ci.dotnet.yml` comments are listed under docs (design :135-137).
 - DEBT-5 (tests in place; **Linux green locally** in the devcontainer, 2026-11-16, evidence row): the CI run ID is still owed, and the d10/BC-10 `[built]` qualifiers lift only with it, per d10 :31's convention.
 - ~~DEBT-6~~ disclosed: brief :35-37 and `dotnet/README.md` (single-file self-extract; plus NuGet-cache hosts, 4b S3).
+
+## D10C-5 — the server package (cycle 1 NEEDS-REWORK, 1 BLOCKER: the Q7 ceiling formula) — [review](D10C-5-design-review.md)
+- DEBT-1 (step 3): set `SERVER_CEILING` from the first CI pack job's server `.nupkg` (Linux copy stripped), with its bytes and
+  run ID beside the constant. Make it overridable like `INTEROP_CEILING`; control C7: a 1-byte ceiling fails, naming the ceiling.
+- DEBT-2 (step 3): enforce "the server package holds nothing else" with an allow-list of its entries (metadata, four root files,
+  `lib/<tfm>/_._`, two shims); today a native file outside `runtimes/` passes. Compare dependencies per TFM group, not their
+  union. Apply "must not list `arrow`" to every package except the server.
+- DEBT-3 (step 3): the pack job must call `check_third_party_notice.sh` on the server notice (edge list `CI:475-476` + `arrow`).
+- DEBT-4 (PM, brief :23): "mismatched versions are refused at load" holds only for different ABI versions; same-ABI package
+  skew loads silently. Reword. Optional: an exact-version Interop dependency refuses the skew at restore.

@@ -114,7 +114,7 @@ extends T49; no test deleted (no subject is forbidden; `CDP:113`'s clause is wor
 
 ## Risks / Unknowns
 
-- **Size vs plan.** Estimate **+195 / −55, net ≈ +140** (range net +100…+170), under 250; but ~11
+- **Size vs plan.** Estimate **+195 / −55, net ≈ +140** (range net +100…+170), under 250; but 10
   production files against the plan's 5-7 (several one-line list edits). **No split.** If it overruns,
   the cut line is: **5a** = §1-§4 and §6 (package, rule list, notices, Q7, lists); **5b** = §5 (server
   lockfiles, `check_conan_lockfile.sh` variant, README route), a declared one-stage gap in the
@@ -138,7 +138,7 @@ Production (counted): `dotnet/src/Fletcher.Server/Fletcher.Server.csproj` (new, 
 `dotnet/src/Fletcher.Interop/Fletcher.Interop.csproj` (comment :6-10, +5/−5).
 Generated: `dotnet/src/Fletcher.Server/packages.lock.json`. Tests (not counted):
 `scripts/test_check_dotnet_packages.py` (new, ~+90). Docs (listed): `dotnet/README.package.md` (table,
-native section, server route, notice), `dotnet/Directory.Build.props:6` ("four"), `check_shim_dependencies.sh:5`
+native section, server route, notice), `dotnet/Directory.Build.props:6` and `.targets:58` ("four"), `check_shim_dependencies.sh:5`
 header (F15), d10 L15 mark + "Holds at" (F23) + Findings (a)1 closed, `reg` BC-17 mark, the BIND annotations (Decision 2).
 
 ## Files-to-delete
