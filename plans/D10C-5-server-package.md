@@ -61,9 +61,9 @@ the server shim on both legs, unchanged. The Linux server copy is stripped exact
 (`CI:161-169`, the exports-unchanged check looped over both), and the server test leg then loads the
 stripped copy, so the tested file is the shipped file. **Ceiling** (Q7 text: "first measured pack plus
 the same margin D-BIND-157 left"; that margin is 12 − 7.7 = 4.3 MB): `SERVER_CEILING` = first measured
-server pack + 4.3 MB, rounded up to a whole MB, with the formula, the bytes and the CI run ID beside it.
-The measured artefact is the **first CI pack job's** server `.nupkg` (Linux copy stripped); a local pack
-sets a provisional value only, replaced from CI before close. Overridable like `INTEROP_CEILING` (`CDP:38-39`).
+server pack + 4.3 MB, rounded up to a whole MB, with the formula, the bytes, image and commit beside it.
+The measured artefact is the devcontainer pack (`fletcher-build:latest`, CI's image; Linux copy stripped);
+CI re-confirms it without gating close and changes it only if its bytes round to another MB (C2-1). Overridable like `INTEROP_CEILING` (`CDP:38-39`).
 
 **5. The relinking route covers the server shim** (D-BIND-140, -173, tier 2). Each CI leg also writes
 the server graph's notice and lockfile into `dotnet/native/<rid>/server/`

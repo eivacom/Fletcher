@@ -6,7 +6,7 @@ breaks that split. Batches flow from stage 7; until then the server shim loads a
 **Forcing test:** the package check over all five packed packages, plus seven breakages it must refuse — the
 server package holds exactly the server shim (Linux, Windows) and needs the base package; the base package
 still holds only the edge shim within 12 MB; nothing else holds native code. **Server package size limit:**
-its first CI-measured size + 4.3 MB (the margin the base package's 12 MB left), rounded up to a whole MB.
+its first measured size (devcontainer pack, CI's image) + 4.3 MB (the margin the base package's 12 MB left), rounded up to a whole MB.
 
 ## Interfaces
 | Surface | Change | Why |
@@ -46,7 +46,7 @@ load, as today; same-interface version skew loads (compatible by design). **Hand
   notice is missing. Licence-exception wiring must skip the server package. A new id's first nuget.org push is unproven.
 - Verification: devcontainer (`fletcher-build:latest`, volumes `fletcher-d10c4-conan`/`-ws`) and Windows by hand:
   `check_shim_dependencies.sh` on both shims; pack five packages; `check_dotnet_packages.sh` + the seven breakages
-  (`scripts/test_check_dotnet_packages.py`); then CI on your draft PR, which also fixes the size limit.
+  (`scripts/test_check_dotnet_packages.py`); then CI on your draft PR, which re-confirms the size limit.
 ## Numbers
 Declared net lines: +210 / −55 (net ≈ +155; no split) · new public surface: 1 (the package) · design cycles: 2/2
 

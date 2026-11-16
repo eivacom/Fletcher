@@ -11,7 +11,7 @@ Cycle-2 items below are open and owed by the implementer.
 
 | Id | Owed | Where |
 |----|------|-------|
-| DEBT-C2-1 | **Must land in this PR.** `pubsub/include/fletcher/pubsub/provider.hpp:68` still documents re-declaration rejection as optional ("may reject"); the owner's ruling makes it mandatory. One word plus one Files-to-touch line. | review §DEBT register — cycle 2 |
+- ~~C2-1~~ resolved: ceiling measured from the devcontainer pack, CI re-confirms without gating (design §4, brief :9, :49; PM record fix).
 | DEBT-C2-2 | Key *retention* by provider but leave *schema_mode* per subject, or the promised PDA-DEC-3 handoff collides with rung-1 item 3. | ditto |
 | DEBT-C2-3 | State that clause 12 observes overlap and cannot force it. | ditto |
 | DEBT-C2-4 | Reuse the conflict comparison already shipping above the seam (`pubsub/src/publisher.cpp:46-78`); note the gateway cannot regress, because `Publisher` never forwards a conflicting or identical re-declaration to the provider. | ditto |
@@ -888,12 +888,13 @@ Review: [../../docs/archive/D7F/reviews/D7F-1-design-review.md](../../docs/archi
 - DEBT-5 (tests in place; **Linux green locally** in the devcontainer, 2026-11-16, evidence row): the CI run ID is still owed, and the d10/BC-10 `[built]` qualifiers lift only with it, per d10 :31's convention.
 - ~~DEBT-6~~ disclosed: brief :35-37 and `dotnet/README.md` (single-file self-extract; plus NuGet-cache hosts, 4b S3).
 
-## D10C-5 — the server package (cycle 1 NEEDS-REWORK, 1 BLOCKER: the Q7 ceiling formula) — [review](D10C-5-design-review.md)
-- DEBT-1 (step 3): set `SERVER_CEILING` from the first CI pack job's server `.nupkg` (Linux copy stripped), with its bytes and
-  run ID beside the constant. Make it overridable like `INTEROP_CEILING`; control C7: a 1-byte ceiling fails, naming the ceiling.
-- DEBT-2 (step 3): enforce "the server package holds nothing else" with an allow-list of its entries (metadata, four root files,
-  `lib/<tfm>/_._`, two shims); today a native file outside `runtimes/` passes. Compare dependencies per TFM group, not their
-  union. Apply "must not list `arrow`" to every package except the server.
-- DEBT-3 (step 3): the pack job must call `check_third_party_notice.sh` on the server notice (edge list `CI:475-476` + `arrow`).
-- DEBT-4 (PM, brief :23): "mismatched versions are refused at load" holds only for different ABI versions; same-ABI package
-  skew loads silently. Reword. Optional: an exact-version Interop dependency refuses the skew at restore.
+## D10C-5 — the server package (cycle 1 NEEDS-REWORK, B1 Q7 formula; cycle 2 APPROVE-WITH-DEBT(1)) — [review](D10C-5-design-review.md)
+- ~~DEBT-1~~ Resolved in cycle 2: C7 and the override (design :66, forcing table); the provenance half became C2-1.
+- ~~DEBT-2~~ Resolved in cycle 2: the entry allow-list, per-TFM-group dependency sets, and `arrow` refused everywhere but the server (design :42-54).
+- ~~DEBT-3~~ Resolved in cycle 2: the pack job calls the notice check on the server notice (design :55-56).
+- ~~DEBT-4~~ Resolved in cycle 2: same-ABI skew disclosed as lawful (design :93-95, brief :24-25).
+- C2-1 (PM before the owner reads the brief; then step 3): set `SERVER_CEILING` at this stage from the devcontainer pack
+  (`fletcher-build:latest`, the pack job's commands, Linux stripped, Windows msvc194 Release), with bytes, image and commit
+  beside it. CI re-confirms rather than gates close (bytes and run ID go to the evidence ledger with D10C-4 DEBT-5); the
+  constant changes only if CI's bytes round to a different whole MB. Strike design :65-66 "replaced from CI before close",
+  brief :9 "CI-measured" and brief :49 "which also fixes the size limit".
