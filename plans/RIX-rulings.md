@@ -601,3 +601,13 @@ retired for SubscriberArrow.**
 no domain-7 code or law changes, and d7's document picks up the test names at its next round (revises d10 §8's "by a domain-7 round").
 (2) **The overflow-then-next-window case is proven as a `heavy`-labelled test (~128 MiB rows)**; no test hook in domain 7's code.
 **Applies to:** D10C rung 1; d10 §8.
+
+## 2026-11-16 — D10C-5: the server package's id; the BIND packaging annotations
+> Package ID: "Eiva.Fletcher.Server (Rec.)"
+> BIND notes: "Annotate now (Rec.)"
+
+*(Chosen options; full texts in `plans/D10C-5-brief.md` Decisions 1–2.)*
+**Rulings:** (1) **The server package's NuGet id is `Eiva.Fletcher.Server`**: it carries only the server shim and depends on
+`Eiva.Fletcher.Interop` (d10 L15). (2) **D-BIND-134, -139, -140, -142 and -173 are annotated "extended to five packages / two
+shims (:337 (1))", text kept.**
+**Applies to:** d10 L15, §2; register BC-17; plans/BIND-locked-decisions.md.
