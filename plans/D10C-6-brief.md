@@ -55,6 +55,5 @@ None. The stop checks are clear:
 **Ejected from the light lane.** Production lines: declared about +45 / −0 in 1 file; **actual +113 / −12 (125 touched) in 1 file**, against an admission of 60. Now in the full loop. Tests: about +100 in 1 file. New public surface: 0. Design cycles used: 1/2.
 
 ---
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
-<delta vs the above — actual net lines, anything retired or added the brief did
-not predict, fix cycles used>.
+**As landed (2026-11-16):**
+Ejected from the light lane (first build 125 touched vs 60); full loop run. Final prod +103/−2 in 1 file (one `SubscribeClaimed` helper, narrow try, TopicPath key). Tests +102. Design cycles 1, fix cycles 1, implementer passes 4. FWD-1/1b/1c carry obligations to rung 7.

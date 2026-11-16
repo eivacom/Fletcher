@@ -57,7 +57,7 @@ C# idiom laid over it (domain-map row 10; owner ruling 2026-11-12, "Shim only", 
 
 **Refuses:**
 - **Batch assembly** (register BC-9; d7 D16). Turning rows into batches is domain 7's. The managed
-  `Batcher` (`SA:353-827`) is a copy that the switch deletes (L4). Until then it stays exactly as
+  `Batcher` (`SA:592-1066`) is a copy that the switch deletes (L4). Until then it stays exactly as
   it is: no interim fixes (ledger :203 (3), :278).
 - **Answering a question a lower layer owns** (L3). Batch options are domain 7's (BC-8, d7 L15);
   topic rules, re-entrancy and unsubscribe semantics are domain 3's, forwarded by the shim (d9 L4);
@@ -87,9 +87,9 @@ C# idiom laid over it (domain-map row 10; owner ruling 2026-11-12, "Shim only", 
 | **Variant check** | `[designed-not-built]` The binding asking the loaded shim `fl_binding_variant` (d9 L16). Imported since D10C-2, with no caller until the loader uses it. |
 | **Thunk** | An `[UnmanagedCallersOnly]` static method native calls: the delivery thunk (`Subscriber.cs:824-877`), the writer and grow thunks. One containment site per direction (D-BIND-19 rule 2). |
 | **Absorbed failure** | A managed handler exception caught at a thunk, counted in `AbsorbedCallbackFailures` and `Diagnostics.AbsorbedTotal`, and raised as `HandlerFaulted` (D-BIND-18, -19 rule 5). |
-| **Managed batcher** | `SubscriberArrow.Batcher` (`SA:353-827`): today's C# copy of batch assembly. Deleted by the switch (d7 D16). |
-| **Window (C#)** | In the managed batcher, the raw rows, their end offsets and attachments since the last flush (`SA:365-368`). D-BIND-68's "framed window". After the switch the word means domain 7's window only. |
-| **Batch handler** | `RecordBatchHandler(RecordBatch? batch, IReadOnlyList<AttachmentsBuilder> attachments, BatchStatus status)` (`SA:113`). |
+| **Managed batcher** | `SubscriberArrow.Batcher` (`SA:592-1066`): today's C# copy of batch assembly. Deleted by the switch (d7 D16). |
+| **Window (C#)** | In the managed batcher, the raw rows, their end offsets and attachments since the last flush (`SA:604-607`). D-BIND-68's "framed window". After the switch the word means domain 7's window only. |
+| **Batch handler** | `RecordBatchHandler(RecordBatch? batch, IReadOnlyList<AttachmentsBuilder> attachments, BatchStatus status)` (`SA:114`). |
 | **Per-row Arrow subscribe** | `SubscriberArrow.Subscribe`: the native per-row path, no batcher (`RowDelivery`, D10C-3; ledger :536 (1), D20); on the edge shim now, on the server package from rung 4. Distinct from `Subscriber.Subscribe`, which hands the borrowed raw row to a `RowHandler`. |
 | **Switch** | This round's change: `SubscriberArrow`'s batches come from domain 7 through the server shim's `fl_subscriber_subscribe_batches`, and the managed batcher is deleted. |
 
@@ -128,12 +128,12 @@ equal to it, never renumbered.
 `[built]` (D10C-2): `fl_status` 0-10, `fl_origin` 0-4, `FL_BATCH_*` 1-3 and `fl_variant` 1-2 each equal their C# mirror, by test.
 - Holds at: `NM:1-54` (the mirror rule), `AbiTypes.cs:1-193` (blittable by construction;
   `LibraryImport` refuses otherwise), `FE:18-52` (`FletcherStatus` 0-10), `FE:62-78`
-  (`FletcherOrigin` 0-4), `SA:116-126` (`BatchReason` 1-3), `NM:37-47` (`FlVariant`).
+  (`FletcherOrigin` 0-4), `SA:117-130` (`BatchReason` 1-3), `NM:37-47` (`FlVariant`).
 - **The violation (closed by D10C-2):** `h:264-269` declares `FL_ORIGIN_HANDOVER = 4` (d9 D32, ABI 0.8); C# stops at
   3. It is unreachable today, because C# never calls a batched entry point, and `Errors.ThrowIfFailed`
   would cast 4 to an unnamed enum value (`Errors.cs:65-67`). The switch adds
   `FletcherOrigin.Handover = 4` (d9 D32, "Forward note (domain 10)"; ledger :551 (3), D26).
-- **The second violation (closed by D10C-2):** `BatchReason {RowLimit, Timeout, Closing}` is 0-based (`SA:116-126`);
+- **The second violation (closed by D10C-2):** `BatchReason {RowLimit, Timeout, Closing}` is 0-based (`SA:117-130`);
   `FL_BATCH_ROW_LIMIT/TIMEOUT/CLOSING` are 1-3 (`h:1013-1015`). **Decided (D34, PM decision under this
   law, 2026-11-15):** the switch renumbers `BatchReason` to 1-3, equal to the C values. A visible change
   (a cast or persisted value shifts by one; `default(BatchReason)` is no longer a named member),
@@ -149,14 +149,14 @@ equal to it, never renumbered.
 **L3. The binding forwards a lower layer's answer; it does not answer again.** A refusal from the
 shim reaches the caller with its number and verbatim message. The binding checks a rule itself only
 where a ruling accepts the duplication, and then native re-checks it.
-`[built for the arrival timeout, topics and selectors; violated on batch options; designed-not-built for
-the edge refusal's sentence and the same-topic refusal]`
+`[built for the arrival timeout, topics and selectors and the same-topic refusal (D10C-6); violated on batch
+options; designed-not-built for the edge refusal's sentence]`
 - Holds at: `Errors.cs:44-75` (one throw site; number and message cross, D-BIND-19 rules 1-3).
 - **Accepted duplications, by ruling:** topic segments and the provider selector are checked in
   managed code in UTF-8 bytes and re-checked natively (Q17 of 2026-09-11, D-BIND-19 rule 4,
   D-BIND-20; `TopicPath.cs`, `ProviderSelector.cs`).
-- **The violation (register BC-8 copies):** `SA:228-235` refuses a negative timeout and a finite
-  timeout above `BatchOptions.MaxTimeout` (~49.7 days, `SA:157`), and `SA:237` clamps `MaxRows`
+- **The violation (register BC-8 copies):** `SA:258-265` refuses a negative timeout and a finite
+  timeout above `BatchOptions.MaxTimeout` (~49.7 days, `SA:161`), and `SA:267` clamps `MaxRows`
   into `[1, int.MaxValue]`. Domain 7 is the one site (d7 L15, BC-8); its binding clause ("a binding
   passes the refusal through") is `[designed-not-built]`, owned by this round (d7 L15 mark). Ruling
   2026-11-12, "Refuse both" (ledger :235): "C# callers passing MaxRows < 1 now get an exception
@@ -175,15 +175,18 @@ the edge refusal's sentence and the same-topic refusal]`
   whichever comes second. It is this object's own rule: its two kinds share one `fl_subscriber` and one
   provider, where the transport would let the later silently replace the earlier (d9 D33). It revises
   :448 (1)'s "documented, not refused" for C#; the transport's rule between separate subscribers stays
-  domain 3/4's. `[designed-not-built]`
+  domain 3/4's. `[built]` (D10C-6: `SubscriberArrow.cs`, `Claim` at the two subscribe entry points and
+  the release in `Unsubscribe`; `SubscriberArrowTests.ARowAndABatchedSubscriptionToOneTopicAreRefusedWhicheverComesSecond`).
 - Tests: `SchemaArrivalTests.*` (negative refused, infinite accepted);
   `SubscriberArrowTests.ATimeoutPastTheTimersMaximumIsRefused` pins the BC-8 copy (to retire or
-  re-anchor; §8).
+  re-anchor; §8); the same-topic refusal (D10C-6): `SubscriberArrowTests.ARowAndABatchedSubscriptionToOneTopicAreRefusedWhicheverComesSecond`,
+  with two guards, `TheSameKindTwiceAndDifferentTopicsAreNotRefused` and
+  `TwoArrowSubscribersOnOneProviderDoNotRefuseEachOther` (guards: they fail if the rule is widened past the mix or the object).
 
 **L4. There is one batch assembler, and it is not in C#.** `SubscriberArrow`'s batches are domain
 7's, reached through the server shim. The binding holds no window, row count, deadline, timer or
 batch thread of its own.
-`[designed-not-built]`; today violated by the managed batcher (`SA:353-827`), accepted only while
+`[designed-not-built]`; today violated by the managed batcher (`SA:592-1066`), accepted only while
 C#'s batched subscribe stays off `main` (ledger :278).
 - Source: ruling 2026-11-12, "one shim, two variants" (ledger :203 (1)); d7 D16; register BC-9.
 - The managed batcher is deleted only after its tests are checked for cases domain 7's suite lacks
@@ -266,8 +269,8 @@ counted and raised; every row domain 7 or the shim reports lost reaches the hand
 message.
 `[built for handler failures on the row and managed-batcher paths; designed-not-built for the
 batch thunk and the hand-over]`
-- Holds at: `Subscriber.cs:824-877` (catch, `ReportAbsorbed`), `SA:352-367`, `SA:442-449` (per row)
-  and `SA:867-874` (handler failures counted and raised), `Diagnostics.cs`.
+- Holds at: `Subscriber.cs:824-877` (catch, `ReportAbsorbed`), `SA:453-468`, `SA:543-550` (per row)
+  and `SA:968-975` (handler failures counted and raised), `Diagnostics.cs`.
 - Source: D-BIND-18, D-BIND-19 rule 5; ruling 2026-11-12, "Shim only" (2) (ledger :246): BC-7 is
   not a prerequisite because "a managed handler's exception is caught, and counted, in C#'s own
   trampoline"; ruling 2026-11-13, "Lost handoff: Report it as lost" (ledger :383; d9 L18); ruling
@@ -301,7 +304,7 @@ native serves, the binding does not refuse.** Disposing a `Subscriber` or `Subsc
 delivery on the same provider is refused with a managed exception; closing or disposing a batched
 subscription from inside its own batch callback is served.
 `[built for row deliveries; designed-not-built for batch callbacks]`
-- Holds at: `Subscriber.cs:704-712` (provider-keyed frame stack, D-BIND-51), `SA:327-333`
+- Holds at: `Subscriber.cs:704-712` (provider-keyed frame stack, D-BIND-51), `SA:428-434`
   (`SubscriberArrow.Dispose`), `Subscriber.cs:395-411` (re-entrant `Subscribe`, naming
   `DispatchAfterDelivery`).
 - Source: D-BIND-18, -50, -51; d9 L1 (the row subscriber's termination is the only one); d7 L9,
@@ -332,14 +335,14 @@ toward zero (`SchemaArrival.cs:216-232`).
   `SchemaArrival.ToMilliseconds`)"); d7 §4 and §6 (C#'s −1 ms is refused by L15, so the binding
   translates it); ruling 2026-11-12, "Add 'never' to C++" (ledger :226): "C# keeps its current
   behaviour", i.e. `Timeout.InfiniteTimeSpan` stays C#'s spelling of no timeout.
-- Today the batch path has its own conversion (`SA:512-523`, `TotalSeconds * Frequency`), bounded
+- Today the batch path has its own conversion (`SA:751-762`, `TotalSeconds * Frequency`), bounded
   by the `MaxTimeout` cap. The cap goes (ledger :536 (3), D22): a finite timeout crosses as given
   and domain 7 decides (d7 L5, L15).
 
 **L13. Batches reach a C# handler one at a time, in window order, on domain 7's batch thread.**
 The binding adds no thread, queue, reordering or lock held across the handler.
 `[designed-not-built]`; today violated (D-BIND-64: three threads may run the handler at once and
-batches may complete out of order, `SA:61-79`).
+batches may complete out of order, `SA:60-78`).
 - Source: d7 L12, D10; d9 L11, L15 (the shim forwards on that thread). Register BC-9: "Until the
   switch, the C# copy violates L9 and L12; accepted only because C# does not ship to `main`
   first". D-BIND-64 is false of C++ since D7F; it is revised by :203 (ledger :551 (4), D27) and
@@ -361,24 +364,24 @@ delivered), a late schema (losses reported, assembly once it arrives) and out-of
 
 | # | Question | C# today | Domain 7 | Authority |
 |---|---|---|---|---|
-| V1 | Threads and order | three threads, concurrent, out of order (`SA:61-79`) | one batch thread, in order | d7 L12, D10; ledger :551 (4) |
-| V2 | `Unsubscribe` inside the handler | closing flush runs nested, inside the handler (`SA:257-259`) | after the handler returns, queued windows first | d7 L9, D8 |
-| V3 | Idle close | nothing delivered (`SA:635-638`) | one empty `Closing` | d7 L6, L9, D18 |
-| V4 | First row with no schema | latches "undecodable for life" (`SA:491-507`) | an absent schema decides nothing; assembly starts at the first decodable row | d7 L8, L13; ledger :258 (3), :551 (4) |
-| V5 | `MaxRows < 1` | clamped to 1 (`SA:237`) | refused | d7 L15; ledger :235 |
-| V6 | `MaxRows > int.MaxValue` | clamped (`SA:237`) | used as given | d7 L15, D7O-3 |
-| V7 | Finite timeout > ~49.7 days | refused (`SA:228-235`) | accepted; unrepresentable means no deadline | d7 L5, L15, D17; BC-8; the cap goes, ledger :536 (3) |
+| V1 | Threads and order | three threads, concurrent, out of order (`SA:60-78`) | one batch thread, in order | d7 L12, D10; ledger :551 (4) |
+| V2 | `Unsubscribe` inside the handler | closing flush runs nested, inside the handler (`SA:362-364`) | after the handler returns, queued windows first | d7 L9, D8 |
+| V3 | Idle close | nothing delivered (`SA:874-877`) | one empty `Closing` | d7 L6, L9, D18 |
+| V4 | First row with no schema | latches "undecodable for life" (`SA:730-746`) | an absent schema decides nothing; assembly starts at the first decodable row | d7 L8, L13; ledger :258 (3), :551 (4) |
+| V5 | `MaxRows < 1` | clamped to 1 (`SA:267`) | refused | d7 L15; ledger :235 |
+| V6 | `MaxRows > int.MaxValue` | clamped (`SA:267`) | used as given | d7 L15, D7O-3 |
+| V7 | Finite timeout > ~49.7 days | refused (`SA:258-265`) | accepted; unrepresentable means no deadline | d7 L5, L15, D17; BC-8; the cap goes, ledger :536 (3) |
 | V8 | Negative timeout | `ArgumentOutOfRangeException`, managed | domain 7's invalid-argument refusal, passed through as `FletcherException(InvalidArgument)` | d7 L15; ledger :536 (3), D22 |
 | V9 | Window bound | raw-byte ceiling, `Array.MaxLength` (D-BIND-63) | per-column 32-bit offset budget | d7 L4 |
-| V10 | Whole-window decode failure | zero-row batch, rows counted (`SA:717-726`, `816-826`) | null batch ("finishing the batch failed") | d7 L7, D9 |
-| V11 | Null batch means | the schema could not be opened (`SA:106-110`) | no batch could be built: no schema yet, rejected, finish failed; plus a failed hand-over | d7 L7; d9 L18; ledger :551 (3), (4) |
+| V10 | Whole-window decode failure | zero-row batch, rows counted (`SA:956-965`, `1055-1065`) | null batch ("finishing the batch failed") | d7 L7, D9 |
+| V11 | Null batch means | the schema could not be opened (`SA:105-111`) | no batch could be built: no schema yet, rejected, finish failed; plus a failed hand-over | d7 L7; d9 L18; ledger :551 (3), (4) |
 | V12 | Dictionary column | value type (`SubscriberArrowTests.ADictionaryColumnArrivesAsItsValueType`; D-BIND-8, -59) | re-folded by `BatchDecoder` (domain 2); per-row stays the value type (D32) | d9 Q11; ledger :551 (2), :575 (5); D24, D32 |
 | V13 | Handler exception | counted and raised | swallowed uncounted by d7 | C# keeps its count (L9; ledger :246 (2)); BC-7 |
 | V14 | `Dispose` inside a batch handler | refused when the flush runs in a row delivery (RowLimit), served on the timer thread | lawful from the batch callback | d7 L9, D12; L11 |
 
 - The deadline rule is the same on both sides (anchored to the previous flush, 1 ms floor;
-  `SA:509-524`, d7 L5); so is "only good rows count toward `max_rows`" (D-BIND-68 B3,
-  `SA:707-714`).
+  `SA:748-763`, d7 L5); so is "only good rows count toward `max_rows`" (D-BIND-68 B3,
+  `SA:946-953`).
 
 **L15. Native code ships only in shim packages, one shim per package, and each package's limits
 are checked when it is packed.** Every other managed package is asset-free.
@@ -444,9 +447,9 @@ a source build whatever is staged beside the tests (CI's dotnet lane stages the 
   named NotSupported (L6, D25). Dictionary columns arrive re-folded (D24).
 - `SubscriberArrow.Subscribe` on the native per-row path, on both packages (L7, D20): ~~the edge
   package~~ `[built]` (D10C-3); the server package, rung 4.
-- One `fl_subscriber` holds both a `SubscriberArrow`'s row and batched subscriptions; a same-topic
+- ~~One `fl_subscriber` holds both a `SubscriberArrow`'s row and batched subscriptions; a same-topic
   mix through one provider collides (d9 D33, ledger :448 (1)), so `SubscriberArrow` refuses it (L3,
-  D33, ledger :575 (6)).
+  D33, ledger :575 (6))~~ `[built]` (D10C-6).
 - ~~`BatchReason` renumbered to 1-3 (L2, D34)~~ `[built]` (D10C-2).
 - ~~The loader's preference for the server shim, failing loudly with no fallback (L5, D21, D28)~~
   `[built]` (D10C-4; Windows, by hand; CI and Linux unrun); the server package `[built]` (D10C-5, L15).
@@ -599,14 +602,14 @@ former Q10 (doc comments lagging D28) is work the round owes (Findings (a)2). Nu
 2. ~~**Owed by the round (tier 3).** `FE:38` (`FletcherStatus.NotSupported`) and `FE:67`
    (`FletcherOrigin.Seam`) lag d9 D28 and `h:265`.~~ **Done (D10C-2):** `FE:38` now reads "This provider or
    this build cannot do this" and `FE:67` includes the library's own refusal.
-3. `SA:4-94` and `SA:106-110` describe D-BIND-64's concurrency and "NULL only when the schema could
+3. `SA:4-93` and `SA:105-111` describe D-BIND-64's concurrency and "NULL only when the schema could
    not be opened"; both become false at the switch (V1, V11).
 4. D-BIND-25, -63, -66 and -68 carry no annotation yet (D19); D-BIND-1a rider i, -8, -19, -20,
    -59 and -64 were annotated 2026-11-15.
 
 **(b) Rules answered in two places**
-1. Batch options: `SA:228-237` and d7's constructor (BC-8). Removed by the switch (L3).
-2. Turning rows into batches: `SA:353-827` and domain 7 (BC-9). Removed by the switch (L4).
+1. Batch options: `SA:258-267` and d7's constructor (BC-8). Removed by the switch (L3).
+2. Turning rows into batches: `SA:592-1066` and domain 7 (BC-9). Removed by the switch (L4).
 3. Batched decode: `fl_decode_rows_framed` (nanoarrow, at flush) and `BatchDecoder` (Arrow C++, per
    row), with different dictionary answers (V12) and different whole-window failure answers (V10).
 

@@ -354,6 +354,108 @@ public sealed class SubscriberArrowTests : IDisposable
         Assert.Single(_sink.Snapshot());
     }
 
+    // ── One object, one kind per topic (D10C-6) ─────────────────────────────
+    //
+    // Ruling :575 (6); d10 L3's ruled refusal; d9 D33. One SubscriberArrow refuses a
+    // per-row and a batched subscription to the same topic, in either order, because
+    // once both share one native subscriber the later would silently replace the
+    // earlier. The scope is this object only: the same kind twice, other topics, and
+    // other subscribers are not refused (L3: no rule without a ruling).
+
+    private SubscribeResult SubscribeKind(SubscriberArrow on, bool perRow, TopicPath topic, Sink into) =>
+        perRow
+            ? on.Subscribe(topic, into.Handler)
+            : on.SubscribeBatched(topic, into.Handler, Options(1, Long));
+
+    /// <summary>
+    /// The second kind on a topic is refused by name, the first keeps delivering, and the
+    /// other kind is accepted once the first is gone.
+    /// </summary>
+    /// <remarks>
+    /// The last arm is the control: a refusal that left its claim behind, or a close that
+    /// never released it, fails there. The release is `Unsubscribe` when the row came
+    /// first and `Subscription.Dispose` when the batched one did, so both routes are shown.
+    /// The refused handler is waited on one-sidedly: absence is shown by a short timeout.
+    /// </remarks>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ARowAndABatchedSubscriptionToOneTopicAreRefusedWhicheverComesSecond(bool rowFirst)
+    {
+        TopicPath topic = Declared(rowFirst ? "mixrowfirst" : "mixbatchedfirst");
+        using var refused = new Sink();
+
+        SubscribeResult held = SubscribeKind(_subscriber, perRow: rowFirst, topic, _sink);
+        held.Schema.Dispose();
+
+        InvalidOperationException refusal = Assert.Throws<InvalidOperationException>(
+            () => SubscribeKind(_subscriber, perRow: !rowFirst, topic, refused));
+        Assert.Contains(topic.ToString(), refusal.Message, StringComparison.Ordinal);
+        // Every message names both kinds (the one refused and the one held), so only the phrase
+        // that names the HELD kind discriminates (D10C-6 review DEBT-3).
+        Assert.Contains(rowFirst ? "holds a per-row" : "holds a batched", refusal.Message, StringComparison.Ordinal);
+
+        Publish(topic, 5, "kept");
+        Assert.True(_sink.WaitFor(1, TimeSpan.FromSeconds(10)), "the first subscription stopped delivering");
+        Assert.Equal(5, ((Int32Array)_sink.Snapshot()[0].Batch!.Column(0)).GetValue(0));
+        Assert.False(refused.WaitFor(1, TimeSpan.FromMilliseconds(300)), "the refused handler was called");
+
+        if (rowFirst)
+        {
+            _subscriber.Unsubscribe(held.Subscription);
+        }
+        else
+        {
+            held.Subscription.Dispose();
+        }
+
+        SubscribeResult accepted = SubscribeKind(_subscriber, perRow: !rowFirst, topic, refused);
+        accepted.Schema.Dispose();
+        Publish(topic, 6, "taken");
+        Assert.True(refused.WaitFor(1, TimeSpan.FromSeconds(10)), "the accepted subscription did not deliver");
+        Assert.Equal(6, ((Int32Array)refused.Snapshot()[0].Batch!.Column(0)).GetValue(0));
+        accepted.Subscription.Dispose();
+    }
+
+    /// <summary>
+    /// Guard: the refusal is the mix only. The same kind twice on one topic, and a row and a
+    /// batched subscription to different topics, are not refused.
+    /// </summary>
+    [Fact]
+    public void TheSameKindTwiceAndDifferentTopicsAreNotRefused()
+    {
+        using var second = new Sink();
+        TopicPath rows = Declared("samekindrow");
+        TopicPath batches = Declared("samekindbatched");
+        TopicPath apart1 = Declared("apartrow");
+        TopicPath apart2 = Declared("apartbatched");
+
+        SubscribeKind(_subscriber, perRow: true, rows, _sink).Schema.Dispose();
+        SubscribeKind(_subscriber, perRow: true, rows, second).Schema.Dispose();
+        SubscribeKind(_subscriber, perRow: false, batches, _sink).Schema.Dispose();
+        SubscribeKind(_subscriber, perRow: false, batches, second).Schema.Dispose();
+        SubscribeKind(_subscriber, perRow: true, apart1, _sink).Schema.Dispose();
+        SubscribeKind(_subscriber, perRow: false, apart2, _sink).Schema.Dispose();
+    }
+
+    /// <summary>
+    /// Guard: the scope is one object. A row subscription here and a batched one on another
+    /// SubscriberArrow over the same provider, in either order, do not refuse each other:
+    /// the transport's rule between separate subscribers is domain 3/4's (d10 L3).
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void TwoArrowSubscribersOnOneProviderDoNotRefuseEachOther(bool rowOnThisOneFirst)
+    {
+        using var other = new SubscriberArrow(_provider);
+        using var otherSink = new Sink();
+        TopicPath topic = Declared(rowOnThisOneFirst ? "twoobjectsrowfirst" : "twoobjectsbatchedfirst");
+
+        SubscribeKind(_subscriber, perRow: rowOnThisOneFirst, topic, _sink).Schema.Dispose();
+        SubscribeKind(other, perRow: !rowOnThisOneFirst, topic, otherSink).Schema.Dispose();
+    }
+
     // ── Per row, on the native per-row path (D10C-3) ────────────────────────
     //
     // d10 L7, L9, L11, D20, D30, D32; register BC-16; ruling :575 (3). A per-row

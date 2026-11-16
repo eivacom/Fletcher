@@ -105,3 +105,26 @@ Session directive (2026-11-15): run from D10C-1 onward, item by item, until a st
 **Owner decisions this stage:** the package id; the BIND annotations; the union notice (P4); the size overrun.
 **Debt carried:** the CI re-confirmation of `SERVER_CEILING` and the Windows server notice (with D10C-4 DEBT-5). The Arrow licence written as a tuple repr in the deployer is a separate item. D-BIND-14′ is not annotated (needs the owner). The test row in `architecture-overview.md:392` still says "four".
 **Records corrected:** the control count; the d10 L15 citation; the architecture-overview :77 wording; the D-BIND-134 union note.
+
+## D10C-6 — SubscriberArrow refuses a row and a batched subscription to one topic (2026-11-16)
+
+**Forcing test:** `SubscriberArrowTests.ARowAndABatchedSubscriptionToOneTopicAreRefusedWhicheverComesSecond` (both orders) → 🔴 (no exception) → 🟢; two guards
+**Lane:** light, **EJECTED** (first build 125 touched vs 60 admission; brief declared ~+45), then the full loop. **Design:** `plans/D10C-6-same-topic-refusal.md` · **Brief:** `plans/D10C-6-brief.md`
+**What landed:** ruling :575 (6) for C#, scoped to one object (L3). `InvalidOperationException` names the topic and the held kind. One `SubscribeClaimed` helper holds the claim, keyed by TopicPath with a count per topic. The try covers only the inner subscribe. The claim is released only after Unsubscribe returns.
+**Interfaces:** no public change (behaviour: the mix is refused).
+**Deleted:** none.
+**Files touched:** `SubscriberArrow.cs`; `SubscriberArrowTests.cs`; d10 (L3, §4, re-anchored SA citations).
+**Reviews:**
+- 0a CLEAR · 0b CLEAR.
+- Design APPROVE-WITH-DEBT(4): the smaller mechanism stands; DEBT-4 = FWD-1c goes to rung 7.
+- Compliance: 2 blocking, then PASS at cycle 2.
+- Code review: 0 blocking, 1 should-fix (done), 4 nits.
+**Verification:**
+- Edge 1528/1528, server 465/465 per TFM (both re-run after the fix).
+- Conformance 12/12 ×2; pubsub-transport-conformance 34/34, on the pre-fix build.
+**Close gate:** PASS (full)
+**Cycle meter:** design 1/2 · fix 1 · implementer passes 4/5 (one agent; behaviour stable, shape changed) · stage words 5382
+**Numbers:** declared ~+45 · actual +103/−2 · tests +102 · new public surface 0
+**Owner decisions this stage:** none
+**Debt carried:** FWD-1, -1b, -1c (rung 7: the edge-leg re-anchors; the claim lifetime vs the in-handler close; the check order against NotSupported).
+**Records corrected:** four d10 SA citations; the evidence lane-(4) note; the design's ledger count (648).

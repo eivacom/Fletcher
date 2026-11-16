@@ -173,6 +173,10 @@ public sealed class SubscriberArrow : IDisposable
     private readonly Subscriber _subscriber;
     private readonly object _gate = new();
     private readonly Dictionary<ulong, Batcher> _batchers = [];
+    // D10C-6: the kind each topic is held in (with a count of that kind), and the topic each
+    // live subscription holds, so a release is keyed by the subscription and happens once.
+    private readonly Dictionary<TopicPath, (bool PerRow, int Count)> _claims = [];
+    private readonly Dictionary<ulong, TopicPath> _claimed = [];
     private readonly long _windowByteCeiling;
     private long _absorbed;
     private bool _disposed;
@@ -211,13 +215,18 @@ public sealed class SubscriberArrow : IDisposable
     /// attachments. The reason is <see cref="BatchReason.RowLimit"/> on every call, and
     /// nothing is delivered after <see cref="Unsubscribe"/>.
     /// </remarks>
+    /// <exception cref="InvalidOperationException">
+    /// This object already holds a <see cref="SubscribeBatched"/> subscription to the topic (ruling
+    /// :575 (6)); refused before anything is subscribed.
+    /// </exception>
     public SubscribeResult Subscribe(TopicPath topic, RecordBatchHandler handler, TopicOptions? topicOptions = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(handler);
 
         var delivery = new RowDelivery(this, handler);
-        SubscribeResult result = _subscriber.Subscribe(topic, delivery.OnRow, topicOptions, delivery);
+        SubscribeResult result = SubscribeClaimed(
+            topic, perRow: true, () => _subscriber.Subscribe(topic, delivery.OnRow, topicOptions, delivery));
         delivery.SubscriptionId = result.Subscription.Id;
         result.Subscription.Canceller = Unsubscribe;
         return result;
@@ -231,6 +240,10 @@ public sealed class SubscriberArrow : IDisposable
     /// Disposing the returned <see cref="Subscription"/> is <see cref="Unsubscribe"/>:
     /// the pending window is flushed with <see cref="BatchReason.Closing"/> first.
     /// </remarks>
+    /// <exception cref="InvalidOperationException">
+    /// This object already holds a per-row <see cref="Subscribe"/> subscription to the topic (ruling
+    /// :575 (6)); refused before anything is subscribed.
+    /// </exception>
     public SubscribeResult SubscribeBatched(
         TopicPath topic, RecordBatchHandler handler, BatchOptions? options = null, TopicOptions? topicOptions = null)
     {
@@ -254,7 +267,8 @@ public sealed class SubscriberArrow : IDisposable
         int maxRows = (int)Math.Clamp(options.MaxRows, 1, int.MaxValue);
         var batcher = new Batcher(this, handler, maxRows, options.Timeout, _windowByteCeiling);
 
-        SubscribeResult result = _subscriber.Subscribe(topic, batcher.OnRow, topicOptions);
+        SubscribeResult result = SubscribeClaimed(
+            topic, perRow: false, () => _subscriber.Subscribe(topic, batcher.OnRow, topicOptions));
         batcher.SubscriptionId = result.Subscription.Id;
         result.Subscription.Canceller = Unsubscribe;
 
@@ -264,6 +278,80 @@ public sealed class SubscriberArrow : IDisposable
         }
 
         return result;
+    }
+
+    /// <summary>The one place a subscription takes, keeps or gives back its topic's claim (ruling :575 (6)).</summary>
+    /// <remarks>
+    /// The claim comes before the inner subscribe and is released if that throws; the subscription is
+    /// recorded straight after it returns, outside the <c>try</c>, so the claim lasts exactly as long
+    /// as the native subscription. Rung 7 replaces only <paramref name="subscribe"/>.
+    /// </remarks>
+    private SubscribeResult SubscribeClaimed(TopicPath topic, bool perRow, Func<SubscribeResult> subscribe)
+    {
+        _ = topic.ToKey(); // a defaulted topic is refused here, before it can be claimed
+        Claim(topic, perRow);
+        SubscribeResult result;
+        try
+        {
+            result = subscribe();
+        }
+        catch
+        {
+            Release(topic);
+            throw;
+        }
+
+        lock (_gate)
+        {
+            _claimed[result.Subscription.Id] = topic;
+        }
+
+        return result;
+    }
+
+    /// <summary>Take the topic for one kind, or refuse: the two kinds never share a topic on this object.</summary>
+    /// <remarks>
+    /// Under the lock and before any subscribe, so two threads racing the kinds see exactly one win.
+    /// The same kind again is not refused: only the mix is (L3, ruling :575 (6)).
+    /// </remarks>
+    private void Claim(TopicPath topic, bool perRow)
+    {
+        lock (_gate)
+        {
+            if (!_claims.TryGetValue(topic, out (bool PerRow, int Count) held))
+            {
+                _claims[topic] = (perRow, 1);
+            }
+            else if (held.PerRow != perRow)
+            {
+                throw new InvalidOperationException(
+                    $"cannot subscribe to '{topic}' {(perRow ? "per-row" : "batched")}: this SubscriberArrow " +
+                    $"already holds a {(held.PerRow ? "per-row" : "batched")} subscription to it, which a later one " +
+                    "of the other kind would silently replace. Unsubscribe that one first");
+            }
+            else
+            {
+                _claims[topic] = (perRow, held.Count + 1);
+            }
+        }
+    }
+
+    private void Release(TopicPath topic)
+    {
+        lock (_gate)
+        {
+            if (_claims.TryGetValue(topic, out (bool PerRow, int Count) held))
+            {
+                if (held.Count <= 1)
+                {
+                    _claims.Remove(topic);
+                }
+                else
+                {
+                    _claims[topic] = (held.PerRow, held.Count - 1);
+                }
+            }
+        }
     }
 
     /// <summary>Flush the subscription's pending window as <see cref="BatchReason.Closing"/>, then cancel it.</summary>
@@ -296,6 +384,19 @@ public sealed class SubscriberArrow : IDisposable
 
         batcher?.Stop();
         _subscriber.Unsubscribe(subscription);
+
+        // Only once the close has returned: a failed one keeps the claim, so a retry releases it.
+        TopicPath claimed;
+        bool held;
+        lock (_gate)
+        {
+            held = _claimed.Remove(subscription.Id, out claimed);
+        }
+
+        if (held)
+        {
+            Release(claimed);
+        }
     }
 
     /// <summary>Watch a topic's schema without its data - <see cref="Subscriber.SubscribeSchema"/>, forwarded.</summary>
