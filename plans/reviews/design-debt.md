@@ -885,5 +885,5 @@ Review: [../../docs/archive/D7F/reviews/D7F-1-design-review.md](../../docs/archi
 - ~~DEBT-2~~ resolved: `env -u LD_LIBRARY_PATH` kept on the conformance server pass (design :61-62, :148).
 - ~~DEBT-3~~ resolved: one decision per `AssemblyLoadContext`, with d9 L17 across contexts (design :18-22, :80).
 - ~~DEBT-4~~ resolved: the full-suite commands and the `ci.dotnet.yml` comments are listed under docs (design :135-137).
-- DEBT-5 (tests, binding; law b): the distro-RID promise (brief :16, :35-36) needs a proof other than the leg at :115. Stage the theory's `runtimes` arm at the literal `runtimes/linux-x64|win-x64/native/`, and extend `NoNativeLoadOutsideTheResolver` to fail on `RuntimeInformation.RuntimeIdentifier` in `dotnet/src/Fletcher.Interop` (vacuity control: it finds `PackageRid`). 4a/4b refuse close without both.
-- DEBT-6 (disclosure): single-file apps published with `IncludeNativeLibrariesForSelfExtract=true` (opt-in) extract the shim outside the app folder and now stop, loudly. Name the exception at brief :35 or list it as unsupported in P1; no code change.
+- DEBT-5 (tests in place; **Linux evidence owed**, run ID): literal `runtimes/linux-x64|win-x64/native` arms + `RuntimeIdentifier` scan landed (D10C-4 fix cycle 1); green on Windows only. Lift d10/BC-10 `[built]` qualifiers only with a green Linux run.
+- ~~DEBT-6~~ disclosed: brief :35-37 and `dotnet/README.md` (single-file self-extract; plus NuGet-cache hosts, 4b S3).
