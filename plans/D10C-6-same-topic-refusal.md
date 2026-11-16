@@ -1,9 +1,9 @@
 # D10C-6 — same-topic refusal: design (as briefed, and as implemented)
 
-*Written after the stage ejected from the light lane: the implementation touched +113 / −12
-production lines, against a light-lane admission of 60 and a brief that declared about +45. This
-document records the design the brief stated, the code as it now stands in the working tree
-(uncommitted, diff base `928bb7d`), and how the two differ. The reviewers rule on the size (§Size).*
+*Written after the stage ejected from the light lane: the first build touched +113 / −12 production
+lines against an admission of 60 and a brief of about +45. This records the brief's design, the code as
+it stands after fix cycle 1 (uncommitted, diff base `928bb7d`, +103 / −2), and how the two differ. The
+reviewers ruled on the size (§Size).*
 
 ## Summary
 A `SubscriberArrow` refuses a per-row and a batched subscription to the same topic, in either order.
@@ -21,14 +21,14 @@ subscribe, a close or a handler.
 - `_claimed`: subscription id → topic. This is what a release finds.
 
 **Flow:**
-1. **Subscribe** (`SA:222-242`) and **SubscribeBatched** (`SA:256-299`) run their existing checks
-   first: disposed, null handler, and for batched the managed options check (rung 10 removes it).
-2. Then `Claim(topic, perRow)` (`SA:306-330`), under the lock. Claiming a free topic takes it. The
-   same kind increments the count. The other kind throws.
-3. Everything after the claim is inside `try { … } catch { Release(claim); throw; }`. That covers
-   building the `RowDelivery` or `Batcher`, the inner subscribe, `Record(id, claim)`, and wiring the
-   id, canceller and batcher.
-4. **Unsubscribe** (`SA:367-400`): `BelongsTo` refuses a foreign subscription first, as before. It
+1. **Subscribe** (`SA:222`) and **SubscribeBatched** (`SA:247`) run their existing checks first
+   (disposed, null handler; for batched the managed options check, which rung 10 removes), then build
+   the `RowDelivery` or `Batcher`. Both then call one helper, `SubscribeClaimed` (`SA:289`).
+2. The helper refuses a defaulted topic (`ToKey()`), then `Claim` (`SA:317`) under the lock: a free
+   topic is taken, the same kind increments the count, the other kind throws.
+3. Only the inner subscribe sits in `try { … } catch { Release(topic); throw; }`. The id is recorded
+   right after the `catch`, outside it, and the id, canceller and batcher wiring follow in the caller.
+4. **Unsubscribe** (`SA:366`): `BelongsTo` refuses a foreign subscription first, as before. It
    stops the batcher, then calls the inner unsubscribe. **Only after that returns normally** does it
    remove the id from `_claimed` and `Release` the topic. A failed close keeps the claim, and a retry
    releases it (the inner unsubscribe of a retired id is a native no-op that returns OK).
@@ -51,20 +51,14 @@ conflict.
 | Point | Brief | Implementation | Assessment |
 |---|---|---|---|
 | Release key | the `Subscription` object | the subscription **id** (`ulong`) | Equivalent today: ids are unique per inner `Subscriber`, and `BelongsTo` runs first. Premise P2 covers rung 7. |
-| Topic key | `TopicPath` | `topic.ToString()` | Same identity for constructed topics (ordinal on the joined key). A default `TopicPath` maps to `"<default>"`, is claimed briefly and released when the inner subscribe refuses it. Nit: keying by `TopicPath` itself avoids the question. |
-| Count per topic | as brief | as brief | Not a deviation. |
-| Release on failure | "every throw after the claim releases it" | `try/catch` around the whole tail | Matches the brief's words, but the `try` is wider than needed (see the pre-existing state below). |
-| Release after close | as brief | as brief | Not a deviation. |
+| Topic key | `TopicPath` | `TopicPath` (first build: `ToString()`, changed by DEBT-1) | A default topic is refused before the claim (N2), so `<default>` is never a key. |
+| Release on failure | every throw after the claim | `try/catch` around the inner subscribe only (DEBT-1; first build: the whole tail) | Closer than the brief's words: the claim lasts exactly as long as the native subscription, because `Record` runs after the `catch` (F1/N1). |
+| Claim, record, release | inline in each entry point | one helper, `SubscribeClaimed` (S1) | Rung 7 changes one place. |
+| Count, release after close | as brief | as brief | Not a deviation. |
 
-**Pre-existing state, not widened:** if the inner subscribe succeeds and a later line in the `try`
-throws, the subscribe call throws and the native subscription is not undone. That leak predates this
-stage: the old code had the same tail with no undo. The lines involved are `Record`, the id and
-canceller assignments, and the `_batchers` insert; realistically only out-of-memory can throw there.
-This stage adds one consequence: the claim is released while that orphaned native subscription lives,
-so in that state the other kind would be accepted on the topic. **Narrowing the `try` to the inner
-subscribe call alone** (record immediately after it returns, wire up outside the `try`) would keep
-the claim exactly as long as the native subscription. It is also smaller (§Size). The reviewers
-decide; it is not a blocker on the forcing test.
+**Residue, not widened:** if a line after the helper returns (the id, canceller or `_batchers` wiring)
+throws, the native subscription is not undone, as before this stage. Only out-of-memory can throw there,
+and the claim is now kept while that subscription lives, so the other kind stays refused.
 
 ## Corner cases forbidden
 - **The mix on one object, either order:** refused at the door (rung 2 of the forbid-before-handle
@@ -92,10 +86,10 @@ on one provider (d10 L3: "this object's own rule … between separate subscriber
   collide, rung 7 re-keys the release (by the `Subscription` object) before landing.*
 - **P3.** At rung 7, an in-handler batched close may return before the transport subscription is gone
   (d7 L9). *If so, rung 7 holds the claim until it is gone* (FWD-1).
-- Ledger: `plans/RIX-rulings.md`, 649 lines, 50 entries, last :643 (D10C-5 overrun); unchanged.
+- Ledger: `plans/RIX-rulings.md`, 648 lines, 50 entries, last :643 (D10C-5 overrun); unchanged.
 
 ## Forcing-test mapping
-All in `dotnet/tests/Fletcher.Tests/SubscriberArrowTests.cs:357-454`.
+All in `dotnet/tests/Fletcher.Tests/SubscriberArrowTests.cs:357-457`.
 - **`ARowAndABatchedSubscriptionToOneTopicAreRefusedWhicheverComesSecond(rowFirst)`** (forcing):
   green by `Claim`'s refusal and `Unsubscribe`'s release. Red before the change: the second call
   returned a subscription ("No exception was thrown"). Its accept-after-release arm is the control
@@ -118,25 +112,16 @@ All in `dotnet/tests/Fletcher.Tests/SubscriberArrowTests.cs:357-454`.
   Size: see §Size.
 
 ## Size: inherent, or is there a smaller mechanism?
-**Where the +113 / −12 goes** (approximate, from the working tree): exception docs 8; fields and
-comment 4; the two `try/catch` wrappers about 14, plus about 12 re-indented lines (the −12 and +12);
-`Claim` 25 (a 5-line message included); `Release` 17; `Record` 7; `Unsubscribe` 12.
+**The first build, +113 / −12:** exception docs 8; fields 4; two `try/catch` wrappers about 14 plus about
+12 re-indented lines; `Claim` 25; `Release` 17; `Record` 7; `Unsubscribe` 12. The brief's +45 under-counted
+the docs and the re-indentation that wrapping the whole tail forces; the light-lane call was mine, wrong.
 
-**Inherent to the subject:** a claim taken before the subscribe call, a release on failure, a release
-after close, a per-subscription record, and docs. That is roughly 55-70 touched lines. The brief's
-+45 under-counted the exception docs and the re-indentation that wrapping requires. The light-lane
-call was mine, and it was wrong.
-
-**A smaller mechanism exists, with the same behaviour:** (1) wrap only the inner subscribe call
-(`try { result = _subscriber.Subscribe(…); } catch { Release(claim); throw; }`, then `Record`): it
-re-indents nothing and ties the claim to the native subscription's lifetime, closing the consequence
-above; (2) fold `Record` into its callers or one shared helper; (3) `Release` as one
-decrement-or-remove; (4) key by `TopicPath`.
-
-The estimate is about +65-75 / −2. That is still just over 60, so the subject would not have fitted
-the light lane even when written tightly. **Recommendation: accept the size or take the narrowing.**
-The narrowing is the only change with a behavioural edge, and it is in the "refuse rather than
-replace" direction. The reviewers decide.
+**The smaller mechanism, taken in fix cycle 1: +103 / −2.** The `try` covers only the inner subscribe
+(nothing re-indented); claim, record and release live in one helper; the key is `TopicPath`. The saving
+is small (about 10 lines) because the subject itself is about 70 lines: a claim, a failure release, a
+close release, a per-subscription record and docs (about 15 lines of comments, 8 of them exception
+docs). The stage would not have fitted the light lane even written tightly. The behavioural gain is the
+claim lasting as long as the native subscription.
 
 ## Files-to-touch
 - `dotnet/src/Fletcher/SubscriberArrow.cs` (production; done, uncommitted).
