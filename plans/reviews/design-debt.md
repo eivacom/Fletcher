@@ -914,3 +914,14 @@ Review: [../../docs/archive/D7F/reviews/D7F-1-design-review.md](../../docs/archi
 - ~~DEBT-2~~ Resolved in cycle 2: design D2 (`ref bool accepted`, `catch when (!accepted)`) and D3 step 6 (null-check); lands in code at step 3.
 - ~~DEBT-3~~ Resolved in cycle 2: pricing taken (switch net +215-245), counting rule stated (brief :51-52); stage net-negative.
 - C2-1 (step 3, tests): scope the rung-8 scans to the class: no `System.Threading.Timer` reference in `Eiva.Fletcher.dll`; `Stopwatch` only in an allow-list {`SchemaArrival`}; source scan over `dotnet/src/Fletcher` with the same list; the packed leg reads the pack step's output (build output by default), never `Skip`.
+
+## D10C-10 — a failed hand-over reaches C# in `BatchStatus` (APPROVE-WITH-DEBT(3), cycle 1 of 2) — [review](D10C-10-design-review.md)
+- DEBT-1 (step 3, the L8 leg): the "struct zeroed" predicate sees only an in-place dispose. A dispose of a struct copy
+  (`var e = *f; fl_error_dispose(ref e)`) leaves `*f` intact, and the shim then double-frees at `batches_server.cpp:169`.
+  Restate design :94's control as "an in-place dispose turns it red" and name the copy case. Optional scan: no `fl_error_dispose` in `SubscriberArrow.cs`.
+- DEBT-2 (PM, brief before the owner reads it): rewrite Decision 1 (b)'s Architecture line (:35-37) in place, naming the
+  `Exception?` variant too. That variant does not strain L2, but it changes the public type, and handlers must type-test.
+  Ground the recommendation on :551 (3)'s scope and on d10 L9 :287-288, which already records (a).
+- DEBT-3 (step 3, a new leg): the handled residue (copying the failure throws) needs a leg: a crafted failure with
+  `MessageLen > int.MaxValue` (the `checked` cast throws). Assert one delivery: a null batch, rows counted, reason kept, `Failure == null`.
+  If the `try` is left out, the window is lost silently in the thunk's outer catch (`SA:559-562`).
