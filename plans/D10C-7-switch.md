@@ -20,7 +20,7 @@ FlBatch*, void>`. `Subscriber` (owner of the handle and the topic/options marsha
 `UnsubscribeBatches(Subscription)` (a no-op once disposed, as `Sub:569-574`); `Sub:425-447`'s options block is shared, not copied.
 
 **D2 `SubscribeBatched`: one wrapper, options as given.** Order: disposed/null checks → a `BatchDelivery` (handler, owner, `Subscription`)
-and its `GCHandle`, built before the claim (D10C-6 DEBT-1) → `SubscribeClaimed` (unchanged) around `SubscribeBatches(options.MaxRows, ToMs(options.Timeout))`.
+and its `GCHandle`, built before the claim (D10C-6 DEBT-1) → `SubscribeClaimed` (gains the `accepted` filter, below) around `SubscribeBatches(options.MaxRows, ToMs(options.Timeout))`.
 `MaxRows` is `int64` end to end; `SA:254-267` (the BC-8 refusal and the clamp) is deleted, so domain 7 answers (L3, D22, D31).
 - **Keyed on "native refused", never on a catch-all (review DEBT-2).** `SubscribeBatches` takes `ref bool accepted` and sets it the
   instant the native call answers OK, before any allocation. ONE frame (`SubscribeBatched`) frees the `GCHandle`, and

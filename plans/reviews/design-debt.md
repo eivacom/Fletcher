@@ -909,7 +909,8 @@ Review: [../../docs/archive/D7F/reviews/D7F-1-design-review.md](../../docs/archi
 - DEBT-3 (step 3, this stage): `SubscriberArrowTests.cs:394` passes whatever kind is named, because every message names both kinds. Assert on "holds a per-row" / "holds a batched".
 - DEBT-4 = FWD-1c (rung 7): P1 is false in the carve-out. A close made inside any delivery on the provider leaves the transport subscription open and quiet (`subscriber.hpp:185-191`, `subscriber.cpp:720-745`). At rung 7 the other kind then replaces it silently, and a later same-kind subscribe takes the `provider_subscribed` fast path and receives no rows. Rung 7 keeps the claim after any in-delivery close, for both kinds, until `Dispose` or a same-kind re-subscribe. Reword P1 at close.
 
-## D10C-7 — the switch (APPROVE-WITH-DEBT(3), cycle 1 of 2) — [review](D10C-7-design-review.md)
-- DEBT-1 (PM, before the owner reads the brief): Decision 1 gains (d) "merge D10C-8's deletion here" (net ≈ −160 to −310, no split, no dead code); fix "the round purpose lands whole" (`Batcher` remains) and (c)'s :643 citation (it kept 250 for later stages).
-- DEBT-2 (step 3, code): one frame frees the batch `GCHandle`, keyed on native refusal (status or an `accepted` flag), never on a catch-all; after OK only Closing frees and only `Unsubscribe` releases the claim; null-check `delivery.Subscription` at Closing.
-- DEBT-3 (PM, close): 7a priced ≈ +215-245 net vs ~+170-200 declared; state whether doc comments count; if 7a passes 250, pull rung 8's deletion forward rather than seek an overrun ruling.
+## D10C-7 — the switch and the deletion (cycle 1 APPROVE-WITH-DEBT(3); cycle 2 APPROVE-WITH-DEBT(1)) — [review](D10C-7-design-review.md)
+- ~~DEBT-1~~ Resolved in cycle 2: (d) ruled at :660; brief Decision 1 rewritten (purpose wording, :643 note).
+- ~~DEBT-2~~ Resolved in cycle 2: design D2 (`ref bool accepted`, `catch when (!accepted)`) and D3 step 6 (null-check); lands in code at step 3.
+- ~~DEBT-3~~ Resolved in cycle 2: pricing taken (switch net +215-245), counting rule stated (brief :51-52); stage net-negative.
+- C2-1 (step 3, tests): scope the rung-8 scans to the class: no `System.Threading.Timer` reference in `Eiva.Fletcher.dll`; `Stopwatch` only in an allow-list {`SchemaArrival`}; source scan over `dotnet/src/Fletcher` with the same list; the packed leg reads the pack step's output (build output by default), never `Skip`.
