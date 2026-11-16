@@ -620,3 +620,15 @@ shims (:337 (1))", text kept.**
 libbacktrace via Boost); D-BIND-140's one notice per package stands. CI's identical-list comparison becomes "each platform's
 list ⊆ the shipped list". Design P4 is recorded as breached and resolved by this ruling.
 **Applies to:** D10C-5; `ci.dotnet.yml` notice step; D-BIND-134/-140.
+
+## 2026-11-16 — Fletcher Linking Exception v1.1: owner rulings on the open issues
+> 1. Agree on the provisions as drafted. 2. First point: Approved. Second point: Yes, that works. Third point: Probably not, but that is then a limitation. Fourth point: Agreed. Fifth point: I don't see why not? 3. They are covered, they are employees of EIVA, and no, the generators do not reproduce library code. 4. All are approved. 5. Duly noted
+
+*(Answers to the walkthrough of `license-exception-revision-notes.md`: 1 = owner decisions 1–6; 2 = counsel questions C3 structure, eligible-process line,
+4(b)/(c) on single-file/mobile/embedded, governing law, §6 later-LGPL; 3 = facts; 4 = proposed repo changes; 5 = new risks.)*
+**Rulings:** (1) **v1.1's provisions stand as drafted**: wrapper SDKs allowed; LGPL §4 chapeau kept; every deployment form, 4(e) waived; C++/TS
+disclosure only; named assembly list; previews not Releases; output tied to an unmodified released generator; later exception versions
+selectable. (2) The whole-Program framing with §5, the eligible-process line, no governing-law clause and §6 are accepted; **4(b)/(c) on
+single-file/mobile/embedded builds is a stated limitation**. (3) **The noreply-account commits are EIVA employees' work; the generators
+do not reproduce library code.** (4) The proposed repo changes are approved. (5) The new risks are accepted.
+**Applies to:** `LICENSE-EXCEPTION` v1.1; D-BIND-175; CONTRIBUTING.md, READMEs, licence metadata. The DRAFT notice stays until EIVA legal lifts it.
