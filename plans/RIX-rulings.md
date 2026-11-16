@@ -632,3 +632,10 @@ selectable. (2) The whole-Program framing with §5, the eligible-process line, n
 single-file/mobile/embedded builds is a stated limitation**. (3) **The noreply-account commits are EIVA employees' work; the generators
 do not reproduce library code.** (4) The proposed repo changes are approved. (5) The new risks are accepted.
 **Applies to:** `LICENSE-EXCEPTION` v1.1; D-BIND-175; CONTRIBUTING.md, READMEs, licence metadata. The DRAFT notice stays until EIVA legal lifts it.
+
+## 2026-11-16 — Fletcher Linking Exception: friend assemblies (m6)
+> Internals: "Leave as is"
+
+*(Chosen option.)* **Ruling:** **no code change for InternalsVisibleTo**; the exception's text alone (code reaching non-public members is
+not an Independent Module) carries m6. Strong-naming and a separate test build were declined.
+**Applies to:** `LICENSE-EXCEPTION` v1.1 m6; Fletcher, Fletcher.Interop, Fletcher.GatewayClient csproj (unchanged).
