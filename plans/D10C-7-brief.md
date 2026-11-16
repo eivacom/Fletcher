@@ -1,9 +1,9 @@
 # D10C-7 — Stage Brief (2026-11-16)
 
 **In one sentence:** a C# app with the server package gets its batches from the C++ batcher, an app on the small shim gets a clear
-"add Eiva.Fletcher.Server" refusal, and under Decision 1 (d) C#'s own batcher is deleted in this stage.
-**Forcing test:** batched tests on both shims: server, batches one at a time, in order, on one thread, exactly one closing delivery
-(empty when idle), re-folded dictionaries, attachments; small shim, the named refusal and nothing delivered.
+"add Eiva.Fletcher.Server" refusal, and C#'s own batcher is deleted in this same stage (ruled :660).
+**Forcing test:** batched tests on both shims (server: one at a time, in order, one thread, exactly one closing delivery, re-folded
+dictionaries, attachments; small shim: the named refusal), and scans showing C#'s batcher gone from the source and the packed assemblies.
 
 ## Interfaces
 | Surface | Change | Why |
@@ -15,9 +15,9 @@
 | `HandlerFaulted.SubscriptionId` | CHANGED | Batched ids are now the shim's (very large numbers); 0 for a fault in a batch that arrives before the subscribe call returns. No new public surface; per-row, publishing and decoding untouched. |
 
 ## Deleted
-- Five tests the laws forbid (dictionaries as plain values, the 49.7-day refusal, overlapping batches, two C#-only window sizes;
-  D10C-1 ported their cases to C++), and C#'s own option checks. C#'s batcher: under (d) deleted here with a sixth test (its ceiling
-  constant); otherwise unreachable (no option, build or fallback leads to it: dead code, not a bridge) until D10C-8 deletes it.
+- **C#'s own batcher** (windows, row counts, timer, deadline clock, window-size ceiling, its framed decode): replaced by the C++
+  batcher through the server shim; no bridge, no dead code. Its option checks: replaced by the C++ batcher's answer. Six tests the laws
+  forbid (dictionaries as plain values, the 49.7-day refusal, overlapping batches, three C#-only window sizes; C++ covers the window-size cases).
 
 ## Corner cases forbidden vs handled
 **Forbidden:** a refused subscribe that delivers; a batch freed early, twice, or kept on memory the shim reclaims; two handler calls at
@@ -25,7 +25,7 @@ once or out of order; one kind silently replacing the other; a negative timeout 
 **Handled:** if C# itself fails to take a batch over (out of memory), the handler gets "no batch" with that window's rows counted as lost.
 
 ## Decisions for you
-1. **The switch is near the size ceiling. Does C#'s own batcher go in the same stage, and if not, where is the switch cut?**
+1. **Ruled 2026-11-16: (d)** (ledger :660). **The switch is near the size ceiling. Does C#'s own batcher go in the same stage, and if not, where is the switch cut?**
    (d) **Merge D10C-8 in:** switch, CI lane and deleting C#'s batcher in one stage, net about −160 to −310. *Users:* nothing ships
    mid-round; C#'s copy is gone when batches start coming from C++; no red test, no dead code. *Architecture:* the purpose's "C#'s own
    copy is gone" (:566) and L4 (no window, count, timer or batch thread in C#) land with the switch; D10C-8 moves in whole (the sixth
@@ -44,12 +44,12 @@ once or out of order; one kind silently replacing the other; a negative timeout 
 - Dictionary import checked first: if Apache.Arrow cannot take C++'s column as-is, work stops for you (C# never converts it). The
   preview-bundle consumer's batched path stays red until D10C-11 (:650 (2)).
 - **Verification:** dotnet suite, edge and server legs (Windows); binding-abi-conformance, both passes; pubsub-transport-conformance
-  with its server pass; Linux devcontainer (`fletcher-build:latest`); under (d) the packed-assembly scan.
+  with its new server pass; the "batcher is gone" scans of the source and of the packed assemblies; Linux devcontainer (`fletcher-build:latest`).
 
 ## Numbers
-Declared net lines: switch (7a) **+215 to +245** (reviewer's pricing, agreed) · CI lane +40 to +60 · under (d) whole stage about −160 to
-−310 · new public surface: 0 · design cycles used: 1/2. Counted: code and `//` comments (the `SubscriberArrow` file header's rewrite
-counts both ways); `///` doc comments, Markdown and domain-doc marks are listed, not counted (ladder :14, as D10C-3).
+Declared: **+320 to +380 / −545 to −595, net −165 to −275** (switch net +215 to +245, reviewer's pricing agreed; CI lane +40 to +60;
+deletion +0 to +10 / −480 to −520) · new public surface: 0 · design cycles used: 1/2. Counted: code and `//` comments (the
+`SubscriberArrow` header's rewrite counts both ways); `///` doc comments, Markdown and domain-doc marks are listed, not counted (ladder :14).
 
 ---
 *As landed (<date>, appended by the PM at close, ≤5 lines):*
