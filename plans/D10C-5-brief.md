@@ -3,9 +3,10 @@
 **In one sentence:** an app can add one package beside `Eiva.Fletcher` to get the server shim (the build with
 the C++ batcher); an app that does not keeps the small, Arrow-free shim, and packing refuses any package that
 breaks that split. Batches flow from stage 7; until then the server shim loads and works per row as today.
-**Forcing test:** the package check over all five packed packages, plus six breakages it must refuse — the
+**Forcing test:** the package check over all five packed packages, plus seven breakages it must refuse — the
 server package holds exactly the server shim (Linux, Windows) and needs the base package; the base package
-still holds only the edge shim within 12 MB; nothing else holds native code.
+still holds only the edge shim within 12 MB; nothing else holds native code. **Server package size limit:**
+its first CI-measured size + 4.3 MB (the margin the base package's 12 MB left), rounded up to a whole MB.
 
 ## Interfaces
 | Surface | Change | Why |
@@ -20,7 +21,8 @@ Only wording ("only `Eiva.Fletcher.Interop` may carry native code"), replaced by
 shim in the other's package; a server package not needing the base one; **any package bringing the server shim
 to an app that did not ask for it**; the wrong licence notice in either shim package; Linux and Windows server
 shims from different libraries; a server shim needing more than the stated system libraries and Linux; a server
-package past its ceiling. Mismatched server/base versions are refused at load, as today. **Handled:** none.
+package past its limit. Server and base packages speaking different native interface versions are refused at
+load, as today; same-interface version skew loads (compatible by design). **Handled:** none.
 
 ## Decisions for you
 1. **What do users type to get batches?**
@@ -40,15 +42,13 @@ package past its ceiling. Mismatched server/base versions are refused at load, a
    **Recommendation:** (a), the ruling governs and an annotation loses nothing. **Default:** (a).
 
 ## Risks accepted / debt carried
-- The stage **stops and asks you** if the server shim needs a library or Linux floor beyond the stated ones,
-  or Arrow C++'s notice text is missing. The pending licence-exception wiring must leave the server package
-  out (no managed code). A new id's first nuget.org push is unproven until a release.
-- Verification: devcontainer (`fletcher-build:latest`, volumes `fletcher-d10c4-conan`/`-ws`) and Windows by
-  hand: `check_shim_dependencies.sh` on both shims; pack five packages; `check_dotnet_packages.sh` + the six
-  breakages (`scripts/test_check_dotnet_packages.py`); then CI on your draft PR.
-
+- **Stops and asks you** if the server shim needs a library or Linux floor beyond the stated ones, or Arrow C++'s
+  notice is missing. Licence-exception wiring must skip the server package. A new id's first nuget.org push is unproven.
+- Verification: devcontainer (`fletcher-build:latest`, volumes `fletcher-d10c4-conan`/`-ws`) and Windows by hand:
+  `check_shim_dependencies.sh` on both shims; pack five packages; `check_dotnet_packages.sh` + the seven breakages
+  (`scripts/test_check_dotnet_packages.py`); then CI on your draft PR, which also fixes the size limit.
 ## Numbers
-Declared net lines: +195 / −55 (net ≈ +140; no split) · new public surface: 1 (the package) · design cycles: 1/2
+Declared net lines: +210 / −55 (net ≈ +155; no split) · new public surface: 1 (the package) · design cycles: 2/2
 
 ---
 *As landed (<date>, appended by the PM at close, ≤5 lines):*
