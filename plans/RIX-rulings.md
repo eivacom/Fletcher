@@ -639,3 +639,10 @@ do not reproduce library code.** (4) The proposed repo changes are approved. (5)
 *(Chosen option.)* **Ruling:** **no code change for InternalsVisibleTo**; the exception's text alone (code reaching non-public members is
 not an Independent Module) carries m6. Strong-naming and a separate test build were declined.
 **Applies to:** `LICENSE-EXCEPTION` v1.1 m6; Fletcher, Fletcher.Interop, Fletcher.GatewayClient csproj (unchanged).
+
+## 2026-11-16 — D10C-5: the stage-size overrun
+> Size: "Accept with owner note (Rec.)"
+
+*(Chosen option.)* **Ruling:** **D10C-5 lands whole at net +260 counted production lines (ceiling 250; adds 60% over declared)**; the
+growth is the union-notice check (:615) and BC-17 hardening from review. Not split, not trimmed.
+**Applies to:** D10C-5 close; the round's stage_size_ceiling stays 250 for later stages.
