@@ -11,7 +11,7 @@ lines, 45 entries, last `## 2026-11-15 — D10C ladder: the domain-7 port tests`
 A fifth NuGet package, `<SERVER_ID>` (brief Decision 1; recommended `Eiva.Fletcher.Server`), carries
 exactly the server shim `fletcher-c-abi-server` for `linux-x64` and `win-x64`, no managed assembly, and
 depends on the base package `Eiva.Fletcher.Interop` (d10 §2 "Base package"; rul:536 (2), D21). BC-17
-becomes one rule list in `CDP` over five packages, with Q7's default limits on the server shim and seven
+becomes one rule list in `CDP` over five packages, with Q7's default limits on the server shim and seven (fourteen as landed)
 controls (six red today, one guard). The base package is unchanged: the edge shim only, under D-BIND-157's 12 MB.
 
 ## Design
