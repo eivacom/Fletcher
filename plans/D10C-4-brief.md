@@ -50,5 +50,5 @@ failure does today; the named reason is the inner exception.
 Declared net lines: +125 / −48 (net ≈ +77) counted production; tests ≈ +295 / −10 · new public surface: 0 · design cycles used: 2/2
 
 ---
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
-<delta vs the above>.
+**As landed (2026-11-16):**
+Counted prod (code + CI + project files) ≈ +166/−100, net ≈ +66 (declared +77); doc comments +65/−34 uncounted. Tests ≈ +910 vs ~+295 (test host, layout harness, F1/G1 arms). Not predicted: 4a F1, a server file whose presence cannot be checked used to read as absent and fall back silently, so it now refuses (`File.GetAttributes`); the refusal names the build and the remedy (4b S1); T43 re-anchored one literal (4b N1); NuGet-cache hosts disclosed with PATH and single-file (4b S3). Green on Windows and in the local Linux devcontainer (AOT and the pack check included); CI is unrun, so the qualifiers stay. Design cycles 2, fix cycles 1.

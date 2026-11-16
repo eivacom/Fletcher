@@ -349,9 +349,10 @@ The packages call the C ABI shim, so `c-abi/` goes into the Conan cache after th
 ```bash
 conan create integration-tests/copy-probe --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 conan create c-abi/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release -o "&:with_probe_shim=True"
+conan create c-abi/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release -o "&:variant=server"
 cd dotnet
 dotnet build Fletcher.slnx -c Release
-dotnet test Fletcher.slnx -c Release -p:FletcherNativeShim=<path to libfletcher-c-abi.so or fletcher-c-abi.dll> -p:FletcherProbeShim=<path to libfletcher-c-abi-probe.so or fletcher-c-abi-probe.dll>
+dotnet test Fletcher.slnx -c Release -p:FletcherNativeShim=<path to libfletcher-c-abi.so or fletcher-c-abi.dll> -p:FletcherProbeShim=<path to libfletcher-c-abi-probe.so or fletcher-c-abi-probe.dll> -p:FletcherServerShim=<path to libfletcher-c-abi-server.so or fletcher-c-abi-server.dll>
 ```
 
 See [`dotnet/README.md`](../dotnet/README.md) for the probe shim, NativeAOT and locked restores.

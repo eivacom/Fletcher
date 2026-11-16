@@ -18,11 +18,15 @@
 // looks identical to a healthy process. The failure carries the resolver's
 // diagnostic, which names the RID and says to run `conan create c-abi`.
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 
 using Eiva.Fletcher.Interop;
+using Eiva.Fletcher.Testing;
 
 using Xunit;
 
@@ -143,8 +147,10 @@ public sealed class NativeLoaderTests
     }
 
     /// <summary>
-    /// Review G-D1: the shim is looked for beside this ASSEMBLY first, then beside the
-    /// application, each both flat and under <c>runtimes/&lt;rid&gt;/native/</c>.
+    /// Review G-D1, re-anchored by D10C-4 (audit 0a T42; d10 L5): the shim is looked for beside
+    /// this ASSEMBLY first, then beside the application, each both flat and under
+    /// <c>runtimes/&lt;rid&gt;/native/</c>; and EVERY server candidate comes before EVERY edge
+    /// candidate, so a server file anywhere beside the app wins.
     /// </summary>
     /// <remarks>
     /// A plugin-style host (a PowerShell module, an MSBuild task, a custom
@@ -153,7 +159,10 @@ public sealed class NativeLoaderTests
     /// or single-file app has no assembly directory, so only the application's is probed.
     /// One directory reached both ways (an ordinary app; a trailing separator) is probed once.
     /// Asserted on the pure candidate list: a second copy of the shim cannot be loaded into
-    /// this process to prove it end to end, because the single-copy marker refuses it.
+    /// this process to prove it end to end, because the single-copy marker refuses it. The
+    /// end-to-end proof that the server file wins is LoaderLayoutTests'; this is the order.
+    /// Before D10C-4 the list held the edge name alone (4 candidates), which pinned "the
+    /// server file is never looked for", against L5.
     /// </remarks>
     [Fact]
     public void TheShimIsLookedForBesideTheAssemblyThenBesideTheApplication()
@@ -161,20 +170,92 @@ public sealed class NativeLoaderTests
         string plugin = Path.Combine(Path.GetTempPath(), "host", "plugins", "fletcher");
         string app = Path.Combine(Path.GetTempPath(), "host");
         const string Rid = "test-x64";
+        string server = LoadedShim.ServerFileName;
+        string edge = LoadedShim.EdgeFileName;
+        string[] folders =
+        [
+            plugin,
+            Path.Combine(plugin, "runtimes", Rid, "native"),
+            app,
+            Path.Combine(app, "runtimes", Rid, "native"),
+        ];
 
         string[] both = NativeLoader.CandidatePaths(plugin, app, Rid).ToArray();
-        Assert.Equal(4, both.Length);
-        Assert.Equal(plugin, Path.GetDirectoryName(both[0]));
-        Assert.Equal(Path.Combine(plugin, "runtimes", Rid, "native"), Path.GetDirectoryName(both[1]));
-        Assert.Equal(app, Path.GetDirectoryName(both[2]));
-        Assert.Equal(Path.Combine(app, "runtimes", Rid, "native"), Path.GetDirectoryName(both[3]));
+        Assert.Equal(8, both.Length);
+        for (int i = 0; i < folders.Length; i++)
+        {
+            Assert.Equal(Path.Combine(folders[i], server), both[i]);
+            Assert.Equal(Path.Combine(folders[i], edge), both[folders.Length + i]);
+        }
 
-        // An ordinary app: one directory, probed once, however it is spelled.
-        Assert.Equal(2, NativeLoader.CandidatePaths(app, app + Path.DirectorySeparatorChar, Rid).Count());
-        // NativeAOT or single-file: no assembly directory, so the application's alone.
+        // An ordinary app: one directory, probed once, however it is spelled; server first.
+        string[] ordinary = NativeLoader.CandidatePaths(app, app + Path.DirectorySeparatorChar, Rid).ToArray();
+        Assert.Equal(
+            [Path.Combine(folders[2], server), Path.Combine(folders[3], server), Path.Combine(folders[2], edge), Path.Combine(folders[3], edge)],
+            ordinary);
+        // NativeAOT or single-file: no assembly directory, so the application's alone; server first.
         string[] aot = NativeLoader.CandidatePaths(null, app, Rid).ToArray();
-        Assert.Equal(2, aot.Length);
-        Assert.All(aot, p => Assert.StartsWith(app, p, StringComparison.Ordinal));
+        Assert.Equal(ordinary, aot);
+    }
+
+    /// <summary>
+    /// D10C-4 (d10 L5, D28; ruling 2026-11-15 "Presence; fail loudly"): only the FIRST present
+    /// file is tried. Two present files, both refused: the refusal names the first and never
+    /// the second, because the second is never tried.
+    /// </summary>
+    /// <remarks>
+    /// A leg of the no-fallback rule; LoaderLayoutTests.AnUnloadableServerShimStopsTheAppAndLoadsNoShim
+    /// is its outside proof. Two refused files rather than one refused and one valid, because a
+    /// valid second copy cannot be loaded into this process (the single-copy marker), and the
+    /// message is what shows whether the loop went on to it.
+    /// </remarks>
+    [Fact]
+    public void OnlyTheFirstPresentFileIsTried()
+    {
+        string folder = Path.Combine(Path.GetTempPath(), "fletcher-first-" + Guid.NewGuid().ToString("N"));
+        string first = Path.Combine(folder, "a", "libfletcher-c-abi.so");
+        string second = Path.Combine(folder, "b", "libfletcher-c-abi.so");
+        Directory.CreateDirectory(Path.GetDirectoryName(first)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(second)!);
+        try
+        {
+            File.WriteAllText(first, "not a shared library");
+            File.WriteAllText(second, "not a shared library");
+
+            DllNotFoundException e = Assert.Throws<DllNotFoundException>(
+                () => NativeLoader.LoadFromCandidates([first, second], "linux-x64"));
+
+            Assert.Contains(first + ":", e.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain(second, e.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// D10C-4 (design review B1, P6): the package folder is keyed on the OS and the process
+    /// architecture, so a distro-built .NET, whose own RID is e.g. <c>ubuntu.24.04-x64</c>,
+    /// still looks in <c>runtimes/linux-x64/native/</c>, and is told the linux-x64 floor.
+    /// </summary>
+    /// <remarks>
+    /// A LEG, not the proof (law b): no runtime in CI reports a distro RID. The outside proof is
+    /// two-part: LoaderLayoutTests' runtimes arms stage at the literal package folder, and
+    /// NoNativeLoadOutsideTheResolver fails on any read of the runtime's RID in
+    /// Fletcher.Interop (DEBT-5).
+    /// </remarks>
+    [Fact]
+    public void ADistroBuiltRuntimeStillFindsTheLinuxX64Folder()
+    {
+        string linux = NativeLoader.PackageRid(OSPlatform.Linux, Architecture.X64);
+        Assert.Equal("linux-x64", linux);
+        Assert.Equal("win-x64", NativeLoader.PackageRid(OSPlatform.Windows, Architecture.X64));
+
+        string app = Path.Combine(Path.GetTempPath(), "distro-app");
+        string package = Path.Combine(app, "runtimes", "linux-x64", "native");
+        Assert.Contains(NativeLoader.CandidatePaths(app, app, linux), p => Path.GetDirectoryName(p) == package);
+        Assert.Contains("Linux-gcc13", NativeLoader.PlatformFloor(linux), StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -230,7 +311,7 @@ public sealed class NativeLoaderTests
 
         Assert.Contains("for RID 'linux-musl-x64'", e.Message, StringComparison.Ordinal);
         Assert.Contains("if yours is not among them", e.Message, StringComparison.Ordinal);
-        Assert.Contains("Also probed: " + missing, e.Message, StringComparison.Ordinal);
+        Assert.Contains("Searched: " + missing, e.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("found its native shim", e.Message, StringComparison.Ordinal);
     }
 
@@ -243,4 +324,109 @@ public sealed class NativeLoaderTests
         Assert.Contains("Windows-msvc194", NativeLoader.PlatformFloor("win-x64"), StringComparison.Ordinal);
         Assert.Contains("ships no shim", NativeLoader.PlatformFloor("osx-arm64"), StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// D10C-4 (d10 L5; audit 0a watch (a)): this process has exactly one shim loaded, and it is
+    /// the server file exactly when a server file is beside the tests, else the edge file; the
+    /// shim's own variant query agrees.
+    /// </summary>
+    /// <remarks>
+    /// A leg, run on both of ci.dotnet's legs: on the edge leg (edge file only) it asserts the
+    /// edge; on the server leg (both files staged) it asserts the server, so that leg cannot go
+    /// green on a silent fallback to the edge, which runs per-row equally well. Which file
+    /// LOADED is read from the module list, not from which files are present.
+    /// </remarks>
+    [Fact]
+    public void TheLoadedShimIsTheServerExactlyWhenItIsBesideTheTests()
+    {
+        FlVariant variant = NativeMethods.fl_binding_variant();
+        bool serverBeside = File.Exists(Path.Combine(AppContext.BaseDirectory, LoadedShim.ServerFileName));
+        string expected = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory,
+            serverBeside ? LoadedShim.ServerFileName : LoadedShim.EdgeFileName));
+
+        IReadOnlyList<string> modules = LoadedShim.Modules();
+
+        Assert.True(
+            modules.Count == 1 && string.Equals(Path.GetFullPath(modules[0]), expected, LoadedShim.Comparison),
+            $"expected exactly {expected} loaded (a server file is {(serverBeside ? string.Empty : "not ")}beside the " +
+            $"tests); loaded: [{string.Join(", ", modules)}]");
+        Assert.Equal(serverBeside ? FlVariant.Server : FlVariant.Edge, variant);
+    }
+
+    /// <summary>
+    /// D10C-4, the BC-10 source scan (d10 L5: one resolver site, no fallback branch): in
+    /// <c>dotnet/src</c>, no <c>NativeLibrary.</c> outside <c>NativeLoader.cs</c>, and no
+    /// <c>LibraryImport(</c> or <c>DllImport(</c> outside <c>Fletcher.Interop</c>; and (design
+    /// review DEBT-5) no read of the runtime's RID anywhere in <c>Fletcher.Interop</c>, since a
+    /// distro-built .NET reports a RID no package folder carries.
+    /// </summary>
+    /// <remarks>
+    /// A guard, with vacuity controls: a scan that reads nothing finds nothing, so it fails unless
+    /// it finds <c>NativeLoader.cs</c>'s own <c>NativeLibrary.Load(</c>, an import inside
+    /// Fletcher.Interop, and the folder key <c>PackageRid(</c>. Code lines only: a line that is
+    /// a comment (<c>//</c>, <c>///</c>, or inside a block comment's <c>*</c> lines) is skipped,
+    /// so prose may name what the code must not do. The RID check is the identifier
+    /// <c>RuntimeIdentifier</c> as a whole word, which also catches a <c>using static</c> read, and the
+    /// host property <c>RUNTIME_IDENTIFIER</c>, the <c>AppContext.GetData</c> route to the same value (audit 0b G3).
+    /// </remarks>
+    [Fact]
+    public void NoNativeLoadOutsideTheResolver()
+    {
+        string src = typeof(NativeLoaderTests).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
+            .FirstOrDefault(a => a.Key == "FletcherDotnetSrc")?.Value ?? string.Empty;
+        Assert.True(Directory.Exists(src), $"the baked dotnet/src folder '{src}' does not exist.");
+        string interop = Path.GetFullPath(Path.Combine(src, "Fletcher.Interop"));
+        string loader = Path.Combine(interop, "NativeLoader.cs");
+
+        Dictionary<string, (int Line, string Text)[]> code = Directory
+            .EnumerateFiles(src, "*.cs", SearchOption.AllDirectories)
+            .Select(Path.GetFullPath)
+            .Where(f => !Path.GetRelativePath(src, f).Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                .Any(part => part is "bin" or "obj"))
+            .ToDictionary(f => f, CodeLines, StringComparer.Ordinal);
+        bool InInterop(string file) => file.StartsWith(interop + Path.DirectorySeparatorChar, LoadedShim.Comparison);
+        bool IsLoader(string file) => string.Equals(file, loader, LoadedShim.Comparison);
+        string[] Hits(Func<string, bool> fileFilter, Func<string, bool> lineFilter) => code
+            .Where(kv => fileFilter(kv.Key))
+            .SelectMany(kv => kv.Value.Where(l => lineFilter(l.Text)).Select(l => $"{kv.Key}:{l.Line}: {l.Text}"))
+            .ToArray();
+
+        // Vacuity controls for the BC-10 half.
+        Assert.True(
+            Hits(IsLoader, l => l.Contains("NativeLibrary.Load(", StringComparison.Ordinal)).Length > 0,
+            $"vacuous: the scan of {src} did not find NativeLoader.cs's own NativeLibrary.Load(.");
+        Assert.True(
+            Hits(InInterop, l => l.Contains("LibraryImport(", StringComparison.Ordinal)).Length > 0,
+            $"vacuous: the scan of {src} found no LibraryImport( in Fletcher.Interop.");
+
+        // BC-10: one resolver site.
+        string[] strayLoads = Hits(f => !IsLoader(f), l => l.Contains("NativeLibrary.", StringComparison.Ordinal));
+        Assert.True(strayLoads.Length == 0, "NativeLibrary. outside NativeLoader.cs:\n" + string.Join("\n", strayLoads));
+        string[] strayImports = Hits(
+            f => !InInterop(f),
+            l => l.Contains("LibraryImport(", StringComparison.Ordinal) || l.Contains("DllImport(", StringComparison.Ordinal));
+        Assert.True(strayImports.Length == 0, "a native import outside Fletcher.Interop:\n" + string.Join("\n", strayImports));
+
+        // DEBT-5: the folder key is never the runtime's own RID.
+        string[] runtimeRid = Hits(InInterop, l => Regex.IsMatch(l, @"\bRuntimeIdentifier\b|RUNTIME_IDENTIFIER"));
+        Assert.True(
+            runtimeRid.Length == 0,
+            "Fletcher.Interop reads the runtime's RID, which on a distro-built .NET names no package folder:\n" +
+            string.Join("\n", runtimeRid));
+
+        // Vacuity control for the DEBT-5 half: the key it must use instead is there.
+        Assert.True(
+            Hits(InInterop, l => l.Contains("PackageRid(", StringComparison.Ordinal)).Length > 0,
+            $"vacuous: the scan of {src} found no PackageRid( in Fletcher.Interop.");
+    }
+
+    /// <summary>Each line of <paramref name="file"/> that is code, numbered from 1, trimmed.</summary>
+    private static (int Line, string Text)[] CodeLines(string file) => File.ReadAllLines(file)
+        .Select((text, index) => (Line: index + 1, Text: text.Trim()))
+        .Where(l => l.Text.Length > 0
+            && !l.Text.StartsWith("//", StringComparison.Ordinal)
+            && !l.Text.StartsWith("/*", StringComparison.Ordinal)
+            && !l.Text.StartsWith('*'))
+        .ToArray();
 }

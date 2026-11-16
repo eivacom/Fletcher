@@ -17,5 +17,6 @@
     <Project Path="tests/Fletcher.Model.Tests/Fletcher.Model.Tests.csproj" />
     <Project Path="tests/Fletcher.GatewayClient.Tests/Fletcher.GatewayClient.Tests.csproj" />
     <Project Path="tests/Fletcher.AotSmoke/Fletcher.AotSmoke.csproj" />
+    <Project Path="tests/Fletcher.TestHost/Fletcher.TestHost.csproj" />
   </Folder>
 </Solution>

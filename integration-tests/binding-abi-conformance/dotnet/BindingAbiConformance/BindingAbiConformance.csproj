@@ -38,6 +38,12 @@
           CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- Which shim LOADED, read from the module list (D10C-4): the one filter the unit
+       tests and their test host use too. -->
+  <ItemGroup>
+    <Compile Include="../../../../dotnet/tests/Shared/LoadedShim.cs" Link="Shared/%(Filename)%(Extension)" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="[18.10.0]" />
     <PackageReference Include="xunit" Version="[2.9.3]" />

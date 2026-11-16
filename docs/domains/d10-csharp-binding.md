@@ -81,9 +81,9 @@ C# idiom laid over it (domain-map row 10; owner ruling 2026-11-12, "Shim only", 
 | **Binding** | This domain: the managed packages over the shim. `binding.h` calls the C surface "the binding ABI"; that surface is domain 9's (d9 §2 "Binding"). |
 | **Base package** | `Eiva.Fletcher.Interop`, which packs the edge shim under `runtimes/<rid>/native/` for `win-x64` and `linux-x64` (`Fletcher.Interop.csproj:52-55`, D-BIND-27, -134). `Eiva.Fletcher` references it. |
 | **Server package** | `[designed-not-built]` The separate .NET package carrying the server shim (d9 D22) under its own file name, depending on the base package (ledger :536 (2), D21). Its NuGet id is the packaging stage's choice. |
-| **Edge shim / server shim** | The two builds of the one shim (d9 L12): `fletcher-c-abi` and `fletcher-c-abi-server` (ruling 2026-11-13, ledger :395). C# today loads only the first (`NM:90`). |
-| **Loader** | `NativeLoader` (`NL:25-273`): installs the per-assembly resolver, probes beside the assembly then the application, and explains a failure by RID or platform floor (D-BIND-172). |
-| **Handshake** | `NativeMethods`' type initializer: install the resolver, then compare `fl_binding_abi_version()` with `HeaderVersion` before any other import can run (`NM:72-79`, `NL:253-272`). |
+| **Edge shim / server shim** | The two builds of the one shim (d9 L12): `fletcher-c-abi` and `fletcher-c-abi-server` (ruling 2026-11-13, ledger :395). C# loads the server file when it is present in the app's folders, else the edge file (L5, D21, D28; `NativeLoader.CandidatePaths`, D10C-4). |
+| **Loader** | `NativeLoader` (`NL:27-340`): installs the per-assembly resolver, probes beside the assembly then the application (every server candidate before every edge candidate, D10C-4), and explains a failure by RID, by the refused file and its build, or by platform floor (D-BIND-172). |
+| **Handshake** | `NativeMethods`' type initializer: install the resolver, then compare `fl_binding_abi_version()` with `HeaderVersion` before any other import can run (`NM:72-79`, `NL:320-339`). |
 | **Variant check** | `[designed-not-built]` The binding asking the loaded shim `fl_binding_variant` (d9 L16). Imported since D10C-2, with no caller until the loader uses it. |
 | **Thunk** | An `[UnmanagedCallersOnly]` static method native calls: the delivery thunk (`Subscriber.cs:824-877`), the writer and grow thunks. One containment site per direction (D-BIND-19 rule 2). |
 | **Absorbed failure** | A managed handler exception caught at a thunk, counted in `AbsorbedCallbackFailures` and `Diagnostics.AbsorbedTotal`, and raised as `HandlerFaulted` (D-BIND-18, -19 rule 5). |
@@ -114,7 +114,7 @@ the loaded shim's ABI version is compared with the version the binding was built
 1.0 the minor must match exactly, and a mismatch refuses with a message naming both versions.
 `[built]`
 - Holds at: `NM:72-79` (the type initializer installs the resolver, then verifies, before any
-  other import resolves), `NL:253-272` (`VerifyAbiVersion`), `NL:31-37` (`HeaderVersionMajor` 0,
+  other import resolves), `NL:320-339` (`VerifyAbiVersion`), `NL:33-39` (`HeaderVersionMajor` 0,
   `HeaderVersionMinor` 8: the one line D9S edited under d9 D27, ledger :363 (2)).
 - Both builds share one version (d9 L6, D27), so the handshake cannot tell them apart; L6 does.
 - Tests: `NativeLoaderTests.TheShimLoadsAndReportsTheAbiVersionThisBindingWasBuiltAgainst`,
@@ -196,7 +196,9 @@ package brings it); otherwise the edge shim; never both, and never the edge shim
 server shim that will not load.** Which file loads is decided at one site in the binding, from what is
 present, not from what the application calls (revised 2026-11-15 by ledger :575 (1), D28; it read
 "only if it references the server package").
-`[designed-not-built]`; today one name only, `fletcher-c-abi` (`NM:90`, `NL:60-87`, `NL:218-232`).
+`[built]` (D10C-4; Windows, by hand; CI and Linux unrun): `NativeLoader.Resolve` is the one site; every
+server candidate before every edge candidate, the first present loaded once, no by-name probing
+(`LoaderLayoutTests`, `NativeLoaderTests.NoNativeLoadOutsideTheResolver`).
 - Source: ruling 2026-11-13, "C# loads: Depends on package" (ledger :363 (4); d9 D29, revising
   D19); d9 L5, L17 (one shim per process; a second loaded is refused by the marker); ruling
   2026-11-13, "the server build is its own file" (ledger :395): "the C# switch round teaches C#
@@ -210,11 +212,11 @@ present, not from what the application calls (revised 2026-11-15 by ledger :575 
 - **Settled 2026-11-15 (ledger :575 (1), D28):** a server shim present beside the application is
   loaded; one present but unloadable (for example below its platform floor) stops the load with an
   exception naming the file and the operating system's reason; **there is no fallback to the edge
-  shim.** Presence decides in every route the runtime takes, its default probing included (today
-  `NL:73` loads by the edge name before any preference runs). Revises :363 (4)'s "references";
-  refines :536 (2). `[designed-not-built]`
+  shim.** Presence decides in every route the runtime takes, its default probing included (the
+  by-name probe is deleted, D10C-4). Revises :363 (4)'s "references";
+  refines :536 (2). `[built]` (D10C-4; Windows, by hand; CI and Linux unrun)
 - CI's staging of the server shim under the edge file name (ledger :525) retires when the loader
-  lands (ledger :536 (2)).
+  lands (ledger :536 (2)). Retired (D10C-4): both lanes stage the server file under its own name.
 
 **L6. A C# caller learns its build by asking, never from a missing symbol.** A batched call on the
 edge build fails with a named not-supported exception that names the server package; it never
@@ -383,7 +385,7 @@ are checked when it is packed.** Every other managed package is asset-free.
 - Holds at: `Fletcher.Interop.csproj:52-63` (both RIDs or none), `scripts/check_dotnet_packages.sh`
   (no `runtimes/` outside Interop, `:12-13`; the 12 MB ceiling on Interop, `:103-107`, D-BIND-157),
   `scripts/check_shim_dependencies.sh` (the exact DLL allow-list, D-BIND-148; the linux-x64 floors,
-  D-BIND-149), `NL:155-162` (the floors stated where a load failure is explained, D-BIND-172).
+  D-BIND-149), `NL:226-233` (the floors stated where a load failure is explained, D-BIND-172).
 - Source: D-BIND-13 as revised by ruling 2026-11-13 "Packaging: Separate server package" (ledger
   :337 (1); d9 D22): "two packages, each a full shim"; D-BIND-157 stays on the base package.
 - Today's check enforces the pre-D22 rule ("no other package carries a `runtimes/` entry"); the
@@ -440,8 +442,8 @@ a source build whatever is staged beside the tests (CI's dotnet lane stages the 
   mix through one provider collides (d9 D33, ledger :448 (1)), so `SubscriberArrow` refuses it (L3,
   D33, ledger :575 (6)).
 - ~~`BatchReason` renumbered to 1-3 (L2, D34)~~ `[built]` (D10C-2).
-- The loader's preference for the server shim, failing loudly with no fallback (L5, D21, D28); the
-  server package (L15, D21, Q7).
+- ~~The loader's preference for the server shim, failing loudly with no fallback (L5, D21, D28)~~
+  `[built]` (D10C-4; Windows, by hand; CI and Linux unrun); the server package (L15, D21, Q7).
 
 **Who calls, and on which thread (after the switch):** a row delivery on the transport's thread
 (unchanged); a batch on domain 7's batch thread, one at a time, in window order (L13);
@@ -468,7 +470,7 @@ not wait (d7 L9, d9 §4).
 | D13 | **A batch is borrowed for its callback and kept only by moving it.** | Ledger :363 (1); d9 D26 |
 | D14 | **One ABI version for both builds; `HeaderVersionMinor` moved with the bump** (the one domain-10 line D9S edited, now 8). | Ledger :363 (2); d9 D27 |
 | D15 | **A failed hand-over carries its status, `FL_ORIGIN_HANDOVER` (4) and message, borrowed;** C# mirrors code 4 and never disposes `failure`. | Ledger :383 (1), :512; d9 D30, D32 |
-| D16 | **CI proves C# against the server shim by staging a copy under the edge file name** (test staging only; decides nothing about packing). Retires when D21's loader lands. | Ledger :525; ledger :536 (2) |
+| D16 | ~~**CI proves C# against the server shim by staging a copy under the edge file name** (test staging only; decides nothing about packing). Retires when D21's loader lands.~~ Retired (D10C-4): the server file is staged under its own name. | Ledger :525; ledger :536 (2) |
 | D17 | **Every close of an accepted batched subscription ends with exactly one closing delivery; a refused one delivers nothing,** so a C# caller may free handler state as soon as a refused call throws. | Ledger :484, :500; d7 D18, D19 |
 | D18 | Inherited BIND decisions this domain keeps: one codec, native (D-BIND-1); values as C Data (D-BIND-1a); errors with origin, five rules (D-BIND-1c, -19, -54); thunk lifetime bookkeeping and managed refusals (D-BIND-18, -50, -51); timeouts and byte bounds (D-BIND-20); no managed provider (D-BIND-24); RIDs (D-BIND-27); handler owns the batch, one handler shape (D-BIND-59); dynamic MSVC CRT (D-BIND-155); AOT-compatible (D-BIND-81); the platform floors (D-BIND-149, -169, -172). | `plans/BIND-locked-decisions.md` |
 | D19 | **Decisions the switch retires:** D-BIND-25's batcher half; D-BIND-63 (the raw-byte ceiling); D-BIND-64 (unserialised handlers, nested closing; revised, D27); D-BIND-66 (the intake's own counting, for the batched path); D-BIND-68's purpose (Q8 for the entry point). D-BIND-64 and -59 are annotated (2026-11-15); the D-BIND-25, -63, -66 and -68 annotations are still owed by the round. | d7 D16; BC-9; d9 Findings (d)6; ledger :551 (4) |

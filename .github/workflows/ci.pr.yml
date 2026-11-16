@@ -161,6 +161,9 @@ jobs:
             dotnet:
               - 'dotnet/**'
               - 'c-abi/**'
+              # D10C-4: the server shim, which the server leg loads, links these two.
+              - 'arrow-bridge/**'
+              - 'pubsub-arrow/**'
               - 'integration-tests/copy-probe/**'
               - 'protoc/tests/golden/**'
               - 'integration-tests/protoc-coverage/golden/**'

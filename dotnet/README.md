@@ -82,8 +82,12 @@ dotnet test Fletcher.slnx -c Release
 The tests load native shims, which a source build has to stage: pass
 `-p:FletcherNativeShim=<fletcher-c-abi>` for `Fletcher.Tests` and
 `-p:FletcherProbeShim=<fletcher-c-abi-probe>` for `Fletcher.CopyOracle.Tests`
-(c-abi built with `with_probe_shim`, see `c-abi/README.md`). A project whose
-shim is missing FAILS with the loader's diagnostic rather than skipping.
+(c-abi built with `with_probe_shim`, see `c-abi/README.md`), and
+`-p:FletcherServerShim=<fletcher-c-abi-server>` (c-abi built with `variant=server`) for
+`Fletcher.Tests`' loader-layout rows, which run a test host from staged folders with
+either shim or both. A project whose shim is missing FAILS with the loader's diagnostic
+rather than skipping. CI runs `Fletcher.Tests` a second time with the server shim copied
+beside it, under its own name, so the whole suite also runs on the server build.
 
 The SDK version is pinned twice on purpose — `global.json` here and
 `DOTNET_SDK_VERSION` in `.devcontainer/Dockerfile` — so the container, CI and a
@@ -155,6 +159,22 @@ fail is refused, with a message naming both modules. For an application this mea
 carries its own. The case it cannot detect, a C++ host that links Fletcher statically and also
 hosts .NET, is ruled out rather than checked: the consumers are .NET processes hosting this binding
 only.
+
+**Which shim loads (D10C-4).** The loader looks only in the app's own folders: beside
+`Eiva.Fletcher.Interop.dll`, then beside the application, each flat and under
+`runtimes/<os>-<arch>/native/` (the folder named from the operating system and the process's
+architecture, so a distro-built .NET still finds `linux-x64`). If a server shim
+(`fletcher-c-abi-server`) is in any of them, it is loaded; otherwise the edge shim
+(`fletcher-c-abi`). The first file present is loaded, once; if the operating system refuses it,
+the app stops with an exception naming the file and the reason, and no other copy is tried. The
+operating system's library path (PATH, LD_LIBRARY_PATH) is not searched, so an app that found
+the shim only through it now stops at start-up, listing the folders searched; so does a
+single-file app published with `IncludeNativeLibrariesForSelfExtract=true`, whose shim is
+extracted elsewhere, and so does a host that loads the package straight from the NuGet cache
+(.NET Interactive's `#r "nuget:"`, dotnet-script, F# Interactive), where the package's
+`runtimes/` folder is not beside the loaded assembly. None of these was documented or tested.
+A file that is present but will not load is not skipped: the message names it, says which
+build it is, and the remedy is to remove it or replace it.
 
 A transport is chosen by its selector string, and C# never implements one (D-BIND-24): the shim
 registers the three built-in providers itself, and managed code can neither register a provider nor

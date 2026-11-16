@@ -4,14 +4,16 @@
 // Finding the shim, and refusing to talk to the wrong one.
 //
 // ── Why a resolver at all ───────────────────────────────────────────────────
-// The default probing rules find the native asset once the package is installed:
-// NuGet lays `runtimes/<rid>/native/` out beside the app and the host adds it to
-// the search path. What they do NOT give is a good failure. A missing RID comes
-// out as `DllNotFoundException: Unable to load shared library
-// 'fletcher-c-abi'`, followed by a list of the dozen names the loader tried -
-// none of which tells the reader the one thing that is wrong, which is that
-// their RID is not one this package ships. So the resolver exists mostly for the
-// message it produces when it fails.
+// It is the ONE place that decides which shim file a C# app loads (d10 L5, D28;
+// register BC-10). Presence decides: a server build (`fletcher-c-abi-server`) in any
+// of the app's folders wins, else the edge build (`fletcher-c-abi`). The first file
+// present is loaded once; if the operating system refuses it the app stops, naming
+// the file and the reason, and nothing else is tried (ruling 2026-11-15, "Presence;
+// fail loudly"). The runtime's own probing by name is NOT used: it cannot tell a file
+// that is present but broken from one that is absent, so it would fall back silently,
+// and it reaches the OS search path (PATH, LD_LIBRARY_PATH), which is not one of the
+// app's folders. The resolver also produces the failures a reader can act on: an
+// unshipped platform, or a machine below the shim's floor.
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
@@ -55,51 +57,65 @@ internal static class NativeLoader
     internal static void Install() =>
         NativeLibrary.SetDllImportResolver(typeof(NativeLoader).Assembly, Resolve);
 
+    /// <summary>The server build's base name (ruling 2026-11-13, "its own name"; d10 D11).</summary>
+    private const string ServerLibraryName = "fletcher-c-abi-server";
+
+    /// <summary>
+    /// The one decision, made on the first import that resolves and kept: every later import
+    /// gets the same handle, and a refusal stays a refusal (a thrown exception is cached).
+    /// </summary>
+    /// <remarks>
+    /// One decision per <c>AssemblyLoadContext</c>: a plugin host that loads this assembly
+    /// twice gets two, and if they differ, the shim's single-copy marker (d9 L17) refuses the
+    /// second shim loudly.
+    /// </remarks>
+    private static readonly Lazy<IntPtr> Decision = new(
+        () =>
+        {
+            string rid = PackageRid(CurrentOsPlatform(), RuntimeInformation.ProcessArchitecture);
+            return LoadFromCandidates(
+                CandidatePaths(AssemblyDirectory(typeof(NativeLoader).Assembly), AppContext.BaseDirectory, rid),
+                rid);
+        },
+        System.Threading.LazyThreadSafetyMode.ExecutionAndPublication);
+
     /// <summary>The resolver itself. Internal so its refusal to answer for other
     /// libraries can be asserted without loading anything.</summary>
     internal static IntPtr Resolve(string libraryName, Assembly assembly, DllImportSearchPath? searchPath)
     {
         // Ours only. Returning zero for anything else leaves every other library
         // in the process on the default rules, which is what a resolver installed
-        // per-assembly must do.
+        // per-assembly must do. For ours it never returns zero, so the runtime's
+        // own probing (by name, through the OS search path) never runs for it.
         if (!string.Equals(libraryName, NativeMethods.LibraryName, StringComparison.Ordinal))
         {
             return IntPtr.Zero;
         }
 
-        // The ordinary route first, because in a published application it is the
-        // correct one and it is what the package's `runtimes/<rid>/native` layout
-        // is designed to satisfy.
-        if (NativeLibrary.TryLoad(libraryName, assembly, searchPath, out IntPtr handle))
-        {
-            return handle;
-        }
-
-        // The development route. There is no NuGet layout in a source build, so
-        // the shim is staged beside the test binary or under a `runtimes` folder
-        // by the build; probing both keeps `dotnet test` working from a plain
-        // checkout without a packaging step. It is also where an installed
-        // package's shim is found again when the ordinary route failed, so the
-        // failure can say why.
-        return LoadFromCandidates(
-            CandidatePaths(AssemblyDirectory(assembly), AppContext.BaseDirectory, RuntimeInformation.RuntimeIdentifier),
-            RuntimeInformation.RuntimeIdentifier);
+        return Decision.Value;
     }
 
-    /// <summary>Load the first candidate that exists and loads; otherwise throw, saying why.</summary>
+    /// <summary>Load the first candidate that is present, once; otherwise throw, saying why.</summary>
     /// <remarks>
+    /// Only the FIRST present file is tried. If the operating system refuses it, nothing else
+    /// is tried: not the edge build in place of a present server build, not a second copy of
+    /// either (d10 L5, D28; ruling 2026-11-15, "no fallback branch"). A file whose presence
+    /// cannot be checked (a folder this process may not read) counts as present, so its refusal
+    /// is named rather than silently skipped (compliance review 4a F1).
     /// Thrown, not returned as zero. Returning zero hands the caller the runtime's own
     /// message, which lists what it tried and never names the cause. Two causes are told
     /// apart (BIND-9b-7, review T14, D-BIND-172):
     /// <list type="bullet">
     ///   <item>No candidate exists: the RID is not one the package ships, or a source build
     ///   did not stage the shim.</item>
-    ///   <item>A candidate exists and the operating system refused it: almost always a machine
-    ///   below the platform floor the shim is built for (an older glibc or C++ runtime, a
-    ///   missing Visual C++ redistributable). The operating system's own reason is quoted,
-    ///   because it names the missing piece (for example "version `GLIBCXX_3.4.32' not
-    ///   found"), and the floor is stated beside it. Blaming the RID here, as this did before,
-    ///   sends the reader looking for a platform that is in fact supported.</item>
+    ///   <item>A candidate exists and the operating system refused it. The message names the
+    ///   file and which build it is, says a present server build is always chosen over the edge
+    ///   build, and gives the remedy: remove the file or replace it (review 4b S1). Since presence
+    ///   decides, a stray or damaged server file beside a working app is a likely cause; a machine
+    ///   below the platform floor (an older glibc or C++ runtime, a missing Visual C++
+    ///   redistributable) is the other, so the operating system's own reason is quoted, because
+    ///   it names the missing piece (for example "version `GLIBCXX_3.4.32' not found"), and the
+    ///   floor is stated beside it.</item>
     /// </list>
     /// Internal, with the candidates passed in, so a test can hand it a file that exists and
     /// cannot load.
@@ -107,43 +123,98 @@ internal static class NativeLoader
     internal static IntPtr LoadFromCandidates(IEnumerable<string> candidates, string rid)
     {
         List<string> probed = [];
-        List<string> refused = [];
+        string? chosen = null;
         foreach (string candidate in candidates)
         {
             probed.Add(candidate);
-            if (!File.Exists(candidate))
+            if (IsPresent(candidate))
             {
-                continue;
-            }
-
-            try
-            {
-                return NativeLibrary.Load(candidate);
-            }
-            catch (Exception e) when (e is DllNotFoundException or BadImageFormatException)
-            {
-                refused.Add($"{candidate}: {e.Message}");
+                chosen = candidate;
+                break;
             }
         }
 
-        string alsoProbed = probed.Count == 0 ? string.Empty : " Also probed: " + string.Join("; ", probed) + ".";
-        if (refused.Count > 0)
+        if (chosen is null)
         {
             throw new DllNotFoundException(
-                $"Fletcher found its native shim '{NativeMethods.LibraryName}' for RID '{rid}', but the " +
-                "operating system could not load it: " + string.Join("; ", refused) + ". This almost " +
-                "always means the machine is below the platform floor the shim is built for: " +
-                PlatformFloor(rid) + "." + alsoProbed);
+                $"Fletcher could not load its native shim '{NativeMethods.LibraryName}' for RID " +
+                $"'{rid}'. Eiva.Fletcher.Interop ships one native " +
+                "asset per supported RID; if yours is not among them the package cannot run on this " +
+                "platform, and no managed fallback exists because the wire codec is native by design " +
+                "(D-BIND-1). In a source build, the shim is produced by `conan create c-abi` and must " +
+                "be staged beside the test binary. Only the app's own folders are searched, not the " +
+                "operating system's library path. Searched: " + string.Join("; ", probed) + ".");
         }
 
-        throw new DllNotFoundException(
-            $"Fletcher could not load its native shim '{NativeMethods.LibraryName}' for RID " +
-            $"'{rid}'. Eiva.Fletcher.Interop ships one native " +
-            "asset per supported RID; if yours is not among them the package cannot run on this " +
-            "platform, and no managed fallback exists because the wire codec is native by design " +
-            "(D-BIND-1). In a source build, the shim is produced by `conan create c-abi` and must " +
-            "be staged beside the test binary." + alsoProbed);
+        try
+        {
+            return NativeLibrary.Load(chosen);
+        }
+        catch (Exception e) when (e is DllNotFoundException or BadImageFormatException)
+        {
+            bool server = string.Equals(Path.GetFileName(chosen), NativeFileName(ServerLibraryName), StringComparison.OrdinalIgnoreCase);
+            throw new DllNotFoundException(
+                $"Fletcher found its native shim for RID '{rid}', but the operating system could not " +
+                $"load it: {chosen}: {e.Message}. That file is the " +
+                (server ? $"server build ('{ServerLibraryName}')" : $"edge build ('{NativeMethods.LibraryName}')") +
+                ". No other copy is tried: a server build present in the app's folders is always chosen over " +
+                $"the edge build ('{NativeMethods.LibraryName}'), and a present file that will not load stops " +
+                "the app. To run, remove that file" +
+                (server ? " (the edge build is then loaded, if it is present)" : string.Empty) +
+                " or replace it with a working copy. A file in place that is refused may be damaged or built " +
+                "for another platform, or the machine may be below the platform floor the shim is built for: " +
+                PlatformFloor(rid) + ".",
+                e);
+        }
     }
+
+    /// <summary>Whether a candidate is present: only "not found" reads as absent.</summary>
+    /// <remarks>
+    /// Not <c>File.Exists</c>, which answers false, with no error, for a path it may not examine;
+    /// a server file in a folder this process cannot read would then be skipped and the edge build
+    /// loaded in its place (compliance review 4a F1). Any failure other than "not found" chooses
+    /// the file, and the one load names it with the operating system's reason.
+    /// </remarks>
+    private static bool IsPresent(string candidate)
+    {
+        try
+        {
+            File.GetAttributes(candidate);
+            return true;
+        }
+        catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return false;
+        }
+        catch (Exception)
+        {
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// The package folder's RID for an operating system and a process architecture:
+    /// <c>&lt;os&gt;-&lt;arch&gt;</c>, e.g. <c>linux-x64</c>, <c>win-x64</c> (D-BIND-27).
+    /// </summary>
+    /// <remarks>
+    /// NOT the runtime's own RID: a distro-built .NET 8+ reports e.g. <c>ubuntu.24.04-x64</c>,
+    /// while a NuGet app's shim sits in <c>runtimes/linux-x64/native/</c> (design review B1).
+    /// An OS or architecture the package does not ship still gets a key, which the "ships no
+    /// shim" message names.
+    /// </remarks>
+    internal static string PackageRid(OSPlatform os, Architecture architecture)
+    {
+        string name = os == OSPlatform.Windows ? "win"
+            : os == OSPlatform.OSX ? "osx"
+            : os.ToString().ToLowerInvariant();
+        return name + "-" + architecture.ToString().ToLowerInvariant();
+    }
+
+    private static OSPlatform CurrentOsPlatform() =>
+        RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? OSPlatform.Windows
+        : RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? OSPlatform.OSX
+        : RuntimeInformation.IsOSPlatform(OSPlatform.FreeBSD) ? OSPlatform.FreeBSD
+        : OSPlatform.Linux;
 
     /// <summary>The platform floor of the shim for <paramref name="rid"/>, as the build profile that
     /// produces it sets it (D-BIND-172).</summary>
@@ -179,28 +250,35 @@ internal static class NativeLoader
         return string.IsNullOrEmpty(location) ? null : Path.GetDirectoryName(location);
     }
 
-    /// <summary>Where a source build, or a host that loads this assembly as a plugin, might
-    /// have put the shim, in the order probed.</summary>
+    /// <summary>Every place the shim may be, in the order probed: every SERVER candidate,
+    /// then every EDGE candidate.</summary>
     /// <remarks>
-    /// Beside this ASSEMBLY first, then beside the APPLICATION (review G-D1). In an ordinary
-    /// app the two are one directory, probed once. In a plugin-style host (a PowerShell module,
-    /// an MSBuild task, a custom <c>AssemblyLoadContext</c>) the package's
-    /// <c>runtimes/&lt;rid&gt;/native/</c> sits beside the assembly, not the host, so only the
-    /// first finds it; in a NativeAOT or single-file app the assembly has no directory and only
-    /// the second applies. Internal and pure so the order can be asserted without loading.
+    /// The server file first, wherever it is, so a server build anywhere beside the app wins
+    /// (d10 L5). Within each name, the folders in one order: beside this ASSEMBLY first, then
+    /// beside the APPLICATION (review G-D1), each flat and then under
+    /// <c>runtimes/&lt;rid&gt;/native/</c>. In an ordinary app the two are one directory,
+    /// probed once. In a plugin-style host (a PowerShell module, an MSBuild task, a custom
+    /// <c>AssemblyLoadContext</c>) the package's <c>runtimes/&lt;rid&gt;/native/</c> sits beside
+    /// the assembly, not the host, so only the first finds it; in a NativeAOT or single-file app
+    /// the assembly has no directory and only the second applies. Internal and pure so the order
+    /// can be asserted without loading.
     /// </remarks>
     internal static IEnumerable<string> CandidatePaths(string? assemblyDirectory, string? appDirectory, string rid)
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
+        List<string> directories = [];
         foreach (string? directory in new[] { assemblyDirectory, appDirectory })
         {
-            if (string.IsNullOrEmpty(directory)
-                || !seen.Add(Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory))))
+            if (!string.IsNullOrEmpty(directory)
+                && seen.Add(Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory))))
             {
-                continue;
+                directories.Add(directory);
             }
+        }
 
-            foreach (string name in NativeFileNames())
+        foreach (string name in new[] { NativeFileName(ServerLibraryName), NativeFileName(NativeMethods.LibraryName) })
+        {
+            foreach (string directory in directories)
             {
                 yield return Path.Combine(directory, name);
                 yield return Path.Combine(directory, "runtimes", rid, "native", name);
@@ -209,27 +287,16 @@ internal static class NativeLoader
     }
 
     /// <summary>
-    /// The shim's file name under each platform's own convention.
+    /// A shim's file name under this platform's own convention.
     /// </summary>
     /// <remarks>
     /// Spelled out because these probes load by PATH, and a path has to carry the
     /// decoration that <see cref="NativeMethods.LibraryName"/> deliberately omits.
     /// </remarks>
-    private static IEnumerable<string> NativeFileNames()
-    {
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        {
-            yield return NativeMethods.LibraryName + ".dll";
-        }
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-        {
-            yield return "lib" + NativeMethods.LibraryName + ".dylib";
-        }
-        else
-        {
-            yield return "lib" + NativeMethods.LibraryName + ".so";
-        }
-    }
+    private static string NativeFileName(string baseName) =>
+        RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? baseName + ".dll"
+        : RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "lib" + baseName + ".dylib"
+        : "lib" + baseName + ".so";
 
     /// <summary>
     /// Compare the loaded shim's ABI version against the one this assembly was

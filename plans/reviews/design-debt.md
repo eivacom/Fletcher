@@ -885,5 +885,5 @@ Review: [../../docs/archive/D7F/reviews/D7F-1-design-review.md](../../docs/archi
 - ~~DEBT-2~~ resolved: `env -u LD_LIBRARY_PATH` kept on the conformance server pass (design :61-62, :148).
 - ~~DEBT-3~~ resolved: one decision per `AssemblyLoadContext`, with d9 L17 across contexts (design :18-22, :80).
 - ~~DEBT-4~~ resolved: the full-suite commands and the `ci.dotnet.yml` comments are listed under docs (design :135-137).
-- DEBT-5 (tests in place; **Linux evidence owed**, run ID): literal `runtimes/linux-x64|win-x64/native` arms + `RuntimeIdentifier` scan landed (D10C-4 fix cycle 1); green on Windows only. Lift d10/BC-10 `[built]` qualifiers only with a green Linux run.
+- DEBT-5 (tests in place; **Linux green locally** in the devcontainer, 2026-11-16, evidence row): the CI run ID is still owed, and the d10/BC-10 `[built]` qualifiers lift only with it, per d10 :31's convention.
 - ~~DEBT-6~~ disclosed: brief :35-37 and `dotnet/README.md` (single-file self-extract; plus NuGet-cache hosts, 4b S3).

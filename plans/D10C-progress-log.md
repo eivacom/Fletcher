@@ -54,3 +54,27 @@ Session directive (2026-11-15): run from D10C-1 onward, item by item, until a st
 **Owner decisions this stage:** none
 **Debt carried:** none.
 **Records corrected:** brief :18 (unreachable change), brief RowLimit basis, design :117 leg mapping and :142 numbers; d10 L9/§2/§4 marks and citations (4a RECORD, by the implementer).
+
+## D10C-4 — the loader picks the shim: server if present, refuse loudly, no fallback (2026-11-16)
+
+**Forcing test:** `LoaderLayoutTests.TheServerShimLoadsWhenPresentBesideTheApp` (4 layout arms, via the new `Fletcher.TestHost` process) → 🔴 (edge loaded) → 🟢
+**Lane:** full · **Design:** `plans/D10C-4-loader.md` · **Brief:** `plans/D10C-4-brief.md`
+**What landed:** `NativeLoader.Resolve` is the one site (BC-10). There is one decision per load context, server candidates first, and only the first file present is loaded; if it is refused, the app stops naming the file, the build and the remedy. The by-name probe is deleted. The folder key is `PackageRid(OS, arch)`, so distro-built .NET still finds `runtimes/linux-x64/native`. Presence is checked by `GetAttributes`, so an unreadable server file refuses rather than falling back (4a F1). CI gains a server leg on both OSes; the conformance lane's renamed copy retires (:525 → :536 (2)).
+**Interfaces:** no public change. DELETED: the default by-name probing.
+**Deleted:** none. T42 rewritten (server first); T47 re-anchored; T43 one literal re-anchored.
+**Files touched:** `NativeLoader.cs`; CI `ci.dotnet.yml`, `ci.pr.yml`, the conformance workflow; slnx and csproj; tests `LoaderLayoutTests.cs`, `NativeLoaderTests.cs`, `Fletcher.TestHost/`, `Shared/LoadedShim.cs`, conformance `LoadedShimTests.cs`; docs (READMEs, d10, BC-10).
+**Reviews:** 0a CLEAR · 0b CLEAR (G1–G3 applied) · design NEEDS-REWORK (B1 distro RID) → APPROVE-WITH-DEBT(2) at cycle 2 · compliance 1 blocking (F1) → PASS at cycle 2 · code review 0 blocking / 3 should-fix (done) / 6 nits
+**Verification:**
+- Windows: edge 1518/1518; server 460/460 per TFM; conformance 12/12 ×2.
+- Linux devcontainer, local: edge 1518/1518; server 460/460 per TFM; conformance 12/12 ×2; `check_dotnet_packages.sh` OK; NativeAOT 4/4. P2 holds (`ldd` shows libc and libstdc++ only).
+- CI not run (pull_request only). The `[built]` qualifiers stay until a CI run (d10 :31).
+**Close gate:** PASS (full)
+**Cycle meter:** design 2/2 · fix 1 · implementer launches 1/5 (one agent: red, green, fix) · stage words 6046
+**Numbers:** declared prod net +77 · actual net ≈ +66 (code + CI + project files) · tests ≈ +910 vs ~+295 · new public surface 0
+**PM decisions:**
+- Decision 1 (OS search path) was not asked: :575 (1), L5/D28 and BC-10 settle it, so it is a disclosure.
+- Defect closures under the 2026-09-11 exception: DEBT-6 (single-file self-extract) and 4b S3 (NuGet-cache hosts), both disclosed.
+- The `[built]` qualifiers are kept despite the local Linux evidence.
+**Owner decisions this stage:** the Linux evidence route ("I'll start Docker").
+**Debt carried:** DEBT-5 still owes its CI run ID. d9 :370 and :600 still describe the renamed copy (d9 is read-only; this goes to round close).
+**Records corrected:** NativeFileName in the design; d10 L5/§2/§4 marks and NL references; BC-10 tense (4a RECORD, by the implementer).
