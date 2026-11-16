@@ -900,4 +900,5 @@ Review: [../../docs/archive/D7F/reviews/D7F-1-design-review.md](../../docs/archi
   brief :9 "CI-measured" and brief :49 "which also fixes the size limit".
 
 ## D10C-6 → D10C-7 (forward note from the D10C-6 brief, PM)
+- FWD-1b (0b, D10C-6): on the edge leg FWD-1 also covers the row-first arm's release-then-accept check, possibly the row-first refusal (if NotSupported precedes the topic check), `TheSameKindTwiceAndDifferentTopicsAreNotRefused`'s batched arms and both arms of `TwoArrowSubscribersOnOneProviderDoNotRefuseEachOther`. Rung 7 decides the check order and re-anchors all three tests; the server leg survives as written.
 - FWD-1 (rung 7, tests): re-anchor `ARowAndABatchedSubscriptionToOneTopicAreRefusedWhicheverComesSecond`'s batched-first arms on the edge leg (SubscribeBatched throws NotSupported there: the refused batched call leaves no claim, and a per-row subscribe to the topic is accepted). Rung 7 keeps releasing the same-topic claim only after the native close returns (hold it longer if an in-handler close returns before the transport subscription is gone).
