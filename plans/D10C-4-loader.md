@@ -25,7 +25,7 @@ handle and a refusal stays a refusal. That holds per `AssemblyLoadContext`: a pl
 order: assembly folder, then app folder, deduplicated, each flat and then `runtimes/<rid>/native/`. It yields that
 order **twice**, first for the server file name and then for the edge one, so every server candidate precedes every
 edge candidate and a server file anywhere beside the app wins (L5). The server base name `fletcher-c-abi-server`
-(`rul:395`, d10 D11) is a private constant beside `LibraryName`; `NativeFileNames` decorates either base name.
+(`rul:395`, d10 D11) is a private constant beside `LibraryName`; `NativeFileName` decorates either base name.
 
 **The folder key (review B1; P6).** `rid` becomes `PackageRid(OSPlatform, ProcessArchitecture)` = `<os>-<arch>`;
 `win-x64` and `linux-x64` are D-BIND-27's two shipped RIDs. It is no longer `RuntimeInformation.RuntimeIdentifier`,
