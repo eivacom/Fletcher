@@ -52,4 +52,5 @@ deletion +0 to +10 / −480 to −520) · new public surface: 0 · design cycles
 `SubscriberArrow` header's rewrite counts both ways); `///` doc comments, Markdown and domain-doc marks are listed, not counted (ladder :14).
 
 ---
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
+**As landed (2026-11-16):**
+Switch + D10C-8's deletion in one stage (ruling :660). Counted prod+CI +328/−555, net −227 (declared net −165..−275); tests +1351/−212; 6 tests deleted. D24 and P1 hold (a C++ dictionary imports). Not predicted: hand NULL at `release` via `Marshal.OffsetOf` (the P2 cross-check is no longer independent); an idle Closing may be a null batch (d7 L6); 10 ms control bound widened 2→5 s (PM); pack job builds Fletcher.Tests. Design cycles 2, fix 1. Green on Windows and the local Linux devcontainer; CI unrun.

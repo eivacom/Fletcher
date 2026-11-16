@@ -128,3 +128,32 @@ Session directive (2026-11-15): run from D10C-1 onward, item by item, until a st
 **Owner decisions this stage:** none
 **Debt carried:** FWD-1, -1b, -1c (rung 7: the edge-leg re-anchors; the claim lifetime vs the in-handler close; the check order against NotSupported).
 **Records corrected:** four d10 SA citations; the evidence lane-(4) note; the design's ledger count (648).
+
+## D10C-7 (+ D10C-8 merged) — the switch: C# batches come from domain 7; C#'s batcher is gone (2026-11-16)
+
+**Forcing tests:** the edge refusal for every batched subject plus the 21 re-anchors (🔴 on the managed batcher, 🟢); `ManagedBatcherGoneTests.TheManagedBatcherIsGoneFromTheAssemblies` and the source scan (rung 8)
+**Lane:** full · **Design:** `plans/D10C-7-switch.md` · **Brief:** `plans/D10C-7-brief.md`
+**What landed:**
+- On the server shim, `SubscribeBatched`, `Unsubscribe` and `Dispose` ride `fl_subscriber_subscribe_batches`. One thunk moves the batch, imports it, copies attachments (D10C-3's function as its second caller), calls the handler and counts a throw. The handle is freed only at Closing, or when the native call refused (DEBT-2).
+- On the edge shim, NotSupported carries the shim's text plus one sentence naming `Eiva.Fletcher.Server`, from one `fl_binding_variant` call site.
+- BC-14 has one timeout site. FWD-1c: a quiet close keeps the topic held.
+- Deleted: `Batcher`, the window ceiling, `DecodeBatchFramed` and the framed import (L4, BC-9).
+- CI: the transport lane gains a server pass; the pack job runs the packed scan.
+**Interfaces:** no new public surface. Batched ids are now large numbers (disclosed).
+**Deleted:** T20, T30, T34, T38, T39, T40 (d10 L3 and V12 amended per :650 (1)). T46 is a declared red window until D10C-11.
+**Reviews:**
+- 0a MUST-DELETE(5), then 6 with T40 · 0b CLEAR (U1 dropped, U2 kept by PM; a narrow re-audit CLEAR).
+- Design APPROVE-WITH-DEBT(3); cycle 2 APPROVE-WITH-DEBT(1) after the merge ruling.
+- Compliance: 2 blocking, then PASS at cycle 2.
+- Code review: 0 blocking, 3 should-fix (done).
+**Verification:**
+- Windows: edge 1550/1550, server 476/476 per TFM, binding-abi-conformance 12/12 ×2, pubsub-transport-conformance 34/34 ×2, pack + packed scan.
+- Linux devcontainer, after the fix cycle: the same, plus `check_dotnet_packages.sh`, C1–C14 and NativeAOT 4/4.
+- CI unrun.
+**Close gate:** PASS (full)
+**Cycle meter:** design 2/2 · fix 1 · implementer launches 1 (one agent, 3 passes) · owner touches 3 · stage words 7599
+**Numbers:** declared net −165..−275 · actual counted +328/−555, net −227 · tests +1351/−212 · new public surface 0
+**PM decisions:** U1 dropped; U2 kept; the 10 ms control's bound widened 2→5 s, against the ladder ground rule, for CI load; the P2 offset cross-check is no longer independent (both use `Marshal.OffsetOf`), so it is recorded as a limitation.
+**Owner decisions this stage:** T30/V12 amended; the T46 red window; D10C-8 merged.
+**Debt carried:** CI run IDs (with D10C-4 DEBT-5). No NativeAOT lane runs a batched subscribe (D-BIND-81).
+**Records corrected:** d10 citations and marks; register BC-9, BC-10, BC-13, BC-14.

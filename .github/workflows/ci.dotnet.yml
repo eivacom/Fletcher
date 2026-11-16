@@ -458,6 +458,9 @@ jobs:
             .github
             scripts
             integration-tests/preview-bundle-consumer
+            c-abi/include
+            protoc/tests/golden
+            integration-tests/protoc-coverage/golden
 
       # BIND-9a-4: the package README's code is the consumer test's code, region for region,
       # so what the README shows compiles and runs (the package-consumer job runs it).
@@ -576,6 +579,33 @@ jobs:
         env:
           SOURCE_COMMIT: ${{ inputs.ref || github.sha }}
         run: python3 scripts/test_check_dotnet_packages.py dotnet/artifacts "$SOURCE_COMMIT"
+
+      # D10C-7, rung 8 (d10 L4; BC-9): C#'s own batcher is gone from what SHIPS. The packed
+      # Eiva.Fletcher and Eiva.Fletcher.Interop, every target framework, unzipped and handed to
+      # ManagedBatcherGoneTests.TheManagedBatcherIsGoneFromTheAssemblies through
+      # FLETCHER_PACKED_ASSEMBLIES (unset, it reads the build output, as the dotnet legs run it).
+      # Fletcher.Tests is restored and built here, in this step's own container (the Pack step's
+      # package cache went with its container), for that one test; the sparse checkout above carries
+      # what its build reads (the header and the goldens). A filter that matches nothing fails.
+      - name: Check the managed batcher is gone from the packed assemblies
+        shell: bash
+        run: |
+          set -e
+          PACKED=dotnet/artifacts/packed-assemblies
+          rm -rf "$PACKED" && mkdir -p "$PACKED"
+          for NUPKG in dotnet/artifacts/Eiva.Fletcher.[0-9]*.nupkg dotnet/artifacts/Eiva.Fletcher.Interop.[0-9]*.nupkg; do
+            test -f "$NUPKG" || { echo "::error::no package matched $NUPKG"; exit 1; }
+            unzip -q "$NUPKG" -d "$PACKED/$(basename "$NUPKG" .nupkg)"
+          done
+          docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace/dotnet -e CI=true \
+            -e FLETCHER_PACKED_ASSEMBLIES=/workspace/$PACKED fletcher-build bash -c "
+              set -e
+              dotnet restore tests/Fletcher.Tests --locked-mode
+              dotnet test tests/Fletcher.Tests -c Release --no-restore \
+                --filter FullyQualifiedName=Eiva.Fletcher.Tests.ManagedBatcherGoneTests.TheManagedBatcherIsGoneFromTheAssemblies \
+                -- RunConfiguration.TreatNoTestsAsError=true
+            "
+          rm -rf "$PACKED"
 
       - name: Upload packages
         uses: actions/upload-artifact@v7.0.1

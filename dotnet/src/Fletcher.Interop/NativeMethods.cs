@@ -106,7 +106,8 @@ internal static partial class NativeMethods
     /// <summary>Which build of the shim is loaded (d9 L16).</summary>
     /// <remarks>
     /// Like the version probe: callable first, no arguments, no state, no error path.
-    /// Both builds export it. Nothing calls it yet; the loader will ask it (d10 L6).
+    /// Both builds export it. Asked at one site, after the shim has refused a batched
+    /// subscribe, only to word the refusal (d10 L3 D29, L6).
     /// </remarks>
     [LibraryImport(LibraryName)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
@@ -194,12 +195,6 @@ internal static partial class NativeMethods
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial int fl_decode_rows(
         CodecHandle codec, nint bytes, nuint len, long count, nint output, ref FlError err);
-
-    /// <summary>Decode a FRAMED window: rows whose boundaries are known, bad ones skipped and reported (D-BIND-68, ABI 0.7).</summary>
-    [LibraryImport(LibraryName)]
-    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial int fl_decode_rows_framed(
-        CodecHandle codec, nint bytes, nuint len, nint ends, long count, nint output, nint valid, ref FlError err);
 
     /* Provider and publisher ------------------------------------------------ */
 
@@ -487,6 +482,30 @@ internal static partial class NativeMethods
     [LibraryImport(LibraryName)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial int fl_subscriber_unsubscribe(
+        SubscriberHandle subscriber, ulong subscriptionId, ref FlError err);
+
+    /// <summary>Subscribe for batches assembled by domain 7. SERVER BUILD ONLY.</summary>
+    /// <remarks>
+    /// <paramref name="onBatch"/> is an <c>fl_batch_fn</c>, called on domain 7's batch thread
+    /// one batch at a time; a refused call (any status but FL_OK) never delivers, so
+    /// <paramref name="ctx"/> may be freed when it returns. The edge build answers
+    /// FL_NOT_SUPPORTED whatever the arguments. Options cross as given (INT64_MAX: no timeout).
+    /// </remarks>
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int fl_subscriber_subscribe_batches(
+        SubscriberHandle subscriber, FlTopic topic, long maxRows, long timeoutMs, in FlTopicOptions options,
+        nint onBatch, nint ctx, out ulong subscriptionId, out SchemaArrivalHandle arrival, ref FlError err);
+
+    /// <summary>End one batched subscription (bit 63 set). SERVER BUILD ONLY.</summary>
+    /// <remarks>
+    /// Outside a batch callback it returns after the closing batch; from the subscription's own
+    /// callback, or from a row delivery on the same provider, it returns at once and the closing
+    /// batch follows. A batched id no longer live is a no-op.
+    /// </remarks>
+    [LibraryImport(LibraryName)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int fl_subscriber_unsubscribe_batches(
         SubscriberHandle subscriber, ulong subscriptionId, ref FlError err);
 
     /// <summary>Look an attachment up by key. Absence is not a failure.</summary>

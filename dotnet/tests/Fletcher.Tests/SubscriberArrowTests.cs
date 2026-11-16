@@ -39,8 +39,8 @@
 //   SubscriberArrowBatchTest.OnlyDroppedRowsStillDeliversEmptyBatch
 //                                                      -> U OnlyDroppedRowsStillDeliverAnEmptyBatch
 //   SubscriberArrowBatchTest.DictionaryColumnRefoldedToDictionaryArray
-//                                                      -> U ADictionaryColumnArrivesAsItsValueType (DIFFERENT BY
-//                                                         RULING: re-folding is deferred to DICT, D-BIND-8)
+//                                                      -> U BatchesAreWellFormed (its dictionary column, re-folded
+//                                                         as domain 7 delivers it: ruling :551 (2), d10 D24)
 //   SubscriberArrowBatchTest.DictionaryColumnPreservesNulls -> U ADictionaryColumnKeepsItsNulls (same ruling)
 //   SubscriberArrowBatchTest.CorruptRowIsCountedDroppedAndBatchStaysAligned
 //                                                      -> U ACorruptRowIsDroppedAndTheBatchStaysAligned
@@ -62,20 +62,31 @@
 //
 // ── ONE CASE IS EXCLUDED ────────────────────────────────────────────────────
 // `FinishFailureIsReportedNotFatal` forces C++'s BatchDecoder to fail at Finish(),
-// when 200 distinct values overflow an int8 dictionary index during RE-FOLDING. C#
-// does not re-fold (D-BIND-8): the column arrives as its value type, so there is
-// no Finish() to fail and nothing to construct. The neighbouring property - a
-// window that cannot be decoded is reported, never fatal - is
-// ASchemaTheCodecCannotOpenDropsEveryRow's and ACorruptRowIsDroppedAndTheBatchStaysAligned's.
-// So the file set is 33: 32 mapped, 1 excluded. Three more cases pin the window
-// ceiling (D-BIND-63), which C++ enforces at 2 GiB and no C++ case can reach.
+// when 200 distinct values overflow an int8 dictionary index during RE-FOLDING.
+// Since D10C-7 C#'s batches ARE domain 7's (d10 L4), so that case is domain 7's own
+// and C# adds nothing to it; the neighbouring property - a window that cannot be
+// decoded is reported, never fatal - is ASchemaTheCodecCannotOpenDropsEveryRow's and
+// ACorruptRowIsDroppedAndTheBatchStaysAligned's. So the file set is 33: 32 mapped,
+// 1 excluded.
+//
+// ── Two legs (D10C-7; the ladder's ground rules) ────────────────────────────
+// Every batched subject runs on the leg this process is: the SERVER leg when the
+// server shim's file is beside the tests (d10 L5's own fact, design P5), else the
+// EDGE leg, where the subject is asserted as the BC-10 truth table instead
+// (EdgeRefuses). Per-row subjects run unchanged on both.
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Threading;
 
 using Apache.Arrow;
+using Apache.Arrow.C;
 using Apache.Arrow.Types;
+
+using Eiva.Fletcher.Testing;
 
 using Xunit;
 
@@ -134,6 +145,62 @@ public sealed class SubscriberArrowTests : IDisposable
     private static BatchOptions Options(long maxRows, TimeSpan timeout) => new() { MaxRows = maxRows, Timeout = timeout };
 
     private static readonly TimeSpan Long = TimeSpan.FromMinutes(10);
+
+    /// <summary>How long a delivery that must come is waited for.</summary>
+    private static readonly TimeSpan Await = TimeSpan.FromSeconds(10);
+
+    /// <summary>The fixed window over which "nothing delivered" is asserted (one-sided; ladder ground rules).</summary>
+    private static readonly TimeSpan Quiet = TimeSpan.FromMilliseconds(300);
+
+    // ── The two legs (D10C-7) ───────────────────────────────────────────────
+
+    /// <summary>
+    /// The server leg: the server shim's file is beside the tests, so it is the one loaded
+    /// (d10 L5; NativeLoaderTests.TheLoadedShimIsTheServerExactlyWhenItIsBesideTheTests).
+    /// Read from outside, never from NativeMethods (design P5).
+    /// </summary>
+    private static bool ServerLeg { get; } =
+        File.Exists(Path.Combine(AppContext.BaseDirectory, LoadedShim.ServerFileName));
+
+    /// <summary>
+    /// The edge build's refusal of a batched entry point, verbatim (d9 L12, L16; the one door,
+    /// <c>c-abi/src/binding.cpp</c> <c>RequireServerBuild</c>).
+    /// </summary>
+    private const string EdgeShimText =
+        "fl_subscriber_subscribe_batches: the edge build of the shim carries no batcher; load the server build " +
+        "(fletcher-c-abi-server) for batched subscriptions";
+
+    /// <summary>The server package a C# app adds for batches (ruling :605 (1); d10 L15).</summary>
+    private const string ServerPackage = "Eiva.Fletcher.Server";
+
+    /// <summary>
+    /// The edge leg's truth table for one batched subject (BC-10; d10 L3, L6, D29; ruling :551 (1),
+    /// :575 (2)): <paramref name="subscribe"/> throws <see cref="FletcherException"/>
+    /// (<see cref="FletcherStatus.NotSupported"/>, origin <see cref="FletcherOrigin.Seam"/>) whose
+    /// message is the shim's text verbatim followed by exactly one sentence naming the server
+    /// package; the handler is never called, and a later publish to the topic delivers nothing.
+    /// </summary>
+    /// <param name="subscribe">The batched subscribe under test, given the handler to pass.</param>
+    /// <param name="publish">A publish to the subscribed topic; the default is one TwoColumns row.</param>
+    private void EdgeRefuses(TopicPath topic, Func<RecordBatchHandler, SubscribeResult> subscribe, Action? publish = null)
+    {
+        Assert.False(ServerLeg, "the edge truth table was asked on the server leg");
+        using var never = new Sink();
+
+        FletcherException refused = Assert.Throws<FletcherException>(() => subscribe(never.Handler).Schema.Dispose());
+        Assert.Equal(FletcherStatus.NotSupported, refused.Status);
+        Assert.Equal(FletcherOrigin.Seam, refused.Origin);
+        Assert.StartsWith(EdgeShimText, refused.Message, StringComparison.Ordinal);
+        string added = refused.Message[EdgeShimText.Length..].Trim();
+        Assert.True(
+            added.Contains(ServerPackage, StringComparison.Ordinal)
+                && added.EndsWith('.')
+                && !added[..^1].Replace(ServerPackage, string.Empty, StringComparison.Ordinal).Contains('.', StringComparison.Ordinal),
+            $"after the shim's text the binding adds exactly one sentence naming {ServerPackage}; it added '{added}'");
+
+        (publish ?? (() => Publish(topic, 1, "edge")))();
+        Assert.False(never.WaitFor(1, Quiet), "a refused batched subscribe called its handler");
+    }
 
     // ── Publisher (PublisherArrow folds into it) ────────────────────────────
 
@@ -254,6 +321,12 @@ public sealed class SubscriberArrowTests : IDisposable
     /// UNCHANGED - the C++ cases' `last_subscribe_options == options` - is shown over
     /// Fast DDS, in the transport lane's ASubscriberArrowForwardsItsReaderProfileOnBothForms
     /// (review T-D3).
+    ///
+    /// D10C-7 (audit 0a T7, FORBIDDEN-BY-TOLERANCE): the edge build answers NotSupported for the
+    /// BUILD, so "NotSupported" alone cannot tell a provider's refusal of the options from the
+    /// build's refusal of the call. Server leg: the provider's refusal, carrying neither the edge
+    /// build's text nor the package sentence (design D2: appended only when the build is Edge).
+    /// Edge leg: the truth table.
     /// </remarks>
     [Fact]
     public void TopicOptionsReachTheProviderThroughBothForms()
@@ -262,11 +335,47 @@ public sealed class SubscriberArrowTests : IDisposable
 
         FletcherException perRow = Assert.Throws<FletcherException>(
             () => _subscriber.Subscribe(Topic("optrow"), _sink.Handler, profiled));
-        FletcherException batched = Assert.Throws<FletcherException>(
-            () => _subscriber.SubscribeBatched(Topic("optbatch"), _sink.Handler, null, profiled));
-
         Assert.Equal(FletcherStatus.NotSupported, perRow.Status);
+
+        TopicPath topic = Declared("optbatch");
+        if (!ServerLeg)
+        {
+            EdgeRefuses(topic, handler => _subscriber.SubscribeBatched(topic, handler, null, profiled));
+            return;
+        }
+
+        FletcherException batched = Assert.Throws<FletcherException>(
+            () => _subscriber.SubscribeBatched(topic, _sink.Handler, null, profiled));
         Assert.Equal(FletcherStatus.NotSupported, batched.Status);
+        Assert.DoesNotContain(EdgeShimText, batched.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(ServerPackage, batched.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The edge refusal on its own (D10C-7; d10 L3 D29, L6; BC-10; ruling :551 (1), :575 (2)): on the
+    /// edge shim a batched subscribe, with default or explicit options, is the truth table and
+    /// leaves no claim on its topic, so a per-row subscription to it is then accepted and delivers
+    /// (FWD-1). On the server shim the same calls are accepted.
+    /// </summary>
+    [Fact]
+    public void ABatchedSubscribeOnTheEdgeShimIsRefusedNamingTheServerPackage()
+    {
+        TopicPath topic = Declared("edgerefusal");
+        if (ServerLeg)
+        {
+            SubscribeResult accepted = _subscriber.SubscribeBatched(topic, _sink.Handler);
+            accepted.Schema.Dispose();
+            accepted.Subscription.Dispose();
+            return;
+        }
+
+        EdgeRefuses(topic, handler => _subscriber.SubscribeBatched(topic, handler));
+        EdgeRefuses(topic, handler => _subscriber.SubscribeBatched(topic, handler, Options(1, Long)));
+
+        _subscriber.Subscribe(topic, _sink.Handler).Schema.Dispose();
+        Publish(topic, 3, "perrow");
+        Assert.True(_sink.WaitFor(1, Await), "a per-row subscription after the refused batched ones did not deliver");
+        Assert.Equal(3, ((Int32Array)_sink.Snapshot()[0].Batch!.Column(0)).GetValue(0));
     }
 
     // ── Round trips ─────────────────────────────────────────────────────────
@@ -362,10 +471,10 @@ public sealed class SubscriberArrowTests : IDisposable
     // earlier. The scope is this object only: the same kind twice, other topics, and
     // other subscribers are not refused (L3: no rule without a ruling).
 
-    private SubscribeResult SubscribeKind(SubscriberArrow on, bool perRow, TopicPath topic, Sink into) =>
+    private static SubscribeResult SubscribeKind(SubscriberArrow on, bool perRow, TopicPath topic, RecordBatchHandler handler) =>
         perRow
-            ? on.Subscribe(topic, into.Handler)
-            : on.SubscribeBatched(topic, into.Handler, Options(1, Long));
+            ? on.Subscribe(topic, handler)
+            : on.SubscribeBatched(topic, handler, Options(1, Long));
 
     /// <summary>
     /// The second kind on a topic is refused by name, the first keeps delivering, and the
@@ -376,6 +485,11 @@ public sealed class SubscriberArrowTests : IDisposable
     /// never released it, fails there. The release is `Unsubscribe` when the row came
     /// first and `Subscription.Dispose` when the batched one did, so both routes are shown.
     /// The refused handler is waited on one-sidedly: absence is shown by a short timeout.
+    ///
+    /// D10C-7, the edge leg (FWD-1, FWD-1b; design D2's check order, claim first, then native):
+    /// row first, the batched call is the same-topic refusal there too, and once the row is
+    /// gone it is the truth table; batched first, it is the truth table and leaves no claim,
+    /// so the per-row subscription is accepted and delivers.
     /// </remarks>
     [Theory]
     [InlineData(true)]
@@ -385,20 +499,32 @@ public sealed class SubscriberArrowTests : IDisposable
         TopicPath topic = Declared(rowFirst ? "mixrowfirst" : "mixbatchedfirst");
         using var refused = new Sink();
 
-        SubscribeResult held = SubscribeKind(_subscriber, perRow: rowFirst, topic, _sink);
+        if (!ServerLeg && !rowFirst)
+        {
+            EdgeRefuses(topic, handler => SubscribeKind(_subscriber, perRow: false, topic, handler));
+            SubscribeResult perRow = SubscribeKind(_subscriber, perRow: true, topic, refused.Handler);
+            perRow.Schema.Dispose();
+            Publish(topic, 6, "taken");
+            Assert.True(refused.WaitFor(1, Await), "the per-row subscription after the refused batched one did not deliver");
+            Assert.Equal(6, ((Int32Array)refused.Snapshot()[0].Batch!.Column(0)).GetValue(0));
+            perRow.Subscription.Dispose();
+            return;
+        }
+
+        SubscribeResult held = SubscribeKind(_subscriber, perRow: rowFirst, topic, _sink.Handler);
         held.Schema.Dispose();
 
         InvalidOperationException refusal = Assert.Throws<InvalidOperationException>(
-            () => SubscribeKind(_subscriber, perRow: !rowFirst, topic, refused));
+            () => SubscribeKind(_subscriber, perRow: !rowFirst, topic, refused.Handler));
         Assert.Contains(topic.ToString(), refusal.Message, StringComparison.Ordinal);
         // Every message names both kinds (the one refused and the one held), so only the phrase
         // that names the HELD kind discriminates (D10C-6 review DEBT-3).
         Assert.Contains(rowFirst ? "holds a per-row" : "holds a batched", refusal.Message, StringComparison.Ordinal);
 
         Publish(topic, 5, "kept");
-        Assert.True(_sink.WaitFor(1, TimeSpan.FromSeconds(10)), "the first subscription stopped delivering");
+        Assert.True(_sink.WaitFor(1, Await), "the first subscription stopped delivering");
         Assert.Equal(5, ((Int32Array)_sink.Snapshot()[0].Batch!.Column(0)).GetValue(0));
-        Assert.False(refused.WaitFor(1, TimeSpan.FromMilliseconds(300)), "the refused handler was called");
+        Assert.False(refused.WaitFor(1, Quiet), "the refused handler was called");
 
         if (rowFirst)
         {
@@ -409,10 +535,16 @@ public sealed class SubscriberArrowTests : IDisposable
             held.Subscription.Dispose();
         }
 
-        SubscribeResult accepted = SubscribeKind(_subscriber, perRow: !rowFirst, topic, refused);
+        if (!ServerLeg)
+        {
+            EdgeRefuses(topic, handler => SubscribeKind(_subscriber, perRow: false, topic, handler));
+            return;
+        }
+
+        SubscribeResult accepted = SubscribeKind(_subscriber, perRow: !rowFirst, topic, refused.Handler);
         accepted.Schema.Dispose();
         Publish(topic, 6, "taken");
-        Assert.True(refused.WaitFor(1, TimeSpan.FromSeconds(10)), "the accepted subscription did not deliver");
+        Assert.True(refused.WaitFor(1, Await), "the accepted subscription did not deliver");
         Assert.Equal(6, ((Int32Array)refused.Snapshot()[0].Batch!.Column(0)).GetValue(0));
         accepted.Subscription.Dispose();
     }
@@ -421,6 +553,7 @@ public sealed class SubscriberArrowTests : IDisposable
     /// Guard: the refusal is the mix only. The same kind twice on one topic, and a row and a
     /// batched subscription to different topics, are not refused.
     /// </summary>
+    /// <remarks>D10C-7 (FWD-1b): the batched arms are the server leg's; on the edge leg each is the truth table.</remarks>
     [Fact]
     public void TheSameKindTwiceAndDifferentTopicsAreNotRefused()
     {
@@ -430,12 +563,19 @@ public sealed class SubscriberArrowTests : IDisposable
         TopicPath apart1 = Declared("apartrow");
         TopicPath apart2 = Declared("apartbatched");
 
-        SubscribeKind(_subscriber, perRow: true, rows, _sink).Schema.Dispose();
-        SubscribeKind(_subscriber, perRow: true, rows, second).Schema.Dispose();
-        SubscribeKind(_subscriber, perRow: false, batches, _sink).Schema.Dispose();
-        SubscribeKind(_subscriber, perRow: false, batches, second).Schema.Dispose();
-        SubscribeKind(_subscriber, perRow: true, apart1, _sink).Schema.Dispose();
-        SubscribeKind(_subscriber, perRow: false, apart2, _sink).Schema.Dispose();
+        SubscribeKind(_subscriber, perRow: true, rows, _sink.Handler).Schema.Dispose();
+        SubscribeKind(_subscriber, perRow: true, rows, second.Handler).Schema.Dispose();
+        SubscribeKind(_subscriber, perRow: true, apart1, _sink.Handler).Schema.Dispose();
+        if (!ServerLeg)
+        {
+            EdgeRefuses(batches, handler => SubscribeKind(_subscriber, perRow: false, batches, handler));
+            EdgeRefuses(apart2, handler => SubscribeKind(_subscriber, perRow: false, apart2, handler));
+            return;
+        }
+
+        SubscribeKind(_subscriber, perRow: false, batches, _sink.Handler).Schema.Dispose();
+        SubscribeKind(_subscriber, perRow: false, batches, second.Handler).Schema.Dispose();
+        SubscribeKind(_subscriber, perRow: false, apart2, _sink.Handler).Schema.Dispose();
     }
 
     /// <summary>
@@ -443,6 +583,7 @@ public sealed class SubscriberArrowTests : IDisposable
     /// SubscriberArrow over the same provider, in either order, do not refuse each other:
     /// the transport's rule between separate subscribers is domain 3/4's (d10 L3).
     /// </summary>
+    /// <remarks>D10C-7 (FWD-1b): both arms are the server leg's; on the edge leg the batched call is the truth table.</remarks>
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
@@ -451,9 +592,16 @@ public sealed class SubscriberArrowTests : IDisposable
         using var other = new SubscriberArrow(_provider);
         using var otherSink = new Sink();
         TopicPath topic = Declared(rowOnThisOneFirst ? "twoobjectsrowfirst" : "twoobjectsbatchedfirst");
+        SubscriberArrow batchedOn = rowOnThisOneFirst ? other : _subscriber;
+        if (!ServerLeg)
+        {
+            SubscribeKind(rowOnThisOneFirst ? _subscriber : other, perRow: true, topic, _sink.Handler).Schema.Dispose();
+            EdgeRefuses(topic, handler => SubscribeKind(batchedOn, perRow: false, topic, handler));
+            return;
+        }
 
-        SubscribeKind(_subscriber, perRow: rowOnThisOneFirst, topic, _sink).Schema.Dispose();
-        SubscribeKind(other, perRow: !rowOnThisOneFirst, topic, otherSink).Schema.Dispose();
+        SubscribeKind(_subscriber, perRow: rowOnThisOneFirst, topic, _sink.Handler).Schema.Dispose();
+        SubscribeKind(other, perRow: !rowOnThisOneFirst, topic, otherSink.Handler).Schema.Dispose();
     }
 
     // ── Per row, on the native per-row path (D10C-3) ────────────────────────
@@ -680,8 +828,9 @@ public sealed class SubscriberArrowTests : IDisposable
     /// <summary>
     /// A per-row dictionary column arrives as its value type (d10 D32, ruling :575 (5)): the
     /// per-row decode hands over the values, in order, and C# converts nothing. A different
-    /// subject from the batched ADictionaryColumnArrivesAsItsValueType, which follows domain 7
-    /// from rung 7. A declared guard: green before and after D10C-3.
+    /// subject from the batched dictionary column (ADictionaryColumnKeepsItsNulls,
+    /// BatchesAreWellFormed), which follows domain 7 from rung 7. A declared guard: green before
+    /// and after D10C-3.
     /// </summary>
     [Fact]
     public void APerRowDictionaryColumnArrivesAsItsValueType()
@@ -753,6 +902,12 @@ public sealed class SubscriberArrowTests : IDisposable
     }
 
     // ── Batching ────────────────────────────────────────────────────────────
+    //
+    // D10C-7 (rung 7): on the server leg every batched subject is domain 7's, reached
+    // through the server shim. Each window arrives on domain 7's batch thread, so a test
+    // reads results after WAITING for delivery, never straight after Publish (ruling
+    // :140, "must wait for delivery instead"; d10 L13). On the edge leg each subject is
+    // the truth table (EdgeRefuses).
 
     // ── Subscribed before the topic is declared (D-BIND-146) ────────────────
     // The seam fixes a subscription's schema mode when Subscribe returns (provider.hpp,
@@ -774,17 +929,28 @@ public sealed class SubscriberArrowTests : IDisposable
         using var publisher = new Publisher(carrying);
         using var subscriber = new SubscriberArrow(carrying);
         TopicPath topic = Topic("carriedfirst");
-        subscriber.SubscribeBatched(topic, _sink.Handler, Options(3, Long)).Schema.Dispose();
-        publisher.CreateTopic(topic, TwoColumns);
-
-        for (int i = 0; i < 3; i++)
+        void PublishThree()
         {
-            using RecordBatch batch = Row(i, "late");
-            using var codec = new FletcherCodec(TwoColumns);
-            using BoundRows rows = codec.Bind(batch);
-            publisher.Publish(topic, rows, 0, null);
+            publisher.CreateTopic(topic, TwoColumns);
+            for (int i = 0; i < 3; i++)
+            {
+                using RecordBatch batch = Row(i, "late");
+                using var codec = new FletcherCodec(TwoColumns);
+                using BoundRows rows = codec.Bind(batch);
+                publisher.Publish(topic, rows, 0, null);
+            }
         }
 
+        if (!ServerLeg)
+        {
+            EdgeRefuses(topic, handler => subscriber.SubscribeBatched(topic, handler, Options(3, Long)), PublishThree);
+            return;
+        }
+
+        subscriber.SubscribeBatched(topic, _sink.Handler, Options(3, Long)).Schema.Dispose();
+        PublishThree();
+
+        Assert.True(_sink.WaitFor(1, Await), "no batch arrived");
         Delivery only = Assert.Single(_sink.Snapshot());
         Assert.Equal(3, only.Rows);
         Assert.Equal(0, only.Status.RowsDropped);
@@ -795,6 +961,16 @@ public sealed class SubscriberArrowTests : IDisposable
     public void OnTheDefaultInProcessLoopbackASubscriberThatSubscribedFirstDropsAndCountsEveryRow()
     {
         TopicPath topic = Topic("declaredlater");
+        if (!ServerLeg)
+        {
+            EdgeRefuses(topic, handler => _subscriber.SubscribeBatched(topic, handler, Options(3, Long)), () =>
+            {
+                _publisher.CreateTopic(topic, TwoColumns);
+                Publish(topic, 1, "late");
+            });
+            return;
+        }
+
         SubscribeResult result = _subscriber.SubscribeBatched(topic, _sink.Handler, Options(3, Long));
         result.Schema.Dispose();
         _publisher.CreateTopic(topic, TwoColumns);
@@ -818,6 +994,12 @@ public sealed class SubscriberArrowTests : IDisposable
     public void FlushesAtTheRowLimit()
     {
         TopicPath topic = Declared("rowlimit");
+        if (!ServerLeg)
+        {
+            EdgeRefuses(topic, handler => _subscriber.SubscribeBatched(topic, handler, Options(3, Long)));
+            return;
+        }
+
         _subscriber.SubscribeBatched(topic, _sink.Handler, Options(3, Long)).Schema.Dispose();
 
         for (int i = 0; i < 3; i++)
@@ -825,6 +1007,7 @@ public sealed class SubscriberArrowTests : IDisposable
             Publish(topic, i, "n");
         }
 
+        Assert.True(_sink.WaitFor(1, Await), "no batch at the row limit");
         Delivery only = Assert.Single(_sink.Snapshot());
         Assert.Equal(3, only.Rows);
         Assert.Equal(3, only.Attachments.Count);
@@ -837,6 +1020,12 @@ public sealed class SubscriberArrowTests : IDisposable
     public void FlushesAtTheTimeout()
     {
         TopicPath topic = Declared("timeout");
+        if (!ServerLeg)
+        {
+            EdgeRefuses(topic, handler => _subscriber.SubscribeBatched(topic, handler, Options(100_000, TimeSpan.FromMilliseconds(100))));
+            return;
+        }
+
         _subscriber.SubscribeBatched(topic, _sink.Handler, Options(100_000, TimeSpan.FromMilliseconds(100))).Schema.Dispose();
 
         Publish(topic, 1, "a");
@@ -849,11 +1038,43 @@ public sealed class SubscriberArrowTests : IDisposable
         Assert.Equal(BatchReason.Timeout, only.Status.Reason);
     }
 
+    /// <summary>
+    /// The control for every one-sided timing arm in this file (ladder ground rules): a 10 ms
+    /// timeout gives a <see cref="BatchReason.Timeout"/> batch within 5 s. A "nothing delivered
+    /// over a fixed window" arm is only evidence while this one is green. (The ladder's 2 s, widened
+    /// so a loaded shared runner does not fail it; review 4b.)
+    /// </summary>
+    [Fact]
+    public void ATenMillisecondTimeoutClosesTheWindowWithinFiveSeconds()
+    {
+        TopicPath topic = Declared("tenms");
+        if (!ServerLeg)
+        {
+            EdgeRefuses(topic, handler => _subscriber.SubscribeBatched(topic, handler, Options(100_000, TimeSpan.FromMilliseconds(10))));
+            return;
+        }
+
+        _subscriber.SubscribeBatched(topic, _sink.Handler, Options(100_000, TimeSpan.FromMilliseconds(10))).Schema.Dispose();
+
+        Publish(topic, 1, "a");
+
+        Assert.True(_sink.WaitFor(1, TimeSpan.FromSeconds(5)), "no Timeout batch within 5 s of a 10 ms window");
+        Delivery first = _sink.Snapshot()[0];
+        Assert.Equal(BatchReason.Timeout, first.Status.Reason);
+        Assert.Equal(1, first.Rows);
+    }
+
     /// <summary>Mirrors SubscriberArrowBatchTest.ClosingFlushOnUnsubscribe.</summary>
     [Fact]
     public void UnsubscribingFlushesThePartialWindow()
     {
         TopicPath topic = Declared("closing");
+        if (!ServerLeg)
+        {
+            EdgeRefuses(topic, handler => _subscriber.SubscribeBatched(topic, handler, Options(100_000, Long)));
+            return;
+        }
+
         SubscribeResult result = _subscriber.SubscribeBatched(topic, _sink.Handler, Options(100_000, Long));
         result.Schema.Dispose();
 
@@ -868,11 +1089,69 @@ public sealed class SubscriberArrowTests : IDisposable
         Assert.Equal(BatchReason.Closing, only.Status.Reason);
     }
 
+    /// <summary>
+    /// D10C-7 (d7 L6, L9; ruling :484; design P3): a close with nothing pending still ends with
+    /// exactly one Closing delivery - empty - and nothing after it, on each way a C# caller closes:
+    /// <c>Unsubscribe</c>, the subscription's <c>Dispose</c>, and the <c>SubscriberArrow</c>'s
+    /// <c>Dispose</c>.
+    /// </summary>
+    /// <remarks>
+    /// "Empty" is d7 L6's either-or, "zero-row, or null if there is no decoder": domain 7 decides
+    /// its decoder from the first row that carries a schema (d7 L8, L13), so a subscription that
+    /// never saw a row closes with a null batch and RowsDropped = 0. Either form is accepted here;
+    /// which one is domain 7's to choose.
+    /// </remarks>
+    [Theory]
+    [InlineData("unsubscribe")]
+    [InlineData("subscription")]
+    [InlineData("subscriber")]
+    public void AnIdleCloseDeliversOneEmptyClosing(string closer)
+    {
+        TopicPath topic = Declared("idleclose" + closer);
+        if (!ServerLeg)
+        {
+            EdgeRefuses(topic, handler => _subscriber.SubscribeBatched(topic, handler, Options(100_000, Long)));
+            return;
+        }
+
+        SubscribeResult result = _subscriber.SubscribeBatched(topic, _sink.Handler, Options(100_000, Long));
+        result.Schema.Dispose();
+        Assert.False(_sink.WaitFor(1, Quiet), "an idle window delivered before the close");
+
+        switch (closer)
+        {
+            case "unsubscribe":
+                _subscriber.Unsubscribe(result.Subscription);
+                break;
+            case "subscription":
+                result.Subscription.Dispose();
+                break;
+            default:
+                _subscriber.Dispose();
+                break;
+        }
+
+        Delivery closing = Assert.Single(_sink.Snapshot());
+        Assert.Equal(BatchReason.Closing, closing.Status.Reason);
+        Assert.True(closing.Batch is null || closing.Rows == 0, $"the idle Closing carried {closing.Rows} row(s)");
+        Assert.Empty(closing.Attachments);
+        Assert.Equal(0, closing.Status.RowsDropped);
+
+        Publish(topic, 1, "after");
+        Assert.False(_sink.WaitFor(2, Quiet), "a delivery after the Closing");
+    }
+
     /// <summary>Mirrors SubscriberArrowBatchTest.AttachmentsAlignWithRows.</summary>
     [Fact]
     public void AttachmentsAlignWithTheirRows()
     {
         TopicPath topic = Declared("align");
+        if (!ServerLeg)
+        {
+            EdgeRefuses(topic, handler => _subscriber.SubscribeBatched(topic, handler, Options(2, Long)));
+            return;
+        }
+
         _subscriber.SubscribeBatched(topic, _sink.Handler, Options(2, Long)).Schema.Dispose();
 
         using var sent = new AttachmentsBuilder();
@@ -880,6 +1159,7 @@ public sealed class SubscriberArrowTests : IDisposable
         Publish(topic, 1, "a", sent);
         Publish(topic, 2, "b");
 
+        Assert.True(_sink.WaitFor(1, Await), "no batch at the row limit");
         Delivery only = Assert.Single(_sink.Snapshot());
         Assert.Equal(2, only.Attachments.Count);
         Assert.True(only.Attachments[0].TryFind("img"u8, out _));
@@ -891,6 +1171,12 @@ public sealed class SubscriberArrowTests : IDisposable
     public void ADroppedRowIsReportedAndItsAttachmentDiscarded()
     {
         TopicPath topic = Declared("dropped");
+        if (!ServerLeg)
+        {
+            EdgeRefuses(topic, handler => _subscriber.SubscribeBatched(topic, handler, Options(100_000, Long)));
+            return;
+        }
+
         SubscribeResult result = _subscriber.SubscribeBatched(topic, _sink.Handler, Options(100_000, Long));
         result.Schema.Dispose();
 
@@ -915,6 +1201,12 @@ public sealed class SubscriberArrowTests : IDisposable
     public void OnlyDroppedRowsStillDeliverAnEmptyBatch()
     {
         TopicPath topic = Declared("onlydropped");
+        if (!ServerLeg)
+        {
+            EdgeRefuses(topic, handler => _subscriber.SubscribeBatched(topic, handler, Options(100_000, TimeSpan.FromMilliseconds(100))));
+            return;
+        }
+
         _subscriber.SubscribeBatched(topic, _sink.Handler, Options(100_000, TimeSpan.FromMilliseconds(100))).Schema.Dispose();
 
         _publisher.PublishRaw(topic, [0x00]);
@@ -928,30 +1220,31 @@ public sealed class SubscriberArrowTests : IDisposable
         Assert.Equal(BatchReason.Timeout, only.Status.Reason);
     }
 
-    /// <summary>Mirrors SubscriberArrowBatchTest.DictionaryColumnRefoldedToDictionaryArray.</summary>
-    /// <remarks>
-    /// DIFFERENT BY RULING: C++'s BatchDecoder re-folds into a DictionaryArray; C#
-    /// delivers the VALUE type, and re-folding is deferred to DICT (D-BIND-8). What
-    /// both owe is the values, in order.
-    /// </remarks>
-    [Fact]
-    public void ADictionaryColumnArrivesAsItsValueType()
-    {
-        RecordBatch source = CodecFixtures.Dictionary();
-        TopicPath topic = Topic("dictionary");
-        _publisher.CreateTopic(topic, source.Schema);
-        _subscriber.SubscribeBatched(topic, _sink.Handler, Options(3, Long)).Schema.Dispose();
-
-        using var codec = new FletcherCodec(source.Schema);
-        using BoundRows rows = codec.Bind(source);
-        _publisher.Publish(topic, rows);
-
-        Delivery only = Assert.Single(_sink.Snapshot());
-        var category = Assert.IsType<StringArray>(only.Batch!.Column(1));
-        Assert.Equal(["gamma", "alpha", "beta"], [category.GetString(0), category.GetString(1), category.GetString(2)]);
-    }
+    /// <summary>The value at <paramref name="row"/> of a dictionary column, through its indices; null when the row is.</summary>
+    private static string? ValueAt(DictionaryArray column, int row) =>
+        column.IsNull(row)
+            ? null
+            : ((StringArray)column.Dictionary).GetString(checked((int)Convert.ToInt64(
+                ((IArrowArray)column.Indices) switch
+                {
+                    Int8Array i8 => (object?)i8.GetValue(row),
+                    Int16Array i16 => i16.GetValue(row),
+                    Int32Array i32 => i32.GetValue(row),
+                    Int64Array i64 => i64.GetValue(row),
+                    UInt8Array u8 => u8.GetValue(row),
+                    UInt16Array u16 => u16.GetValue(row),
+                    UInt32Array u32 => u32.GetValue(row),
+                    UInt64Array u64 => u64.GetValue(row),
+                    _ => throw new InvalidOperationException($"a dictionary index of type {column.Indices.Data.DataType.Name}"),
+                },
+                System.Globalization.CultureInfo.InvariantCulture)));
 
     /// <summary>Mirrors SubscriberArrowBatchTest.DictionaryColumnPreservesNulls.</summary>
+    /// <remarks>
+    /// D10C-7 (audit 0a T21; ruling :551 (2); d10 D24): a batched dictionary column arrives
+    /// re-folded, as domain 7 delivers it - a <see cref="DictionaryArray"/> - with its null and
+    /// its values kept. C# converts nothing; the index width is domain 7's to choose.
+    /// </remarks>
     [Fact]
     public void ADictionaryColumnKeepsItsNulls()
     {
@@ -963,16 +1256,24 @@ public sealed class SubscriberArrowTests : IDisposable
 
         TopicPath topic = Topic("dictnulls");
         _publisher.CreateTopic(topic, schema);
-        _subscriber.SubscribeBatched(topic, _sink.Handler, Options(3, Long)).Schema.Dispose();
-
         using var codec = new FletcherCodec(schema);
         using BoundRows rows = codec.Bind(source);
+        if (!ServerLeg)
+        {
+            EdgeRefuses(topic, handler => _subscriber.SubscribeBatched(topic, handler, Options(3, Long)), () => _publisher.Publish(topic, rows));
+            return;
+        }
+
+        _subscriber.SubscribeBatched(topic, _sink.Handler, Options(3, Long)).Schema.Dispose();
         _publisher.Publish(topic, rows);
 
-        var category = Assert.IsType<StringArray>(Assert.Single(_sink.Snapshot()).Batch!.Column(0));
-        Assert.Equal("x", category.GetString(0));
+        Assert.True(_sink.WaitFor(1, Await), "no batch at the row limit");
+        var category = Assert.IsType<DictionaryArray>(Assert.Single(_sink.Snapshot()).Batch!.Column(0));
+        Assert.Equal(3, category.Length);
+        Assert.Equal(1, category.NullCount);
+        Assert.Equal("x", ValueAt(category, 0));
         Assert.True(category.IsNull(1));
-        Assert.Equal("x", category.GetString(2));
+        Assert.Equal("x", ValueAt(category, 2));
     }
 
     /// <summary>Mirrors SubscriberArrowBatchTest.CorruptRowIsCountedDroppedAndBatchStaysAligned.</summary>
@@ -993,7 +1294,6 @@ public sealed class SubscriberArrowTests : IDisposable
         ], metadata: null);
         TopicPath topic = Topic("corrupt");
         _publisher.CreateTopic(topic, schema);
-        _subscriber.SubscribeBatched(topic, _sink.Handler, Options(2, Long)).Schema.Dispose();
 
         using var codec = new FletcherCodec(schema);
         RecordBatch RowOf(int x, params string[] items)
@@ -1012,6 +1312,13 @@ public sealed class SubscriberArrowTests : IDisposable
         using RecordBatch rowB = RowOf(2, "c");
         using BoundRows boundA = codec.Bind(rowA);
         using BoundRows boundB = codec.Bind(rowB);
+        if (!ServerLeg)
+        {
+            EdgeRefuses(topic, handler => _subscriber.SubscribeBatched(topic, handler, Options(2, Long)), () => _publisher.Publish(topic, boundA, 0));
+            return;
+        }
+
+        _subscriber.SubscribeBatched(topic, _sink.Handler, Options(2, Long)).Schema.Dispose();
         var encodedA = new System.Buffers.ArrayBufferWriter<byte>();
         codec.Encode(boundA, 0, encodedA);
         byte[] truncated = encodedA.WrittenSpan[..^3].ToArray();
@@ -1026,6 +1333,7 @@ public sealed class SubscriberArrowTests : IDisposable
         Assert.Empty(_sink.Snapshot());
         _publisher.Publish(topic, boundB, 0, b);  // reaches max_rows
 
+        Assert.True(_sink.WaitFor(1, Await), "no batch at the row limit");
         Delivery only = Assert.Single(_sink.Snapshot());
         Assert.Equal(2, only.Rows);
         Assert.Equal(1, only.Status.RowsDropped);
@@ -1050,12 +1358,18 @@ public sealed class SubscriberArrowTests : IDisposable
 
         TopicPath topic = Topic("fixedsize");
         _publisher.CreateTopic(topic, schema);
-        _subscriber.SubscribeBatched(topic, _sink.Handler, Options(1, Long)).Schema.Dispose();
-
         using var codec = new FletcherCodec(schema);
         using BoundRows rows = codec.Bind(source);
+        if (!ServerLeg)
+        {
+            EdgeRefuses(topic, handler => _subscriber.SubscribeBatched(topic, handler, Options(1, Long)), () => _publisher.Publish(topic, rows, 0));
+            return;
+        }
+
+        _subscriber.SubscribeBatched(topic, _sink.Handler, Options(1, Long)).Schema.Dispose();
         _publisher.Publish(topic, rows, 0);
 
+        Assert.True(_sink.WaitFor(1, Await), "no batch at the row limit");
         var column = Assert.IsType<FixedSizeListArray>(Assert.Single(_sink.Snapshot()).Batch!.Column(0));
         Assert.True(column.IsValid(0), "the list itself arrived null");
         var values = (FloatArray)column.Values;
@@ -1066,8 +1380,8 @@ public sealed class SubscriberArrowTests : IDisposable
     /// <remarks>
     /// The property: a schema the codec cannot open drops EVERY row for the life of
     /// the subscription, reported with a NULL batch rather than silently. C++ shows
-    /// it on a nested dictionary; C#'s codec decodes those (D-BIND-39), so it is shown
-    /// here on one the codec refuses by name - a dictionary whose value type is a struct.
+    /// it on a nested dictionary; here it is shown on a dictionary whose value type is a
+    /// struct, which domain 7's decoder refuses too (d7 L7, L8).
     /// </remarks>
     [Fact]
     public void ASchemaTheCodecCannotOpenDropsEveryRow()
@@ -1076,6 +1390,12 @@ public sealed class SubscriberArrowTests : IDisposable
         var schema = new Schema([new Field("category", new DictionaryType(Int32Type.Default, nested, ordered: false), nullable: true)], metadata: null);
         TopicPath topic = Topic("undecodable");
         _publisher.CreateTopic(topic, schema);
+        if (!ServerLeg)
+        {
+            EdgeRefuses(topic, handler => _subscriber.SubscribeBatched(topic, handler, Options(100_000, Long)), () => _publisher.PublishRaw(topic, [0x00]));
+            return;
+        }
+
         SubscribeResult result = _subscriber.SubscribeBatched(topic, _sink.Handler, Options(100_000, Long));
         result.Schema.Dispose();
 
@@ -1093,40 +1413,76 @@ public sealed class SubscriberArrowTests : IDisposable
     }
 
     /// <summary>Mirrors SubscriberArrowBatchTest.UnsubscribeFromCallbackDuringRowLimitFlushStopsDeliveryCleanly.</summary>
+    /// <remarks>
+    /// D10C-7 (audit 0a T25; ruling :484; d7 L9): an Unsubscribe from inside the handler returns
+    /// at once, and the subscription still ends with exactly one Closing - empty, since the
+    /// window was just delivered - after the handler returns; then nothing.
+    /// </remarks>
     [Fact]
     public void UnsubscribingFromTheHandlerDuringARowLimitFlushStopsDelivery()
     {
         TopicPath topic = Declared("selfcancel");
-        int delivered = 0;
-        Subscription? self = null;
-        SubscribeResult result = _subscriber.SubscribeBatched(topic, (batch, _, _) =>
+        if (!ServerLeg)
         {
-            batch?.Dispose();
-            delivered++;
-            _subscriber.Unsubscribe(self!);
+            EdgeRefuses(topic, handler => _subscriber.SubscribeBatched(topic, handler, Options(1, Long)));
+            return;
+        }
+
+        int calls = 0;
+        Subscription? self = null;
+        SubscribeResult result = _subscriber.SubscribeBatched(topic, (batch, attachments, status) =>
+        {
+            _sink.Handler(batch, attachments, status);
+            if (Interlocked.Increment(ref calls) == 1)
+            {
+                _subscriber.Unsubscribe(self!);
+            }
         }, Options(1, Long));
         self = result.Subscription;
         result.Schema.Dispose();
 
         Publish(topic, 1, "a");
-        Assert.Equal(1, delivered);
+
+        Assert.True(_sink.WaitFor(2, Await), "the in-handler Unsubscribe was not followed by a Closing delivery");
+        List<Delivery> seen = _sink.Snapshot();
+        Assert.Equal(BatchReason.RowLimit, seen[0].Status.Reason);
+        Assert.Equal(1, seen[0].Rows);
+        Assert.Equal(BatchReason.Closing, seen[1].Status.Reason);
+        Assert.Equal(0, seen[1].Rows);
+        Assert.Equal(0, seen[1].Status.RowsDropped);
 
         Publish(topic, 2, "b");
         Publish(topic, 3, "c");
-        Assert.Equal(1, delivered);
+        Assert.False(_sink.WaitFor(3, Quiet), "a delivery after the Closing");
+        Assert.Equal(0UL, _subscriber.AbsorbedCallbackFailures);
     }
 
     /// <summary>Mirrors SubscriberArrowBatchTest.UnsubscribeFromInsideATimeoutFlushIsSafe.</summary>
+    /// <remarks>
+    /// D10C-7 (audit 0a T26): the handler also receives the subscription's Closing (ruling :484)
+    /// and ignores it, rather than unsubscribing a closed subscription again.
+    /// </remarks>
     [Fact]
     public void UnsubscribingFromInsideATimeoutFlushIsSafe()
     {
         TopicPath topic = Declared("timercancel");
+        if (!ServerLeg)
+        {
+            EdgeRefuses(topic, handler => _subscriber.SubscribeBatched(topic, handler, Options(100, TimeSpan.FromMilliseconds(20))));
+            return;
+        }
+
         using var done = new ManualResetEventSlim(false);
         Subscription? self = null;
         Exception? failure = null;
-        SubscribeResult result = _subscriber.SubscribeBatched(topic, (batch, _, _) =>
+        SubscribeResult result = _subscriber.SubscribeBatched(topic, (batch, _, status) =>
         {
             batch?.Dispose();
+            if (status.Reason == BatchReason.Closing)
+            {
+                return;
+            }
+
             try
             {
                 _subscriber.Unsubscribe(self!);
@@ -1145,7 +1501,7 @@ public sealed class SubscriberArrowTests : IDisposable
 
         Assert.True(done.Wait(TimeSpan.FromSeconds(5)), "the timeout flush never ran");
         Assert.Null(failure);
-        Assert.False(self.IsLive);
+        Assert.True(SpinWait.SpinUntil(() => !self.IsLive, Await), "the subscription is still live");
     }
 
     // ── The framed decode (D-BIND-68) ───────────────────────────────────────
@@ -1169,6 +1525,12 @@ public sealed class SubscriberArrowTests : IDisposable
     public void ACorruptRowDoesNotCountTowardMaxRows()
     {
         TopicPath topic = Declared("corruptlimit");
+        if (!ServerLeg)
+        {
+            EdgeRefuses(topic, handler => _subscriber.SubscribeBatched(topic, handler, Options(2, Long)));
+            return;
+        }
+
         _subscriber.SubscribeBatched(topic, _sink.Handler, Options(2, Long)).Schema.Dispose();
 
         using var a = new AttachmentsBuilder();
@@ -1183,6 +1545,7 @@ public sealed class SubscriberArrowTests : IDisposable
         Assert.Empty(_sink.Snapshot());  // one good row: the window waits for another
         _publisher.PublishRaw(topic, Encoded(2, "second"), b);
 
+        Assert.True(_sink.WaitFor(1, Await), "no batch at the row limit");
         Delivery only = Assert.Single(_sink.Snapshot());
         Assert.Equal(BatchReason.RowLimit, only.Status.Reason);
         Assert.Equal(2, only.Rows);
@@ -1205,6 +1568,12 @@ public sealed class SubscriberArrowTests : IDisposable
     public void RowsSplitAcrossMessagesAreDroppedNotMisaligned()
     {
         TopicPath topic = Declared("split");
+        if (!ServerLeg)
+        {
+            EdgeRefuses(topic, handler => _subscriber.SubscribeBatched(topic, handler, Options(100, Long)));
+            return;
+        }
+
         SubscribeResult result = _subscriber.SubscribeBatched(topic, _sink.Handler, Options(100, Long));
         result.Schema.Dispose();
 
@@ -1242,34 +1611,18 @@ public sealed class SubscriberArrowTests : IDisposable
         Assert.True(own.Subscription.IsLive);
     }
 
-    /// <summary>
-    /// A finite Timeout runs from zero to the timer's maximum; past it is refused,
-    /// where TimeSpan.MaxValue used to overflow the deadline into "now" and flush a
-    /// window meant never to time out at once (review B8).
-    /// </summary>
-    [Fact]
-    public void ATimeoutPastTheTimersMaximumIsRefused()
-    {
-        TopicPath topic = Declared("timeoutbounds");
-        foreach (TimeSpan refused in new[] { TimeSpan.MaxValue, BatchOptions.MaxTimeout + TimeSpan.FromMilliseconds(1), TimeSpan.FromTicks(-1) })
-        {
-            Assert.Throws<ArgumentOutOfRangeException>(
-                () => _subscriber.SubscribeBatched(topic, _sink.Handler, Options(10, refused)));
-        }
-
-        foreach (TimeSpan accepted in new[] { TimeSpan.Zero, BatchOptions.MaxTimeout, Timeout.InfiniteTimeSpan })
-        {
-            SubscribeResult result = _subscriber.SubscribeBatched(topic, _sink.Handler, Options(10, accepted));
-            result.Schema.Dispose();
-            result.Subscription.Dispose();
-        }
-    }
-
     /// <summary>At the timer's maximum a window does NOT flush early: it waits, and closes on Unsubscribe.</summary>
+    /// <remarks>D10C-7 (audit 0a M1): its edge leg is the truth table from rung 7; MaxTimeout itself goes at rung 10.</remarks>
     [Fact]
     public void AWindowAtTheMaximumTimeoutWaits()
     {
         TopicPath topic = Declared("maxtimeout");
+        if (!ServerLeg)
+        {
+            EdgeRefuses(topic, handler => _subscriber.SubscribeBatched(topic, handler, Options(100, BatchOptions.MaxTimeout)));
+            return;
+        }
+
         SubscribeResult result = _subscriber.SubscribeBatched(topic, _sink.Handler, Options(100, BatchOptions.MaxTimeout));
         result.Schema.Dispose();
 
@@ -1306,16 +1659,338 @@ public sealed class SubscriberArrowTests : IDisposable
         Assert.Equal(0UL, _subscriber.AbsorbedCallbackFailures);
     }
 
-    // ── Handler calls are not serialised (D-BIND-64) ────────────────────────
+    /// <summary>
+    /// The batched twin of ARowWithAnEmptyAttachmentKeyArrives (D10C-7; audit 0a; design D3 step 2):
+    /// a row whose attachment has an EMPTY key reaches a batched handler with that attachment,
+    /// copied by the binding's one attachment-copy function, and nothing is dropped or absorbed.
+    /// </summary>
+    [Fact]
+    public void ABatchedRowWithAnEmptyAttachmentKeyArrives()
+    {
+        TopicPath topic = Declared("emptykeybatched");
+        if (!ServerLeg)
+        {
+            EdgeRefuses(topic, handler => _subscriber.SubscribeBatched(topic, handler, Options(1, Long)));
+            return;
+        }
+
+        _subscriber.SubscribeBatched(topic, _sink.Handler, Options(1, Long)).Schema.Dispose();
+
+        using var sent = new AttachmentsBuilder();
+        sent.AppendDelivered(ReadOnlySpan<byte>.Empty, [7, 8]);
+        Publish(topic, 1, "a", sent);
+
+        Assert.True(_sink.WaitFor(1, Await), "no batch at the row limit");
+        Delivery only = _sink.Snapshot()[0];
+        Assert.Equal(1, only.Rows);
+        Assert.Equal(0, only.Status.RowsDropped);
+        Assert.True(Assert.Single(only.Attachments).TryFind(ReadOnlySpan<byte>.Empty, out ReadOnlySpan<byte> value));
+        Assert.Equal(new byte[] { 7, 8 }, value.ToArray());
+        Assert.Equal(0UL, _subscriber.AbsorbedCallbackFailures);
+    }
+
+    // ── One at a time, in window order, on one thread (d10 L13; d7 L12) ─────
+
+    /// <summary>
+    /// d7's EveryCallbackRunsOnTheBatchThreadInWindowOrder, replayed from C# (D10C-7, ladder rung 7;
+    /// BC-9; d10 L13, L4): max_rows = 2, a second thread publishes 6 rows, and the first handler
+    /// call holds until the publisher reports every Publish returned - which a Publish that ran or
+    /// waited on a handler can never report. Then the windows arrive as x = 0, 2, 4, two rows each,
+    /// and the close ends them with one empty Closing; every call on one thread that is neither
+    /// the publisher's nor the closer's.
+    /// </summary>
+    [Fact]
+    public void EveryBatchArrivesOnOneThreadInWindowOrder()
+    {
+        TopicPath topic = Declared("onethread");
+        if (!ServerLeg)
+        {
+            EdgeRefuses(topic, handler => _subscriber.SubscribeBatched(topic, handler, Options(2, Long)));
+            return;
+        }
+
+        TimeSpan hold = TimeSpan.FromSeconds(2);
+        using var entered = new ManualResetEventSlim(false);
+        using var allPublished = new ManualResetEventSlim(false);
+        using var firstReturned = new ManualResetEventSlim(false);
+        bool releasedByPublisher = false;
+        var threads = new List<int>();
+        SubscribeResult result = _subscriber.SubscribeBatched(topic, (batch, attachments, status) =>
+        {
+            lock (threads)
+            {
+                threads.Add(Environment.CurrentManagedThreadId);
+            }
+
+            _sink.Handler(batch, attachments, status);
+            if (!entered.IsSet)
+            {
+                entered.Set();
+                Volatile.Write(ref releasedByPublisher, allPublished.Wait(hold));
+                firstReturned.Set();
+            }
+        }, Options(2, Long));
+        result.Schema.Dispose();
+
+        int publisherThread = 0;
+        bool enteredBeforeRest = false;
+        var publisher = new Thread(() =>
+        {
+            publisherThread = Environment.CurrentManagedThreadId;
+            Publish(topic, 0, "n");
+            Publish(topic, 1, "n");  // the first full window
+            enteredBeforeRest = entered.Wait(Await);
+            for (int i = 2; i < 6; i++)
+            {
+                Publish(topic, i, "n");
+            }
+
+            allPublished.Set();
+        })
+        { IsBackground = true };
+        publisher.Start();
+        Assert.True(publisher.Join(Await + Await), "the publisher never finished");
+        Assert.True(firstReturned.Wait(Await), "the first handler call never returned");
+
+        Assert.True(Volatile.Read(ref releasedByPublisher),
+            "the publisher could not finish publishing while the first handler call was held: Publish ran or waited on a batch handler");
+        Assert.True(enteredBeforeRest, "the first window was not delivered while the publisher waited");
+        Assert.True(_sink.WaitFor(3, Await), "fewer than three windows arrived");
+        result.Subscription.Dispose();
+
+        List<Delivery> seen = _sink.Snapshot();
+        Assert.Equal(4, seen.Count);
+        for (int i = 0; i < 3; i++)
+        {
+            Assert.Equal(BatchReason.RowLimit, seen[i].Status.Reason);
+            Assert.Equal(2, seen[i].Rows);
+            Assert.Equal(2 * i, ((Int32Array)seen[i].Batch!.Column(0)).GetValue(0));
+            Assert.Equal(0, seen[i].Status.RowsDropped);
+        }
+
+        Assert.Equal(BatchReason.Closing, seen[3].Status.Reason);
+        Assert.Equal(0, seen[3].Rows);
+
+        int[] on;
+        lock (threads)
+        {
+            on = [.. threads];
+        }
+
+        Assert.All(on, id => Assert.Equal(on[0], id));
+        Assert.NotEqual(publisherThread, on[0]);
+        Assert.NotEqual(Environment.CurrentManagedThreadId, on[0]);
+    }
+
+    /// <summary>
+    /// D10C-7 design D3 step 2, d10 L8: a batch the handler KEEPS reads intact after the handler
+    /// returned, after later windows were delivered, and after the Closing - the handler owns it,
+    /// so nothing it points into is reclaimed under it. The SERVER arm is a guard: green before the
+    /// switch (the managed batcher's batches are owned too); after it, it catches a batch imported
+    /// without first being moved out of the shim's borrowed struct. The edge arm is the truth table
+    /// (D2's forcing arm), red until the switch.
+    /// </summary>
+    [Fact]
+    public void AKeptBatchReadsIntactAfterClosing()
+    {
+        TopicPath topic = Declared("kept");
+        if (!ServerLeg)
+        {
+            EdgeRefuses(topic, handler => _subscriber.SubscribeBatched(topic, handler, Options(2, Long)));
+            return;
+        }
+
+        SubscribeResult result = _subscriber.SubscribeBatched(topic, _sink.Handler, Options(2, Long));
+        result.Schema.Dispose();
+
+        // Five rows at two a window: two full windows, then a Closing that carries the fifth,
+        // so this guard does not lean on the idle Closing (AnIdleCloseDeliversOneEmptyClosing's).
+        for (int i = 0; i < 5; i++)
+        {
+            Publish(topic, i, "kept" + new string('k', i * 40));
+        }
+
+        Assert.True(_sink.WaitFor(2, Await), "fewer than two windows arrived");
+        result.Subscription.Dispose();
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+
+        List<Delivery> seen = _sink.Snapshot();
+        Assert.Equal(3, seen.Count);
+        Assert.Equal(BatchReason.Closing, seen[2].Status.Reason);
+        int expected = 0;
+        foreach (Delivery d in seen)
+        {
+            var x = (Int32Array)d.Batch!.Column(0);
+            var name = (StringArray)d.Batch!.Column(1);
+            for (int r = 0; r < d.Rows; r++, expected++)
+            {
+                Assert.Equal(expected, x.GetValue(r));
+                Assert.Equal("kept" + new string('k', expected * 40), name.GetString(r));
+            }
+        }
+
+        Assert.Equal(5, expected);
+    }
+
+    /// <summary>
+    /// A leg (mechanism, design P2; d10 L8): the batch thunk, called directly with a batch C#
+    /// exported, MOVES the array and schema out of the borrowed structs - each source's
+    /// <c>release</c> is NULL when it returns - and the batch the handler kept reads intact after
+    /// the source structs are freed, with each row's attachments copied. Runs on both legs: it
+    /// calls no shim entry point. Not the proof of a promise; AKeptBatchReadsIntactAfterClosing is.
+    /// </summary>
+    [Fact]
+    public unsafe void TheBatchThunkMovesTheBatchOutOfTheBorrowedStructs()
+    {
+        using RecordBatch exported = new(TwoColumns,
+            [new Int32Array.Builder().Append(4).Append(5).Build(), new StringArray.Builder().Append("moved").Append("kept").Build()],
+            length: 2);
+        CArrowArray* array = CArrowArray.Create();
+        CArrowSchema* schema = CArrowSchema.Create();
+        using var first = new AttachmentsBuilder();
+        first.Set("row", [1]);
+        using var second = new AttachmentsBuilder();
+        nint[] sets = [first.Build().DangerousGetHandle(), second.Build().DangerousGetHandle()];
+
+        RecordBatch? kept = null;
+        IReadOnlyList<AttachmentsBuilder> keptAttachments = [];
+        RecordBatchHandler handler = (batch, attachments, _) =>
+        {
+            kept = batch;
+            keptAttachments = attachments;
+        };
+        Type deliveryType = typeof(SubscriberArrow).GetNestedType("BatchDelivery", BindingFlags.NonPublic)!;
+        object delivery = Activator.CreateInstance(
+            deliveryType, BindingFlags.NonPublic | BindingFlags.Instance, null, [_subscriber, handler], null)!;
+        GCHandle self = GCHandle.Alloc(delivery);
+        var thunk = (delegate* unmanaged[Cdecl]<nint, Eiva.Fletcher.Interop.FlBatch*, void>)typeof(SubscriberArrow)
+            .GetMethod("BatchThunk", BindingFlags.NonPublic | BindingFlags.Static)!.MethodHandle.GetFunctionPointer();
+        try
+        {
+            CArrowSchemaExporter.ExportSchema(TwoColumns, schema);
+            CArrowArrayExporter.ExportRecordBatch(exported, array);
+            fixed (nint* setPointers = sets)
+            {
+                var batch = new Eiva.Fletcher.Interop.FlBatch
+                {
+                    Reason = (int)BatchReason.RowLimit,
+                    NumRows = 2,
+                    Array = (nint)array,
+                    Schema = (nint)schema,
+                    Attachments = (nint)setPointers,
+                };
+                thunk(GCHandle.ToIntPtr(self), &batch);
+            }
+
+            // The move: each source's `release` NULL, read where Apache.Arrow's struct keeps it.
+            Assert.Equal(nint.Zero, *(nint*)((byte*)array + Marshal.OffsetOf<CArrowArray>("release")));
+            Assert.Equal(nint.Zero, *(nint*)((byte*)schema + Marshal.OffsetOf<CArrowSchema>("release")));
+        }
+        finally
+        {
+            CArrowArray.Free(array);
+            CArrowSchema.Free(schema);
+            self.Free();
+        }
+
+        Assert.NotNull(kept);
+        using (kept)
+        {
+            Assert.Equal(2, kept!.Length);
+            Assert.Equal(5, ((Int32Array)kept.Column(0)).GetValue(1));
+            Assert.Equal("moved", ((StringArray)kept.Column(1)).GetString(0));
+            Assert.Equal(2, keptAttachments.Count);
+            Assert.True(keptAttachments[0].TryFind("row"u8, out ReadOnlySpan<byte> value));
+            Assert.Equal(new byte[] { 1 }, value.ToArray());
+            Assert.Equal(0, keptAttachments[1].Count);
+        }
+
+        foreach (AttachmentsBuilder copy in keptAttachments)
+        {
+            copy.Dispose();
+        }
+
+        Assert.Equal(0UL, _subscriber.AbsorbedCallbackFailures);
+    }
+
+    /// <summary>
+    /// A leg (mechanism, design residue (a); d10 L9; review 4a F1): a window the thunk cannot take over
+    /// still reaches the handler - a Closing here - as a null batch with no attachments, its rows added
+    /// to RowsDropped and its reason kept, never lost. The failure is the design's own example: a
+    /// window longer than one managed batch holds (more than int.MaxValue rows), refused before
+    /// anything is moved, so the shim still owns, and releases, the array.
+    /// </summary>
+    [Fact]
+    public unsafe void AWindowTheThunkCannotTakeOverArrivesAsANullBatchWithItsRowsCounted()
+    {
+        using RecordBatch exported = new(TwoColumns,
+            [new Int32Array.Builder().Append(4).Append(5).Build(), new StringArray.Builder().Append("a").Append("b").Build()],
+            length: 2);
+        CArrowArray* array = CArrowArray.Create();
+        CArrowSchema* schema = CArrowSchema.Create();
+        using var first = new AttachmentsBuilder();
+        using var second = new AttachmentsBuilder();
+        nint[] sets = [first.Build().DangerousGetHandle(), second.Build().DangerousGetHandle()];
+
+        var seen = new List<Delivery>();
+        RecordBatchHandler handler = (batch, attachments, status) => seen.Add(new Delivery(batch, attachments, status));
+        Type deliveryType = typeof(SubscriberArrow).GetNestedType("BatchDelivery", BindingFlags.NonPublic)!;
+        object delivery = Activator.CreateInstance(
+            deliveryType, BindingFlags.NonPublic | BindingFlags.Instance, null, [_subscriber, handler], null)!;
+        nint ctx = GCHandle.ToIntPtr(GCHandle.Alloc(delivery));  // a Closing: the thunk frees it
+        var thunk = (delegate* unmanaged[Cdecl]<nint, Eiva.Fletcher.Interop.FlBatch*, void>)typeof(SubscriberArrow)
+            .GetMethod("BatchThunk", BindingFlags.NonPublic | BindingFlags.Static)!.MethodHandle.GetFunctionPointer();
+        try
+        {
+            CArrowSchemaExporter.ExportSchema(TwoColumns, schema);
+            CArrowArrayExporter.ExportRecordBatch(exported, array);
+            fixed (nint* setPointers = sets)
+            {
+                var batch = new Eiva.Fletcher.Interop.FlBatch
+                {
+                    Reason = (int)BatchReason.Closing,
+                    RowsDropped = 3,
+                    NumRows = (long)int.MaxValue + 1,
+                    Array = (nint)array,
+                    Schema = (nint)schema,
+                    Attachments = (nint)setPointers,
+                };
+                thunk(ctx, &batch);
+            }
+        }
+        finally
+        {
+            CArrowArray.Free(array);
+            CArrowSchema.Free(schema);
+        }
+
+        Delivery only = Assert.Single(seen);
+        Assert.Null(only.Batch);
+        Assert.Empty(only.Attachments);
+        Assert.Equal(BatchReason.Closing, only.Status.Reason);
+        Assert.Equal(3 + (long)int.MaxValue + 1, only.Status.RowsDropped);
+        Assert.Equal(0UL, _subscriber.AbsorbedCallbackFailures);
+    }
+
+    // ── A handler that cancels, and Unsubscribe's wait (D-BIND-64, revised) ─
     //
-    // No C++ mirror: these pin what the BIND-5 review found and D-BIND-64 ruled.
-    // The first is the review's B2 reproduction, kept as a regression test.
+    // No C++ mirror: these pin what the BIND-5 review found. The first is the review's
+    // B2 reproduction, kept as a regression test. D-BIND-64's "not serialised" is revised
+    // by ruling :551 (4): batches reach a handler one at a time, in order (d10 L13).
 
     /// <summary>A timer-thread handler that cancels while a delivery fills the window does not deadlock.</summary>
     [Fact]
     public void ATimerHandlerThatCancelsDuringADeliveryDoesNotDeadlock()
     {
         TopicPath topic = Declared("timercancelrace");
+        if (!ServerLeg)
+        {
+            EdgeRefuses(topic, handler => _subscriber.SubscribeBatched(topic, handler, Options(2, TimeSpan.FromMilliseconds(20))));
+            return;
+        }
+
         using var inHandler = new ManualResetEventSlim(false);
         using var done = new ManualResetEventSlim(false);
         Subscription? self = null;
@@ -1349,49 +2024,17 @@ public sealed class SubscriberArrowTests : IDisposable
         Assert.True(delivery.Join(TimeSpan.FromSeconds(10)), "the delivery never returned");
     }
 
-    /// <summary>A Timeout flush and a RowLimit flush may run the handler at once, as in C++.</summary>
-    [Fact]
-    public void ATimeoutFlushAndARowLimitFlushMayOverlap()
-    {
-        TopicPath topic = Declared("overlap");
-        using var inTimer = new ManualResetEventSlim(false);
-        using var rowLimitRan = new ManualResetEventSlim(false);
-        bool overlapped = false;
-        _subscriber.SubscribeBatched(topic, (batch, _, status) =>
-        {
-            batch?.Dispose();
-            if (status.Reason == BatchReason.Timeout && !inTimer.IsSet)
-            {
-                inTimer.Set();
-                overlapped = rowLimitRan.Wait(TimeSpan.FromSeconds(5));
-            }
-            else if (status.Reason == BatchReason.RowLimit)
-            {
-                rowLimitRan.Set();
-            }
-        }, Options(2, TimeSpan.FromMilliseconds(20))).Schema.Dispose();
-
-        Publish(topic, 1, "a");
-        Assert.True(inTimer.Wait(TimeSpan.FromSeconds(5)), "the timeout flush never ran");
-        // A thread of its own, not the pool: the timer's callbacks already run there.
-        var delivery = new Thread(() =>
-        {
-            Publish(topic, 2, "b");
-            Publish(topic, 3, "c");
-        })
-        { IsBackground = true };
-        delivery.Start();
-
-        Assert.True(delivery.Join(TimeSpan.FromSeconds(10)), "the row-limit flush waited for the timer handler");
-        SpinWait.SpinUntil(() => Volatile.Read(ref overlapped), TimeSpan.FromSeconds(5));
-        Assert.True(Volatile.Read(ref overlapped), "the row-limit handler did not run while the timer handler was running");
-    }
-
     /// <summary>Unsubscribe returns only once a timer-thread handler still running elsewhere has finished.</summary>
     [Fact]
     public void UnsubscribeWaitsForATimerHandlerStillRunning()
     {
         TopicPath topic = Declared("waitstimer");
+        if (!ServerLeg)
+        {
+            EdgeRefuses(topic, handler => _subscriber.SubscribeBatched(topic, handler, Options(100, TimeSpan.FromMilliseconds(20))));
+            return;
+        }
+
         using var inHandler = new ManualResetEventSlim(false);
         int finished = 0;
         SubscribeResult result = _subscriber.SubscribeBatched(topic, (batch, _, status) =>
@@ -1417,11 +2060,13 @@ public sealed class SubscriberArrowTests : IDisposable
     /// <summary>Mirrors SubscriberArrowBatchTest.BatchesAreValidArrow.</summary>
     /// <remarks>
     /// C++'s schema - int32, utf8, a dictionary and a list of utf8 - so the decode
-    /// builds a variable-length child and a dictionary-as-value column as well as
-    /// scalars (review T-D2). Weaker in one way, by necessity: Apache.Arrow for .NET
-    /// has no ValidateFull, so the shape it would check is checked by hand - every
-    /// column the batch's length, the list's offsets monotonic and ending at its
-    /// values' length - and every value is read back.
+    /// builds a variable-length child and a dictionary column as well as scalars
+    /// (review T-D2). Weaker in one way, by necessity: Apache.Arrow for .NET has no
+    /// ValidateFull, so the shape it would check is checked by hand - every column the
+    /// batch's length, the list's offsets monotonic and ending at its values' length -
+    /// and every value is read back. D10C-7 (audit 0a T36; ruling :551 (2); d10 D24): the
+    /// dictionary column arrives re-folded, a <see cref="DictionaryArray"/>, as domain 7
+    /// delivers it.
     /// </remarks>
     [Fact]
     public void BatchesAreWellFormed()
@@ -1436,10 +2081,9 @@ public sealed class SubscriberArrowTests : IDisposable
         ], metadata: null);
         TopicPath topic = Topic("wellformed");
         _publisher.CreateTopic(topic, schema);
-        _subscriber.SubscribeBatched(topic, _sink.Handler, Options(5, Long)).Schema.Dispose();
 
         using var codec = new FletcherCodec(schema);
-        for (int i = 0; i < 5; i++)
+        void PublishRow(int i)
         {
             var tags = new ListArray.Builder(StringType.Default);
             tags.Append();
@@ -1456,6 +2100,19 @@ public sealed class SubscriberArrowTests : IDisposable
             _publisher.Publish(topic, rows, 0);
         }
 
+        if (!ServerLeg)
+        {
+            EdgeRefuses(topic, handler => _subscriber.SubscribeBatched(topic, handler, Options(5, Long)), () => PublishRow(0));
+            return;
+        }
+
+        _subscriber.SubscribeBatched(topic, _sink.Handler, Options(5, Long)).Schema.Dispose();
+        for (int i = 0; i < 5; i++)
+        {
+            PublishRow(i);
+        }
+
+        Assert.True(_sink.WaitFor(1, Await), "no batch at the row limit");
         RecordBatch batch = Assert.Single(_sink.Snapshot()).Batch!;
         Assert.Equal(5, batch.Length);
         Assert.All(batch.Arrays, column => Assert.Equal(5, column.Length));
@@ -1470,11 +2127,12 @@ public sealed class SubscriberArrowTests : IDisposable
 
         Assert.Equal(listed.Values.Length, offsets[5]);
 
+        var folded = Assert.IsType<DictionaryArray>(batch.Column(2));
         for (int i = 0; i < 5; i++)
         {
             Assert.Equal(i, ((Int32Array)batch.Column(0)).GetValue(i));
             Assert.Equal("n" + i, ((StringArray)batch.Column(1)).GetString(i));
-            Assert.Equal(i % 2 == 0 ? "red" : "blue", ((StringArray)batch.Column(2)).GetString(i));
+            Assert.Equal(i % 2 == 0 ? "red" : "blue", ValueAt(folded, i));
             Assert.Equal("t" + i, ((StringArray)listed.Values).GetString(offsets[i]));
         }
     }
@@ -1484,6 +2142,12 @@ public sealed class SubscriberArrowTests : IDisposable
     public void WindowsFollowOneAnother()
     {
         TopicPath topic = Declared("windows");
+        if (!ServerLeg)
+        {
+            EdgeRefuses(topic, handler => _subscriber.SubscribeBatched(topic, handler, Options(2, Long)));
+            return;
+        }
+
         SubscribeResult result = _subscriber.SubscribeBatched(topic, _sink.Handler, Options(2, Long));
         result.Schema.Dispose();
 
@@ -1515,75 +2179,107 @@ public sealed class SubscriberArrowTests : IDisposable
         Assert.Equal(5, expected);
     }
 
-    // ── The window ceiling (D-BIND-63) ──────────────────────────────────────
-    //
-    // No C++ mirror in `test_pubsub_arrow`: its BatchCapacityExceeded split needs
-    // 2 GiB in one builder. The rule is the same one - a row that would take the
-    // window past the ceiling flushes it first, one that alone exceeds it is
-    // dropped and counted - shown here with a ceiling of a few rows' bytes.
-
-    private static int RowBytes(int x, string name)
+    /// <summary>
+    /// D10C-7 (review 4b S3; d7 L9; binding.h, fl_subscriber_unsubscribe_batches): closing ANOTHER batched
+    /// subscription from inside a batch handler waits for that one's Closing - it arrives, once, before
+    /// the call returns - and nothing reaches it after. One direction only: two handlers closing each
+    /// other hang, which Unsubscribe's docs state and no test exercises.
+    /// </summary>
+    [Fact]
+    public void ClosingASiblingFromABatchHandlerWaitsForItsClosing()
     {
-        using RecordBatch batch = Row(x, name);
-        using var codec = new FletcherCodec(TwoColumns);
-        using BoundRows rows = codec.Bind(batch);
-        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
-        codec.Encode(rows, 0, buffer);
-        return buffer.WrittenCount;
+        TopicPath closer = Declared("siblingcloser");
+        TopicPath closed = Declared("siblingclosed");
+        if (!ServerLeg)
+        {
+            EdgeRefuses(closed, handler => _subscriber.SubscribeBatched(closed, handler, Options(1, Long)));
+            return;
+        }
+
+        using var siblingSink = new Sink();
+        SubscribeResult sibling = _subscriber.SubscribeBatched(closed, siblingSink.Handler, Options(1, Long));
+        sibling.Schema.Dispose();
+        using var returned = new ManualResetEventSlim(false);
+        int closingsBeforeReturn = -1;
+        Exception? failure = null;
+        _subscriber.SubscribeBatched(closer, (batch, _, status) =>
+        {
+            batch?.Dispose();
+            if (status.Reason == BatchReason.RowLimit && !returned.IsSet)
+            {
+                failure = Record.Exception(() => _subscriber.Unsubscribe(sibling.Subscription));
+                closingsBeforeReturn = siblingSink.Snapshot().Count(d => d.Status.Reason == BatchReason.Closing);
+                returned.Set();
+            }
+        }, Options(1, Long)).Schema.Dispose();
+
+        Publish(closer, 1, "close");
+
+        Assert.True(returned.Wait(Await), "closing a sibling from a batch handler did not return");
+        Assert.Null(failure);
+        Assert.Equal(1, closingsBeforeReturn);
+        Publish(closed, 2, "after");
+        Assert.False(siblingSink.WaitFor(2, Quiet), "a delivery reached the sibling after its Closing");
+        Assert.False(sibling.Subscription.IsLive);
     }
 
-    [Fact]
-    public void ARowThatWouldPassTheCeilingFlushesTheWindowFirst()
+    // ── A quiet close keeps its topic (D10C-7 D5; FWD-1, FWD-1c) ────────────
+
+    /// <summary>
+    /// D5's forcing test (D10C-7 design D5; FWD-1c; ruling :575 (6)), red before D5 on both legs
+    /// because the claim was released at the close: a subscription closed from inside a ROW
+    /// delivery on the provider leaves the transport subscription open and quiet (subscriber.hpp,
+    /// owner ruling 2026-09-05), so the topic stays held for that kind: the other kind is refused
+    /// by name, and the same kind again is accepted and receives rows.
+    /// </summary>
+    /// <remarks>
+    /// The close is made from a per-row handler on another topic of this same object. Per-row
+    /// first runs on both legs: the claim is checked before the shim is asked (design D2), so the
+    /// edge leg refuses the batched call by the claim too. Batched first is the server leg's; on
+    /// the edge leg it is the truth table.
+    /// </remarks>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AQuietCloseKeepsTheTopicForItsKind(bool perRowHeld)
     {
-        int one = RowBytes(1, "same");
-        using var bounded = new SubscriberArrow(_provider, windowByteCeiling: (one * 2) + (one / 2));
-        TopicPath topic = Declared("ceiling");
-        SubscribeResult result = bounded.SubscribeBatched(topic, _sink.Handler, Options(100_000, Long));
-        result.Schema.Dispose();
+        TopicPath topic = Declared(perRowHeld ? "quietrow" : "quietbatched");
+        TopicPath trigger = Declared(perRowHeld ? "quiettriggerrow" : "quiettriggerbatched");
+        if (!perRowHeld && !ServerLeg)
+        {
+            EdgeRefuses(topic, handler => SubscribeKind(_subscriber, perRow: false, topic, handler));
+            return;
+        }
 
-        Publish(topic, 1, "same");
-        Publish(topic, 2, "same");
-        Assert.Empty(_sink.Snapshot());
+        using var again = new Sink();
+        SubscribeResult held = SubscribeKind(_subscriber, perRowHeld, topic, _sink.Handler);
+        held.Schema.Dispose();
 
-        Publish(topic, 3, "same");  // would make three rows: two go first
-        Delivery first = Assert.Single(_sink.Snapshot());
-        Assert.Equal(2, first.Rows);
-        Assert.Equal(BatchReason.RowLimit, first.Status.Reason);
-        Assert.Equal(0, first.Status.RowsDropped);
+        Exception? closeFailure = null;
+        bool closedInside = false;
+        _subscriber.Subscribe(trigger, (batch, _, _) =>
+        {
+            batch?.Dispose();
+            if (!closedInside)
+            {
+                closedInside = true;
+                closeFailure = Record.Exception(() => _subscriber.Unsubscribe(held.Subscription));
+            }
+        }).Schema.Dispose();
+        Publish(trigger, 0, "close");
+        Assert.True(closedInside, "the trigger's row delivery did not run");
+        Assert.Null(closeFailure);
 
-        result.Subscription.Dispose();
-        List<Delivery> seen = _sink.Snapshot();
-        Assert.Equal(2, seen.Count);
-        Assert.Equal(1, seen[1].Rows);
-        Assert.Equal(3, ((Int32Array)seen[1].Batch!.Column(0)).GetValue(0));
-        Assert.Equal(BatchReason.Closing, seen[1].Status.Reason);
-    }
+        InvalidOperationException refusal = Assert.Throws<InvalidOperationException>(
+            () => SubscribeKind(_subscriber, !perRowHeld, topic, again.Handler));
+        Assert.Contains(topic.ToString(), refusal.Message, StringComparison.Ordinal);
+        Assert.Contains(perRowHeld ? "holds a per-row" : "holds a batched", refusal.Message, StringComparison.Ordinal);
 
-    [Fact]
-    public void ARowLargerThanTheCeilingIsDroppedAndCounted()
-    {
-        int one = RowBytes(1, "small");
-        using var bounded = new SubscriberArrow(_provider, windowByteCeiling: one + 4);
-        TopicPath topic = Declared("toolarge");
-        SubscribeResult result = bounded.SubscribeBatched(topic, _sink.Handler, Options(100_000, Long));
-        result.Schema.Dispose();
-
-        Publish(topic, 1, "small");
-        Publish(topic, 2, new string('x', 64));  // alone past the ceiling
-        result.Subscription.Dispose();
-
-        Delivery only = Assert.Single(_sink.Snapshot());
-        Assert.Equal(1, only.Rows);
-        Assert.Equal(1, only.Status.RowsDropped);
-        Assert.Equal(0UL, bounded.AbsorbedCallbackFailures);
-    }
-
-    [Fact]
-    public void TheDefaultCeilingIsTheMostOneManagedBufferHolds()
-    {
-        Assert.Equal(Math.Min((1L << 31) - 2, System.Array.MaxLength), SubscriberArrow.DefaultWindowByteCeiling);
-        Assert.Throws<ArgumentOutOfRangeException>(
-            () => new SubscriberArrow(_provider, SubscriberArrow.DefaultWindowByteCeiling + 1));
+        SubscribeResult reopened = SubscribeKind(_subscriber, perRowHeld, topic, again.Handler);
+        reopened.Schema.Dispose();
+        Publish(topic, 9, "again");
+        Assert.True(again.WaitFor(1, Await), "the same kind, subscribed again after a quiet close, received nothing");
+        Assert.Equal(9, ((Int32Array)again.Snapshot()[0].Batch!.Column(0)).GetValue(0));
     }
 
     /// <summary>A handler that throws is absorbed and counted, and the next batch still arrives.</summary>
@@ -1613,6 +2309,52 @@ public sealed class SubscriberArrowTests : IDisposable
         Assert.Equal(2, calls);
         Assert.Equal(1UL, _subscriber.AbsorbedCallbackFailures);
         Assert.Equal(1, faults);
+    }
+
+    /// <summary>
+    /// The batched twin of AHandlerThatThrowsIsAbsorbedCountedAndRaised (D10C-7; d10 L9, V13;
+    /// design D3 step 5): a batched handler that throws is absorbed, counted once and raised once
+    /// with its own exception, and the next batch still arrives.
+    /// </summary>
+    [Fact]
+    public void ABatchedHandlerThatThrowsIsAbsorbedCountedAndRaised()
+    {
+        TopicPath topic = Declared("throwsbatched");
+        if (!ServerLeg)
+        {
+            EdgeRefuses(topic, handler => _subscriber.SubscribeBatched(topic, handler, Options(1, Long)));
+            return;
+        }
+
+        var faults = new List<Exception>();
+        _subscriber.HandlerFaulted += (_, e) =>
+        {
+            lock (faults)
+            {
+                faults.Add(e.Exception);
+            }
+        };
+        int calls = 0;
+        _subscriber.SubscribeBatched(topic, (batch, attachments, status) =>
+        {
+            _sink.Handler(batch, attachments, status);
+            if (Interlocked.Increment(ref calls) == 1)
+            {
+                throw new InvalidOperationException("first batch");
+            }
+        }, Options(1, Long)).Schema.Dispose();
+
+        Publish(topic, 1, "a");
+        Publish(topic, 2, "b");
+
+        Assert.True(_sink.WaitFor(2, Await), "the batch after the one whose handler threw did not arrive");
+        Assert.Equal(2, ((Int32Array)_sink.Snapshot()[1].Batch!.Column(0)).GetValue(0));
+        Assert.Equal(1UL, _subscriber.AbsorbedCallbackFailures);
+        lock (faults)
+        {
+            Exception raised = Assert.Single(faults);
+            Assert.Equal("first batch", Assert.IsType<InvalidOperationException>(raised).Message);
+        }
     }
 
     // ── The sink ────────────────────────────────────────────────────────────

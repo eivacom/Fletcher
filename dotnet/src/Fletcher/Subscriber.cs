@@ -129,18 +129,21 @@ public sealed class Subscription : IDisposable
     /// <summary>Whether this subscription has not been cancelled.</summary>
     public bool IsLive => !Retired;
 
-    internal bool Retired { get; private set; }
+    // Volatile: a batched subscription is retired on domain 7's batch thread (its Closing).
+    private bool _retired;
 
-    internal void MarkRetired() => Retired = true;
+    internal bool Retired => Volatile.Read(ref _retired);
+
+    internal void MarkRetired() => Volatile.Write(ref _retired, true);
 
     /// <summary>Whether <paramref name="subscriber"/> issued this subscription.</summary>
     internal bool BelongsTo(Subscriber subscriber) => ReferenceEquals(_owner, subscriber);
 
     /// <summary>Who cancels this subscription, when it is not its Subscriber directly.</summary>
     /// <remarks>
-    /// Set by <see cref="SubscriberArrow"/>: a batched subscription must deliver its
-    /// closing flush and stop its timer BEFORE the data subscription is cancelled, so
-    /// disposing the handle has to go through the tier that owns the batcher.
+    /// Set by <see cref="SubscriberArrow"/>: a batched subscription closes through the
+    /// shim's batched entry point, and either kind gives back its topic's claim, so
+    /// disposing the handle has to go through that tier.
     /// </remarks>
     internal Action<Subscription>? Canceller { get; set; }
 
@@ -422,19 +425,14 @@ public sealed unsafe class Subscriber : IDisposable
         // no retirement, so the handle is freed right here.
         state.Self = GCHandle.Alloc(state);
 
-        byte[] profile = options?.Profile is { Length: > 0 } p ? System.Text.Encoding.UTF8.GetBytes(p) : [];
+        byte[] profile = ProfileBytes(options);
         FlError err = default;
         int status;
         ulong id;
         SchemaArrivalHandle arrival;
         fixed (byte* profileBytes = profile)
         {
-            var nativeOptions = new FlTopicOptions
-            {
-                Profile = new FlStr { Data = (nint)profileBytes, Len = (nuint)profile.Length },
-                MaxPayloadBytes = options?.MaxPayloadBytes ?? 0,
-            };
-
+            FlTopicOptions nativeOptions = NativeOptions(options, profileBytes, profile.Length);
             status = NativeMethods.fl_subscriber_subscribe_with_options(
                 _handle,
                 native,
@@ -472,6 +470,84 @@ public sealed unsafe class Subscriber : IDisposable
     }
 
     private readonly System.Collections.Generic.Dictionary<ulong, SubscriptionState> _live = [];
+
+    /// <summary>A topic's options as UTF-8 profile bytes, for <see cref="NativeOptions"/>; empty for none.</summary>
+    private static byte[] ProfileBytes(TopicOptions? options) =>
+        options?.Profile is { Length: > 0 } p ? System.Text.Encoding.UTF8.GetBytes(p) : [];
+
+    /// <summary>The ABI's options over <paramref name="profile"/>, which the caller keeps pinned for the call.</summary>
+    private static FlTopicOptions NativeOptions(TopicOptions? options, byte* profile, int length) => new()
+    {
+        Profile = new FlStr { Data = (nint)profile, Len = (nuint)length },
+        MaxPayloadBytes = options?.MaxPayloadBytes ?? 0,
+    };
+
+    /// <summary>The one sentence C# adds to the edge build's refusal of a batched subscribe (d10 L3, D29).</summary>
+    internal const string ServerPackageSentence =
+        "Batched delivery needs the server build of the shim: reference the Eiva.Fletcher.Server package.";
+
+    /// <summary>
+    /// Subscribe for batches assembled by domain 7, through the server shim (D10C-7 D1, D2). For
+    /// <see cref="SubscriberArrow"/> only, which owns <paramref name="onBatch"/> and <paramref name="ctx"/>.
+    /// </summary>
+    /// <remarks>
+    /// <paramref name="accepted"/> is set the instant native answers FL_OK, before anything is
+    /// allocated: from then on native holds <paramref name="ctx"/> until its closing batch, so a
+    /// caller frees it only while this is still false. Options cross as given (L3, D22). A refusal
+    /// is the shim's; on the edge build its NotSupported gains one sentence naming the server
+    /// package, asked of the build only after the shim refused, so the variant refuses nothing (L6).
+    /// </remarks>
+    internal SubscribeResult SubscribeBatches(
+        TopicPath topic, long maxRows, long timeoutMs, TopicOptions? options, nint onBatch, nint ctx, ref bool accepted)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        byte* buffer = stackalloc byte[TopicPath.MaxJoinedBytes];
+        FlStr* segments = stackalloc FlStr[topic.Segments.Count];
+        FlTopic native = MarshalTopic(topic, buffer, segments);
+
+        byte[] profile = ProfileBytes(options);
+        FlError err = default;
+        int status;
+        ulong id;
+        SchemaArrivalHandle arrival;
+        fixed (byte* profileBytes = profile)
+        {
+            FlTopicOptions nativeOptions = NativeOptions(options, profileBytes, profile.Length);
+            status = NativeMethods.fl_subscriber_subscribe_batches(
+                _handle, native, maxRows, timeoutMs, in nativeOptions, onBatch, ctx, out id, out arrival, ref err);
+        }
+
+        if (status != (int)FletcherStatus.Ok)
+        {
+            arrival.Dispose();
+            string? sentence = status == (int)FletcherStatus.NotSupported && NativeMethods.fl_binding_variant() == FlVariant.Edge
+                ? ServerPackageSentence
+                : null;
+            Errors.ThrowIfFailed(status, ref err, sentence: sentence);
+        }
+
+        accepted = true;
+        return new SubscribeResult(new Subscription(this, id), new SchemaArrival(arrival));
+    }
+
+    /// <summary>End one batched subscription (D10C-7 D4); a no-op once this subscriber is disposed.</summary>
+    /// <remarks>
+    /// Outside its own batch handler this returns after the closing batch; from inside it, or from
+    /// a row delivery on this provider, it returns at once and the closing batch follows (d7 L9).
+    /// The subscription is retired by its closing batch, not here.
+    /// </remarks>
+    internal void UnsubscribeBatches(Subscription subscription)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        FlError err = default;
+        int status = NativeMethods.fl_subscriber_unsubscribe_batches(_handle, subscription.Id, ref err);
+        Errors.ThrowIfFailed(status, ref err);
+    }
 
     /// <summary>Watch a topic's schema without subscribing to its data (D-BIND-52, D-BIND-57).</summary>
     /// <remarks>

@@ -21,6 +21,11 @@ internal static class Errors
     /// <param name="captured">
     /// A managed exception a callback recorded on its own side, if any.
     /// </param>
+    /// <param name="sentence">
+    /// One sentence the binding appends after the shim's verbatim message, if any; the number
+    /// and the origin are unchanged. Used once: the edge build's refusal of a batched
+    /// subscribe names the server package (d10 L3, D29).
+    /// </param>
     /// <remarks>
     /// Three rules meet here.
     ///
@@ -41,7 +46,7 @@ internal static class Errors
     /// the shim on every failure, and a throw site that released it only on the
     /// paths it remembered would leak on the others.
     /// </remarks>
-    internal static void ThrowIfFailed(int status, ref FlError err, ExceptionDispatchInfo? captured = null)
+    internal static void ThrowIfFailed(int status, ref FlError err, ExceptionDispatchInfo? captured = null, string? sentence = null)
     {
         if (status == (int)FletcherStatus.Ok)
         {
@@ -54,7 +59,7 @@ internal static class Errors
             // status the shim synthesised from it.
             captured?.Throw();
 
-            string message = ReadMessage(in err);
+            string message = sentence is null ? ReadMessage(in err) : ReadMessage(in err) + " " + sentence;
             FletcherStatus typed = (FletcherStatus)status;
 
             // The ORIGIN says which catch arm fired; the STATUS says what went wrong.

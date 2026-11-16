@@ -191,3 +191,35 @@ internal struct FlWriteWindow
     /// </remarks>
     internal nint Grow;
 }
+
+/// <summary>One closed window handed to a batch callback (`fl_batch`, ABI 0.8), every field.</summary>
+/// <remarks>
+/// EVERYTHING IT POINTS TO IS BORROWED FOR THE CALL. A binding keeps the array and schema
+/// only by Arrow's move (copy the struct, set the source's <c>release</c> to NULL); the shim
+/// releases whatever is left when the callback returns. <see cref="Failure"/> is mirrored
+/// although nothing reads it yet, so reading it changes no signature.
+/// </remarks>
+[StructLayout(LayoutKind.Sequential)]
+internal struct FlBatch
+{
+    /// <summary>`int32_t reason` - an FL_BATCH_* value.</summary>
+    internal int Reason;
+
+    /// <summary>`int64_t rows_dropped` - domain 7's count, as given.</summary>
+    internal long RowsDropped;
+
+    /// <summary>`int64_t num_rows` - 0 when there is no array.</summary>
+    internal long NumRows;
+
+    /// <summary>`struct ArrowArray* array` - NULL: no batch could be built.</summary>
+    internal nint Array;
+
+    /// <summary>`struct ArrowSchema* schema` - NULL exactly when <see cref="Array"/> is.</summary>
+    internal nint Schema;
+
+    /// <summary>`const fl_attachments* const* attachments` - `num_rows` sets; NULL iff `num_rows` is 0.</summary>
+    internal nint Attachments;
+
+    /// <summary>`const fl_error* failure` - NULL unless the hand-over failed.</summary>
+    internal nint Failure;
+}

@@ -419,6 +419,16 @@ public sealed class NativeLoaderTests
         Assert.True(
             Hits(InInterop, l => l.Contains("PackageRid(", StringComparison.Ordinal)).Length > 0,
             $"vacuous: the scan of {src} found no PackageRid( in Fletcher.Interop.");
+
+        // D10C-7 (BC-10, ladder rung 7; d10 L6): the build is asked at ONE site, Subscriber.SubscribeBatches,
+        // after the shim has refused, to word the refusal; never a second site that could refuse by variant.
+        // Exactly one, not "at most one": the site's own presence is the vacuity control.
+        string subscriber = Path.Combine(Path.GetFullPath(Path.Combine(src, "Fletcher")), "Subscriber.cs");
+        string[] variantCalls = Hits(_ => true, l => l.Contains("fl_binding_variant(", StringComparison.Ordinal)
+            && !l.Contains("partial FlVariant fl_binding_variant(", StringComparison.Ordinal));
+        Assert.True(
+            variantCalls.Length == 1 && variantCalls[0].StartsWith(subscriber + ":", LoadedShim.Comparison),
+            $"fl_binding_variant( must be called at exactly one site, in {subscriber}; found:\n" + string.Join("\n", variantCalls));
     }
 
     /// <summary>Each line of <paramref name="file"/> that is code, numbered from 1, trimmed.</summary>
