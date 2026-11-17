@@ -2106,6 +2106,184 @@ public sealed class SubscriberArrowTests : IDisposable
         Assert.Empty(only.Attachments);
         Assert.Equal(BatchReason.Closing, only.Status.Reason);
         Assert.Equal(3 + (long)int.MaxValue + 1, only.Status.RowsDropped);
+        // C#'s own take-over failure carries a count only, no error (ruling :669; d10 L9).
+        Assert.Null(only.Status.Failure);
+        Assert.Equal(0UL, _subscriber.AbsorbedCallbackFailures);
+    }
+
+    // ── A failed hand-over's failure, in the thunk (D10C-10, rung 11) ───────
+    //
+    // Legs: the mechanism under the external proof in Fletcher.Handover.Tests
+    // (AWindowTheShimCannotHandOverReachesTheHandlerWithItsFailure), each driving the batch thunk
+    // directly with a crafted fl_batch whose `failure` is set, as d9 hands over a window it could
+    // not export: no array, no schema, no rows, the window's rows in rows_dropped.
+
+    /// <summary>The batch thunk as native calls it.</summary>
+    private static unsafe delegate* unmanaged[Cdecl]<nint, Eiva.Fletcher.Interop.FlBatch*, void> Thunk =>
+        (delegate* unmanaged[Cdecl]<nint, Eiva.Fletcher.Interop.FlBatch*, void>)typeof(SubscriberArrow)
+            .GetMethod("BatchThunk", BindingFlags.NonPublic | BindingFlags.Static)!.MethodHandle.GetFunctionPointer();
+
+    /// <summary>A BatchDelivery over <paramref name="handler"/>, held by a GCHandle the caller (or a Closing) frees.</summary>
+    private GCHandle NewDelivery(RecordBatchHandler handler)
+    {
+        Type deliveryType = typeof(SubscriberArrow).GetNestedType("BatchDelivery", BindingFlags.NonPublic)!;
+        object delivery = Activator.CreateInstance(
+            deliveryType, BindingFlags.NonPublic | BindingFlags.Instance, null, [_subscriber, handler], null)!;
+        return GCHandle.Alloc(delivery);
+    }
+
+    /// <summary>
+    /// A leg (rung 11; d10 L3, L8; ruling :551 (3), :512): the failure on a window's <c>fl_batch</c>
+    /// reaches the handler's <see cref="BatchStatus.Failure"/> AS GIVEN. Its status and origin are an
+    /// unusual pair (PayloadTooLarge, Seam), so a hard-coded Internal or Handover turns this red; its
+    /// message is multi-byte UTF-8 with an escape sequence and no NUL, followed in memory by bytes
+    /// that are not part of it, so a decode that scans instead of using the length turns it red. The
+    /// "unchanged" half the external test cannot spell (its message differs by C++ runtime).
+    /// </summary>
+    [Fact]
+    public unsafe void TheBatchThunkForwardsAFailureAsGiven()
+    {
+        byte[] message = System.Text.Encoding.UTF8.GetBytes("hånd-över fejlede: 失败 \u001b[31m✗\u001b[0m 🚀");
+        const int Beyond = 16;
+        byte* bytes = (byte*)NativeMemory.Alloc((nuint)(message.Length + Beyond));
+        var seen = new List<Delivery>();
+        GCHandle self = NewDelivery((batch, attachments, status) => seen.Add(new Delivery(batch, attachments, status)));
+        try
+        {
+            message.CopyTo(new Span<byte>(bytes, message.Length));
+            new Span<byte>(bytes + message.Length, Beyond).Fill((byte)'X');
+            var failure = new Eiva.Fletcher.Interop.FlError
+            {
+                Status = (int)FletcherStatus.PayloadTooLarge,
+                Origin = (int)FletcherOrigin.Seam,
+                Message = (nint)bytes,
+                MessageLen = (nuint)message.Length,
+            };
+            var batch = new Eiva.Fletcher.Interop.FlBatch
+            {
+                Reason = (int)BatchReason.Timeout,
+                RowsDropped = 4,
+                Failure = (nint)(&failure),
+            };
+            Thunk(GCHandle.ToIntPtr(self), &batch);
+        }
+        finally
+        {
+            self.Free();
+            NativeMemory.Free(bytes);
+        }
+
+        Delivery only = Assert.Single(seen);
+        Assert.Null(only.Batch);
+        Assert.Empty(only.Attachments);
+        Assert.Equal(BatchReason.Timeout, only.Status.Reason);
+        Assert.Equal(4, only.Status.RowsDropped);
+        FletcherException forwarded = Assert.IsType<FletcherException>(only.Status.Failure);
+        Assert.Equal(FletcherStatus.PayloadTooLarge, forwarded.Status);
+        Assert.Equal(FletcherOrigin.Seam, forwarded.Origin);
+        Assert.Equal(message, System.Text.Encoding.UTF8.GetBytes(forwarded.Message));
+        Assert.Equal(0UL, _subscriber.AbsorbedCallbackFailures);
+    }
+
+    /// <summary>
+    /// A leg (rung 11; d10 L8 "never disposes a batch's failure"; d9 L2; ruling :512 "borrowed for
+    /// the callback"; step-0a audit (a)): the thunk leaves the borrowed <c>fl_error</c> as it found
+    /// it, because the shim frees it after the callback returns (<c>batches_server.cpp</c>). The
+    /// failure is a real one the shim allocated (a refused codec open, as HandleTests does), and
+    /// <c>fl_error_dispose</c> zeroes what it frees (<c>binding.cpp</c>), so an IN-PLACE dispose of
+    /// the borrowed struct turns this red. Why a leg: if C# did dispose it, nobody outside could
+    /// see it, since the shim's own later dispose of a zeroed struct is a no-op.
+    /// </summary>
+    /// <remarks>
+    /// A dispose of a struct COPY (<c>var e = *f; fl_error_dispose(ref e)</c>) frees the message
+    /// and leaves <c>*f</c> intact, so it is outside the predicate above (review DEBT-1); the shim
+    /// would then free the message a second time. The scan below covers that case: the thunk's
+    /// file, <c>SubscriberArrow.cs</c>, names <c>fl_error_dispose</c> nowhere, and the decoder's,
+    /// <c>Errors.cs</c>, names it once, in <c>ThrowIfFailed</c>'s finally, which the thunk never
+    /// reaches (step-0b audit note 2). The bare name, so no spelling of the call escapes (4a F1).
+    /// </remarks>
+    [Fact]
+    public unsafe void TheBatchThunkNeverDisposesTheBorrowedFailure()
+    {
+        Eiva.Fletcher.Interop.FlError failure = default;
+        int refused = Eiva.Fletcher.Interop.NativeMethods.fl_codec_open(
+            nint.Zero, out Eiva.Fletcher.Interop.CodecHandle codec, ref failure);
+        codec.Dispose();
+        var seen = new List<Delivery>();
+        GCHandle self = NewDelivery((batch, attachments, status) => seen.Add(new Delivery(batch, attachments, status)));
+        try
+        {
+            Assert.NotEqual(0, refused);
+            Assert.NotEqual(nint.Zero, failure.Message);
+            Eiva.Fletcher.Interop.FlError before = failure;
+            var batch = new Eiva.Fletcher.Interop.FlBatch
+            {
+                Reason = (int)BatchReason.RowLimit,
+                RowsDropped = 2,
+                Failure = (nint)(&failure),
+            };
+            Thunk(GCHandle.ToIntPtr(self), &batch);
+
+            Assert.Single(seen);
+            Assert.Equal(before.Status, failure.Status);
+            Assert.Equal(before.Origin, failure.Origin);
+            Assert.Equal(before.Message, failure.Message);
+            Assert.Equal(before.MessageLen, failure.MessageLen);
+        }
+        finally
+        {
+            self.Free();
+            Eiva.Fletcher.Interop.NativeMethods.fl_error_dispose(ref failure);
+        }
+
+        string src = typeof(SubscriberArrowTests).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
+            .FirstOrDefault(a => a.Key == "FletcherDotnetSrc")?.Value ?? string.Empty;
+        string thunkFile = Path.Combine(src, "Fletcher", "SubscriberArrow.cs");
+        string errorsFile = Path.Combine(src, "Fletcher", "Errors.cs");
+        Assert.True(File.Exists(thunkFile) && File.Exists(errorsFile), $"the baked source folder '{src}' lacks the scanned files.");
+        Assert.DoesNotContain("fl_error_dispose", File.ReadAllText(thunkFile), StringComparison.Ordinal);
+        string errors = File.ReadAllText(errorsFile);
+        int disposes = errors.Split("fl_error_dispose").Length - 1;
+        Assert.True(disposes == 1 && errors.Contains("finally", StringComparison.Ordinal) && errors.Contains("throw ToException(", StringComparison.Ordinal),
+            $"Errors.cs disposes an fl_error {disposes} times; exactly once, in ThrowIfFailed's finally, is the rule");
+    }
+
+    /// <summary>
+    /// A leg (rung 11, the design's handled residue; review DEBT-3; d10 L9; brief D10C-10, "Handled"): when
+    /// copying the shim's failure throws, the window still arrives, once - a null batch, its rows
+    /// counted, its reason kept - with no failure attached. The failure crafted here has a
+    /// message longer than one managed string holds (more than int.MaxValue bytes), so the copy
+    /// throws deterministically before reading a byte. Red if the copy is not contained: its throw
+    /// would escape the delivery and the thunk's outer catch would swallow the window - a Closing
+    /// here, the subscription's last delivery.
+    /// </summary>
+    [Fact]
+    public unsafe void ACopiedFailureThatCannotBeDecodedStillDeliversTheWindow()
+    {
+        byte unread = (byte)'x';
+        var seen = new List<Delivery>();
+        nint ctx = GCHandle.ToIntPtr(NewDelivery((batch, attachments, status) => seen.Add(new Delivery(batch, attachments, status))));
+        var failure = new Eiva.Fletcher.Interop.FlError
+        {
+            Status = (int)FletcherStatus.Internal,
+            Origin = (int)FletcherOrigin.Handover,
+            Message = (nint)(&unread),
+            MessageLen = (nuint)int.MaxValue + 1,
+        };
+        var batch = new Eiva.Fletcher.Interop.FlBatch
+        {
+            Reason = (int)BatchReason.Closing,
+            RowsDropped = 5,
+            Failure = (nint)(&failure),
+        };
+        Thunk(ctx, &batch);  // a Closing: the thunk frees the context
+
+        Delivery only = Assert.Single(seen);
+        Assert.Null(only.Batch);
+        Assert.Empty(only.Attachments);
+        Assert.Equal(BatchReason.Closing, only.Status.Reason);
+        Assert.Equal(5, only.Status.RowsDropped);
+        Assert.Null(only.Status.Failure);
         Assert.Equal(0UL, _subscriber.AbsorbedCallbackFailures);
     }
 

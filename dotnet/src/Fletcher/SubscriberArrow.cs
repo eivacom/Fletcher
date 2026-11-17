@@ -24,7 +24,10 @@
 // (AbsorbedCallbackFailures, HandlerFaulted; d10 L9). The handler OWNS what it is
 // handed and may keep it past the call (d10 L8). A window C# cannot take over (out
 // of memory, an import refusal) still arrives, as a null batch with its rows added
-// to RowsDropped, never silently (d9 L18's rule, one layer up). A dictionary column
+// to RowsDropped, never silently (d9 L18's rule, one layer up), with no error (ruling
+// :669). A window the SHIM could not hand over arrives the same way, carrying the shim's
+// failure in BatchStatus.Failure: copied as given, never disposed, for the shim frees it
+// after the callback (ruling :551 (3); d10 L3, L8, L9). A dictionary column
 // arrives as domain 7 delivers it, re-folded; C# converts nothing (ruling :551 (2)).
 //
 // ── Lifetime ────────────────────────────────────────────────────────────────
@@ -60,7 +63,8 @@ namespace Eiva.Fletcher;
 /// carried a schema, so there is nothing to build a batch from (d7 L6). NULL when no batch could be built
 /// for this window - no usable schema yet, a schema that cannot be opened (then for the
 /// subscription's life), or a window that could not be finished or handed over - with
-/// RowsDropped counting the window's rows. Per row (<see cref="SubscriberArrow.Subscribe"/>):
+/// RowsDropped counting the window's rows; a failed hand-over also carries its failure in
+/// <see cref="BatchStatus.Failure"/>. Per row (<see cref="SubscriberArrow.Subscribe"/>):
 /// NULL when this one row could not be decoded, with RowsDropped = 1.
 /// </param>
 /// <param name="attachments">Row <c>i</c>'s attachments at index <c>i</c>, owned copies.</param>
@@ -86,10 +90,11 @@ public enum BatchReason
 /// <summary>Why a batch was flushed and whether rows were lost.</summary>
 public readonly struct BatchStatus
 {
-    internal BatchStatus(BatchReason reason, long rowsDropped)
+    internal BatchStatus(BatchReason reason, long rowsDropped, FletcherException? failure = null)
     {
         Reason = reason;
         RowsDropped = rowsDropped;
+        Failure = failure;
     }
 
     /// <summary>Why this batch was flushed.</summary>
@@ -97,6 +102,14 @@ public readonly struct BatchStatus
 
     /// <summary>Rows lost since the previous flush; 0 means all good.</summary>
     public long RowsDropped { get; }
+
+    /// <summary>
+    /// Null, except on a window the server shim could not hand over: then the batch is null, the
+    /// window's rows are in <see cref="RowsDropped"/>, and this is the shim's failure, its status,
+    /// origin (<see cref="FletcherOrigin.Handover"/>) and message as the shim gave them (d10 L9).
+    /// A window C# itself could not take over carries none: its rows are counted, nothing more.
+    /// </summary>
+    public FletcherException? Failure { get; }
 }
 
 /// <summary>How a batched subscription flushes.</summary>
@@ -654,7 +667,23 @@ public sealed class SubscriberArrow : IDisposable
                 }
             }
 
-            var status = new BatchStatus((BatchReason)source->Reason, dropped);
+            // A failed hand-over's failure, copied as given (d10 L3) and never disposed: it is
+            // borrowed for this call, and the shim frees it when the call returns (d10 L8). A copy
+            // that throws (out of memory) costs the window only its failure (brief D10C-10, "Handled"; DEBT-3).
+            FletcherException? failure = null;
+            if (source->Failure != 0)
+            {
+                try
+                {
+                    failure = Errors.ToException(((FlError*)source->Failure)->Status, in *(FlError*)source->Failure);
+                }
+                catch (Exception)
+                {
+                    // Delivered without its failure; its rows are already counted.
+                }
+            }
+
+            var status = new BatchStatus((BatchReason)source->Reason, dropped, failure);
             try
             {
                 _handler(batch, delivered, status);

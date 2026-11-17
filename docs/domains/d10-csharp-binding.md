@@ -140,7 +140,7 @@ equal to it, never renumbered.
   accepted because the batched API has not reached `main` (D4). `[built]` (D10C-2).
 - The mirror imports what the binding calls, not every export. Since D10C-7 it imports
   `fl_subscriber_subscribe_batches`, `fl_subscriber_unsubscribe_batches` and the whole `fl_batch`
-  (`failure` included, unread until rung 11), and no longer imports `fl_decode_rows_framed`, which the
+  (`failure` included), and no longer imports `fl_decode_rows_framed`, which the
   shim keeps (Q8 default). That is not a violation.
 - Tests: `AbiNumberTableTests.EveryNumberTheShimHandsOutHasTheSameValueInCSharp` (one row per table, both
   directions; closes Q11), `ErrorTests.OriginFourIsHandover`, `AbiNumberTableTests.BindingVariantAnswersADefinedMember`.
@@ -154,7 +154,7 @@ where a ruling accepts the duplication, and then native re-checks it.
 sentence (D10C-7; Windows, by hand; CI and Linux unrun); for batch options, built and tested (D10C-9: passed as given; the clamp, the managed refusal and
 `BatchOptions.MaxTimeout` deleted; `BatchOptionsTests.EveryBatchOptionReachesDomain7AsGiven`, BC-8's 6 x 7 grid, and the source scan
 `NoBatchOptionIsCheckedOrClampedInCSharp`; Windows, by hand; CI and Linux unrun)]`.
-- Holds at: `Errors.cs:44-75` (one throw site; number and message cross, D-BIND-19 rules 1-3).
+- Holds at: `Errors.cs:52-92` (one throw site, `ThrowIfFailed`, over one decoder, `ToException`; number and message cross, D-BIND-19 rules 1-3).
 - **Accepted duplications, by ruling:** topic segments and the provider selector are checked in
   managed code in UTF-8 bytes and re-checked natively (Q17 of 2026-09-11, D-BIND-19 rule 4,
   D-BIND-20; `TopicPath.cs`, `ProviderSelector.cs`).
@@ -272,7 +272,9 @@ into a borrowed batch, never releases what it did not move, and never disposes a
 `release`, found with `Marshal.OffsetOf` on Apache.Arrow's own struct, whose field is internal), then imports; a failure
 anywhere in the take-over still delivers the window, as a null batch with its rows counted.
 Tests: the guard `SubscriberArrowTests.AKeptBatchReadsIntactAfterClosing` (server leg) and the leg
-`.TheBatchThunkMovesTheBatchOutOfTheBorrowedStructs` (P2).
+`.TheBatchThunkMovesTheBatchOutOfTheBorrowedStructs` (P2). The `failure` clause `[built]` (D10C-10; Windows, by hand; CI and
+Linux unrun): the thunk copies it with `Errors.ToException`, which disposes nothing; leg `.TheBatchThunkNeverDisposesTheBorrowedFailure`
+(the struct the shim lent is unchanged, and a source scan for the struct-copy case, review DEBT-1).
 - Source: ruling 2026-11-13, "Batch owner: Borrowed; keep by moving" (ledger :363 (1); d9 D26,
   L14); d9 D32 and L2's borrowed clause (ledger :512): `failure` is copied to keep, never disposed.
 - Keeps D-BIND-59 (3)'s ownership half for the handler ("the handler OWNS the batch and disposes
@@ -283,9 +285,13 @@ Tests: the guard `SubscriberArrowTests.AKeptBatchReadsIntactAfterClosing` (serve
 counted and raised; every row domain 7 or the shim reports lost reaches the handler in
 `RowsDropped`, unchanged; a failed hand-over reaches the application with its status, origin and
 message.
-`[built for handler failures on the row path and in the batch thunk (D10C-7; Windows, by hand; CI and Linux unrun); designed-not-built
-for the hand-over's failure in BatchStatus (rung 11)]`. A window C# itself cannot take over arrives as a
-null batch with its rows added to `RowsDropped` (D10C-7 design, residue (a)).
+`[built for handler failures on the row path and in the batch thunk (D10C-7); built for the hand-over's failure in
+BatchStatus (D10C-10); Windows, by hand; CI and Linux unrun]`. A window C# itself cannot take over arrives as a
+null batch with its rows added to `RowsDropped` and no error (D10C-7 design, residue (a); ruling :669); so does a
+failed hand-over whose failure C# cannot copy (out of memory): the window arrives, reason kept, without its failure (D10C-10).
+Tests: `Fletcher.Handover.Tests.HandoverTests.AWindowTheShimCannotHandOverReachesTheHandlerWithItsFailure` (d9's
+fault shim; a row-limit window and the Closing), its control `UnarmedNoWindowCarriesAFailure`, and the legs
+`SubscriberArrowTests.TheBatchThunkForwardsAFailureAsGiven`, `.ACopiedFailureThatCannotBeDecodedStillDeliversTheWindow`.
 - Holds at: `Subscriber.cs:824-877` (catch, `ReportAbsorbed`), `SA:453-468`, `SA:543-550` (per row)
   and `SubscriberArrow.BatchDelivery.Deliver` (batch handler failures counted and raised; D10C-7), `Diagnostics.cs`.
 - Source: D-BIND-18, D-BIND-19 rule 5; ruling 2026-11-12, "Shim only" (2) (ledger :246): BC-7 is
@@ -310,7 +316,7 @@ null batch with its rows added to `RowsDropped` (D10C-7 design, residue (a)).
 thunk catches everything, including failures of its own bookkeeping. A managed exception that
 caused a native failure is rethrown as itself.
 `[built]`
-- Holds at: `Subscriber.cs:824-877`, `Errors.cs:44-75` (rule 3 first: `captured?.Throw()`).
+- Holds at: `Subscriber.cs:824-877`, `Errors.cs:52-71` (rule 3 first: `captured?.Throw()`).
 - Source: D-BIND-19 rules 2 and 3; d9 L1 ("a caller's callback must not throw into the shim";
   `fl_batch_fn` "must not throw", `h:1058-1060`). The batch thunk (`SubscriberArrow.BatchThunk`, D10C-7)
   is in the scope of the reflection test, which passes on it.
@@ -381,8 +387,8 @@ accepted subscription, empty when idle; nothing after it), a refused subscribe (
 delivered), a late schema (losses reported, assembly once it arrives) and out-of-range options
 (refused) are domain 7's, mapped one to one.
 `[built for the reasons, loss counts, null batches, closing, late schemas, dictionaries and order (D10C-7; Windows, by hand; CI and Linux unrun);
-built and tested for out-of-range options (V5-V8: D10C-9's grid); designed-not-built for the hand-over's
-failure in BatchStatus (rung 11)]`. C# forwards domain 7's batches, reasons and counts as given: the closing
+built and tested for out-of-range options (V5-V8: D10C-9's grid); built for the hand-over's
+failure in BatchStatus (D10C-10, L9's tests; Windows and the local Linux devcontainer, by hand; CI unrun)]`. C# forwards domain 7's batches, reasons and counts as given: the closing
 (`AnIdleCloseDeliversOneEmptyClosing`, T25, `ClosingASiblingFromABatchHandlerWaitsForItsClosing`), late schemas
 (T12, T13), null batches (T24) and dictionaries (T21, T36) are tested on the server leg.
 - Source: d7 L1-L9, L12, L13, L15; ruling 2026-11-12 "Late schema in C#: Follow domain 7" (ledger
@@ -469,7 +475,7 @@ a source build whatever is staged beside the tests (CI's dotnet lane stages the 
 **What the switch adds** `[built]` (D10C-7; Windows, by hand; CI and Linux unrun) except where marked:
 - Imports of the three server entry points and of `fl_batch`/`fl_batch_fn`, against the server shim
   (and answered `FL_NOT_SUPPORTED` by the edge shim, L6).
-- ~~`FletcherOrigin.Handover = 4` (L2)~~ `[built]` (D10C-2); and the failure in `BatchStatus` (L9, D26).
+- ~~`FletcherOrigin.Handover = 4` (L2)~~ `[built]` (D10C-2); and the failure in `BatchStatus` (L9, D26) `[built]` (D10C-10) (Windows and the local Linux devcontainer, by hand; CI unrun).
 - `SubscriberArrow.SubscribeBatched` over `fl_subscriber_subscribe_batches`: `MaxRows` as `int64`
   unchanged, `Timeout` through the one translation site (L12), refusals passed through as
   `FletcherException(InvalidArgument)` (L3, D22), `BatchOptions.MaxTimeout` removed (D10C-9); a batch
@@ -520,7 +526,7 @@ not wait (d7 L9, d9 §4).
 | D23 | **C# keeps the edge/server split;** D-BIND-1a rider i ("a .NET process is never the microcontroller") is revised by :363 (4). Resolves former Q12 and d9 Findings (d)5. | Ledger :536 (4) |
 | D24 | **A batched dictionary column reaches C# re-folded, as domain 7 delivers it;** D-BIND-8 / D-BIND-59's "value type" is revised for batches. Resolves former Q5 and, with domain 2, d9 Q11 (L14 V12). | Ledger :551 (2) |
 | D25 | **C#'s batched subscribe exists on every package; on the edge shim it throws a named NotSupported naming the server package.** Resolves former Q3 (L6). | Ledger :551 (1) |
-| D26 | **A failed hand-over reaches a C# handler as a null batch, its rows counted, with the failure's status, origin `Handover` (4) and message in `BatchStatus`;** `FletcherOrigin` gains code 4. Resolves former Q6 (L2, L9). | Ledger :551 (3) |
+| D26 | **A failed hand-over reaches a C# handler as a null batch, its rows counted, with the failure's status, origin `Handover` (4) and message in `BatchStatus`;** `FletcherOrigin` gains code 4. Resolves former Q6 (L2, L9). Built: `BatchStatus.Failure` (`FletcherException?`; D10C-2, D10C-10) (Windows and the local Linux devcontainer, by hand; CI unrun). | Ledger :551 (3), :669 |
 | D27 | **D-BIND-64 (concurrent, out-of-order handlers), D-BIND-59 (3) (null batch = schema not opened only) and C#'s schema-less first-row latch are revised by :203;** C# follows domain 7 (d7 L7, L9, L12) (L13; L14 V1, V2, V4, V11). | Ledger :551 (4) |
 | D28 | **A server shim present beside the app is loaded; one present but unloadable stops the load loudly, naming the file; no fallback to the edge shim.** Revises :363 (4)'s "references"; refines :536 (2) (L5). | Ledger :575 (1) |
 | D29 | **The edge refusal is the shim's message verbatim plus one binding sentence naming the server package,** appended at the batched wrapper; number and origin unchanged (L3, L6). | Ledger :575 (2) |
@@ -648,5 +654,5 @@ former Q10 (doc comments lagging D28) is work the round owes (Findings (a)2). Nu
 - ~~`FletcherStatus`/`FletcherOrigin`/`BatchReason` against `binding.h` (L2).~~ Tested (D10C-2).
 - ~~`SubscriberArrow.Dispose`'s refusal inside a row delivery (L11).~~ Tested (D10C-3,
   `SubscriberArrowTests.DisposingInsideAPerRowDeliveryIsRefusedAndNothingIsTornDown`).
-- ~~Origin 4 reaching C# (L2), unreachable today.~~ Origin 4 maps to `Handover` (D10C-2, `ErrorTests.OriginFourIsHandover`); reaching it from a real batch is the switch's.
+- ~~Origin 4 reaching C# (L2), unreachable today.~~ Origin 4 maps to `Handover` (D10C-2, `ErrorTests.OriginFourIsHandover`); reaching it from a real batch is tested (D10C-10, `HandoverTests`) (Windows and the local Linux devcontainer, by hand; CI unrun).
 - A C# handler disposing its `SubscriberArrow` from a batch callback (L11), until the switch.

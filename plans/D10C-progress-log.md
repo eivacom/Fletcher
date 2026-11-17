@@ -173,3 +173,26 @@ Session directive (2026-11-15): run from D10C-1 onward, item by item, until a st
 **Owner decisions this stage:** none
 **Debt carried:** none
 **Records corrected:** the d10 L11 citation; the evidence size note.
+
+## D10C-10 — a failed hand-over reaches the C# handler with the failure in BatchStatus (2026-11-17)
+
+**Forcing test:** `HandoverTests.AWindowTheShimCannotHandOverReachesTheHandlerWithItsFailure` (window 2 of 3; Closing), through d9's test-only fault shim staged as the server shim → 🔴 (compile, no `Failure`) → 🟢; control `UnarmedNoWindowCarriesAFailure`
+**Lane:** full · **Design:** `plans/D10C-10-handover.md` · **Brief:** `plans/D10C-10-brief.md`
+**What landed:**
+- `BatchStatus.Failure` (`FletcherException?`), named in d10.
+- `Errors` is split into `ToException` (no dispose) and `ThrowIfFailed`. The thunk copies the borrowed `fl_batch.failure` as given and never disposes it (L8, L3, :551 (3)).
+- A C#-side take-over failure is a count only (ruling 2026-11-17).
+- CI: both dotnet jobs build the fault shim from the unchanged c-abi recipe.
+**Interfaces:** NEW `BatchStatus.Failure`.
+**Deleted:** none.
+**Reviews:** 0a CLEAR · 0b CLEAR · design APPROVE-WITH-DEBT(3) · compliance PASS (1 optional fix applied) · code review 0 blocking / 0 should-fix / 3 nits
+**Verification:**
+- Windows: edge 1580/1580 (incl. Handover 4); server 487/487 per TFM.
+- Linux devcontainer: the new CI step's exactly-one check passes; edge 1580/1580, server 487/487, NativeAOT 4/4.
+- CI unrun.
+**Close gate:** PASS (full). Not measured by the gate: `D10C-10-design-review.md` is 72 lines, over the 60 config cap (recorded, not trimmed).
+**Cycle meter:** design 1/2 · fix 0 (non-blocking edits only) · implementer launches 1 (3 passes) · owner touches 1 · stage words 5736
+**Numbers:** declared +70..+120 · actual net +110 · tests about +700 incl. lock file · new public surface 1
+**Owner decisions this stage:** C#-side take-over failure is count only.
+**Debt carried:** none
+**Records corrected:** d10 L2, :157, :319 citations and qualifiers; the :669 citation for the copy-throws case moved to the brief's Handled line.

@@ -44,6 +44,5 @@ library's borrowed error (the handler gets a copy); a failed final window not en
 Declared net lines: +90 / −4 (range +70..+120), 5 counted files: **not** light-lane · new public surface: 1 · cycles: 1/2
 
 ---
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
-<delta vs the above — actual net lines, anything retired or added the brief did
-not predict, fix cycles used>.
+**As landed (2026-11-17):**
+Counted prod +129/−19, net +110 (declared +70..+120). New public member `BatchStatus.Failure`. Tests: new `Fletcher.Handover.Tests` (4) + 3 legs. The failure decode has its own try before the handler (no array on a failed hand-over). Green on Windows and the local Linux devcontainer (fault shim built from the unchanged recipe); CI unrun. Design cycles 1, fix cycles 0 (4a/4b non-blocking, applied).

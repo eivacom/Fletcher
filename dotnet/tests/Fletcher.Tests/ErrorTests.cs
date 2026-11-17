@@ -101,8 +101,8 @@ public sealed class ErrorTests
     /// <remarks>
     /// D10C-2 (d9 D32, ruling :551 (3)). The header numbers it 4, so a failed hand-over
     /// reaches C# as origin 4; the throw site's cast must yield a DEFINED member, not the
-    /// bare number "4" an unnamed value prints as. Built by hand because no managed call
-    /// can provoke a failed hand-over on demand.
+    /// bare number "4" an unnamed value prints as. Built by hand: the shipped shims cannot
+    /// fail a hand-over on demand (Fletcher.Handover.Tests does, with d9's test-only fault shim).
     /// </remarks>
     [Fact]
     public void OriginFourIsHandover()

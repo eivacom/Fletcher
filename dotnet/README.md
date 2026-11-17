@@ -87,7 +87,10 @@ The tests load native shims, which a source build has to stage: pass
 (c-abi built with `with_probe_shim`, see `c-abi/README.md`), and
 `-p:FletcherServerShim=<fletcher-c-abi-server>` (c-abi built with `variant=server`) for
 `Fletcher.Tests`' loader-layout rows, which run a test host from staged folders with
-either shim or both. A project whose shim is missing FAILS with the loader's diagnostic
+either shim or both, and `-p:FletcherHandoverFaultShim=<fletcher-c-abi-handover-fault>` for
+`Fletcher.Handover.Tests`: d9's test-only fault shim, built only by c-abi's test build of the server
+variant, `(cd c-abi && conan build . -o "&:variant=server" -o "&:run_tests=True" -c tools.build:skip_test=True)`,
+under `c-abi/build`. A project whose shim is missing FAILS with the loader's diagnostic
 rather than skipping. CI runs `Fletcher.Tests` a second time with the server shim copied
 beside it, under its own name, so the whole suite also runs on the server build.
 

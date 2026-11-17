@@ -14,6 +14,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Fletcher.CopyOracle.Tests/Fletcher.CopyOracle.Tests.csproj" />
+    <Project Path="tests/Fletcher.Handover.Tests/Fletcher.Handover.Tests.csproj" />
     <Project Path="tests/Fletcher.Tests/Fletcher.Tests.csproj" />
     <Project Path="tests/Fletcher.Model.Tests/Fletcher.Model.Tests.csproj" />
     <Project Path="tests/Fletcher.GatewayClient.Tests/Fletcher.GatewayClient.Tests.csproj" />

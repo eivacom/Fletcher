@@ -138,6 +138,15 @@ jobs:
               echo "::group::conan create c-abi (server build)"
               (cd /workspace/c-abi && conan create . --build=missing -pr:a=$PROFILE -o "&:variant=server")
               echo "::endgroup::"
+              # D10C-10 (rung 11): the test-only hand-over fault shim of domain 9, built only by the
+              # c-abi test build of the server variant (no package carries it); no ctest run here.
+              # Exactly one file, or the lane fails by name. Fletcher.Handover.Tests stages it.
+              echo "::group::conan build c-abi (server build, tests built: the fault shim)"
+              (cd /workspace/c-abi && conan build . --build=missing -pr:a=$PROFILE -o "&:variant=server" -o "&:run_tests=True" -c tools.build:skip_test=True)
+              echo "::endgroup::"
+              FAULT=$(find /workspace/c-abi/build -type f -name "libfletcher-c-abi-handover-fault.so")
+              if [ "$(echo "$FAULT" | grep -c .)" != 1 ]; then echo "::error::expected exactly one libfletcher-c-abi-handover-fault.so under c-abi/build, found: $FAULT"; exit 1; fi
+              echo "hand-over fault shim: $FAULT"
 
               # By the package identity (D9S-2), not by file name: the edge shim, with the probe.
               SHIM=$(bash /workspace/scripts/locate_shim.sh fletcher-c-abi variant=edge with_probe_shim=True)
@@ -203,7 +212,7 @@ jobs:
               dotnet --info
               echo "::endgroup::"
               dotnet restore Fletcher.slnx --locked-mode
-              dotnet build Fletcher.slnx -c Release --no-restore -p:FletcherNativeShim="$SHIM" -p:FletcherProbeShim="$PROBE" -p:FletcherServerShim="$SERVER"
+              dotnet build Fletcher.slnx -c Release --no-restore -p:FletcherNativeShim="$SHIM" -p:FletcherProbeShim="$PROBE" -p:FletcherServerShim="$SERVER" -p:FletcherHandoverFaultShim="$FAULT"
               # One results file per target framework (D-BIND-170): with a fixed LogFileName
               # the net10.0 leg overwrote the file of the net8.0 leg, so the per-test
               # timings of a failure never reached the uploaded artifact. (No apostrophes
@@ -310,6 +319,10 @@ jobs:
           echo "::group::conan create c-abi (server build)"
           (cd c-abi && conan create . --build=missing -pr:a="$PROFILE" -o "&:variant=server")
           echo "::endgroup::"
+          # D10C-10 (rung 11): the hand-over fault shim, as on the Linux leg.
+          echo "::group::conan build c-abi (server build, tests built: the fault shim)"
+          (cd c-abi && conan build . --build=missing -pr:a="$PROFILE" -o "&:variant=server" -o "&:run_tests=True" -c tools.build:skip_test=True)
+          echo "::endgroup::"
 
       # Checked, not trusted: the native rows fail rather than skip when the shim
       # is absent, so an empty path here would surface as test failures instead of
@@ -329,6 +342,11 @@ jobs:
           SERVER=$(bash scripts/locate_shim.sh fletcher-c-abi-server variant=server)
           echo "server shim: $SERVER"
           echo "server=$SERVER" >> "$GITHUB_OUTPUT"
+          # D10C-10: exactly one hand-over fault shim from c-abi's test build, or the lane fails by name.
+          FAULT=$(find "$PWD/c-abi/build" -type f -name "fletcher-c-abi-handover-fault.dll")
+          if [ "$(echo "$FAULT" | grep -c .)" != 1 ]; then echo "::error::expected exactly one fletcher-c-abi-handover-fault.dll under c-abi/build, found: $FAULT"; exit 1; fi
+          echo "hand-over fault shim: $FAULT"
+          echo "fault=$FAULT" >> "$GITHUB_OUTPUT"
 
       # BIND-9a-0 (D-BIND-134): as the Linux leg. dumpbin comes with the MSVC toolset
       # the shim was built with; vswhere finds it. The notice is read off the same graph.
@@ -386,7 +404,7 @@ jobs:
           set -e
           dotnet --info
           dotnet restore Fletcher.slnx --locked-mode
-          dotnet build Fletcher.slnx -c Release --no-restore -p:FletcherNativeShim="${{ steps.shim.outputs.path }}" -p:FletcherProbeShim="${{ steps.shim.outputs.probe }}" -p:FletcherServerShim="${{ steps.shim.outputs.server }}"
+          dotnet build Fletcher.slnx -c Release --no-restore -p:FletcherNativeShim="${{ steps.shim.outputs.path }}" -p:FletcherProbeShim="${{ steps.shim.outputs.probe }}" -p:FletcherServerShim="${{ steps.shim.outputs.server }}" -p:FletcherHandoverFaultShim="${{ steps.shim.outputs.fault }}"
           # One results file per target framework (D-BIND-170), as on the Linux leg.
           dotnet test Fletcher.slnx -c Release --no-build --logger "trx;LogFilePrefix=windows"
 
