@@ -55,10 +55,16 @@
        at the package root, when CI hands the folder holding the three in:
          dotnet pack -p:FletcherLicenceDir=<dir>
        A local pack without it still builds; ci.dotnet's pack checks refuse a
-       package without them. -->
+       package without them.
+       D-BIND-175 (approved by EIVA legal, ruling 2026-11-17): the four managed packages also
+       carry LICENSE-EXCEPTION, the Fletcher Linking Exception, from the same folder. A
+       package that carries only a native library (Eiva.Fletcher.Server), which the exception
+       leaves under the LGPL alone, sets FletcherPacksLinkingException to false. -->
   <ItemGroup Condition="'$(FletcherLicenceDir)' != '' And '$(IsPackable)' != 'false'">
     <None Include="$(FletcherLicenceDir)/LICENSE" Pack="true" PackagePath="" Visible="false" />
     <None Include="$(FletcherLicenceDir)/COPYING" Pack="true" PackagePath="" Visible="false" />
+    <None Include="$(FletcherLicenceDir)/LICENSE-EXCEPTION" Pack="true" PackagePath="" Visible="false"
+          Condition="'$(FletcherPacksLinkingException)' != 'false'" />
     <None Include="$(FletcherLicenceDir)/THIRD-PARTY-LICENSES.txt" Pack="true" PackagePath="" Visible="false" />
   </ItemGroup>
 

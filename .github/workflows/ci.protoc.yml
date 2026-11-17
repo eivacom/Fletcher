@@ -240,6 +240,9 @@ jobs:
                 -pr:a=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release
               cp /workspace/LICENSE /workspace/protoc-licences/LICENSE
               cp /workspace/COPYING /workspace/protoc-licences/COPYING
+              # D-BIND-175: the Fletcher Linking Exception, for Eiva.Fletcher.Protoc and the
+              # protoc-v Release (not the npm package, which D-BIND-175 does not name).
+              cp /workspace/LICENSE-EXCEPTION /workspace/protoc-licences/LICENSE-EXCEPTION
               # What the plugin links or compiles in must be in its notice: protobuf
               # and zlib from the graph, and the vendored nanoarrow, which only reaches
               # the notice through the recipe (BIND-9a review B4), with the Apache NOTICE files
@@ -286,6 +289,7 @@ jobs:
           path: |
             protoc-licences/LICENSE
             protoc-licences/COPYING
+            protoc-licences/LICENSE-EXCEPTION
             protoc-licences/THIRD-PARTY-LICENSES.txt
           retention-days: 5
 

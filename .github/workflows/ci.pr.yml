@@ -180,6 +180,8 @@ jobs:
               # BIND-9b-7 (D-BIND-173): and its lockfile by this one.
               - 'scripts/check_conan_lockfile.sh'
               - 'COPYING'
+              # D-BIND-175: the four managed packages carry it, and the check requires it.
+              - 'LICENSE-EXCEPTION'
               # BIND-9a-4: the package README's snippets are checked against the
               # consumer test's code.
               - 'scripts/check_readme_snippets.py'

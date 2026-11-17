@@ -190,5 +190,6 @@ This package, like Fletcher's C++ libraries, stays under the LGPL alone. An appl
 bundles it (for example with a JavaScript bundler) or otherwise combines it into one file must
 meet LGPL section 4(d)(0), and 4(e), for it: convey the Minimal Corresponding Source and the
 Corresponding Application Code in a form that lets the user recombine the application with a
-modified version of this package. The draft Fletcher
-Linking Exception in the repository (`LICENSE-EXCEPTION`, not in force) does not change that.
+modified version of this package. The Fletcher Linking Exception in the repository
+(`LICENSE-EXCEPTION`), which covers Fletcher's .NET assemblies and generated code, does not change
+that.

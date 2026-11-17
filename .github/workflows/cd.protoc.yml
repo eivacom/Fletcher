@@ -11,6 +11,7 @@
 #       │       │    fletcher-protoc-{linux,windows}            (Conan .tgz)
 #       │       │    fletcher-protoc-{linux,windows}-static     (raw binary)
 #       │       │    fletcher-protoc-licences                   (LICENSE, COPYING,
+#       │       │                                                LICENSE-EXCEPTION,
 #       │       │                                                THIRD-PARTY-LICENSES.txt)
 #       │       │    fletcher-protoc-nuget                      (Eiva.Fletcher.Protoc)
 #       ├── dotnet  (ci.dotnet.yml)   ┐ built only for the gate,
@@ -147,6 +148,12 @@ jobs:
             test -s "$f" || { echo "::error::protoc/npm/$f is missing or empty"; exit 1; }
             npm pack --dry-run --json | grep -q "\"path\": *\"$f\"" || { echo "::error::npm pack would not carry $f"; exit 1; }
           done
+          # D-BIND-175 names Eiva.Fletcher.Protoc and the Release, not this package: the artifact
+          # brings LICENSE-EXCEPTION here, and package.json's "files" leaves it out.
+          if npm pack --dry-run --json | grep -q '"path": *"LICENSE-EXCEPTION"'; then
+            echo "::error::npm pack would carry LICENSE-EXCEPTION, which D-BIND-175 does not put in the npm package"
+            exit 1
+          fi
 
       - name: Resolve dist-tag
         id: dist-tag
@@ -196,8 +203,9 @@ jobs:
       #       → shared-linked Conan-package tarballs (from ci.protoc.yml)
       #   - fletcher-protoc-linux-static + fletcher-protoc-windows-static
       #       → static-linked raw binaries (from build-static-* jobs)
-      #   - fletcher-protoc-licences → LICENSE, COPYING, THIRD-PARTY-LICENSES.txt
-      #       (BIND-9b-7, review T13, M6: attached beside the binaries)
+      #   - fletcher-protoc-licences → LICENSE, COPYING, LICENSE-EXCEPTION,
+      #       THIRD-PARTY-LICENSES.txt (BIND-9b-7, review T13, M6: attached beside the
+      #       binaries; LICENSE-EXCEPTION since D-BIND-175)
       #   - fletcher-protoc-nuget → Eiva.Fletcher.Protoc
       # `merge-multiple: true` flattens each artifact's files into the
       # current directory, matching the file names the gh release create
@@ -220,7 +228,7 @@ jobs:
             protoc-gen-fletcher-linux-x64 \
             protoc-gen-fletcher-windows-x64.exe \
             "Eiva.Fletcher.Protoc.${GITHUB_REF_NAME#protoc-v}.nupkg" \
-            LICENSE COPYING THIRD-PARTY-LICENSES.txt; do
+            LICENSE COPYING LICENSE-EXCEPTION THIRD-PARTY-LICENSES.txt; do
             if [ ! -f "$asset" ]; then
               echo "::error::Missing release asset: $asset"
               ls -lah
@@ -254,6 +262,7 @@ jobs:
             "Eiva.Fletcher.Protoc.${VERSION}.nupkg" \
             "LICENSE" \
             "COPYING" \
+            "LICENSE-EXCEPTION" \
             "THIRD-PARTY-LICENSES.txt"
 
   # D-BIND-176: Eiva.Fletcher.Protoc to nuget.org, by Trusted Publishing, as cd.dotnet's nuget-org

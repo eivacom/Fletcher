@@ -17,7 +17,8 @@
 #               ▼
 #         release                         tag == Directory.Build.props version; the .nupkg and
 #               │                         .snupkg attached to the GitHub Release, with the
-#               │                         shims' four Conan lockfiles (D-BIND-173, D10C-5)
+#               │                         shims' four Conan lockfiles (D-BIND-173, D10C-5) and
+#               │                         LICENSE-EXCEPTION (D-BIND-175)
 #               ▼
 #         nuget-org                       the same packages to nuget.org, by Trusted Publishing
 #                                         in the environment nuget-org (D-BIND-176)
@@ -120,6 +121,10 @@ jobs:
               [ -s "packages/$lock" ] || { echo "::error::missing release asset $lock"; ls -l packages; exit 1; }
             done
           done
+          # D-BIND-175 (approved by EIVA legal, ruling 2026-11-17): the Fletcher Linking Exception,
+          # the tag's own (a root file, which the sparse checkout's cone mode always includes),
+          # beside the packages that carry it.
+          [ -s LICENSE-EXCEPTION ] || { echo "::error::missing release asset LICENSE-EXCEPTION"; exit 1; }
           ls -l packages
 
       # The Release carries the packages and the lockfiles before nuget.org gets them (D-BIND-176),
@@ -132,7 +137,7 @@ jobs:
             --repo "${{ github.repository }}" \
             --title "${{ github.ref_name }}" \
             --generate-notes \
-            packages/*.nupkg packages/*.snupkg packages/*.conan.lock
+            packages/*.nupkg packages/*.snupkg packages/*.conan.lock LICENSE-EXCEPTION
 
   # D-BIND-176: the packages the gate tested, to nuget.org, by Trusted Publishing. The job asks
   # GitHub for an OIDC token and NuGet/login exchanges it for an API key that lives one hour; a

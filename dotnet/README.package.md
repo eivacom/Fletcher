@@ -311,6 +311,36 @@ separate shared library beside a NativeAOT application. Linking the shim statica
 application is not supported, and an application that did so would form a different combined
 work under the LGPL, with the obligations that brings.
 
+## Licence: the Fletcher Linking Exception
+
+`Eiva.Fletcher`, `Eiva.Fletcher.Interop`, `Eiva.Fletcher.Model` and `Eiva.Fletcher.GatewayClient`
+carry `LICENSE-EXCEPTION` beside `LICENSE` and `COPYING`: the Fletcher Linking Exception, version
+1.1, an additional permission under section 7 of the GNU GPL-3.0 that EIVA A/S gives for Fletcher,
+approved by EIVA A/S's legal counsel. It takes effect for a Release that EIVA A/S publishes with it
+beside `LICENSE` and `COPYING` (its section 9). This is a summary; the text in the package is what
+grants the permission.
+
+It permits you to convey an application built with the four managed assemblies Fletcher,
+Fletcher.Interop, Fletcher.Model and Fletcher.GatewayClient, unmodified as a Release ships them,
+under terms of your choice, also when NativeAOT, ReadyToRun, single-file publishing or trimming
+compiles or merges them into your executable. You then need not meet LGPL sections 4(d) and 4(e)
+for those assemblies, but you still meet 4(a) to 4(c): state with the application that it uses
+Fletcher and that Fletcher is under the LGPL, ship `LICENSE` and `COPYING` with it, and show
+Fletcher's copyright notice where the application shows such notices; and your terms must not
+restrict modifying the assemblies' part of the work or reverse engineering to debug such changes.
+Code that `Eiva.Fletcher.Protoc` generates is covered too; its README says how.
+
+It does not extend to a modified assembly, which stays under the LGPL alone, nor to the native
+shims: the edge shim in `Eiva.Fletcher.Interop` and the server shim in `Eiva.Fletcher.Server` stay
+under the LGPL alone, so the relinking route above applies to them as before.
+`Eiva.Fletcher.Server`, which carries only the server shim, does not carry `LICENSE-EXCEPTION`.
+One limitation is stated: whether LGPL sections 4(b) and 4(c) can be met for a single-file, mobile
+or embedded build is unresolved, and the exception does not relax them.
+
+EIVA A/S's copy, in the Fletcher repository and its Releases, is the authoritative text; a copy
+changed by anyone else does not alter it. The earlier public draft (v1.0) in the repository's
+history was never in force.
+
 ## Third-party licences
 
 `THIRD-PARTY-LICENSES.txt` in this package lists the third-party libraries linked into the shim

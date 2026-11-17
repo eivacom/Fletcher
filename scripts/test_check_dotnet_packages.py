@@ -25,6 +25,8 @@
 #   C12 a dependency on the server package outside every target-framework group
 #   C13 a nuspec with no target-framework group at all
 #   C14 a shipped server notice that lacks a library one platform's graph lists
+#   C15 a managed package without LICENSE-EXCEPTION (D-BIND-175)
+#   C16 the server package carrying LICENSE-EXCEPTION (D-BIND-175: a native library only)
 #
 # A refusal counts only if the check exits non-zero AND one single `::error::` line names
 # the package it refused and the thing that is wrong with it. A check that exits 1 for
@@ -70,13 +72,19 @@ def read(path: pathlib.Path, name: str) -> bytes:
         return z.read(name)
 
 
-def mutate(path: pathlib.Path, replace=None, add=None) -> None:
+def mutate(path: pathlib.Path, replace=None, add=None, drop=()) -> None:
     """Rewrite a .nupkg in place: `replace` swaps the bytes of existing entries, `add`
-    appends new ones. Everything else is carried over entry for entry."""
+    appends new ones, `drop` leaves existing ones out. Everything else is carried over
+    entry for entry."""
     replace, add = replace or {}, add or {}
+    with zipfile.ZipFile(path) as z:
+        for name in drop:
+            assert name in z.namelist(), f'{path.name}: {name} to drop is not there'
     tmp = path.with_suffix('.tmp')
     with zipfile.ZipFile(path) as src, zipfile.ZipFile(tmp, 'w') as dst:
         for info in src.infolist():
+            if info.filename in drop:
+                continue
             data = replace.get(info.filename)
             if data is None:
                 data = src.read(info.filename)
@@ -330,6 +338,23 @@ def main() -> int:
             code, out = covers('equal.txt', 'more.txt')
             problem = problem or refusal(out, code, ['windows-only-library'])
         report('C14 a shipped notice missing a library one platform lists is refused (and a subset accepted)', problem)
+
+        # C15: D-BIND-175, the four managed packages carry the Fletcher Linking Exception.
+        folder = scratch(tmp)
+        pkg = package(folder, 'Eiva.Fletcher.Model')
+        mutate(pkg, drop=('LICENSE-EXCEPTION',))
+        code, out = run_check(folder, commit)
+        report('C15 a managed package without LICENSE-EXCEPTION is refused',
+               refusal(out, code, [pkg.name, 'LICENSE-EXCEPTION', 'D-BIND-175']))
+
+        # C16: and the server package, a native library the exception leaves under the LGPL
+        # alone, does not. Its allow-list refuses the entry too; this needle is the named rule's.
+        folder = scratch(tmp)
+        pkg = package(folder, SERVER)
+        mutate(pkg, add={'LICENSE-EXCEPTION': read(package(folder, BASE), 'LICENSE-EXCEPTION')})
+        code, out = run_check(folder, commit)
+        report('C16 the server package carrying LICENSE-EXCEPTION is refused',
+               refusal(out, code, [pkg.name, 'LICENSE-EXCEPTION', 'D-BIND-175', 'native-library']))
 
     print('every control refuses for its own reason' if failures == 0 else f'{failures} control(s) misbehaved')
     return 1 if failures else 0

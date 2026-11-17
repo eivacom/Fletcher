@@ -488,7 +488,7 @@ jobs:
           name: dotnet-native-win-x64
           path: dotnet/native/win-x64
 
-      - name: Stage one notice per shim, the LICENSE and COPYING
+      - name: Stage one notice per shim, the LICENSE, COPYING and LICENSE-EXCEPTION
         shell: bash
         run: |
           set -e
@@ -515,6 +515,9 @@ jobs:
           cp $SHIPPED dotnet/native/licences-server/THIRD-PARTY-LICENSES.txt
           cp LICENSE COPYING dotnet/native/licences/
           cp LICENSE COPYING dotnet/native/licences-server/
+          # D-BIND-175: the Fletcher Linking Exception, for the four managed packages only; the
+          # server package is a native library, which the exception leaves under the LGPL alone.
+          cp LICENSE-EXCEPTION dotnet/native/licences/
           listed dotnet/native/licences/THIRD-PARTY-LICENSES.txt
           # Compiled into the shim from source, so not in the Conan graph: their texts
           # come from the fletcher-* packages that vendor them, and must be here; since

@@ -21,6 +21,9 @@
 #     group; no package carries the probe shim;
 #   * every package carries LICENSE, COPYING (the GPL-3.0 text the LGPL incorporates,
 #     D-BIND-152) and THIRD-PARTY-LICENSES.txt at its root, and the notice is not empty;
+#   * D-BIND-175 (approved by EIVA legal, ruling 2026-11-17): the four managed packages carry
+#     LICENSE-EXCEPTION, the Fletcher Linking Exception, at their root, the tree's text; the
+#     server package, a native library the exception leaves under the LGPL alone, does not;
 #   * BIND-9a-2 (D-BIND-140 to 142, D-BIND-149): every package carries its README.md at
 #     its root, named by the nuspec, and it is dotnet/README.package.md with exactly the
 #     version and the commit filled in (so nothing was lost or mangled on the way, and
@@ -42,6 +45,7 @@ COMMIT=${2:-}
 HERE=$(cd "$(dirname "$0")" && pwd)
 TEMPLATE="$HERE/../dotnet/README.package.md"
 LOADER="$HERE/../dotnet/src/Fletcher.Interop/NativeLoader.cs"
+EXCEPTION="$HERE/../LICENSE-EXCEPTION"
 # shellcheck source=shim_floors.env
 . "$HERE/shim_floors.env"
 fail=0
@@ -139,6 +143,16 @@ for id in Eiva.Fletcher Eiva.Fletcher.Interop $SERVER_ID Eiva.Fletcher.Model Eiv
   done
   if echo "$ENTRIES" | grep -qx THIRD-PARTY-LICENSES.txt; then
     [ "$(member "$PKG" THIRD-PARTY-LICENSES.txt | wc -c)" -gt 200 ] || err "$PKG: THIRD-PARTY-LICENSES.txt is empty"
+  fi
+  # D-BIND-175: the linking exception covers the managed assemblies, not the native libraries.
+  if [ "$id" = "$SERVER_ID" ]; then
+    if echo "$ENTRIES" | grep -qx LICENSE-EXCEPTION; then
+      err "$PKG carries LICENSE-EXCEPTION, which D-BIND-175 does not put in a native-library package (the server shim stays under the LGPL alone)"
+    fi
+  elif ! echo "$ENTRIES" | grep -qx LICENSE-EXCEPTION; then
+    err "$PKG does not carry LICENSE-EXCEPTION at its root (D-BIND-175)"
+  elif ! member "$PKG" LICENSE-EXCEPTION | tr -d '\r' | cmp -s - <(tr -d '\r' < "$EXCEPTION"); then
+    err "$PKG: its LICENSE-EXCEPTION is not the tree's (D-BIND-175)"
   fi
   if echo "$ENTRIES" | grep -qx README.md; then
     nuspec "$PKG" | grep -q "<readme>README.md</readme>" || err "$PKG: the nuspec does not name README.md as its readme"

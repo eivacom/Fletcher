@@ -191,3 +191,20 @@ them from `-p:FletcherLicenceDir=<dir>`, which CI's pack job passes (`Directory.
 package README states the relinking route: how to rebuild the shim from the commit the package
 names, with the Conan lockfile attached to the release, and put it in place of the shipped one
 (D-BIND-140, D-BIND-173).
+
+The four managed packages (`Eiva.Fletcher`, `.Interop`, `.Model`, `.GatewayClient`) also pack
+`LICENSE-EXCEPTION`, the Fletcher Linking Exception v1.1 (D-BIND-175), approved by EIVA A/S's legal
+counsel (ruling 2026-11-17); `Eiva.Fletcher.Protoc` packs it too, and the `dotnet-v*` and
+`protoc-v*` Releases attach it. It is an additional permission under GPL-3.0 section 7: an
+application built with the managed assemblies, unmodified as a Release ships them, may be conveyed
+under terms of its author's choice, NativeAOT, single-file and trimmed builds included, without
+LGPL sections 4(d) and 4(e) for those assemblies but with 4(a) to 4(c); code generated from
+`options.proto` and the generator's output are the consumer's to license. A modified assembly and
+every native library, both shims included, stay under the LGPL alone, so the relinking route above
+still applies to the shims; `Eiva.Fletcher.Server`, which carries only the server shim, does not
+pack the exception, and `check_dotnet_packages.sh` refuses it there and requires it in the four.
+It takes effect with the first Release that carries it (its section 9). Whether LGPL sections 4(b)
+and 4(c) can be met for single-file, mobile or embedded builds is unresolved, and the exception
+does not relax them. EIVA A/S's copy in the repository and its Releases is the authoritative text;
+the earlier public draft (v1.0) was never in force. `PackageLicenseExpression` stays
+`LGPL-3.0-or-later`: NuGet accepts only SPDX identifiers, and the exception only adds permissions.
