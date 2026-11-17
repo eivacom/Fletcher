@@ -690,3 +690,14 @@ Release that carries it. `PackageLicenseExpression` stays `LGPL-3.0-or-later` (D
 *(Chosen options.)* **Rulings:** (1) **D10C's round close runs now** (ledger ingestion, archive, retrospective). (2) **The ship gate
 (2026-11-12) stays until a draft-PR CI run is green on this branch; it lifts then**, not at round close. Merging stays the owner's step.
 **Applies to:** D10C close; the 2026-11-12 ship gate; the `[built]` "CI unrun" qualifiers.
+
+## 2026-11-17 — D10C round close: L9's residue; d9/d7 factual fixes; D-BIND-175
+> L9 residue: "Name it as a residue (Rec.)"
+> d9/d7 notes: "Yes, factual fixes (Rec.)"
+> D-BIND-175: "Annotate it (Rec.)"
+
+*(Chosen options.)* **Rulings:** (1) **d10 L9 names the residue: a shim hand-over failure whose message C# cannot copy (length beyond
+int.MaxValue) arrives as a counted null batch without status**; no code change. (2) **The close commit may correct stale facts in d9
+(§1, D29, L13's body, Findings) and d7 (L15's mark), citing D10C rulings; no law's meaning changes.** (3) **D-BIND-175 is annotated
+"approved by EIVA legal 2026-11-17; wired", text kept.**
+**Applies to:** d10 L9; d9; d7 L15; plans/BIND-locked-decisions.md D-BIND-175.
