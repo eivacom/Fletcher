@@ -925,3 +925,9 @@ Review: [../../docs/archive/D7F/reviews/D7F-1-design-review.md](../../docs/archi
 - DEBT-3 (step 3, a new leg): the handled residue (copying the failure throws) needs a leg: a crafted failure with
   `MessageLen > int.MaxValue` (the `checked` cast throws). Assert one delivery: a null batch, rows counted, reason kept, `Failure == null`.
   If the `try` is left out, the window is lost silently in the thunk's outer catch (`SA:559-562`).
+
+## D10C-11 — the purpose, proven from the packages (APPROVE-WITH-DEBT(4), cycle 1 of 2) — [review](D10C-11-design-review.md)
+- DEBT-1 (step 3): the base arm also requires the shim's text, `&& e.Message.Contains("fletcher-c-abi-server")` (audit 0a (1), :575 (2)). The exact shape stays pinned at `SubscriberArrowTests.cs:190-199`.
+- DEBT-2 (step 3): design :65-66's STOP-AND-ASK can never fire, because `PlatformFloor(rid)` (`NL:226`) is one sentence for both builds. Re-point the premise at `check_shim_dependencies.sh:59` on the server shim (`ci.dotnet.yml:189,379`). Escape the dots: `GLIBCXX_3\.4\.3[12]' not found`.
+- DEBT-3 (close, PM): the qualifier states exactly what ran: Linux only, local; `run.sh` rolled forward (net8.0 legs on .NET 10); `minimal.sh` through a Git Bash docker wrapper (record its command); Windows and CI unrun. Re-run the server below-floor arm after the `minimal.sh:85` edit. :408 (2) gates lifting marks, not the close.
+- DEBT-4 (docs): d10 L5 and L6 cite T46 and `minimal.sh` as from-packages tests, as L7 does (audit 0a, "Laws with no test"). The README's server step is prose or `snippet: none`: no source region holds the server reference (D-BIND-147).
