@@ -547,6 +547,7 @@ CI's renamed-copy staging, :525, retires when it lands). (3) **An out-of-range b
 as FletcherException(InvalidArgument); the 49.7-day cap goes**; supersedes D-BIND-19 rule 4 / D-BIND-20's pre-check for batch options.
 (4) **C# keeps the edge/server split**; D-BIND-1a rider i ("a .NET process is never the microcontroller") is revised by :363 (4).
 **Applies to:** d10 L3, L5, L7, L14, D9, Q1, Q2, Q4; d9 Q5a; register BC-2, BC-8, BC-10.
+*Ingested (D10C close, 2026-11-17): (1) d10 D20, L7 and §2 "Per-row Arrow subscribe"; (2) d10 D21 and L5; d9 Q5a and §6 domain-10 list marked settled; (3) d10 D22, L3, L12 and L14 V5-V8; d7 L15's binding-clause mark set to `[built]`; (4) d10 D23; d9 Findings (d)5 marked ruled. Each cited :536.*
 
 ## 2026-11-15 — D10C pre-round: batched API on edge, dictionaries, hand-over in C#, the old BIND batcher decisions
 > API on edge: "Yes; throws NotSupported (Rec.)"
@@ -562,6 +563,7 @@ status, origin `Handover` (4) and message**; C#'s origin enum gains code 4. (4) 
 D-BIND-59 (3) (null batch = schema not opened only) and C#'s schema-less first-row latch are revised by 2026-11-12 (:203)**; C#
 follows domain 7 (d7 L7, L9, L12).
 **Applies to:** d10 L2, L6, L9, L13, L14, Q3, Q5, Q6; BIND-locked-decisions annotations.
+*Ingested (D10C close, 2026-11-17): (1) d10 D25 and L6; (2) d10 D24 and L14 V12; d9 Q11 marked answered; (3) d10 D26, L2 and L9; (4) d10 D27, L13 and L14 (V1, V2, V4, V11); the BIND annotations (D-BIND-8, -59, -64) in `plans/BIND-locked-decisions.md`. Each cited :551.*
 
 ## 2026-11-15 — D10C: domain 10 confirmed; the round's purpose
 > Confirm d10: "Confirm (Rec.)"
@@ -571,6 +573,7 @@ follows domain 7 (d7 L7, L9, L12).
 C#'s own copy is gone, while an app that does not need batches still runs on the small, Arrow-free shim."
 **Ruling:** **domain 10 (`docs/domains/d10-csharp-binding.md`, at `74bf308`) is `specified`; its Q7 and Q8 defaults stand.**
 **Applies to:** the domain map row 10; the D10C config's `round_purpose`.
+*Ingested (D10C close, 2026-11-17): d10 header status (`specified`, owner-confirmed 2026-11-15); domain-map row 10; d9 §6 domain-10 heading (no longer "anticipated"), cited :566. The purpose was the D10C config's; execution-only beyond that.*
 
 ## 2026-11-15 — D10C pre-round audit: six collisions and the BIND annotations
 > Which loads: "Presence; fail loudly (Rec.)"
@@ -591,6 +594,7 @@ batched subscription to the same topic** (a ruled exception under d10 L3; revise
 (7) **D-BIND-25, D-BIND-63, D-BIND-66 (batched half), D-BIND-68 (scope, put-back) and BIND-5's acceptance clauses are annotated as
 retired for SubscriberArrow.**
 **Applies to:** d10 L3, L5, L7, L9, L14; register BC-10, BC-16 (new); plans/BIND-*.
+*Ingested (D10C close, 2026-11-17): (1) d10 D28 and L5 (correction of :363 (4)); supersession noted, old text kept, on d9 §1, D29 and §6; (2) d10 D29, L3 and L6; (3) d10 D30, L7, L9 and register BC-16; (4) d10 D31 and L3 (correction of :235); (5) d10 D32 and L14 V12; d9 Q11; (6) d10 D33 and L3's ruled refusal (its exception type and claim release added at close); d9 §6 pointer; (7) BIND annotations D-BIND-25, -63, -66, -68 and BIND-5; d10 D19 and Findings (a)4 no longer say "owed". Each cited :575.*
 
 ## 2026-11-15 — D10C ladder: the domain-7 port tests
 > Port tests: "Yes, test-only (Rec.)"
@@ -601,6 +605,7 @@ retired for SubscriberArrow.**
 no domain-7 code or law changes, and d7's document picks up the test names at its next round (revises d10 §8's "by a domain-7 round").
 (2) **The overflow-then-next-window case is proven as a `heavy`-labelled test (~128 MiB rows)**; no test hook in domain 7's code.
 **Applies to:** D10C rung 1; d10 §8.
+*Ingested (D10C close, 2026-11-17): (1) d10 D35 (new) and §8 rule 6 (the four ported tests named; "by a domain-7 round" revised, supersession noted); Q9 closed; the deferral "d7 picks up the names at its next round" in §8 rule 6 (owner: domain 7's next round; 2026-11-15); (2) d10 D35 and §8 rule 6 (the `heavy` case, proven by hand only, accepted risk with :140). Each cited :595.*
 
 ## 2026-11-16 — D10C-5: the server package's id; the BIND packaging annotations
 > Package ID: "Eiva.Fletcher.Server (Rec.)"
@@ -611,6 +616,7 @@ no domain-7 code or law changes, and d7's document picks up the test names at it
 `Eiva.Fletcher.Interop` (d10 L15). (2) **D-BIND-134, -139, -140, -142 and -173 are annotated "extended to five packages / two
 shims (:337 (1))", text kept.**
 **Applies to:** d10 L15, §2; register BC-17; plans/BIND-locked-decisions.md.
+*Ingested (D10C close, 2026-11-17): (1) d10 §1 and §2 "Server package" and L15 (already cited); register BC-17; d9 §1 supersession note; (2) BIND annotations on D-BIND-134, -139, -140, -142 and -173 (already present). Cited :605.*
 
 ## 2026-11-16 — D10C-5: one licence notice for the server package across platforms
 > Notice: "One notice, both lists (Rec.)"
@@ -620,6 +626,7 @@ shims (:337 (1))", text kept.**
 libbacktrace via Boost); D-BIND-140's one notice per package stands. CI's identical-list comparison becomes "each platform's
 list ⊆ the shipped list". Design P4 is recorded as breached and resolved by this ruling.
 **Applies to:** D10C-5; `ci.dotnet.yml` notice step; D-BIND-134/-140.
+*Ingested (D10C close, 2026-11-17): d10 L15 (the one-notice rule, now cited :615); BIND D-BIND-134 annotation (already present); the Windows server notice never produced is part of d10 Q13.*
 
 ## 2026-11-16 — Fletcher Linking Exception v1.1: owner rulings on the open issues
 > 1. Agree on the provisions as drafted. 2. First point: Approved. Second point: Yes, that works. Third point: Probably not, but that is then a limitation. Fourth point: Agreed. Fifth point: I don't see why not? 3. They are covered, they are employees of EIVA, and no, the generators do not reproduce library code. 4. All are approved. 5. Duly noted
@@ -632,6 +639,7 @@ selectable. (2) The whole-Program framing with §5, the eligible-process line, n
 single-file/mobile/embedded builds is a stated limitation**. (3) **The noreply-account commits are EIVA employees' work; the generators
 do not reproduce library code.** (4) The proposed repo changes are approved. (5) The new risks are accepted.
 **Applies to:** `LICENSE-EXCEPTION` v1.1; D-BIND-175; CONTRIBUTING.md, READMEs, licence metadata. The DRAFT notice stays until EIVA legal lifts it.
+*Not ingested: no domain owns licensing (a domain-map finding, recorded in `docs/domain-map.md` "Where this map is incomplete"). Annotated instead on BIND D-BIND-175 (tier 2): (1), (2), (3) (answers D-BIND-175's author question) and (5); (4) was execution-only and has landed. The `license-exception-revision-notes.md` cited above is not in git.*
 
 ## 2026-11-16 — Fletcher Linking Exception: friend assemblies (m6)
 > Internals: "Leave as is"
@@ -639,6 +647,7 @@ do not reproduce library code.** (4) The proposed repo changes are approved. (5)
 *(Chosen option.)* **Ruling:** **no code change for InternalsVisibleTo**; the exception's text alone (code reaching non-public members is
 not an Independent Module) carries m6. Strong-naming and a separate test build were declined.
 **Applies to:** `LICENSE-EXCEPTION` v1.1 m6; Fletcher, Fletcher.Interop, Fletcher.GatewayClient csproj (unchanged).
+*Not ingested: no domain owns licensing. Annotated on BIND D-BIND-175 (tier 2), citing `LICENSE-EXCEPTION:57`.*
 
 ## 2026-11-16 — D10C-5: the stage-size overrun
 > Size: "Accept with owner note (Rec.)"
@@ -646,6 +655,7 @@ not an Independent Module) carries m6. Strong-naming and a separate test build w
 *(Chosen option.)* **Ruling:** **D10C-5 lands whole at net +260 counted production lines (ceiling 250; adds 60% over declared)**; the
 growth is the union-notice check (:615) and BC-17 hardening from review. Not split, not trimmed.
 **Applies to:** D10C-5 close; the round's stage_size_ceiling stays 250 for later stages.
+*Not ingested: execution-only (D10C-5's stage size); nothing forward-relevant.*
 
 ## 2026-11-16 — D10C-7 pre-design: T30 in d10; the preview-consumer red window
 > d10 T30: "Amend detail: delete (Rec.)"
@@ -656,6 +666,7 @@ growth is the union-notice check (:615) and BC-17 hardening from review. Not spl
 V12 drops its T20 citation.** (2) **The preview-bundle consumer's batched path (T46) is a declared red window from D10C-7 until D10C-11**,
 which re-anchors it from packages; nothing ships mid-round.
 **Applies to:** d10 L3, V12; D10C-7..D10C-11; T46.
+*Ingested (D10C close, 2026-11-17): (1) d10 L3 Tests line and L14 V12 (already present, cited :650 (1)). (2) Not ingested: execution-only; the red window expired when D10C-11 re-anchored T46 (d10 L5, L6, L7).*
 
 ## 2026-11-16 — D10C-7: the switch and the deletion are one stage
 > Switch shape: "(d) Merge D10C-8 in (Rec.)"
@@ -665,6 +676,7 @@ which re-anchors it from packages; nothing ships mid-round.
 −160 to −310); rung 8's forcing scans, its sixth forbidden test (T40) and BC-9's narrowing move with it. The round drops to 10 stages;
 D10C-8's tracker row closes as merged.
 **Applies to:** D10C-7, D10C-8; ladder rungs 7–8; plan tracker; d10 L4.
+*Ingested (D10C close, 2026-11-17): d10 L4 (already present, cited :660). The rest (tracker, ladder rungs) is execution-only.*
 
 ## 2026-11-17 — D10C-10: C#'s own take-over failure carries a count only
 > C# loss: "(a) Count only (Rec.)"
@@ -673,6 +685,7 @@ D10C-8's tracker row closes as merged.
 **Ruling:** **when C# itself fails to take over a window, the handler gets a null batch with the rows counted and no error**;
 `BatchStatus.Failure` stays `FletcherException?` and carries only the shim's hand-over failure (:551 (3)). d10 L9's build-state line stands.
 **Applies to:** D10C-10; d10 L9; `BatchStatus.Failure`.
+*Ingested (D10C close, 2026-11-17): d10 L9's statement (the first named residue) and body, and D26 (`Failure` carries only the shim's hand-over failure). Each cited :669.*
 
 ## 2026-11-17 — Fletcher Linking Exception: legal approval; pack it
 > "EIVA legal has approved, you can pack it now"
@@ -682,6 +695,7 @@ D10C-8's tracker row closes as merged.
 READMEs/CONTRIBUTING say what it permits. The DRAFT notice is lifted in the repo text; per §9 the exception takes effect with the first
 Release that carries it. `PackageLicenseExpression` stays `LGPL-3.0-or-later` (D-BIND-175). REUSE.toml (M9), deferred only for the DRAFT, may land.
 **Applies to:** D-BIND-175; LICENSE-EXCEPTION; CONTRIBUTING.md; READMEs; ci.dotnet, ci.protoc, package checks.
+*Not ingested: no domain owns licensing. Annotated on BIND D-BIND-175 (tier 2): "approved by EIVA legal 2026-11-17; wired (packed, CI, Releases)", DRAFT status lifted, text kept.*
 
 ## 2026-11-17 — D10C round close; the ship gate
 > Round close: "Yes, run round close (Rec.)"
@@ -690,6 +704,7 @@ Release that carries it. `PackageLicenseExpression` stays `LGPL-3.0-or-later` (D
 *(Chosen options.)* **Rulings:** (1) **D10C's round close runs now** (ledger ingestion, archive, retrospective). (2) **The ship gate
 (2026-11-12) stays until a draft-PR CI run is green on this branch; it lifts then**, not at round close. Merging stays the owner's step.
 **Applies to:** D10C close; the 2026-11-12 ship gate; the `[built]` "CI unrun" qualifiers.
+*Ingested (D10C close, 2026-11-17): (2) d10 §1 Refuses, D4 (current position; "before the switch lands" superseded, noted), the header's evidence note and the new Q13 (owner: the owner; trigger: the first green draft-PR CI run); domain-map planned order 6 and row 10. Each cited :686 (2). (1) Not ingested: execution-only (this close).*
 
 ## 2026-11-17 — D10C round close: L9's residue; d9/d7 factual fixes; D-BIND-175
 > L9 residue: "Name it as a residue (Rec.)"
@@ -701,3 +716,4 @@ int.MaxValue) arrives as a counted null batch without status**; no code change. 
 (§1, D29, L13's body, Findings) and d7 (L15's mark), citing D10C rulings; no law's meaning changes.** (3) **D-BIND-175 is annotated
 "approved by EIVA legal 2026-11-17; wired", text kept.**
 **Applies to:** d10 L9; d9; d7 L15; plans/BIND-locked-decisions.md D-BIND-175.
+*Ingested (D10C close, 2026-11-17): (1) d10 L9's statement (the second named residue) and body, and D26, cited :694 (1); (2) applied: d9 §1, L13 Tests, D29, §6 domain-10 list, Q5a, Q9, Q11 and Findings (d)5-6; d7 L15's mark; each note cites the D10C ruling and :694 (2); no law's meaning changed; (3) BIND D-BIND-175 annotated, text kept.*

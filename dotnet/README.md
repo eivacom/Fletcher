@@ -160,8 +160,8 @@ per copy, so a second copy in one process would serve a re-entrant call that mus
 silently. The shim therefore links every Fletcher component it uses, and when it loads it looks for
 another module exporting its marker (`fl_single_copy_marker`); if it finds one, every call that can
 fail is refused, with a message naming both modules. For an application this means no second
-`fletcher-c-abi` loaded beside the one `Eiva.Fletcher.Interop` brings, for example by a plugin that
-carries its own. The case it cannot detect, a C++ host that links Fletcher statically and also
+shim loaded beside the one the packages bring (the edge shim from `Eiva.Fletcher.Interop`, or the
+server shim from `Eiva.Fletcher.Server`), for example by a plugin that carries its own. The case it cannot detect, a C++ host that links Fletcher statically and also
 hosts .NET, is ruled out rather than checked: the consumers are .NET processes hosting this binding
 only.
 
@@ -179,7 +179,9 @@ extracted elsewhere, and so does a host that loads the package straight from the
 (.NET Interactive's `#r "nuget:"`, dotnet-script, F# Interactive), where the package's
 `runtimes/` folder is not beside the loaded assembly. None of these was documented or tested.
 A file that is present but will not load is not skipped: the message names it, says which
-build it is, and the remedy is to remove it or replace it.
+build it is, and the remedy is to remove it or replace it. The choice is made once per
+`AssemblyLoadContext`, and a refused load stays refused there; it reaches the app as a
+`TypeInitializationException` whose inner `DllNotFoundException` names the file and the reason.
 
 A transport is chosen by its selector string, and C# never implements one (D-BIND-24): the shim
 registers the three built-in providers itself, and managed code can neither register a provider nor

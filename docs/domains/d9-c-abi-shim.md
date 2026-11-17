@@ -54,7 +54,10 @@ containment.
 - **Server-tier variant** `[built]` (D9S-2..5b; the in-callback and idle close by D9S-5b: `Batches.EveryCloseEndsWithExactlyOneClosingDelivery`, `Batches.ARefusedBatchedSubscribeNeverDelivers`): the edge surface plus `pubsub-arrow`'s batched
   subscribe (domain 7). Ships in its own .NET package, a full shim (D22). A C# app loads it only if
   it references the server package; otherwise it loads the edge build (D29, revising in place
-  D19's "C# on desktop loads the server variant"; domain 10, next round).
+  D19's "C# on desktop loads the server variant"; domain 10, next round). *Corrected at D10C close
+  (2026-11-17, ruling :694 (2)):* "references" became "is present beside the app" (ledger :575 (1),
+  d10 D28): a present server shim is loaded, one present but unloadable stops the load loudly, and
+  there is no fallback; the package is `Eiva.Fletcher.Server` (ledger :605 (1)); built by D10C-4/-5.
 
 **Refuses:**
 - **Answering the seam's questions again.** Topic validation, options checks, re-entrancy,
@@ -371,6 +374,9 @@ the added batched subscribe is `[built]` (D9S-4a, with each row's attachments D9
   with a `cmp` guard and its control (ruling 2026-11-14, ledger :525, for the staging only); the corpus stays the
   edge build's, so the server pass compares server bytes with edge bytes (a design choice, not ruled). The
   mechanism lives in `integration-tests/binding-abi-conformance/README.md` (D9S, 2026-11-14).
+  *Corrected at D10C close (2026-11-17, ruling :694 (2)):* the renamed-copy staging and its `cmp` guard are
+  retired (D10C-4, under ledger :536 (2)): C#'s loader picks the server file by its own name, so both lanes stage
+  `fletcher-c-abi-server` as itself (d10 L5, D16, D21).
 
 **L14. A batch crosses as an Arrow C Data Interface array and schema, borrowed for the batch
 callback; a binding keeps it only by moving it.** *(Amended 2026-11-13, D26.)* The batch callback is
@@ -546,7 +552,7 @@ in its own .NET package (D22); the NuGet-level name stays domain 10's (Q5a).
 | D26 | **A batch handed to a callback is borrowed for the call; a binding keeps it only by moving it** (Arrow's C Data Interface move); what is not moved the shim releases when the callback returns. L11 holds; L14 amended. Resolves audit B1. | Owner ruling 2026-11-13, "Batch owner: Borrowed; keep by moving" ([RIX-rulings.md](../../plans/RIX-rulings.md), "D9S pre-round: batch ownership, version, error code, what C# loads") |
 | D27 | **Both builds share one ABI version, and both bump** with the shim round. Recorded scope exception: the round edits one line of domain 10, the C# loader's expected version (`HeaderVersionMinor`, `dotnet/src/Fletcher.Interop/NativeLoader.cs`), in the same commit as the bump. Resolves Q8 and audit LC-1 / OQ-1 (L6, L12). | Owner ruling 2026-11-13, "Version: One version; edit the line" |
 | D28 | **`FL_NOT_SUPPORTED` is reused; its meaning widens to "this provider or this build cannot do this"**; no new status number. Resolves Q3's residue and audit LC-2 (L2, L12, §2). | Owner ruling 2026-11-13, "Error code: Reuse, widen meaning" |
-| D29 | **Revision in place of D19's "C# on desktop loads the server variant":** a C# app loads the server build only if it references the server package, otherwise the edge build. Consequence owned by the C# switch round: C#'s per-row subscribe must work on the edge build, without a batcher (§6). Resolves audit R-2 / F2. | Owner ruling 2026-11-13, "C# loads: Depends on package" |
+| D29 | **Revision in place of D19's "C# on desktop loads the server variant":** a C# app loads the server build only if it references the server package, otherwise the edge build. Consequence owned by the C# switch round: C#'s per-row subscribe must work on the edge build, without a batcher (§6). Resolves audit R-2 / F2. *Revised 2026-11-15 by ledger :575 (1) (d10 D28):* "references the server package" became "the server shim is present beside the app; a present one that will not load stops the load, no fallback"; the per-row consequence is built (d10 L7, D20). Noted at D10C close (ruling :694 (2)). | Owner ruling 2026-11-13, "C# loads: Depends on package"; ledger :575 (1) |
 | D30 | **A batch the shim cannot hand over is reported, never lost silently:** a "no batch could be built" delivery for that window, its rows counted as dropped, its reason kept; one site in the shim (register BC-12); domain 7 untouched. Recorded as law L18. Resolves audit census C5 / F12. | Owner ruling 2026-11-13, "Lost handoff: Report it as lost" ("D9S pre-round: a failed handoff is reported; corrections approved") |
 | D31 | **The audit's tier-2 text corrections are approved** and applied before the round: F1 (L12), F3 (L4, §1), F4 (L1), F6 (L6), F7 (L7), F9 (L12, D14), F15 (§8); F17-F19 (BIND annotations); F10, F22, F23 (`binding.h` comments); F24-F26 (`c-abi/README.md`); F27 (ledger notes). | Owner ruling 2026-11-13, "Corrections: Approve all as listed" |
 | D32 | **A failed hand-over carries its status and message; d9 §1 holds.** `fl_batch` gains a trailing `const fl_error* failure`, NULL unless the window's hand-over failed, and `fl_origin` gains `FL_ORIGIN_HANDOVER = 4`, both on D9S-1's 0.8 bump (D27); no status number. The failure is borrowed for the callback, so L2 gains that clause (a law change this ruling authorises). Settles L18's shape and Q12's hand-over half. Forward note (domain 10): C#'s `FletcherOrigin` stops at 3 (`dotnet/src/Fletcher/FletcherException.cs:62-75`); the C# switch round mirrors code 4 and never disposes `failure`. | Owner ruling 2026-11-14, "(b) Keep the promise" ([RIX-rulings.md](../../plans/RIX-rulings.md), "D9S-6: a failed hand-over still carries its status and message", :512) |
@@ -570,18 +576,23 @@ in its own .NET package (D22); the NuGet-level name stays domain 10's (Q5a).
   refusal passed through (BC-8); no batching of its own (BC-9). Domain 7's L9 exceptions (closing from
   inside a batch callback does not wait) and L12 reach C callers through the shim. A batch the shim
   cannot hand over is reported by the shim (L18, D30); domain 7 is untouched by that rule.
-- **Domain 10 (C# binding), anticipated.** Loads the shim; owns the handshake's managed half,
+- **Domain 10 (C# binding)**, `specified` 2026-11-15 (ledger :566; it read "anticipated"). Loads the shim; owns the handshake's managed half,
   `Timeout.Infinite` mapping, `SafeHandle`s, managed refusals (D-BIND-18, -51), and the deletion of
   the managed batcher once it reaches domain 7 through the server variant.
   - **What a C# app loads** (D29, 2026-11-13, revising D19): the server build only if the app
     references the server package; otherwise the edge build. **Consequence, owned by the C# switch
     round:** C#'s per-row subscribe must then work on the edge build, without a batcher.
+    *Settled at D10C (noted at close, ruling :694 (2)):* "references" became "present" (ledger :575 (1),
+    d10 D28); per-row runs on the native per-row path on both packages (ledger :536 (1), d10 D20, L7).
+  - **The same-topic mix in C#** (D33): C#'s `SubscriberArrow` refuses a row and a batched subscription to
+    one topic in managed code (ledger :575 (6), d10 D33, L3); C and C++ keep "documented, not refused".
   - **Origin 4 and `fl_batch.failure`** (D32): C#'s `FletcherOrigin` stops at 3
     (`FletcherException.cs:62-75`); the C# switch round mirrors `FL_ORIGIN_HANDOVER` and never
-    disposes a batch's `failure` (borrowed, L2).
+    disposes a batch's `failure` (borrowed, L2). *Built (D10C-2, D10C-10; d10 L2, L8, L9, D26).*
   - **The one line this round edits in domain 10** (D27): `HeaderVersionMinor` in
     `dotnet/src/Fletcher.Interop/NativeLoader.cs`, in the bump's commit (L6).
-  - **Collisions registered for the C# switch round** (audit, not ruled here):
+  - **Collisions registered for the C# switch round** (audit, not ruled here; *both ruled 2026-11-15:
+    R-3 by ledger :536 (1), d10 D20; R-4 by ledger :536 (3) and :575 (4), d10 D22, D31*):
     **R-3** (F21): D-BIND-59 (1) and the 2026-11-12 "Shim only" (2) make C#'s per-row
     `SubscriberArrow.Subscribe` a batched one with `MaxRows = 1`; on the base package (edge build)
     there is no batcher once the managed one is deleted (d7 D16). Either it moves to
@@ -598,6 +609,10 @@ in its own .NET package (D22); the NuGet-level name stays domain 10's (Q5a).
     or with lists and floors of its own, and whether the server package gets a size ceiling of its
     own (D-BIND-157 stays on the base package, D22).
     Once settled, CI's D9S-7 staging of the server shim under the edge file name (ruling 2026-11-14, ledger :525) retires.
+    *Settled by domain 10 (noted at D10C close, ruling :694 (2)):* distinct names, the server package depends on
+    the base one, the loader prefers a present server shim (ledger :536 (2), d10 D21; refined by :575 (1), D28);
+    the same DLL list and floors, and a ceiling of its own, 18,000,000 bytes (d10 Q7, L15). The staging retired
+    in D10C-4.
 - **Domain 5 (gateway).** Not a consumer: `Eiva.Fletcher.GatewayClient` has its own managed codec
   and batcher (D-BIND-1's one exception; BC-9).
 
@@ -610,13 +625,13 @@ in its own .NET package (D22); the NuGet-level name stays domain 10's (Q5a).
 | Q3 | Resolved 2026-11-13 (D23, L12): one surface; the edge build exports the batched entry points and refuses them by name. Residue resolved 2026-11-13 (D28, audit LC-2): "named" is `FL_NOT_SUPPORTED` plus a message; its meaning widens to "this provider or this build cannot do this"; no new number. | — |
 | Q4 | Resolved by D9S-3 (`52a0103`): `scripts/check_edge_arrow_free.sh` checks the edge build's graph and the edge shim's names for Arrow C++ by name (BC-11); Windows by hand, Linux and CI unrun. | — |
 | Q5 | Resolved 2026-11-13 (D22): the server variant ships in its own .NET package; D-BIND-157 stays on the base package; D-BIND-13 and -17 revised. | — |
-| Q5a | Packaging residue the ruling does not settle: do the two packages' native files have distinct names (so both can sit in one app's output), does the server package depend on the base one, how does a binding choose which to load, and does the server package get a size ceiling of its own? **The shim-side half is resolved (owner ruling 2026-11-13, D9S-2 Decision 1): the server build's file is `fletcher-c-abi-server`.** **Registered 2026-11-13 as domain-10 questions in §6**, together with R-9 (D-BIND-148 / -149 for the server shim). | domain 10 (C# switch round), with the shim round for the native file name |
+| Q5a | Packaging residue the ruling does not settle: do the two packages' native files have distinct names (so both can sit in one app's output), does the server package depend on the base one, how does a binding choose which to load, and does the server package get a size ceiling of its own? **The shim-side half is resolved (owner ruling 2026-11-13, D9S-2 Decision 1): the server build's file is `fletcher-c-abi-server`.** **Registered 2026-11-13 as domain-10 questions in §6**, together with R-9 (D-BIND-148 / -149 for the server shim). **Settled 2026-11-15 by d10 D21 (ledger :536 (2)), refined by D28 (:575 (1)); the ceiling by d10 Q7 (D10C-5); built by D10C-4/-5.** Noted at D10C close (ruling :694 (2)). | — |
 | Q6 | How do a batch's row-aligned attachments, `BatchStatus` and a null batch cross? Per-row `fl_attachments` handles, a flattened form, or a C Data column? **Resolved for `BatchStatus` and the null batch (D9S-4a):** `int32_t reason`, `int64_t rows_dropped`, and `array == schema == NULL` for no batch (a zero-row batch has an array). **Attachments resolved (D9S-4b, `[built]`):** one `fl_attachments` per row, an empty set rather than a NULL entry, the list NULL exactly when the batch has no rows. | shim round (4b), then owner if it widens the seam's vocabulary |
 | Q7 | How are `kNoTimeout` and L15's refusal expressed in the C signature: an `int64_t timeout_ms` with `INT64_MAX` as no timeout (as `fl_schema_arrival_wait` does), and `FL_INVALID_ARGUMENT` with domain 7's message? D-D7O-1 says a plain value; confirm the field width. **Resolved (D9S-4a):** `int64_t max_rows` and `int64_t timeout_ms`, `INT64_MAX` is `kNoTimeout` untranslated; the refusal is domain 7's, passed through (tested D9S-5a: `Batches.EveryBatchOptionReachesDomain7AsGiven`). | — |
 | Q8 | Resolved 2026-11-13 (D27, audit LC-1): one `FL_BINDING_ABI_VERSION` for both builds, and both bump; the C# loader's expected minor moves in the same commit (the named scope exception, L6). | — |
-| Q9 | After the C# switch, `fl_decode_rows_framed` exists only for the deleted managed batcher. Does it stay (L13: the edge surface is unchanged) or go (a 0.x minor may remove it)? Also carries Findings (d)6. | C# switch round (domain 10) |
+| Q9 | After the C# switch, `fl_decode_rows_framed` exists only for the deleted managed batcher. Does it stay (L13: the edge surface is unchanged) or go (a 0.x minor may remove it)? Also carries Findings (d)6. **Default taken (d10 Q8):** it stays; C# stopped importing it (D10C-7); removing it is a later d9 stage's, recorded as d9 debt. Noted at D10C close (ruling :694 (2)). | domain 9, a later stage |
 | Q10 | Which consumer loads the edge variant once C# desktop moves? "Embedded devices" has no RID today (D-BIND-27: `win-x64`, `linux-x64`; `linux-arm64` first addition). Partly answered 2026-11-13 (D29): a C# app that does not reference the server package loads the edge build. The embedded-device consumer remains open. | owner |
-| Q11 | A batched dictionary column arrives re-folded (domain 2's `BatchDecoder`), while `fl_decode_rows` returns its value type (D-BIND-39, D-BIND-59). Is that difference intended for a server-variant caller? | domain 2, with domain 10 |
+| Q11 | A batched dictionary column arrives re-folded (domain 2's `BatchDecoder`), while `fl_decode_rows` returns its value type (D-BIND-39, D-BIND-59). Is that difference intended for a server-variant caller? **Answered for C# (ledger :551 (2), :575 (5); d10 D24, D32):** yes; a batch delivers the column re-folded, per row its value type, and C# converts nothing. Noted at D10C close (ruling :694 (2)). | domain 2, for other bindings |
 | Q12 | Which `fl_origin` does the edge build's `FL_NOT_SUPPORTED` refusal carry, and which a failed hand-over on domain 7's batch thread (L18)? `FL_ORIGIN_SEAM` is "a `PubSubError` from the seam". A new enumerator is the shim's own (append, bump, L6), not a seam stop-and-ask (audit F5). **Edge half resolved (D9S-4a): `FL_ORIGIN_SEAM`**, as every refusal the shim makes itself; the comment on `FL_ORIGIN_SEAM` widens to "...or the shim's own refusal of an argument or of a call this build cannot serve" and D-BIND-54 switches only on (`FL_INVALID_ARGUMENT`, `FL_ORIGIN_CODEC`), so it is unaffected. **Hand-over half resolved (D9S-6, D32): `FL_ORIGIN_HANDOVER` (4)**, appended, on D9S-1's bump. | — |
 | Q13 | Build every shim (edge, server, probe, handover-fault, edge twin) through one CMake function, from its variant. Until then the edge twin (`fletcher-c-abi-edge-twin`, `c-abi/tests/CMakeLists.txt`) is a hand copy of the edge recipe, and `TwoBuilds`'s build assertion catches only a change to the variant define, not drift in sources, flags or links (L5, L17). From D9S-7 design debt DEBT-2 (D9S, 2026-11-14). | a later d9 stage |
 | LC-1 | Audit owner confirmation: does the edge build's minor bump, with one version for both builds? **Resolved 2026-11-13 (D27).** | — |
@@ -712,7 +727,11 @@ Items 2-4 resolved by the 2026-11-13 packaging ruling (D22); item 6 handed to th
 5. **D-BIND-1a rider i ("a .NET process is never the microcontroller", so the edge/server split "may
    not need mirroring in C#") vs the variant split now being mirrored in what C# loads.** Probably
    compatible (desktop C# loads server); listed because the rider argued the opposite direction.
-   Since D29 a C# app chooses its build by package; still unruled (audit R-10, low).
+   Since D29 a C# app chooses its build by package; still unruled (audit R-10, low). **Ruled 2026-11-15
+   (ledger :536 (4), d10 D23):** C# keeps the edge/server split; rider i is revised by :363 (4). Noted at
+   D10C close (ruling :694 (2)).
 6. **D-BIND-25's managed Arrow tier and D-BIND-68's `fl_decode_rows_framed`** exist for the batcher the
    2026-11-12 ruling deletes (d7 D16 records D-BIND-25's supersession; D-BIND-68 is not mentioned).
-   **Owned by the C# switch round (domain 10)**, with Q9.
+   **Owned by the C# switch round (domain 10)**, with Q9. **Done:** D-BIND-25, -63, -66 (batched half) and
+   -68 annotated as retired for `SubscriberArrow` (2026-11-15, ledger :575 (7); d10 D19); `fl_decode_rows_framed`
+   stays (Q9). Noted at D10C close (ruling :694 (2)).

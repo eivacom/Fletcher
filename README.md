@@ -320,9 +320,10 @@ The packages call the C ABI shim, so build `c-abi/` into the Conan cache first (
 conan create integration-tests/copy-probe --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 conan create c-abi/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release -o "&:with_probe_shim=True"
 conan create c-abi/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release -o "&:variant=server"
+(cd c-abi && conan build . --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release -o "&:variant=server" -o "&:run_tests=True" -c tools.build:skip_test=True)
 cd dotnet
 dotnet build Fletcher.slnx -c Release
-dotnet test Fletcher.slnx -c Release -p:FletcherNativeShim=<path to libfletcher-c-abi.so or fletcher-c-abi.dll> -p:FletcherProbeShim=<path to libfletcher-c-abi-probe.so or fletcher-c-abi-probe.dll> -p:FletcherServerShim=<path to libfletcher-c-abi-server.so or fletcher-c-abi-server.dll>
+dotnet test Fletcher.slnx -c Release -p:FletcherNativeShim=<path to libfletcher-c-abi.so or fletcher-c-abi.dll> -p:FletcherProbeShim=<path to libfletcher-c-abi-probe.so or fletcher-c-abi-probe.dll> -p:FletcherServerShim=<path to libfletcher-c-abi-server.so or fletcher-c-abi-server.dll> -p:FletcherHandoverFaultShim=<path under c-abi/build to libfletcher-c-abi-handover-fault.so or fletcher-c-abi-handover-fault.dll>
 ```
 
 [`dotnet/README.md`](dotnet/README.md) has the details (the probe shim, NativeAOT, locked restores).

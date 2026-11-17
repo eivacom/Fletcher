@@ -816,7 +816,7 @@ Review: [../../docs/archive/D7F/reviews/D7F-1-design-review.md](../../docs/archi
 
 ## D7F-3 — one batch thread, in order, nothing lost at close (cycle 1 NEEDS-REWORK; cycle 2 APPROVE-WITH-DEBT(2)) — [review](../../docs/archive/D7F/reviews/D7F-3-design-review.md)
 - ~~DEBT-1..3 (deadline forbid, `notify_all`, benchmark and fastdds Files-to-touch)~~ Folded into design revision 2 (§2, §1, Files-to-touch).
-- **C2-1 (PM-facing, before the owner reads the brief):** Remove the destructor from Decision 2. Destroying over a provider inside its own delivery is already forbidden (§6 clause 5, ruling 2026-09-05; `sub:556-578`), and the program stops under either option. Scope (b)'s "No hang" to the subscription's own provider.
+- **C2-1 (PM-facing, before the owner reads the brief):** *(Left open for D7F's own round to confirm; not D10C's, noted at D10C close, 2026-11-17.)* Remove the destructor from Decision 2. Destroying over a provider inside its own delivery is already forbidden (§6 clause 5, ruling 2026-09-05; `sub:556-578`), and the program stops under either option. Scope (b)'s "No hang" to the subscription's own provider.
 - ~~**C2-2:** the provider token and the third `Stop` case.~~ Landed in D7F-3 (`5b4e807`): `SubscriberArrow::provider_token_` (private, hpp), `Stop`'s `InsideDeliveryOn(provider_)` case moves and detaches `thread_`; the "may not free" case is in the hpp `Unsubscribe` doc, the README and d7 L9.
 
 ## D7O-1 — nonsensical options are refused (APPROVE-WITH-DEBT(1), cycle 1 of 2) — [review](../../docs/archive/D7O/reviews/D7O-1-design-review.md)
@@ -832,63 +832,63 @@ Review: [../../docs/archive/D7F/reviews/D7F-1-design-review.md](../../docs/archi
 - ~~DEBT-3 (step 3): verdict/pre-size split test~~ Landed in `c18e95e` (`AFailedPreSizeDoesNotMakeTheSchemaUnusable`).
 - ~~DEBT-4 (step 3, docs): BC-3 gap, d7 Findings, BC-8 hint clause, bitmap residue~~ Landed in `c18e95e` (d7 Q8 and Findings (d); register BC-3, BC-8).
 
-## D9S-2 — the shim's server build (APPROVE-WITH-DEBT(4), cycle 1 of 2) — [review](D9S-2-design-review.md)
+## D9S-2 — the shim's server build (APPROVE-WITH-DEBT(4), cycle 1 of 2) — [review](../../docs/archive/D9S/reviews/D9S-2-design-review.md)
 - ~~DEBT-1 (D9S-7): P3 fires when rung 10 creates a server package in the conformance lane. Re-anchor `ci.integration-test.binding-abi-conformance.yml:86, :150` with `locate_shim.sh` in that commit, and annotate ladder rung 9's "Builds on" with R1's 10–20 lines.~~ Landed in the D9S-7 stage commit `f1a099e` (both lookups by package identity; `docs/archive/D9S/D9S-test-ladder.md` rung 9 annotated).
 - ~~DEBT-2~~ Applied to the brief before the owner read it (`fd6dcd2`).
 - ~~DEBT-3~~ Recorded at close: production +339/−74 (D9S-2 brief As landed).
 - ~~DEBT-4~~ Landed in `0a43e99` (server shim size printed on both legs, not enforced).
 
-## D9S-3 — the edge build carries no Arrow C++, by name (APPROVE-WITH-DEBT(3), cycle 1 of 2) — [review](D9S-3-design-review.md)
+## D9S-3 — the edge build carries no Arrow C++, by name (APPROVE-WITH-DEBT(3), cycle 1 of 2) — [review](../../docs/archive/D9S/reviews/D9S-3-design-review.md)
 - ~~DEBT-1~~ Applied to the brief and design (`3dcfd69`).
 - ~~DEBT-2~~ Landed in `52a0103` (check runs before the size ceilings on both legs).
 - ~~DEBT-3~~ Landed before 0b (graph control uses step 1's test; both packages required).
 
-## D9S-4 — batches cross the shim (cycle 1 NEEDS-REWORK; cycle 2 APPROVE-WITH-DEBT(3)) — [review](D9S-4-design-review.md)
+## D9S-4 — batches cross the shim (cycle 1 NEEDS-REWORK; cycle 2 APPROVE-WITH-DEBT(3)) — [review](../../docs/archive/D9S/reviews/D9S-4-design-review.md)
 - ~~DEBT-1~~ Applied in design cycle 2 (H3 says "a failed hand-over"; the catch encloses thunk steps 1–4).
 - ~~DEBT-2 (step 3, 4a): a fourth `Reason` must fail the build~~ Landed in `e766c3e` (exhaustive `switch` in `batches_server.cpp`, switch warning as error; d9 L1, `ReasonOf`).
 - ~~DEBT-3 (step 3, 4a header doc): the same-topic arrival wording~~ Landed in `e766c3e` (`binding.h` same-topic bullet; d9 Findings b2).
 - ~~DEBT-4 (PM): D-D9S-8 fPIC annotation, tracker rows~~ Landed in `5b36a63` (`docs/archive/D9S/D9S-locked-decisions.md`, `docs/archive/D9S/D9S-plan.md`).
 
-## D9S-5a — close from outside, borrow-and-move, options as given (APPROVE-WITH-DEBT(4), cycle 1 of 2) — [review](D9S-5a-design-review.md)
+## D9S-5a — close from outside, borrow-and-move, options as given (APPROVE-WITH-DEBT(4), cycle 1 of 2) — [review](../../docs/archive/D9S/reviews/D9S-5a-design-review.md)
 - ~~DEBT-1 (step 3, docs): BC-13 / d9 L14 marks, the untagged id, the row-delivery clause~~ Landed in `ea49aa3` and `640e8cd` (register BC-13, d9 L14 and §4, `binding.h`).
 - ~~DEBT-2 (step 3, tests): one sink per subscription, counts before teardown~~ Test item, landed with `ea49aa3` (`test_batches.cpp`).
 - ~~DEBT-3 (PM): trim the brief~~ Process item, landed in `c7220e2`.
 - ~~DEBT-4 (step 3, close): shared truth-table body, table-driven G2, test-line report~~ Test and process item, reported at close (`ad69f4a`, `docs/archive/D9S/D9S-progress-log.md`).
 
-## D9S-5b — every close ends with one closing delivery (cycle 1 NEEDS-REWORK, B1 answered by ruling :493; cycle 2 APPROVE-WITH-DEBT(3)) — [review](D9S-5b-design-review.md)
+## D9S-5b — every close ends with one closing delivery (cycle 1 NEEDS-REWORK, B1 answered by ruling :493; cycle 2 APPROVE-WITH-DEBT(3)) — [review](../../docs/archive/D9S/reviews/D9S-5b-design-review.md)
 - ~~**DEBT-1**~~ Resolved in cycle 2: brief :8-9 and :40-42, design :22.
 - ~~**DEBT-2**~~ Resolved in cycle 2: F1 has cell (d); D18/D19 record only the rulings.
 - ~~DEBT-3 (PM)~~ landed: D-D9S-8 annotated with both 2026-11-14 widenings.
 - ~~DEBT-4 (step 3): m4 is an equivalent mutant~~ Landed in `3903911` (design rule 3 and m4 restated as DEBT-4 (b); F2 reported as the external proof).
 - ~~DEBT-5 (code commit): "no batch arrives before the call returns" is false~~ Landed in `60ff057` (`binding.h`, the C++ hpp and README: correlate by `ctx`).
 
-## D9S-6 — a batch the shim cannot hand over still arrives, counted (cycle 1 NEEDS-REWORK, B1 + B2 STOP-AND-ASK; cycle 2 APPROVE-WITH-DEBT(2), B2 answered by ruling :504) — [review](D9S-6-design-review.md)
+## D9S-6 — a batch the shim cannot hand over still arrives, counted (cycle 1 NEEDS-REWORK, B1 + B2 STOP-AND-ASK; cycle 2 APPROVE-WITH-DEBT(2), B2 answered by ruling :504) — [review](../../docs/archive/D9S/reviews/D9S-6-design-review.md)
 - ~~DEBT-1~~ Resolved in cycle 2: restated as "held by name" (design 4(iii), P2, corner case 7; brief risk).
 - ~~DEBT-2~~ Applied in cycle 2: design step 6 (d9 L1). Lands with the docs.
 - ~~DEBT-3~~ Applied in cycle 2: design l.103-104 (one batched subscription per cell).
 - ~~DEBT-4 (step 3, docs; PM): `fl_error` paragraph, D32, d9 §6 domain 10~~ Landed in `abc0776` (`binding.h`; d9 L2, D32, §6).
 - ~~DEBT-5 (step 3, code): a half-built attachment set leaks on OOM~~ Landed in `abc0776` (`handles.hpp`, `fl_attachments`' constructor deletes the built blocks; untested, d9 Findings c).
 
-## D9S-7 — two builds in one process; C# against both (APPROVE-WITH-DEBT(4), cycle 1 of 2) — [review](D9S-7-design-review.md)
+## D9S-7 — two builds in one process; C# against both (APPROVE-WITH-DEBT(4), cycle 1 of 2) — [review](../../docs/archive/D9S/reviews/D9S-7-design-review.md)
 - ~~DEBT-1~~ landed `157d3c3` (`env -u LD_LIBRARY_PATH`).
 - ~~DEBT-2 (round close or a later d9 stage): one CMake function for every shim~~ Migrated to d9 §7 Q13 (D9S close, 2026-11-14); `c-abi/tests/CMakeLists.txt` points there.
 - ~~DEBT-3~~ landed `157d3c3` (dead line and design paragraph deleted).
 - ~~DEBT-4~~ landed: d9 §6 domain-10 list notes the staging retires with Q5a; ladder rung 10 credits :516 for the staging only.
 
-## D10C-3 — per-row `SubscriberArrow.Subscribe` on the native path (APPROVE-WITH-DEBT(3), cycle 1 of 2) — [review](D10C-3-design-review.md)
+## D10C-3 — per-row `SubscriberArrow.Subscribe` on the native path (APPROVE-WITH-DEBT(3), cycle 1 of 2) — [review](../../docs/archive/D10C/reviews/D10C-3-design-review.md)
 - ~~DEBT-1~~ resolved: leg remarks name the delivery-exit free; release observed by `ReentrancyTests.TheReleaseRunsExactlyOnceWhereverTheSubscriptionIsFreed` (D10C-3 close).
 - ~~DEBT-2~~ resolved: release after `Self.Free()`, no catch, must-not-throw contract (`Subscriber.cs:380`, 4a F1) (D10C-3 close).
 - ~~DEBT-3~~ resolved: brief/design restated to 130–160 (commits 5b311af, 779dbda); landed net 125 excl. comments.
 
-## D10C-4 — the loader picks the shim (cycle 1 NEEDS-REWORK, 1 BLOCKER; cycle 2 APPROVE-WITH-DEBT(2)) — [review](D10C-4-design-review.md)
+## D10C-4 — the loader picks the shim (cycle 1 NEEDS-REWORK, 1 BLOCKER; cycle 2 APPROVE-WITH-DEBT(2)) — [review](../../docs/archive/D10C/reviews/D10C-4-design-review.md)
 - ~~DEBT-1~~ resolved: Decision 1 became a disclosure (brief :34-40; PM decision).
 - ~~DEBT-2~~ resolved: `env -u LD_LIBRARY_PATH` kept on the conformance server pass (design :61-62, :148).
 - ~~DEBT-3~~ resolved: one decision per `AssemblyLoadContext`, with d9 L17 across contexts (design :18-22, :80).
 - ~~DEBT-4~~ resolved: the full-suite commands and the `ci.dotnet.yml` comments are listed under docs (design :135-137).
-- DEBT-5 (tests in place; **Linux green locally** in the devcontainer, 2026-11-16, evidence row): the CI run ID is still owed, and the d10/BC-10 `[built]` qualifiers lift only with it, per d10 :31's convention.
+- DEBT-5 (tests in place; **Linux green locally** in the devcontainer, 2026-11-16, evidence row): the CI run ID is still owed, and the d10/BC-10 `[built]` qualifiers lift only with it, per d10 :31's convention. **Open; tracked as `docs/domains/d10-csharp-binding.md` §7 Q13** (D10C close, 2026-11-17).
 - ~~DEBT-6~~ disclosed: brief :35-37 and `dotnet/README.md` (single-file self-extract; plus NuGet-cache hosts, 4b S3).
 
-## D10C-5 — the server package (cycle 1 NEEDS-REWORK, B1 Q7 formula; cycle 2 APPROVE-WITH-DEBT(1)) — [review](D10C-5-design-review.md)
+## D10C-5 — the server package (cycle 1 NEEDS-REWORK, B1 Q7 formula; cycle 2 APPROVE-WITH-DEBT(1)) — [review](../../docs/archive/D10C/reviews/D10C-5-design-review.md)
 - ~~DEBT-1~~ Resolved in cycle 2: C7 and the override (design :66, forcing table); the provenance half became C2-1.
 - ~~DEBT-2~~ Resolved in cycle 2: the entry allow-list, per-TFM-group dependency sets, and `arrow` refused everywhere but the server (design :42-54).
 - ~~DEBT-3~~ Resolved in cycle 2: the pack job calls the notice check on the server notice (design :55-56).
@@ -898,36 +898,31 @@ Review: [../../docs/archive/D7F/reviews/D7F-1-design-review.md](../../docs/archi
   beside it. CI re-confirms rather than gates close (bytes and run ID go to the evidence ledger with D10C-4 DEBT-5); the
   constant changes only if CI's bytes round to a different whole MB. Strike design :65-66 "replaced from CI before close",
   brief :9 "CI-measured" and brief :49 "which also fixes the size limit".
+  **Open (the CI re-confirmation); tracked as `docs/domains/d10-csharp-binding.md` §7 Q13** (D10C close, 2026-11-17).
 
 ## D10C-6 → D10C-7 (forward note from the D10C-6 brief, PM)
-- FWD-1b (0b, D10C-6): on the edge leg FWD-1 also covers the row-first arm's release-then-accept check, possibly the row-first refusal (if NotSupported precedes the topic check), `TheSameKindTwiceAndDifferentTopicsAreNotRefused`'s batched arms and both arms of `TwoArrowSubscribersOnOneProviderDoNotRefuseEachOther`. Rung 7 decides the check order and re-anchors all three tests; the server leg survives as written.
-- FWD-1 (rung 7, tests): re-anchor `ARowAndABatchedSubscriptionToOneTopicAreRefusedWhicheverComesSecond`'s batched-first arms on the edge leg (SubscribeBatched throws NotSupported there: the refused batched call leaves no claim, and a per-row subscribe to the topic is accepted). Rung 7 keeps releasing the same-topic claim only after the native close returns (hold it longer if an in-handler close returns before the transport subscription is gone).
+- ~~FWD-1b~~ Landed in D10C-7: the edge-leg arms of the three same-topic tests re-anchored (`SubscriberArrowTests.ARowAndABatchedSubscriptionToOneTopicAreRefusedWhicheverComesSecond`, `.TheSameKindTwiceAndDifferentTopicsAreNotRefused`, `.TwoArrowSubscribersOnOneProviderDoNotRefuseEachOther`).
+- ~~FWD-1~~ Landed in D10C-7: the batched-first arms re-anchored on the edge leg; the claim is released only after the native close returns (d10 L3, "When the topic is freed").
 
-## D10C-6 — same-topic refusal (APPROVE-WITH-DEBT(4), cycle 1 of 2) — [review](D10C-6-design-review.md)
-- DEBT-1 (step 3, this stage): take the narrowing. Build `RowDelivery`/`Batcher` before `Claim`; put the `try` around the inner `_subscriber.Subscribe` only; do `Record` and the wiring after it; key `_claims` by `TopicPath`, not `ToString()` (`<default>` is a valid segment).
-- DEBT-2 (step 3, this stage): drop "or use another SubscriberArrow" from the refusal (`SA:320-321`). On the same provider, a second subscriber is d9 (b2)'s collision, a silent replacement on `inprocess` (`in_process_provider.cpp:307-315`).
-- DEBT-3 (step 3, this stage): `SubscriberArrowTests.cs:394` passes whatever kind is named, because every message names both kinds. Assert on "holds a per-row" / "holds a batched".
-- DEBT-4 = FWD-1c (rung 7): P1 is false in the carve-out. A close made inside any delivery on the provider leaves the transport subscription open and quiet (`subscriber.hpp:185-191`, `subscriber.cpp:720-745`). At rung 7 the other kind then replaces it silently, and a later same-kind subscribe takes the `provider_subscribed` fast path and receives no rows. Rung 7 keeps the claim after any in-delivery close, for both kinds, until `Dispose` or a same-kind re-subscribe. Reword P1 at close.
+## D10C-6 — same-topic refusal (APPROVE-WITH-DEBT(4), cycle 1 of 2) — [review](../../docs/archive/D10C/reviews/D10C-6-design-review.md)
+- ~~DEBT-1~~ Landed in D10C-6: claim after building the delivery, `try` around the inner subscribe only, `_claims` keyed by `TopicPath` (`SubscriberArrow.cs`, `Claim`/`Release`).
+- ~~DEBT-2~~ Landed in D10C-6: the refusal no longer says "or use another SubscriberArrow".
+- ~~DEBT-3~~ Landed in D10C-6: the test asserts "holds a per-row" / "holds a batched" (`SubscriberArrowTests.cs:522`).
+- ~~DEBT-4 = FWD-1c~~ Landed in D10C-7 (design D5): a quiet close keeps the claim for its kind (`SubscriberArrow.cs:40-45`; `SubscriberArrowTests.AQuietCloseKeepsTheTopicForItsKind`; d10 L3).
 
-## D10C-7 — the switch and the deletion (cycle 1 APPROVE-WITH-DEBT(3); cycle 2 APPROVE-WITH-DEBT(1)) — [review](D10C-7-design-review.md)
+## D10C-7 — the switch and the deletion (cycle 1 APPROVE-WITH-DEBT(3); cycle 2 APPROVE-WITH-DEBT(1)) — [review](../../docs/archive/D10C/reviews/D10C-7-design-review.md)
 - ~~DEBT-1~~ Resolved in cycle 2: (d) ruled at :660; brief Decision 1 rewritten (purpose wording, :643 note).
 - ~~DEBT-2~~ Resolved in cycle 2: design D2 (`ref bool accepted`, `catch when (!accepted)`) and D3 step 6 (null-check); lands in code at step 3.
 - ~~DEBT-3~~ Resolved in cycle 2: pricing taken (switch net +215-245), counting rule stated (brief :51-52); stage net-negative.
-- C2-1 (step 3, tests): scope the rung-8 scans to the class: no `System.Threading.Timer` reference in `Eiva.Fletcher.dll`; `Stopwatch` only in an allow-list {`SchemaArrival`}; source scan over `dotnet/src/Fletcher` with the same list; the packed leg reads the pack step's output (build output by default), never `Skip`.
+- ~~C2-1~~ Landed in D10C-7: the scans are scoped to the class, `Stopwatch` allowed only in `SchemaArrival`, the packed leg reads the pack output (`ManagedBatcherGoneTests`; d10 L4).
 
-## D10C-10 — a failed hand-over reaches C# in `BatchStatus` (APPROVE-WITH-DEBT(3), cycle 1 of 2) — [review](D10C-10-design-review.md)
-- DEBT-1 (step 3, the L8 leg): the "struct zeroed" predicate sees only an in-place dispose. A dispose of a struct copy
-  (`var e = *f; fl_error_dispose(ref e)`) leaves `*f` intact, and the shim then double-frees at `batches_server.cpp:169`.
-  Restate design :94's control as "an in-place dispose turns it red" and name the copy case. Optional scan: no `fl_error_dispose` in `SubscriberArrow.cs`.
-- DEBT-2 (PM, brief before the owner reads it): rewrite Decision 1 (b)'s Architecture line (:35-37) in place, naming the
-  `Exception?` variant too. That variant does not strain L2, but it changes the public type, and handlers must type-test.
-  Ground the recommendation on :551 (3)'s scope and on d10 L9 :287-288, which already records (a).
-- DEBT-3 (step 3, a new leg): the handled residue (copying the failure throws) needs a leg: a crafted failure with
-  `MessageLen > int.MaxValue` (the `checked` cast throws). Assert one delivery: a null batch, rows counted, reason kept, `Failure == null`.
-  If the `try` is left out, the window is lost silently in the thunk's outer catch (`SA:559-562`).
+## D10C-10 — a failed hand-over reaches C# in `BatchStatus` (APPROVE-WITH-DEBT(3), cycle 1 of 2) — [review](../../docs/archive/D10C/reviews/D10C-10-design-review.md)
+- ~~DEBT-1~~ Landed in D10C-10: the copy case is named and the leg is `SubscriberArrowTests.TheBatchThunkNeverDisposesTheBorrowedFailure` with a source scan (d10 L8).
+- ~~DEBT-2~~ Landed in D10C-10: brief Decision 1 (b) rewritten before the owner read it; ruled at :669 (d10 L9, D26).
+- ~~DEBT-3~~ Landed in D10C-10: leg `SubscriberArrowTests.ACopiedFailureThatCannotBeDecodedStillDeliversTheWindow` (`SubscriberArrowTests.cs:2261`); the residue is named in d10 L9 (ruling :694 (1)).
 
-## D10C-11 — the purpose, proven from the packages (APPROVE-WITH-DEBT(4), cycle 1 of 2) — [review](D10C-11-design-review.md)
-- DEBT-1 (step 3): the base arm also requires the shim's text, `&& e.Message.Contains("fletcher-c-abi-server")` (audit 0a (1), :575 (2)). The exact shape stays pinned at `SubscriberArrowTests.cs:190-199`.
-- DEBT-2 (step 3): design :65-66's STOP-AND-ASK can never fire, because `PlatformFloor(rid)` (`NL:226`) is one sentence for both builds. Re-point the premise at `check_shim_dependencies.sh:59` on the server shim (`ci.dotnet.yml:189,379`). Escape the dots: `GLIBCXX_3\.4\.3[12]' not found`.
-- DEBT-3 (close, PM): the qualifier states exactly what ran: Linux only, local; `run.sh` rolled forward (net8.0 legs on .NET 10); `minimal.sh` through a Git Bash docker wrapper (record its command); Windows and CI unrun. Re-run the server below-floor arm after the `minimal.sh:85` edit. :408 (2) gates lifting marks, not the close.
-- DEBT-4 (docs): d10 L5 and L6 cite T46 and `minimal.sh` as from-packages tests, as L7 does (audit 0a, "Laws with no test"). The README's server step is prose or `snippet: none`: no source region holds the server reference (D-BIND-147).
+## D10C-11 — the purpose, proven from the packages (APPROVE-WITH-DEBT(4), cycle 1 of 2) — [review](../../docs/archive/D10C/reviews/D10C-11-design-review.md)
+- ~~DEBT-1~~ Landed in D10C-11: the base arm also requires `fletcher-c-abi-server` (`integration-tests/preview-bundle-consumer/dotnet/PreviewConsumer/Program.cs:171-172`).
+- ~~DEBT-2~~ Landed in D10C-11: the premise re-pointed at `check_shim_dependencies.sh`; `minimal.sh:100` matches `GLIBCXX_3\.4\.3[12]' not found`.
+- ~~DEBT-3~~ Landed in D10C-11: the qualifier states exactly what ran (d10 L5, L6, L7 "From packages").
+- ~~DEBT-4~~ Landed in D10C-11: d10 L5 and L6 cite T46 and `minimal.sh` as from-packages tests.

@@ -4064,6 +4064,25 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   C++ libraries (static Conan packages) and `gateway-client-ts` (which a bundler merges into a
   web application) raise the same section 4(d)(0) question for their consumers; they are outside
   this ruling.
+  *Annotated 2026-11-16 (ledger :624, owner rulings on `LICENSE-EXCEPTION` v1.1's open issues; text kept):*
+  *(1) v1.1's provisions stand as drafted: wrapper SDKs allowed; LGPL section 4's chapeau kept; every
+  deployment form, 4(e) waived; C++/TS disclosure only; a named assembly list; previews are not Releases;
+  generated output tied to an unmodified released generator; later exception versions selectable.
+  (2) The whole-Program framing with section 5, the eligible-process line, no governing-law clause and
+  section 6 are accepted; 4(b)/(c) for single-file, mobile and embedded builds is a stated limitation
+  (`LICENSE-EXCEPTION:102-104`). (3) The author question above is answered: the noreply-account commits
+  are EIVA employees' work, so EIVA holds the copyright and can grant the exception, and the generators do
+  not reproduce library code. (5) The new risks the walkthrough listed are accepted. (4), the repo changes,
+  was execution and has landed. The walkthrough's `license-exception-revision-notes.md` is not in git.*
+  *Annotated 2026-11-16 (ledger :636, m6): friend assemblies need no code change; the exception's text alone
+  (code reaching a Covered Library's non-public members is not an Independent Module, `LICENSE-EXCEPTION:57`)
+  carries it; strong-naming and a separate test build were declined.*
+  *Annotated 2026-11-17 (ledger :677, :694 (3)): **approved by EIVA legal 2026-11-17; wired (packed, CI,
+  Releases).** The DRAFT status above is lifted: `LICENSE-EXCEPTION` is packed beside `LICENSE` and
+  `COPYING` in the packages named above, staged by CI, required by the package checks and attached to
+  Releases, and the READMEs and CONTRIBUTING say what it permits. Per its section 9 it takes effect with
+  the first Release that carries it. `PackageLicenseExpression` stays `LGPL-3.0-or-later`. REUSE.toml (M9)
+  may land. Text above kept.*
 - **D-BIND-176 - the NuGet packages go to nuget.org, pushed from a GitHub-hosted runner with
   Trusted Publishing; there is no self-hosted runner and no internal feed.** *LOCKED BY THE
   MAINTAINER 2026-10-28 (BIND-9b review Q2, recast).* The maintainer's correction: Fletcher is a

@@ -279,8 +279,11 @@ used as given. This domain is the one place the question "are these options acce
 answered (register BC-8); a binding passes the refusal through instead of answering it again.
 `[built]` for the refusal (D15, D7O-1); the "used as given" clause is `[built]` for timeouts
 (D7O-2) and for `max_rows` (D7O-3); the binding clause ("a binding passes the refusal through") is
-`[designed-not-built]`, owned by the C# switch round: C# still answers the question itself (register
-BC-8 copies). (D7O close, 2026-11-12, from `docs/archive/D7O/reviews/D7O-1-compliance.md` RECORD.)
+~~`[designed-not-built]`, owned by the C# switch round: C# still answers the question itself (register
+BC-8 copies)~~ `[built]` for C# (D10C-7 and D10C-9: C# passes batch options as given and forwards
+domain 7's refusal as `FletcherException(InvalidArgument)`; BC-8's copies deleted; d10 L3, D22; Windows,
+by hand; CI unrun). (D7O close, 2026-11-12, from `docs/archive/D7O/reviews/D7O-1-compliance.md` RECORD;
+mark updated at D10C close, 2026-11-17, ruling :694 (2), citing :536 (3).)
 - Source: owner ruling, 2026-11-12, "Refuse both" ([RIX-rulings.md](../../plans/RIX-rulings.md)).
 - A call both out of range and re-entrant (made where subscribing is not allowed) gets
   `kInvalidArgument`, not `kReentrantCall`: the options are checked first. Both refusals leave

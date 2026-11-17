@@ -12,6 +12,11 @@
 > day. **D10C pre-round audit rulings (2026-11-15, ledger :575) applied:** R-1 to R-6 and B1 of
 > [plans/D10C-pre-round-audit.md](../../plans/D10C-pre-round-audit.md) became D28-D33; the PM's
 > `BatchReason` renumbering under L2 is D34; the audit's F1 (L12) and F8 (§8) corrections applied.
+> **D10C round rulings (2026-11-15 to 2026-11-17) ingested at round close (D10C, 2026-11-17):** ledger
+> :595 (the domain-7 port tests: §8 rule 6, Q9, D35), :605 (1) (the server package's id: §1, §2, L15),
+> :615 (one server notice: L15), :650 (1) (L3's Tests line, V12), :660 (L4), :669 (L9, D26),
+> :686 (2) (the ship gate: §1, D4, Q13) and :694 (1) (L9's named residue). The licence rulings (:624,
+> :636, :677) are not this domain's; they annotate BIND D-BIND-175.
 
 **Mode: survey for everything that exists in `dotnet/`, verified against the tree at `fb0f5bf`**
 (branch `feature/csharp-switch`). The code is ground truth. The BIND plan
@@ -30,7 +35,8 @@ other files are named. `h:N` is `c-abi/include/fletcher/abi/binding.h`, as in d9
 **What the C# binding stands on is Windows-only evidence.** Every server-build mark in d9 reads
 "Windows, by hand; CI and Linux unrun" until a green CI run on the owner's draft PR covers it
 (ledger :408 (2)). A domain-10 `[built]` mark that depends on the server build inherits that
-qualifier.
+qualifier. CI has never run on this branch; every "CI unrun" qualifier here lifts together with the
+ship gate, at the first green draft-PR CI run (Q13; ledger :686 (2)).
 
 ## 1. Intent
 
@@ -57,8 +63,8 @@ C# idiom laid over it (domain-map row 10; owner ruling 2026-11-12, "Shim only", 
 
 **Refuses:**
 - **Batch assembly** (register BC-9; d7 D16). Turning rows into batches is domain 7's. The managed
-  `Batcher` (`SA:592-1066`) is a copy that the switch deletes (L4). Until then it stays exactly as
-  it is: no interim fixes (ledger :203 (3), :278).
+  `Batcher`, C#'s copy, was deleted by the switch (D10C-7, L4); until then it stayed exactly as it
+  was: no interim fixes (ledger :203 (3), :278).
 - **Answering a question a lower layer owns** (L3). Batch options are domain 7's (BC-8, d7 L15);
   topic rules, re-entrancy and unsubscribe semantics are domain 3's, forwarded by the shim (d9 L4);
   row bytes are domain 2's (D-BIND-1). The binding forwards their refusals. The exceptions are
@@ -70,9 +76,11 @@ C# idiom laid over it (domain-map row 10; owner ruling 2026-11-12, "Shim only", 
   publisher/subscriber pair): domain 1's.
 - **A provider authored in C#** (D-BIND-24): providers are opaque handles; no `Register`, no
   resolver.
-- **Shipping C#'s batched subscribe to `main` before the switch lands.** PR #129 does not merge with
-  the managed batcher in it; if shipping becomes urgent the question returns to the owner
-  (ledger :278; domain-map planned order 6).
+- **Shipping C#'s batched subscribe to `main` before a draft-PR CI run on this branch is green.**
+  The switch has landed (D10C-7), but the ship gate stays until that run is green, and lifts then,
+  not at round close; merging stays the owner's step (ledger :686 (2), D4; it revises :278's "before
+  the switch lands"). If shipping becomes urgent before then, the question returns to the owner
+  (ledger :278; domain-map planned order 6; Q13).
 
 ## 2. Ubiquitous language
 
@@ -90,7 +98,7 @@ C# idiom laid over it (domain-map row 10; owner ruling 2026-11-12, "Shim only", 
 | **Managed batcher** | `SubscriberArrow.Batcher`: C#'s former copy of batch assembly. ~~Deleted by the switch (d7 D16).~~ Deleted by D10C-7 (L4). |
 | **Window (C#)** | In the former managed batcher (deleted by D10C-7), the raw rows, their end offsets and attachments since the last flush. D-BIND-68's "framed window". Since the switch the word means domain 7's window only. |
 | **Batch handler** | `RecordBatchHandler(RecordBatch? batch, IReadOnlyList<AttachmentsBuilder> attachments, BatchStatus status)` (`SA:114`). |
-| **Per-row Arrow subscribe** | `SubscriberArrow.Subscribe`: the native per-row path, no batcher (`RowDelivery`, D10C-3; ledger :536 (1), D20); on the edge shim now, on the server package from rung 4. Distinct from `Subscriber.Subscribe`, which hands the borrowed raw row to a `RowHandler`. |
+| **Per-row Arrow subscribe** | `SubscriberArrow.Subscribe`: the native per-row path, no batcher (`RowDelivery`, D10C-3; ledger :536 (1), D20); built on both shims (edge D10C-3, server D10C-4, from packages D10C-11; L7). Each delivery is one row or one drop, labelled `RowLimit`; it never sends a `Closing` (L7). Distinct from `Subscriber.Subscribe`, which hands the borrowed raw row to a `RowHandler`. |
 | **Switch** | This round's change: `SubscriberArrow`'s batches come from domain 7 through the server shim's `fl_subscriber_subscribe_batches`, and the managed batcher is deleted. |
 
 **Naming findings:**
@@ -118,6 +126,9 @@ the loaded shim's ABI version is compared with the version the binding was built
   other import resolves), `NL:320-339` (`VerifyAbiVersion`), `NL:33-39` (`HeaderVersionMajor` 0,
   `HeaderVersionMinor` 8: the one line D9S edited under d9 D27, ledger :363 (2)).
 - Both builds share one version (d9 L6, D27), so the handshake cannot tell them apart; L6 does.
+- A server package and a base package of different package versions but the same ABI version load
+  together with no signal. That is lawful: L1 judges compatibility by ABI version only; a different
+  ABI version is refused by the handshake. (D10C, 2026-11, from the D10C-5 design's corner cases.)
 - Tests: `NativeLoaderTests.TheShimLoadsAndReportsTheAbiVersionThisBindingWasBuiltAgainst`,
   `.TheHandshakeAcceptsItsOwnVersion`, `.TheHandshakeRefusesAnyOtherVersion`.
 
@@ -144,8 +155,9 @@ equal to it, never renumbered.
   shim keeps (Q8 default). That is not a violation.
 - Tests: `AbiNumberTableTests.EveryNumberTheShimHandsOutHasTheSameValueInCSharp` (one row per table, both
   directions; closes Q11), `ErrorTests.OriginFourIsHandover`, `AbiNumberTableTests.BindingVariantAnswersADefinedMember`.
-  While `FlVariant` is internal, its row is the sole proof of the variant's numbers; rung 4 re-proves it from
-  outside if it makes the variant public.
+  `FlVariant` stays internal (decided in the D10C-4 design: no public variant property, new public surface 0),
+  so its row is the sole proof of the variant's numbers; the external proof of which shim loaded is the operating
+  system's module list (L5). (D10C, 2026-11.)
 
 **L3. The binding forwards a lower layer's answer; it does not answer again.** A refusal from the
 shim reaches the caller with its number and verbatim message. The binding checks a rule itself only
@@ -181,6 +193,17 @@ sentence (D10C-7; Windows, by hand; CI and Linux unrun); for batch options, buil
   :448 (1)'s "documented, not refused" for C#; the transport's rule between separate subscribers stays
   domain 3/4's. `[built]` (D10C-6: `SubscriberArrow.cs`, `Claim` at the two subscribe entry points and
   the release in `Unsubscribe`; `SubscriberArrowTests.ARowAndABatchedSubscriptionToOneTopicAreRefusedWhicheverComesSecond`).
+  - *How it refuses.* An `InvalidOperationException` naming the topic and the kind already held, raised before
+    anything is subscribed. No lower layer answers this question (the transport silently replaces), so there is
+    no status or origin to forward, and a `FletcherException` would assert one that never occurred (L2). The same
+    kind twice, and different topics, are not refused.
+  - *When the topic is freed.* Only after the holder's close returns normally: a failed close keeps the claim,
+    and a retry frees it. A close made inside a row delivery on the provider leaves the transport subscription
+    open and quiet until the `SubscriberArrow` is disposed or the topic is subscribed again by the same kind, so
+    the claim stays held for that kind (count 0): the same kind may take it again, the other kind is refused
+    with a message saying why (`SA:40-45`, `Claim`/`Release`; `SubscriberArrowTests.AQuietCloseKeepsTheTopicForItsKind`).
+    A batch callback is not a row delivery: a close there tears the transport subscription down.
+  (D10C, 2026-11, from the D10C-6 design and D10C-7 design D5.)
 - Tests: `SchemaArrivalTests.*` (negative refused, infinite accepted);
   `SubscriberArrowTests.ATimeoutPastTheTimersMaximumIsRefused`, which pinned the BC-8 copy, is deleted, not
   re-anchored (§8 rule 6; amended by ledger :650 (1); deleted by D10C-7); the edge refusal's sentence:
@@ -230,6 +253,12 @@ server candidate before every edge candidate, the first present loaded once, no 
   shim.** Presence decides in every route the runtime takes, its default probing included (the
   by-name probe is deleted, D10C-4). Revises :363 (4)'s "references";
   refines :536 (2). `[built]` (D10C-4; Windows, by hand; CI and Linux unrun)
+- **One decision per load context** (D10C, 2026-11, from the D10C-4 design and brief). The shim is
+  chosen once per `AssemblyLoadContext`: `Resolve` returns one cached handle, and a refused load stays
+  refused for that context. A plugin host that loads `Eiva.Fletcher.Interop` in two contexts gets two
+  decisions; if they differ, d9 L17's marker refuses the second shim loudly. A refused load reaches the
+  application as a `TypeInitializationException` wrapping the `DllNotFoundException` that names the file
+  and the reason, as every load failure does; tests assert the inner exception.
 - CI's staging of the server shim under the edge file name (ledger :525) retires when the loader
   lands (ledger :536 (2)). Retired (D10C-4): both lanes stage the server file under its own name.
 - **From packages** (D10C-11; local bundle, by hand: `run.sh` on the Linux devcontainer, whose .NET 8 builds ran rolled forward on .NET 10, and on Windows; `minimal.sh` through a Git Bash docker wrapper; CI unrun): the preview-bundle consumer (T46 and its shim check,
@@ -255,7 +284,7 @@ From packages (D10C-11; local bundle, by hand: `run.sh` on the Linux devcontaine
   package. **How it is named (ledger :575 (2), D29):** the shim's own message verbatim, then one
   binding sentence naming the server package (L3). C# does not refuse from the variant query itself;
   it forwards the shim's `FL_NOT_SUPPORTED` (register BC-10). Nothing is a compile error, and the generated subscriber (domain 1) is unaffected.
-  Whether C# also exposes the loaded variant as a public property is the round's design.
+  C# does not expose the loaded variant as a public property: `FlVariant` stays internal (D10C-4 design; L2).
 
 **L7. Everything but the batched subscribe works on the edge shim.** A C# application that does not
 reference the server package publishes, subscribes per row and decodes as it does today.
@@ -272,8 +301,15 @@ configuration (`Eiva.Fletcher` only) publishes, subscribes per row and decodes o
   packages. This arbitrates :246 (2) (whose "per-row is batched with `MaxRows = 1`" premise is
   amended) against :363 (4). The per-row path decodes each row natively and adds no window, count
   or timer (L4). **What it reports for a row it cannot decode is ruled (ledger :575 (3), D30):** a
-  null batch with `RowsDropped = 1` (L9; register BC-16). `[built on the edge shim]` (D10C-3;
-  `SubscriberArrowTests.PerRowDeliversEachRowAloneOrCountsItAsOneDrop`); the server leg is rung 4's.
+  null batch with `RowsDropped = 1` (L9; register BC-16). `[built on both shims]` (the edge shim D10C-3,
+  `SubscriberArrowTests.PerRowDeliversEachRowAloneOrCountsItAsOneDrop`; the server shim since D10C-4's
+  loader, whose server leg runs it; from packages D10C-11; CI unrun).
+- **What a per-row delivery looks like** (D10C, 2026-11, from the D10C-3 brief and design). Every
+  per-row delivery carries reason `RowLimit`, losses included (`SA:498`): L2 forbids a reason the C
+  surface does not publish, `Closing` would claim the last delivery and `Timeout` a passed deadline, so
+  "the window is full at its one row" is the one true value (a PM decision under L2, not a ruling). A
+  per-row subscription never sends a `Closing` or an empty delivery (nothing is ever pending, and
+  BC-16 requires every call to carry exactly one row or one drop), and nothing follows `Unsubscribe`.
 
 **L8. A batch handed to the binding is borrowed for its callback; the binding keeps it only by
 moving it.** Inside the batch callback the binding takes the array and schema by the C Data
@@ -295,11 +331,16 @@ Linux unrun): the thunk copies it with `Errors.ToException`, which disposes noth
 **L9. Nothing is lost or absorbed silently.** Every managed handler failure is caught at its thunk,
 counted and raised; every row domain 7 or the shim reports lost reaches the handler in
 `RowsDropped`, unchanged; a failed hand-over reaches the application with its status, origin and
-message.
+message. **Two named residues** arrive counted but without a failure: a window C# itself cannot take
+over arrives as a null batch with its rows counted and no error (ledger :669); and a shim hand-over
+failure whose message C# cannot copy (a length beyond `int.MaxValue`) arrives as a counted null batch
+without the failure's status (`BatchStatus.Failure` null, reason kept) (ledger :694 (1); named at round
+close, no code change).
 `[built for handler failures on the row path and in the batch thunk (D10C-7); built for the hand-over's failure in
 BatchStatus (D10C-10); Windows, by hand; CI and Linux unrun]`. A window C# itself cannot take over arrives as a
 null batch with its rows added to `RowsDropped` and no error (D10C-7 design, residue (a); ruling :669); so does a
-failed hand-over whose failure C# cannot copy (out of memory): the window arrives, reason kept, without its failure (D10C-10).
+failed hand-over whose failure C# cannot copy (a message longer than `int.MaxValue` bytes, whose `checked` cast
+throws, or out of memory): the window arrives, reason kept, without its failure (D10C-10; ruling :694 (1)).
 Tests: `Fletcher.Handover.Tests.HandoverTests.AWindowTheShimCannotHandOverReachesTheHandlerWithItsFailure` (d9's
 fault shim; a row-limit window and the Closing), its control `UnarmedNoWindowCarriesAFailure`, and the legs
 `SubscriberArrowTests.TheBatchThunkForwardsAFailureAsGiven`, `.ACopiedFailureThatCannotBeDecodedStillDeliversTheWindow`.
@@ -315,8 +356,16 @@ fault shim; a row-limit window and the Closing), its control `UnarmedNoWindowCar
 - **Per-row Arrow (ledger :575 (3), D30):** a row `SubscriberArrow.Subscribe` cannot decode (no schema
   yet, a schema that cannot be opened, malformed bytes) reaches the handler as a null batch with
   `RowsDropped = 1`, from one classify-and-count site (register BC-16); never skipped silently, as
-  C++'s per-row `Subscribe` does (BC-2's registered gap). `[built on the edge shim]` on the native
-  per-row path (D10C-3, `RowDelivery.OnRow`); the server leg is rung 4's.
+  C++'s per-row `Subscribe` does (BC-2's registered gap). `[built on both shims]` on the native
+  per-row path (D10C-3, `RowDelivery.OnRow`; the server leg since D10C-4; CI unrun).
+- **Accepted residues** (D10C, 2026-11, from the D10C-3 design and the D10C-7 design's handled residue (b)):
+  - `HandlerFaulted.SubscriptionId` reads 0 for a fault raised in a delivery that precedes the return of
+    `Subscribe` or `SubscribeBatched`: the id is native's and known only when the call returns (the shim may
+    deliver before `out_id` is written, `h:1077`). The count is exact. Batched ids are bit-63 values
+    (`h:1121-1127`), so a row id and a batched id never collide.
+  - An attachment copy that fails on allocation counts its row as one drop (D-BIND-66's rule, kept).
+  - A codec that fails on allocation, not on rejection, decides "unopenable" for the life of the
+    subscription: the same gap as d7's register BC-3.
 - Tests: `SubscriberArrowTests.PerRowDeliversEachRowAloneOrCountsItAsOneDrop`,
   `SubscriberArrowTests.AHandlerThatThrowsIsAbsorbedCountedAndRaised`, its batched twin
   `.ABatchedHandlerThatThrowsIsAbsorbedCountedAndRaised` (D10C-7),
@@ -441,7 +490,9 @@ are checked when it is packed.** Every other managed package is asset-free.
   package, the server package's entry allow-list, the notices' `arrow`; the ceilings `:49`, `:56`:
   12 MB on Interop, D-BIND-157, and 18 MB on the server package, Q7), and its fourteen controls in
   `scripts/test_check_dotnet_packages.py` (the server notice's one-for-both-platforms rule, ruling
-  2026-11-16, is `scripts/check_notice_covers.sh`),
+  2026-11-16, ledger :615: ONE notice listing the union of both platforms' server graphs, each
+  platform's list a subset of it; D-BIND-140's one notice per package stands; it is
+  `scripts/check_notice_covers.sh`, which has never run on the Windows server notice, Q13),
   `scripts/check_shim_dependencies.sh` (the exact DLL allow-list, D-BIND-148; the linux-x64 floors,
   D-BIND-149), `NL:226-233` (the floors stated where a load failure is explained, D-BIND-172).
 - Source: D-BIND-13 as revised by ruling 2026-11-13 "Packaging: Separate server package" (ledger
@@ -462,11 +513,14 @@ with `RowHandler`, `SubscribeSchema`, `Unsubscribe`, `DispatchAfterDelivery`,
 `FletcherException`/`FletcherFormatException`, `FletcherStatus`, `FletcherOrigin`, `Diagnostics`.
 `Eiva.Fletcher.Interop` is internal to `Eiva.Fletcher` (`Fletcher.Interop.csproj:41-47`).
 
-**C# entry points into the shim (survey).** Every import resolves the one name
-`NativeMethods.LibraryName = "fletcher-c-abi"` (`NM:90`), so every one loads `fletcher-c-abi.dll`
-(`win-x64`) or `libfletcher-c-abi.so` (`linux-x64`): in a package the base package's edge shim; in
-a source build whatever is staged beside the tests (CI's dotnet lane stages the edge build,
-`.github/workflows/ci.dotnet.yml`, `locate_shim.sh fletcher-c-abi variant=edge`). 47 entry points:
+**C# entry points into the shim (survey).** Every import names the one library
+`NativeMethods.LibraryName = "fletcher-c-abi"` (`NM:90`), and the binding's resolver maps that name
+to the server file (`fletcher-c-abi-server`) when one is present in the application's folders, else
+to the edge file (`fletcher-c-abi`) (L5, D10C-4): in a package, the server package's shim when it is
+referenced, else the base package's edge shim; in a source build whatever is staged beside the tests
+(CI's dotnet lane runs an edge leg and a server leg, each shim staged under its own name and found by
+`locate_shim.sh`, `.github/workflows/ci.dotnet.yml`; CI unrun, Q13). (Corrected at D10C close,
+2026-11-17: it read "every one loads `fletcher-c-abi`" and "CI stages the edge build".) 47 entry points:
 - Version and marker: `fl_binding_abi_version` (the handshake), `fl_single_copy_marker`.
 - Errors and lists: `fl_error_dispose`, `fl_string_list_size/at/dispose`.
 - Codec: `fl_codec_open/close`, `fl_rows_bind` (in `BoundRowsHandle`), `fl_rows_unbind`,
@@ -494,7 +548,7 @@ a source build whatever is staged beside the tests (CI's dotnet lane stages the 
   `fl_subscriber_unsubscribe_batches` (bit-63 ids, `h:1121-1127`). On the edge shim it throws a
   named NotSupported (L6, D25). Dictionary columns arrive re-folded (D24).
 - `SubscriberArrow.Subscribe` on the native per-row path, on both packages (L7, D20): ~~the edge
-  package~~ `[built]` (D10C-3); the server package, rung 4.
+  package~~ `[built]` (D10C-3); the server package `[built]` (D10C-4's server leg; from packages D10C-11; CI unrun).
 - ~~One `fl_subscriber` holds both a `SubscriberArrow`'s row and batched subscriptions; a same-topic
   mix through one provider collides (d9 D33, ledger :448 (1)), so `SubscriberArrow` refuses it (L3,
   D33, ledger :575 (6))~~ `[built]` (D10C-6).
@@ -506,7 +560,10 @@ a source build whatever is staged beside the tests (CI's dotnet lane stages the 
 (unchanged); a batch on domain 7's batch thread, one at a time, in window order (L13);
 `SubscriberArrow.Unsubscribe` from outside a batch handler blocks until the closing batch has been
 delivered; from inside its own batch handler, or from a row delivery on the same provider, it does
-not wait (d7 L9, d9 §4).
+not wait (d7 L9, d9 §4). Two batch handlers that each close or dispose the other's subscription
+wait for each other forever: that is the shim's and domain 7's rule (register BC-5, residue (1)), and
+C# does not refuse it, because refusing would answer a question a lower layer owns (L3). (D10C, 2026-11,
+from the D10C-9 brief's handled corner case.)
 
 ## 5. Decisions of record
 
@@ -515,7 +572,7 @@ not wait (d7 L9, d9 §4).
 | D1 | **Domain 10 is the C# binding**: `Eiva.Fletcher`, `.Interop`, `.Model`; the gateway client is domain 5's, generated C# domain 1's; each language binding is its own domain. | Owner rulings 2026-11-12, "New bindings domain" and "Shim only" (ledger :258 (1), :246 (1)); domain-map row 10 |
 | D2 | **One batch assembler, domain 7's; C#'s managed batcher is deleted once C# runs on it,** after its tests are checked for cases domain 7 lacks. Supersedes D-BIND-25's batcher half (annotation owed by this round). | Ledger :203 (1); d7 D16; domain-map planned order 6 |
 | D3 | **No interim fixes to the C# batcher.** It stays as it is, non-compliant (L4, L13, L14), until deleted. | Ledger :203 (3); :278 revised :258 (2) ("keeping it compliant") in its favour |
-| D4 | **C#'s batched subscribe does not ship to `main` (PR #129) before the switch lands.** If shipping becomes urgent the question is re-opened, not assumed. | Ledger :278, "No fixes; don't ship it first" |
+| D4 | **C#'s batched subscribe does not ship to `main` (PR #129) until a draft-PR CI run on this branch is green; the gate lifts then, not at round close, and merging stays the owner's step.** The switch has landed (D10C-7). Supersedes the 2026-11-12 wording "before the switch lands" (revised 2026-11-17 by :686 (2)). If shipping becomes urgent before then, the question is re-opened, not assumed. Open until Q13's run. | Ledger :278, "No fixes; don't ship it first"; :686 (2), "Lift after green CI" |
 | D5 | **C# keeps its no-timeout spelling**, `Timeout.InfiniteTimeSpan`; after the switch it crosses as `kNoTimeout` (`INT64_MAX` ms). | Ledger :226, "C# keeps its current behaviour"; d7 D14, §6; BC-14 |
 | D6 | **A C# `MaxRows < 1` throws after the switch** ("an exception instead of 1"); the refusal is domain 7's, passed through. | Ledger :235, "Refuse both"; d7 L15, D15; BC-8 (exception type: D22) |
 | D7 | **A C# subscription whose first row arrives before its schema follows domain 7:** losses reported, assembly once the schema arrives; not undecodable for life. | Ledger :258 (3), "Follow domain 7" |
@@ -530,14 +587,14 @@ not wait (d7 L9, d9 §4).
 | D16 | ~~**CI proves C# against the server shim by staging a copy under the edge file name** (test staging only; decides nothing about packing). Retires when D21's loader lands.~~ Retired (D10C-4): the server file is staged under its own name. | Ledger :525; ledger :536 (2) |
 | D17 | **Every close of an accepted batched subscription ends with exactly one closing delivery; a refused one delivers nothing,** so a C# caller may free handler state as soon as a refused call throws. | Ledger :484, :500; d7 D18, D19 |
 | D18 | Inherited BIND decisions this domain keeps: one codec, native (D-BIND-1); values as C Data (D-BIND-1a); errors with origin, five rules (D-BIND-1c, -19, -54); thunk lifetime bookkeeping and managed refusals (D-BIND-18, -50, -51); timeouts and byte bounds (D-BIND-20); no managed provider (D-BIND-24); RIDs (D-BIND-27); handler owns the batch, one handler shape (D-BIND-59); dynamic MSVC CRT (D-BIND-155); AOT-compatible (D-BIND-81); the platform floors (D-BIND-149, -169, -172). | `plans/BIND-locked-decisions.md` |
-| D19 | **Decisions the switch retires:** D-BIND-25's batcher half; D-BIND-63 (the raw-byte ceiling); D-BIND-64 (unserialised handlers, nested closing; revised, D27); D-BIND-66 (the intake's own counting, for the batched path); D-BIND-68's purpose (Q8 for the entry point). D-BIND-64 and -59 are annotated (2026-11-15); the D-BIND-25, -63, -66 and -68 annotations are still owed by the round. | d7 D16; BC-9; d9 Findings (d)6; ledger :551 (4) |
+| D19 | **Decisions the switch retires:** D-BIND-25's batcher half; D-BIND-63 (the raw-byte ceiling); D-BIND-64 (unserialised handlers, nested closing; revised, D27); D-BIND-66 (the intake's own counting, for the batched path); D-BIND-68's purpose (Q8 for the entry point). D-BIND-64 and -59 are annotated (2026-11-15); D-BIND-25, -63, -66 (batched half), -68 and BIND-5's acceptance clauses are annotated as retired for `SubscriberArrow` (2026-11-15, ledger :575 (7); `plans/BIND-locked-decisions.md`). | d7 D16; BC-9; d9 Findings (d)6; ledger :551 (4), :575 (7) |
 | D20 | **C#'s per-row Arrow subscribe runs on the native per-row path and works on both packages.** Arbitrates :246 (2) (its "batched with `MaxRows = 1`" premise amended) against :363 (4). Resolves former Q1 and d9 R-3 (L7). | Ledger :536 (1) |
 | D21 | **Distinct native file names; the server package depends on the base package; `NativeLoader` prefers the server shim when present.** Settles d9 Q5a and BC-10's deferred half; CI's renamed-copy staging (:525, D16) retires when it lands. Resolves former Q2 (L5). | Ledger :536 (2) |
 | D22 | **An out-of-range batch option raises domain 7's refusal, passed through as `FletcherException(InvalidArgument)`; the 49.7-day `MaxTimeout` cap goes.** Supersedes D-BIND-19 rule 4 / D-BIND-20's pre-check for batch options only. Resolves former Q4 and d9 R-4; :235's "as it does today" is revised by :575 (4) (D31) (L3, L12, L14 V5-V8). | Ledger :536 (3); :575 (4) |
 | D23 | **C# keeps the edge/server split;** D-BIND-1a rider i ("a .NET process is never the microcontroller") is revised by :363 (4). Resolves former Q12 and d9 Findings (d)5. | Ledger :536 (4) |
 | D24 | **A batched dictionary column reaches C# re-folded, as domain 7 delivers it;** D-BIND-8 / D-BIND-59's "value type" is revised for batches. Resolves former Q5 and, with domain 2, d9 Q11 (L14 V12). | Ledger :551 (2) |
 | D25 | **C#'s batched subscribe exists on every package; on the edge shim it throws a named NotSupported naming the server package.** Resolves former Q3 (L6). | Ledger :551 (1) |
-| D26 | **A failed hand-over reaches a C# handler as a null batch, its rows counted, with the failure's status, origin `Handover` (4) and message in `BatchStatus`;** `FletcherOrigin` gains code 4. Resolves former Q6 (L2, L9). Built: `BatchStatus.Failure` (`FletcherException?`; D10C-2, D10C-10) (Windows and the local Linux devcontainer, by hand; CI unrun). | Ledger :551 (3), :669 |
+| D26 | **A failed hand-over reaches a C# handler as a null batch, its rows counted, with the failure's status, origin `Handover` (4) and message in `BatchStatus`;** `FletcherOrigin` gains code 4. Resolves former Q6 (L2, L9). Built: `BatchStatus.Failure` (`FletcherException?`; D10C-2, D10C-10) (Windows and the local Linux devcontainer, by hand; CI unrun). `Failure` carries only the shim's hand-over failure: C#'s own take-over failure carries a count only (:669), and a failure whose message C# cannot copy arrives without it, a named residue of L9 (:694 (1)). | Ledger :551 (3), :669, :694 (1) |
 | D27 | **D-BIND-64 (concurrent, out-of-order handlers), D-BIND-59 (3) (null batch = schema not opened only) and C#'s schema-less first-row latch are revised by :203;** C# follows domain 7 (d7 L7, L9, L12) (L13; L14 V1, V2, V4, V11). | Ledger :551 (4) |
 | D28 | **A server shim present beside the app is loaded; one present but unloadable stops the load loudly, naming the file; no fallback to the edge shim.** Revises :363 (4)'s "references"; refines :536 (2) (L5). | Ledger :575 (1) |
 | D29 | **The edge refusal is the shim's message verbatim plus one binding sentence naming the server package,** appended at the batched wrapper; number and origin unchanged (L3, L6). | Ledger :575 (2) |
@@ -546,6 +603,7 @@ not wait (d7 L9, d9 §4).
 | D32 | **Per-row and batched may deliver different Arrow types for one dictionary column** (the value type per row, a `DictionaryArray` batched); C# converts nothing (L3, L14 V12, D24). | Ledger :575 (5) |
 | D33 | **`SubscriberArrow` refuses a row and a batched subscription to the same topic,** a ruled exception under L3; revises :448 (1)'s "documented, not refused" for C#. | Ledger :575 (6) |
 | D34 | **`BatchReason` is renumbered to the C values 1-3** (`RowLimit = 1`, `Timeout = 2`, `Closing = 3`); a visible change, accepted because the batched API is not on `main` (D4). | PM decision 2026-11-15, under L2, which already governs it |
+| D35 | **The managed-batcher cases domain 7's suite lacked are ported to `pubsub-arrow`'s tests, test files only** (a named scope exception: no domain-7 code or law changes; d7's document picks up the names at its next round). It revises §8's "ported by a domain-7 round". **The offset-budget case is a `heavy`-labelled test (~128 MiB rows)**, with no test hook in domain 7's code. Built by D10C-1 (§8 rule 6; Q9). | Ledger :595 (1), (2) |
 
 ## 6. Relationships
 
@@ -561,7 +619,8 @@ not wait (d7 L9, d9 §4).
 - **Domain 7 (batch assembly).** Reached only through the shim's server build. Domain 7 owns every
   batching answer (BC-1, -2, -3, -4, -8); this domain maps them (L14) and answers none (L3, L4).
   d7 L15's binding clause and d7 §6's two obligations (translate −1 ms; `MaxTimeout` dropped, D22)
-  are this round's. d7's suite is the target of the managed-batcher test check (§8).
+  were the D10C round's and are built (D10C-7, D10C-9; d7 L15's mark updated at D10C close). d7's
+  suite is the target of the managed-batcher test check (§8); D10C-1 ported four cases into it (D35).
 - **Domain 2 (row encoding).** Owns the bytes; the shim hosts its codec (d9 D24). Per-row decode
   (`fl_decode_rows`) gives a dictionary's value type; a batch from `BatchDecoder` arrives re-folded,
   and C# delivers each as it comes (V12, D24, D32).
@@ -580,14 +639,16 @@ not wait (d7 L9, d9 §4).
 ## 7. Open questions
 
 Former Q1-Q6 and Q12 were answered by the owner on 2026-11-15 (ledger :536, :551) and are now D20-D27;
-former Q10 (doc comments lagging D28) is work the round owes (Findings (a)2). Numbers are kept.
+former Q10 (doc comments lagging D28) was done by D10C-2 (Findings (a)2). Q7, Q9 and Q11 are closed
+(D10C). Numbers are kept.
 
 | # | Question | Owner |
 |---|---|---|
-| Q7 | Do D-BIND-148's allow-list and D-BIND-149's floors apply to the server shim as they stand, and what packed-size ceiling does the server package get (D-BIND-157 stays on the base package)? Proposed default: the same lists and floors, failing by name if the server shim needs more; a ceiling of its own set from the first measured pack plus the same margin D-BIND-157 left. Owner only if the measured shim breaks a list or floor. **Default stands unless the owner objects.** **Measured (D10C-5, 2026-11-16):** the server shim passes the same list and floors; the first pack is 12,848,400 bytes, so the ceiling is 18,000,000 (12.85 + 4.3 MB, rounded up). | domain 10 (packaging stage), then owner on a breach |
+| Q7 | **Closed (D10C-5, 2026-11-16):** answered by the measurement below; the ceiling is `SERVER_CEILING` (L15), which CI re-confirms (Q13). Do D-BIND-148's allow-list and D-BIND-149's floors apply to the server shim as they stand, and what packed-size ceiling does the server package get (D-BIND-157 stays on the base package)? Proposed default: the same lists and floors, failing by name if the server shim needs more; a ceiling of its own set from the first measured pack plus the same margin D-BIND-157 left. Owner only if the measured shim breaks a list or floor. **Default stands unless the owner objects.** **Measured (D10C-5, 2026-11-16):** the server shim passes the same list and floors; the first pack is 12,848,400 bytes, so the ceiling is 18,000,000 (12.85 + 4.3 MB, rounded up). | domain 10 (packaging stage), then owner on a breach |
 | Q8 | Does `fl_decode_rows_framed` stay after the switch (d9 Q9)? Its one consumer is deleted. Proposed default: it stays; removing an entry point is domain 9's, at a later d9 stage, recorded as d9 debt. Owner only to remove it in this round. **Default stands unless the owner objects.** | domain 9, after this round |
-| Q9 | Which managed-batcher tests carry cases domain 7's suite lacks (§8)? **Answered by the D10C pre-round audit (part C): four cases, listed in §8 rule 6;** the test-authority step re-checks before the deletion stage; each is ported by a domain-7 round or dropped by the owner. | D10C, stage before deletion |
+| Q9 | ~~Which managed-batcher tests carry cases domain 7's suite lacks (§8)? **Answered by the D10C pre-round audit (part C): four cases, listed in §8 rule 6;** the test-authority step re-checks before the deletion stage; each is ported by a domain-7 round or dropped by the owner.~~ **Closed (D10C-1, ledger :595):** the four cases were ported test-only to `pubsub-arrow/tests` (D35): `SubscriberArrowBatchTest.RowsSplitAcrossMessagesAreDroppedNotMisaligned`, `.AnEmptyAttachmentKeyArrivesWithItsRow`, `.AThrowingCallbackDoesNotStopTheNextBatch`, and the `heavy` `SubscriberArrowBatchHeavyTest.ARowThatMeetsTheBudgetClosesTheWindowAndOpensTheNext` with its control `.TwoHalfBudgetRowsFitAloneButNotTogether` (§8 rule 6). | D10C |
 | Q11 | ~~No C# test compares `FletcherStatus`/`FletcherOrigin`/`BatchReason`/the variant with `binding.h`'s numbers (L2; d9 Findings a7). Proposed: the switch adds one.~~ **Closed (D10C-2):** `AbiNumberTableTests.EveryNumberTheShimHandsOutHasTheSameValueInCSharp`. | D10C |
+| Q13 | **CI has never run on this branch.** Owed to it: the run IDs owed by D10C-4 DEBT-5 (the loader's legs; Linux green only locally) and D10C-5 C2-1 (CI re-confirms `SERVER_CEILING`; the constant changes only if CI's bytes round to a different whole MB); the Windows server notice, never produced, and `check_notice_covers.sh` never run on it (L15, ledger :615); the proofs that exist only in YAML (the server legs, the transport lane's server pass, the packed-assembly scan, the fault-shim build). At that run: record the run IDs in the evidence, lift every "CI unrun" qualifier in this document and in the register's C# notes (BC-8 to BC-17), and lift the ship gate (§1, D4). Opened at D10C close, 2026-11-17 (ledger :686 (2)). | the owner; trigger: the first green draft-PR CI run on `feature/csharp-switch` |
 
 ## 8. How to extend this domain
 
@@ -629,14 +690,25 @@ former Q10 (doc comments lagging D28) is work the round owes (Findings (a)2). Nu
      `ATimeoutPastTheTimersMaximumIsRefused` (V7, D22, D31), `ADictionaryColumnArrivesAsItsValueType`
      (V12, D24), and the window-ceiling tests `ARowThatWouldPassTheCeilingFlushesTheWindowFirst`,
      `ARowLargerThanTheCeilingIsDroppedAndCounted`, `TheDefaultCeilingIsTheMostOneManagedBufferHolds` (L4).
-   - **Cases domain 7's suite lacks (Q9), to port:** `RowsSplitAcrossMessagesAreDroppedNotMisaligned`
-     (d7 has the "buffer not fully consumed" check but no batch-level test),
-     `ARowWithAnEmptyAttachmentKeyArrives` (the batched path), a callback that throws (d7's half: the
-     next batch still arrives; d7 L10 has no test), and a small-size offset-budget split (d7's is
-     `heavy` only, with no test-only budget). `AFixedSizeListArrivesNonNull` is not one: d7 has
+   - **Cases domain 7's suite lacked (Q9), ported** (D10C-1, test files only, ledger :595 (1), D35):
+     `RowsSplitAcrossMessagesAreDroppedNotMisaligned` (d7 had the "buffer not fully consumed" check but
+     no batch-level test) is `SubscriberArrowBatchTest.RowsSplitAcrossMessagesAreDroppedNotMisaligned`;
+     `ARowWithAnEmptyAttachmentKeyArrives` (the batched path) is
+     `SubscriberArrowBatchTest.AnEmptyAttachmentKeyArrivesWithItsRow`; a callback that throws (d7's half:
+     the next batch still arrives; d7 L10 had no test) is
+     `SubscriberArrowBatchTest.AThrowingCallbackDoesNotStopTheNextBatch`; and the offset-budget split is
+     `SubscriberArrowBatchHeavyTest.ARowThatMeetsTheBudgetClosesTheWindowAndOpensTheNext`, with its control
+     `.TwoHalfBudgetRowsFitAloneButNotTogether` (`pubsub-arrow/tests/test_pubsub_arrow.cpp`,
+     `test_pubsub_arrow_heavy.cpp`). `AFixedSizeListArrivesNonNull` is not one: d7 has
      `FixedSizeListWithNamedItemArrivesNonNull`.
-   A case domain 7 lacks is ported to domain 7 by a domain-7 round, or the owner rules it dropped;
-   it is never kept alive in C# (ledger :203).
+   A case domain 7 lacks is ported to domain 7's suite, or the owner rules it dropped; it is never kept
+   alive in C# (ledger :203). For the switch the port was done test-only by this round under :595 (1),
+   which revises the earlier "by a domain-7 round". **Deferred (ledger :595 (1), 2026-11-15):** d7's
+   document names none of the four yet (it still says a throwing callback has no test); it picks them up
+   at its next round (owner: domain 7's next round). **Accepted risk (ledger :595 (2), :140):** the budget
+   case is `heavy`-labelled (two ~128 MiB rows) and no CI job runs `heavy` (the default run is
+   `ctest -LE heavy`), so it is proven by hand only (D10C-1, Windows); a regression there goes unnoticed
+   until the next hand run. (D10C, 2026-11, from the D10C-1 brief.)
 7. **Record the change.** Write any change to a law here before the code, with its build state.
 
 ## Findings (reported, not fixed)
@@ -650,20 +722,46 @@ former Q10 (doc comments lagging D28) is work the round owes (Findings (a)2). Nu
 2. ~~**Owed by the round (tier 3).** `FE:38` (`FletcherStatus.NotSupported`) and `FE:67`
    (`FletcherOrigin.Seam`) lag d9 D28 and `h:265`.~~ **Done (D10C-2):** `FE:38` now reads "This provider or
    this build cannot do this" and `FE:67` includes the library's own refusal.
-3. `SA:4-93` and `SA:105-111` describe D-BIND-64's concurrency and "NULL only when the schema could
-   not be opened"; both become false at the switch (V1, V11).
-4. D-BIND-25, -63, -66 and -68 carry no annotation yet (D19); D-BIND-1a rider i, -8, -19, -20,
-   -59 and -64 were annotated 2026-11-15.
+3. ~~`SA:4-93` and `SA:105-111` describe D-BIND-64's concurrency and "NULL only when the schema could
+   not be opened"; both become false at the switch (V1, V11).~~ **Done (D10C-7):** rewritten with the switch.
+4. ~~D-BIND-25, -63, -66 and -68 carry no annotation yet (D19); D-BIND-1a rider i, -8, -19, -20,
+   -59 and -64 were annotated 2026-11-15.~~ **Done:** annotated 2026-11-15 (ledger :575 (7); D19).
+5. **Not this domain's; owner unassigned** (no specified domain owns `gateway/deployers/`; domain 5 is
+   `draft`). `gateway/deployers/third_party_licenses.py:177` and `:189` format a tuple licence with an
+   f-string, so a third-party notice prints `('Apache-2.0',)` for Arrow, in the server package's notice and
+   in the gateway's and protoc's. The checks pass (they match the bullet prefix), but it is a wording
+   defect in a legal notice. Fix: `", ".join` for a tuple or list. Recorded here so it is not lost; it
+   wants an issue. (D10C, 2026-11, from the D10C-5 code review.)
 
 **(b) Rules answered in two places**
-1. Batch options: `SA:258-267` and d7's constructor (BC-8). Removed by the switch (L3).
-2. Turning rows into batches: `SA:592-1066` and domain 7 (BC-9). Removed by the switch (L4).
-3. Batched decode: `fl_decode_rows_framed` (nanoarrow, at flush) and `BatchDecoder` (Arrow C++, per
-   row), with different dictionary answers (V12) and different whole-window failure answers (V10).
+1. ~~Batch options: `SA:258-267` and d7's constructor (BC-8). Removed by the switch (L3).~~ **Done (D10C-7,
+   D10C-9):** C# passes options as given (L3).
+2. ~~Turning rows into batches: `SA:592-1066` and domain 7 (BC-9). Removed by the switch (L4).~~ **Done
+   (D10C-7):** the managed batcher is deleted (L4).
+3. ~~Batched decode: `fl_decode_rows_framed` (nanoarrow, at flush) and `BatchDecoder` (Arrow C++, per
+   row), with different dictionary answers (V12) and different whole-window failure answers (V10).~~
+   **Done (D10C-7):** C# no longer imports `fl_decode_rows_framed`; the shim keeps it (Q8).
 
 **(c) Behaviour with no test**
 - ~~`FletcherStatus`/`FletcherOrigin`/`BatchReason` against `binding.h` (L2).~~ Tested (D10C-2).
 - ~~`SubscriberArrow.Dispose`'s refusal inside a row delivery (L11).~~ Tested (D10C-3,
   `SubscriberArrowTests.DisposingInsideAPerRowDeliveryIsRefusedAndNothingIsTornDown`).
 - ~~Origin 4 reaching C# (L2), unreachable today.~~ Origin 4 maps to `Handover` (D10C-2, `ErrorTests.OriginFourIsHandover`); reaching it from a real batch is tested (D10C-10, `HandoverTests`) (Windows and the local Linux devcontainer, by hand; CI unrun).
-- A C# handler disposing its `SubscriberArrow` from a batch callback (L11), until the switch.
+- ~~A C# handler disposing its `SubscriberArrow` from a batch callback (L11), until the switch.~~ Tested
+  (D10C-9, `SubscriberArrowTests.DisposingTheSubscriberInsideABatchHandlerIsServed`).
+- Open code-review findings, none verified as fixed (D10C, 2026-11, from the D10C-4, -5 and -7 code reviews):
+  - The clock scans (L4: `ManagedBatcherGoneTests`) miss a deadline built on `Environment.TickCount64`,
+    `DateTime` or `Task.Delay`, and a hand-made batch `Thread`.
+  - `TimeSpan.FromMilliseconds(-1)` equals `Timeout.InfiniteTimeSpan`, so a −1 ms batch timeout crosses as
+    "no timeout" rather than being refused (L12). Inherent to .NET; worth one line in `BatchOptions.Timeout`'s doc.
+  - No test covers `PackageRid(Linux, Arm64)` or an unsupported architecture reaching "ships no shim" (L5).
+  - The BC-10 source scan's `CodeLines` skips every line that starts with `*`, so an unsafe dereference such
+    as `*p = NativeLibrary.Load(...)` is invisible to it (L5).
+  - The notice check's `^Apache Arrow$` is not tied to arrow's section, and the server package's entry
+    allow-list admits anything under `package/` and `_rels/` (L15).
+
+**(d) Known limitations** (D10C, 2026-11, from the D10C-7 progress log)
+- The P2 offset cross-check (L8, `.TheBatchThunkMovesTheBatchOutOfTheBorrowedStructs`) is not independent:
+  the code and the test both find `release` with `Marshal.OffsetOf`.
+- No NativeAOT lane runs a batched subscribe (D-BIND-81), so the batch thunk is AOT-compatible by
+  construction only, not by a run.
