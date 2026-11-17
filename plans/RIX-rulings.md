@@ -665,3 +665,11 @@ which re-anchors it from packages; nothing ships mid-round.
 −160 to −310); rung 8's forcing scans, its sixth forbidden test (T40) and BC-9's narrowing move with it. The round drops to 10 stages;
 D10C-8's tracker row closes as merged.
 **Applies to:** D10C-7, D10C-8; ladder rungs 7–8; plan tracker; d10 L4.
+
+## 2026-11-17 — D10C-10: C#'s own take-over failure carries a count only
+> C# loss: "(a) Count only (Rec.)"
+
+*(Chosen option; full text in `plans/D10C-10-brief.md` Decision 1.)*
+**Ruling:** **when C# itself fails to take over a window, the handler gets a null batch with the rows counted and no error**;
+`BatchStatus.Failure` stays `FletcherException?` and carries only the shim's hand-over failure (:551 (3)). d10 L9's build-state line stands.
+**Applies to:** D10C-10; d10 L9; `BatchStatus.Failure`.

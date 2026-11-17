@@ -53,7 +53,8 @@ project of its own (the CopyOracle pattern). No d7/d9 file is edited.
   C# forwards whatever arrives and does not re-check (L3).
 - **Handled residue: copying the failure throws** (out of memory while building the string or the exception). The
   window is still delivered, rows counted and reason kept, with `Failure` null. *Why not forbidden:* an allocation
-  failure cannot be made unrepresentable, and L9's "the window arrives" outranks "with its why".
+  failure cannot be made unrepresentable, and L9's "the window arrives" outranks "with its why". Its test is the
+  leg `ACopiedFailureThatCannotBeDecodedStillDeliversTheWindow` (review DEBT-3).
 
 ## Premises and stop conditions
 - P1: the fault shim exports `fl_test_handover_fault_arm`/`_fired` on both OSes (`FL_ABI_EXPORT`; `exports.map`
@@ -91,7 +92,14 @@ window's rows, the reason is `RowLimit` (A) or `Closing` (B), `Status == Interna
   - `TheBatchThunkNeverDisposesTheBorrowedFailure`, for audit (a) and L8. The test gets a shim-allocated `FlError`
     from a refused call (as `HandleTests:115`), passes it as `failure`, and asserts that after the thunk returns
     the struct is unchanged (`fl_error_dispose` zeroes it, `binding.cpp:263-273`). The test then disposes it.
-    Its control: disposing a copy is detected by the same predicate.
+    Its control: an **in-place** dispose of the borrowed struct turns the predicate red. A dispose of a struct
+    **copy** (`var e = *f; fl_error_dispose(ref e)`) frees the buffer but leaves `*f` intact, so it is **outside
+    this leg** (the shim would then double-free at `batches_server.cpp:169`). That case is covered by the optional
+    one-line scan that `SubscriberArrow.cs` references no `fl_error_dispose` (true today) (review DEBT-1).
+  - `ACopiedFailureThatCannotBeDecodedStillDeliversTheWindow` (review DEBT-3; the handled residue). A crafted
+    failure with `MessageLen > int.MaxValue` makes the `checked` cast at `Errors.cs:92` throw deterministically.
+    The leg asserts exactly one delivery: a null batch, rows counted, reason kept, `Failure == null`. It is red if
+    the decode's `try` is missing (the window would be swallowed by the thunk's outer catch, `SA:559-562`).
   *Why a leg:* if C# did dispose the failure, nobody outside could see it, because the shim's own later dispose
   is then a no-op.
 
@@ -104,9 +112,10 @@ window's rows, the reason is `RowLimit` (A) or `Closing` (B), `Status == Interna
   `dotnet/README.md:85-88` gains the property.
 - **Evidence.** Until a green run on the owner's draft PR, the marks read "Windows, by hand; CI and Linux unrun"
   (ledger :408 (2)).
-- **Decision 1** (C#'s own take-over failure). Under the default, the leg `:2061` gains `Assert.Null(status.Failure)`.
-  Under option (b), `Failure`'s shape changes (see the brief). That arm has no external trigger (out of memory), so
-  only a leg proves it. This is disclosed.
+- **Decision 1** (C#'s own take-over failure) confirms the spec: d10 L9 (:287-288) already records (a), and no
+  ruling covers the case. Under the default (a), the leg `:2061` gains `Assert.Null(status.Failure)`. (b1) reuses
+  origin `Handover` and strains L2. (b2) widens `Failure` to `Exception?`, so handlers must type-test to read status
+  and origin; L2 holds. Neither has an external trigger (out of memory), so only a leg would prove it. Disclosed.
 - No coexistence window. Nothing later in the ladder touches this site.
 - **Size:** about +90 / −4 counted lines in 5 files, which exceeds the light lane (60 lines, 3 files).
 
@@ -115,7 +124,7 @@ window's rows, the reason is `RowLimit` (A) or `Closing` (B), `Status == Interna
 header and `RecordBatchHandler` doc) · `dotnet/src/Fletcher/Errors.cs` (`ToException` split) ·
 `dotnet/tests/Fletcher.Handover.Tests/{Fletcher.Handover.Tests.csproj, HandoverTests.cs, packages.lock.json}` (new)
 · `dotnet/Fletcher.slnx` · `.github/workflows/ci.dotnet.yml` (both jobs) ·
-`dotnet/tests/Fletcher.Tests/SubscriberArrowTests.cs` (two legs, `:2061`'s assertion under Decision 1) ·
+`dotnet/tests/Fletcher.Tests/SubscriberArrowTests.cs` (three legs, `:2061`'s assertion under Decision 1) ·
 `ErrorTests.cs:104-105` (stale remark, prose). Docs, listed and not counted: `dotnet/README.md`, d10 L8, L9, L14
 marks and §4, register BC-12 C# half.
 
