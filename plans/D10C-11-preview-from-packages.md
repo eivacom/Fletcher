@@ -23,7 +23,7 @@ edge shim must not be loaded (L5, L15). Together these close the red window decl
   directions (see Corner cases), so it cannot hide a defect.
 - **T46 re-anchored** (audit 0a (1)): `Program.cs:76-83`.
   - server: `Check("native batch", NativeBatch(...))`, as before.
-  - base: `CheckBatchedSubscribeRefused` (`:163-179`) requires `FletcherException` with status `NotSupported`,
+  - base: `CheckBatchedSubscribeRefused` (`:160-181`) requires `FletcherException` with status `NotSupported`,
     origin `Seam`, and a message containing `Eiva.Fletcher.Server`. A success is a failure, and so is any other
     exception (reported with its type, status and origin).
   - The `native-batch` snippet region is unchanged. The README snippet check (D-BIND-142) still holds, and the
@@ -35,16 +35,17 @@ edge shim must not be loaded (L5, L15). Together these close the red window decl
   - Ubuntu 24.04 (`noble`), .NET 8 and 10: both configurations must print `OK`.
   - Debian 12 (`bookworm-slim`), below the floor: the base build keeps today's three greps.
   - The server build must fail, with the floor sentence, `found its native shim`, and `That file is the server
-    build ('fletcher-c-abi-server')`. It must **not** print `That file is the edge build`. The edge file sits in
-    the same output, so a fallback would print that line and would also leave the app running.
+    build ('fletcher-c-abi-server')`. It must **not** print `That file is the edge build`. The edge shim has the
+    same floor, so Debian 12 refuses it too: a fallback there could not run and would show only as a refusal
+    naming the edge file. The at-floor exactly-one check is what proves no fallback where it could run.
 - **Below-floor grep (PM decision, recorded in the log).** The server shim's measured floor is `GLIBCXX_3.4.32`,
   the same as the edge shim's (d10 L15, D10C-5). The OS, however, names the first unmet version it hits, which
   is `GLIBCXX_3.4.31` for the server shim on Debian 12. So the server arm requires:
   - the floor sentence, `glibc 2.34 and the GCC 13 C++ runtime`, which names `GLIBCXX_3.4.32`;
-  - the OS reason, matched as `GLIBCXX_3.4.3[12]' not found` (`grep -E`).
+  - the OS reason, matched as a regex (`grep -E`): `GLIBCXX_3\.4\.3[12]' not found` (dots escaped, `' not found` kept).
 
-  The floor itself is not loosened. The base arm keeps its exact `3.4.32` grep. ⚠ As read, `minimal.sh:85` still
-  has the fixed `3.4.32` string in the server loop, so it must take the PM's pattern before the close.
+  The floor itself is not loosened. The base arm keeps its exact `3.4.32` grep. Applied in `minimal.sh`'s server
+  arm, with a comment giving the reason (design review DEBT-2, audit 0b conditions a and b).
 - **No CI YAML edit.** `ci.package-consumer.yml` already runs `run.sh` on ubuntu-24.04 and windows-2022, and
   `minimal.sh` on Linux. Both configurations ride those steps.
 
@@ -62,8 +63,9 @@ edge shim must not be loaded (L5, L15). Together these close the red window decl
 
 ## Premises and stop conditions
 - The server shim's floor equals the edge shim's (L15, measured in D10C-5). *Corrected:* the OS's reason names
-  3.4.31, not 3.4.32, hence the PM's pattern. **STOP-AND-ASK** if the server build's floor sentence ever
-  differs from the edge build's: that is a D-BIND-149 finding. Do not widen the grep.
+  3.4.31, not 3.4.32, hence the PM's pattern. The old tripwire (a differing floor sentence) could never fire:
+  `PlatformFloor(rid)` is keyed by RID, so both builds print one sentence. **STOP-AND-ASK** now fires at
+  `check_shim_dependencies.sh:59` on the server shim (highest GLIBCXX_ != `shim_floors.env`): a D-BIND-149 finding.
 - `dotnet add package --no-restore` accepts an exact `[v]` range offline. If an SDK refuses it, insert the same
   line into the copy with `sed`, and keep the grep check.
 - The loader's refusal text (`NativeLoader.cs:157-166`) is the stable observable. The test greps for its sentences
@@ -82,7 +84,7 @@ tests and harness only, with no production change. The rows arms, the gateway ro
 already green. The red evidence is the old T46 and two mismatched-argument controls, rehearsed once and logged,
 not committed.
 **Evidence so far:** the bundle was **assembled locally** (`scripts/assemble_preview_bundle.sh` over locally
-packed packages) because CI has not run on this branch. CI evidence (ruling :408 (2)) is owed at the close.
+packed packages) because CI has not run on this branch. A green CI run is what lifts the marks (ruling :408 (2)); it does not gate the close, and the qualifier says what ran.
 
 ## Risks / Unknowns
 - Size: ejected from the light lane. The overrun is the two-configuration plumbing in `minimal.sh` and the
@@ -94,7 +96,7 @@ packed packages) because CI has not run on this branch. CI evidence (ruling :408
 
 ## Files-to-touch
 - `integration-tests/preview-bundle-consumer/dotnet/PreviewConsumer/Program.cs`, `run.sh`, `minimal.sh`: authored
-  (+126 / −26). `minimal.sh:85` still owes the PM's pattern.
+  (+126 / −26), then DEBT-1 (base arm also requires the shim's own text) and the PM's floor pattern.
 - Docs, still owed (audit 0a (4)):
   - `dotnet/README.package.md:145-154`: batches need `Eiva.Fletcher.Server`, otherwise the named error; handler
     calls come one at a time, in window order; rows before the schema are counted, then assembled (L13,
@@ -102,6 +104,9 @@ packed packages) because CI has not run on this branch. CI evidence (ruling :408
   - `dotnet/PREVIEW-TESTERS.md:10`: add the server package.
   - `integration-tests/preview-bundle-consumer/README.md`: the two configurations, the argument, and the server
     run in `minimal.sh`.
+  - `scripts/preview/README-preview.md:11,33-35` (fix cycle 1, compliance F1; the bundle's own README, shipped in
+    every bundle): lists `Eiva.Fletcher.Server` and its two server lockfiles, and the reference guidance adds it
+    beside `Eiva.Fletcher` for batched Arrow subscriptions.
   - `docs/domains/d10-csharp-binding.md:254`: L7 becomes `[built]` (D10C-11), and its CI qualifier lifts only on
     a green run.
 
