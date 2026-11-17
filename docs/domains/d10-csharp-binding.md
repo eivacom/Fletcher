@@ -10,7 +10,7 @@
 > origin `Handover` (4); D-BIND-64, D-BIND-59 (3) and the schema-less latch revised by :203). They
 > became D20-D27 and closed former Q1-Q6 and contradictions 1-8; BIND annotations written the same
 > day. **D10C pre-round audit rulings (2026-11-15, ledger :575) applied:** R-1 to R-6 and B1 of
-> [plans/D10C-pre-round-audit.md](../../plans/D10C-pre-round-audit.md) became D28-D33; the PM's
+> [docs/archive/D10C/D10C-pre-round-audit.md](../archive/D10C/D10C-pre-round-audit.md) became D28-D33; the PM's
 > `BatchReason` renumbering under L2 is D34; the audit's F1 (L12) and F8 (§8) corrections applied.
 > **D10C round rulings (2026-11-15 to 2026-11-17) ingested at round close (D10C, 2026-11-17):** ledger
 > :595 (the domain-7 port tests: §8 rule 6, Q9, D35), :605 (1) (the server package's id: §1, §2, L15),
@@ -665,7 +665,7 @@ former Q10 (doc comments lagging D28) was done by D10C-2 (Findings (a)2). Q7, Q9
    the edge shim (D25); everything else works on the edge shim (L7).
 6. **Retire a test that asserts what a law forbids,** through the test-authority step, before the
    code that satisfies it is deleted. For the switch (L4), the managed-batcher tests sort into
-   (corrected 2026-11-15 from the D10C audit, F8; full table in `plans/D10C-pre-round-audit.md` part C):
+   (corrected 2026-11-15 from the D10C audit, F8; full table in `docs/archive/D10C/D10C-pre-round-audit.md` part C):
    - **Kept, re-anchored on domain 7 and the server shim** (lawful; each has a d7 mirror or holds under
      d7): `FlushesAtTheRowLimit`, `FlushesAtTheTimeout`, `UnsubscribingFlushesThePartialWindow`,
      `AttachmentsAlignWithTheirRows`, `ADroppedRowIsReportedAndItsAttachmentDiscarded`,
