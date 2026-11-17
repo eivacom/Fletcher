@@ -28,10 +28,10 @@ None. Whether to use one project with a switch or two copies is a mechanism choi
 - **Floor premise, corrected:** the server shim's measured floor is `GLIBCXX_3.4.32`, the same as the edge shim's, but on Debian 12 the OS names `GLIBCXX_3.4.31`, the first unmet version it hits.
   - PM decision, recorded in the log: the server arm's below-floor check requires the floor sentence ("glibc 2.34 and the GCC 13 C++ runtime") and `GLIBCXX_3.4.3[12]' not found`.
   - The floor is not loosened, and the base arm keeps its exact 3.4.32 grep.
-  - STOP-AND-ASK if the two builds' floor sentences ever differ.
+  - The floor stop-and-ask fires at `check_shim_dependencies.sh:59` on the server shim (DEBT-2).
 - **Green on arrival:** everything except the old T46, because D10C-4, -5 and -7 built the behaviour. No production code changes in this stage.
-- **Evidence:** the bundle was assembled locally, because CI has not run on this branch. A green CI run is owed at the close (:408 (2)).
-- **Docs still owed** (audit 0a (4)): `README.package.md:145-154`, `PREVIEW-TESTERS.md:10`, the consumer README, and d10 L7's build mark.
+- **Evidence:** the bundle was assembled locally, because CI has not run on this branch. A green CI run is owed before marks lift (:408 (2)), not before this close.
+- **Docs** (audit 0a (4), done in phase 2): `README.package.md:145-154`, `PREVIEW-TESTERS.md:10`, the consumer README, and d10 L7's build mark.
 
 ## Numbers
 Actual net lines: **+126 / −26** (152 touched) in `Program.cs`, `run.sh` and `minimal.sh`, against the ~50 I declared (≈ +40 / −12). Docs still to add: about +12 / −8 in 4 files. CI YAML: none. New public surface: 0. Design cycles used: 1/2.
