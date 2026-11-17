@@ -682,3 +682,11 @@ D10C-8's tracker row closes as merged.
 READMEs/CONTRIBUTING say what it permits. The DRAFT notice is lifted in the repo text; per §9 the exception takes effect with the first
 Release that carries it. `PackageLicenseExpression` stays `LGPL-3.0-or-later` (D-BIND-175). REUSE.toml (M9), deferred only for the DRAFT, may land.
 **Applies to:** D-BIND-175; LICENSE-EXCEPTION; CONTRIBUTING.md; READMEs; ci.dotnet, ci.protoc, package checks.
+
+## 2026-11-17 — D10C round close; the ship gate
+> Round close: "Yes, run round close (Rec.)"
+> Ship gate: "Lift after green CI"
+
+*(Chosen options.)* **Rulings:** (1) **D10C's round close runs now** (ledger ingestion, archive, retrospective). (2) **The ship gate
+(2026-11-12) stays until a draft-PR CI run is green on this branch; it lifts then**, not at round close. Merging stays the owner's step.
+**Applies to:** D10C close; the 2026-11-12 ship gate; the `[built]` "CI unrun" qualifiers.
