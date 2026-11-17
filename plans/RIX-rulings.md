@@ -673,3 +673,12 @@ D10C-8's tracker row closes as merged.
 **Ruling:** **when C# itself fails to take over a window, the handler gets a null batch with the rows counted and no error**;
 `BatchStatus.Failure` stays `FletcherException?` and carries only the shim's hand-over failure (:551 (3)). d10 L9's build-state line stands.
 **Applies to:** D10C-10; d10 L9; `BatchStatus.Failure`.
+
+## 2026-11-17 — Fletcher Linking Exception: legal approval; pack it
+> "EIVA legal has approved, you can pack it now"
+
+**Ruling:** **EIVA legal has approved `LICENSE-EXCEPTION` v1.1; D-BIND-175's wiring proceeds now**: the exception is packed beside
+`LICENSE` and `COPYING` in the packages D-BIND-175 names, staged by CI, required by the package checks, attached to Releases, and the
+READMEs/CONTRIBUTING say what it permits. The DRAFT notice is lifted in the repo text; per §9 the exception takes effect with the first
+Release that carries it. `PackageLicenseExpression` stays `LGPL-3.0-or-later` (D-BIND-175). REUSE.toml (M9), deferred only for the DRAFT, may land.
+**Applies to:** D-BIND-175; LICENSE-EXCEPTION; CONTRIBUTING.md; READMEs; ci.dotnet, ci.protoc, package checks.
