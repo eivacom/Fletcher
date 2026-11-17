@@ -144,14 +144,14 @@ publisher.Publish(fixes);
 
 **5. Or receive them as Arrow batches**, for volume: `SubscriberArrow` collects rows into a
 window, flushed at `MaxRows` or after `Timeout` (8000 rows or one minute by default), and the
-generated accessor reads the batch, as model objects (`ToRow`) or in place (`At`). An Arrow
-subscriber reads rows with the topic's schema, which comes from its publisher. Over `fastdds` the
-schema arrives with the data, so the order does not matter. Over the default `inprocess` provider,
-a subscription made before the topic is declared stays without a schema, and every row on it is
-dropped and counted, so declare the publisher first. The handler owns the batch, and its calls are
-not serialised: a window flushed at `MaxRows` runs on the delivery thread, one flushed by `Timeout`
-on a timer thread, and the last one on the thread that unsubscribes, so two may run at once and
-complete out of order.
+generated accessor reads the batch, as model objects (`ToRow`) or in place (`At`). Batches need
+the server build of the shim: add `Eiva.Fletcher.Server` beside `Eiva.Fletcher`. Without it,
+`SubscribeBatched` throws a `FletcherException` with status `NotSupported` that names the package;
+publishing and subscribing row by row work on either build. An Arrow subscriber reads rows with the
+topic's schema, which comes from its publisher. Rows that arrive before the schema do not stop the
+subscription: they are counted as dropped (`RowsDropped`), and assembly starts once the schema
+arrives, so declare the publisher first to lose none. The handler owns the batch, and its calls
+come one at a time, in window order, on the subscription's own thread.
 
 <!-- snippet: native-batch -->
 ```csharp

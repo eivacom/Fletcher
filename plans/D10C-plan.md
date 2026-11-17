@@ -18,7 +18,7 @@ Status: ⚪ not started · 🔴 in progress · 🟢 done. Lane: **L** marks a li
 | D10C-8 | C#'s own batcher is gone from the packed assemblies | 8 | d10 L4; audit MUST-DELETE (6 tests); BC-9 narrowing | −470 to −520 / 3 | F | 🟢 (merged into D10C-7, ruling :660) |
 | D10C-9 | Dispose from inside a batch handler is served; bad batch options pass through as `FletcherException(InvalidArgument)` | 9, 10 | d10 L11; :536 (3), :575 (4); BC-8 grid, BC-14; `MaxTimeout` removed | 5–40 / 1–3 | L? | 🟢 |
 | D10C-10 | A failed hand-over reaches the C# handler with the failure in `BatchStatus` | 11 | d10 L9, D26; :551 (3); d9 test-only fault shim | 40–75 / 3–4 | F | 🟢 |
-| D10C-11 | The purpose end to end from packages: the server package gives batches; the base package alone runs on edge and gets the named NotSupported | 12 | the round purpose; d10 L5–L7 | 10–40 / 1–3 | L | ⚪ |
+| D10C-11 | The purpose end to end from packages: the server package gives batches; the base package alone runs on edge and gets the named NotSupported | 12 | the round purpose; d10 L5–L7 | 10–40 / 1–3 | L | 🟢 |
 
 ## Round exit
 

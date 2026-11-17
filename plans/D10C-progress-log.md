@@ -196,3 +196,25 @@ Session directive (2026-11-15): run from D10C-1 onward, item by item, until a st
 **Owner decisions this stage:** C#-side take-over failure is count only.
 **Debt carried:** none
 **Records corrected:** d10 L2, :157, :319 citations and qualifiers; the :669 citation for the copy-throws case moved to the brief's Handled line.
+
+## D10C-11 — the round purpose end to end from packages (2026-11-17)
+
+**Forcing test:** T46, `PreviewConsumer` `NativeBatch`. Base packages only: the named NotSupported, naming `Eiva.Fletcher.Server`. With `Eiva.Fletcher.Server` added: rows. 🔴 (old T46 expected rows on base and threw) → 🟢. The red window declared at :650 (2) closes.
+**Lane:** light, **EJECTED** (152 touched vs 60; declared ~50), then the full loop. **Design:** `plans/D10C-11-preview-from-packages.md` · **Brief:** `plans/D10C-11-brief.md`
+**What landed:**
+- One consumer in two configurations: `dotnet add package Eiva.Fletcher.Server` is the user's step. Each configuration loads exactly its own shim from `runtimes/<rid>/native/`, and the base output holds no server file.
+- `minimal.sh` runs both builds: at the floor both are OK; below the floor both are refused, naming their own file.
+- Docs: README.package, PREVIEW-TESTERS, README-preview, the consumer README; d10 L5, L6 and L7 marked `[built]` with a precise qualifier.
+**Interfaces:** none (no production change).
+**Deleted:** none; T46 re-anchored.
+**Reviews:** 0a CLEAR (conditions) · 0b CLEAR (grep conditions) · design APPROVE-WITH-DEBT(4) · compliance 1 blocking (README-preview), then PASS at cycle 2 · code review 0 blocking / 3 nits
+**Verification:** the local bundle (five packages plus protoc plus gateway) assembled in the devcontainer; `run.sh` 6/6 on Linux (net8 rolled forward to net10) and 6/6 on Windows (net8 and net10 native); `minimal.sh` through the docker wrapper. CI unrun.
+**Close gate:** PASS (full)
+**Cycle meter:** design 1/2 · fix 1 · implementer launches 1 (3 passes) · stage words 5442
+**Numbers:** declared ~50 touched (harness) · actual +139/−26 harness, docs about +50/−22 · production 0 · new public surface 0
+**PM decisions:**
+- Ejected: no post-hoc reclassification of the harness as tests.
+- The server below-floor check accepts `GLIBCXX_3.4.3[12]' not found` plus the floor sentence. The loader names the first unmet version; the floor value is proven at pack time by `check_shim_dependencies.sh`. Not loosened.
+**Owner decisions this stage:** none
+**Debt carried:** CI run IDs (round-wide). README-preview mentions symbol packages, which the server package has none of (cosmetic).
+**Records corrected:** the brief's dead stop condition and "owed at close" lines; the "four packages" wording; the design citations.

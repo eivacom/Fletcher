@@ -56,3 +56,5 @@
   says "owed at the close". The design re-pointed both (DEBT-2, DEBT-3).
 - RECORD: `D10C-progress-log.md` does not yet hold the PM's `3\.4\.3[12]` decision (0b (c): log it at close).
 - RECORD: `preview-bundle-consumer/README.md:69` says "the README all four packages carry". The server package carries it too.
+## Cycle 2 — PASS (no blocking items)
+All three findings and the RECORDs are closed in the tree. F1: `README-preview.md:11,33-35`, and the file is in the design's Files-to-touch (:107). F2: `minimal.sh:77-80` and design :38-40 now say the edge shim shares the floor. F3: `Program.cs:15-17`; d10 L6 cites `minimal.sh`'s at-floor base runs. The consumer README :69 says "five", and the brief :31/:33 is fixed (`3e8ec66`). Re-checked: the snippet check still matches 7 of 7. Nothing changed in `dotnet/src`, d7, d9, `c-abi` or `.github`. `read -r` changes no arm, and the evidence rows record the re-runs. Non-blocking note: `README-preview.md:11`'s "with their symbol packages" now covers `Eiva.Fletcher.Server`, which has none (`assemble_preview_bundle.sh:11`).

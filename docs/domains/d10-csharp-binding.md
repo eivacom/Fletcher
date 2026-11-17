@@ -232,12 +232,20 @@ server candidate before every edge candidate, the first present loaded once, no 
   refines :536 (2). `[built]` (D10C-4; Windows, by hand; CI and Linux unrun)
 - CI's staging of the server shim under the edge file name (ledger :525) retires when the loader
   lands (ledger :536 (2)). Retired (D10C-4): both lanes stage the server file under its own name.
+- **From packages** (D10C-11; local bundle, by hand: `run.sh` on the Linux devcontainer, whose .NET 8 builds ran rolled forward on .NET 10, and on Windows; `minimal.sh` through a Git Bash docker wrapper; CI unrun): the preview-bundle consumer (T46 and its shim check,
+  `integration-tests/preview-bundle-consumer`), in a configuration that adds `Eiva.Fletcher.Server`:
+  exactly one shim is loaded, `fletcher-c-abi-server` from `runtimes/<rid>/native/`, and never the
+  edge shim beside it; and `minimal.sh`'s server arm below the platform floor: refused naming the
+  server file, never the edge one.
 
 **L6. A C# caller learns its build by asking, never from a missing symbol.** A batched call on the
 edge build fails with a named not-supported exception that names the server package; it never
 surfaces as `EntryPointNotFoundException` or a crash.
 `[built]` (D10C-7; Windows, by hand; CI and Linux unrun): `SubscriberArrowTests.ABatchedSubscribeOnTheEdgeShimIsRefusedNamingTheServerPackage` and every
 batched test's edge leg; the transport lane's edge pass (`TopicOptionsOverFastDdsTests`).
+From packages (D10C-11; local bundle, by hand: `run.sh` on the Linux devcontainer, whose .NET 8 builds ran rolled forward on .NET 10, and on Windows; `minimal.sh` through a Git Bash docker wrapper; CI unrun): the preview-bundle consumer's base configuration (T46) and
+`minimal.sh`'s at-floor base runs, which require `NotSupported`, origin `Seam`, the shim's text naming
+`fletcher-c-abi-server` and the sentence naming `Eiva.Fletcher.Server`, with no rows arm.
 - Source: ruling 2026-11-13, "Wrong build: Clear 'not supported'" (d9 D23, L12, L16); d9 D28
   ("this provider or this build cannot do this"). The shim's edge refusal is `[built]` (d9 L12),
   `FL_NOT_SUPPORTED` with `FL_ORIGIN_SEAM` and a message naming `fletcher-c-abi-server`
@@ -251,7 +259,10 @@ batched test's edge leg; the transport lane's edge pass (`TopicOptionsOverFastDd
 
 **L7. Everything but the batched subscribe works on the edge shim.** A C# application that does not
 reference the server package publishes, subscribes per row and decodes as it does today.
-`[built for today's single build; designed-not-built for the switch]`
+`[built]` (D10C-11, from packages; local bundle, by hand: Linux devcontainer with the .NET 8 builds rolled
+forward on .NET 10, and Windows; `minimal.sh` through a Git Bash docker wrapper; CI unrun): the preview-bundle consumer's base
+configuration (`Eiva.Fletcher` only) publishes, subscribes per row and decodes on the edge shim, and no
+`*fletcher-c-abi-server*` file is anywhere in its output.
 - Source: ruling 2026-11-13 (4), consequence: "C#'s per-row subscribe must work on the edge build
   without a batcher" (ledger :363; d9 D29, §6 R-3).
 - Holds today at: `Subscriber.cs` (`fl_subscriber_subscribe`), `FletcherCodec.cs:260`

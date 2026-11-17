@@ -37,6 +37,5 @@ None. Whether to use one project with a switch or two copies is a mechanism choi
 Actual net lines: **+126 / −26** (152 touched) in `Program.cs`, `run.sh` and `minimal.sh`, against the ~50 I declared (≈ +40 / −12). Docs still to add: about +12 / −8 in 4 files. CI YAML: none. New public surface: 0. Design cycles used: 1/2.
 
 ---
-*As landed (<date>, appended by the PM at close, ≤5 lines):*
-<delta vs the above — actual net lines, anything retired or added the brief did
-not predict, fix cycles used>.
+**As landed (2026-11-17):**
+Ejected (152 touched vs 60). Harness +139/−26 (Program.cs, run.sh, minimal.sh); docs about +50/−22; no production change. T46 re-anchored. Round purpose proven from a locally assembled bundle on Linux (container) and Windows (host); minimal.sh via a docker wrapper. PM: the server below-floor regex `GLIBCXX_3\.4\.3[12]' not found` (loader reporting order; the floor is proven by check_shim_dependencies.sh). Design cycles 1, fix cycles 1. CI unrun.

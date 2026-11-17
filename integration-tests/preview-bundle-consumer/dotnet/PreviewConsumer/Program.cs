@@ -3,14 +3,20 @@
 //
 // BIND-9a-2: what a tester does with the preview bundle, end to end, with nothing else.
 //
-//   PreviewConsumer <the bundle's gateway executable>
+//   PreviewConsumer <the bundle's gateway executable> <base|server>
+//
+// The second argument is the configuration the program was built as, which run.sh decides: `base`
+// references Eiva.Fletcher (and so Eiva.Fletcher.Interop's edge shim) and nothing more; `server`
+// is the same project with Eiva.Fletcher.Server added, as a user adds it (D10C-11, d10 L5-L7).
 //
 // 1. Natively through Eiva.Fletcher, over `inprocess`: the generated FixFeed_Report pair
 //    publishes and subscribes row by row, then SubscriberArrow receives the same rows as one
 //    Arrow batch read through the generated accessor; then the pair again over `fastdds`, in
-//    this one process (D-BIND-151); and the shim that answered is the one
-//    Eiva.Fletcher.Interop's package put under runtimes/<rid>/native/ in this application's
-//    output.
+//    this one process (D-BIND-151); and the shim that answered is the one the configuration's
+//    package put under runtimes/<rid>/native/ in this application's output: Eiva.Fletcher.Interop's
+//    for `base`, Eiva.Fletcher.Server's for `server`. A batched subscribe works in the `server` configuration, on the server shim; in the
+//    `base` configuration it is refused with the named NotSupported that says to add
+//    Eiva.Fletcher.Server (d10 L6), and no server file is in the output at all (d10 L7).
 // 2. Through Eiva.Fletcher.GatewayClient: the bundle's gateway is started over `inprocess`, and
 //    the generated gateway pair carries the same rows across it between two clients, row by row
 //    and then as one batch.
@@ -40,16 +46,18 @@ using Eiva.Fletcher.Model;
 
 using Fletcher.Gen.Preview.Consumer;
 
-if (args.Length != 1 || !File.Exists(args[0]))
+if (args.Length != 2 || !File.Exists(args[0]) || args[1] is not ("base" or "server"))
 {
-    Console.Error.WriteLine("usage: PreviewConsumer <gateway executable>");
+    Console.Error.WriteLine("usage: PreviewConsumer <gateway executable> <base|server>");
     return 2;
 }
+
+bool serverBuild = args[1] == "server";
 
 Fix[] sent = { MakeFix(1, "north"), MakeFix(2, "Æøå"), MakeFix(3, string.Empty) };
 string[] expected = sent.Select(Describe).ToArray();
 var failures = new List<string>();
-Console.WriteLine($"PreviewConsumer on {RuntimeInformation.FrameworkDescription}, {RuntimeInformation.RuntimeIdentifier}");
+Console.WriteLine($"PreviewConsumer ({args[1]}) on {RuntimeInformation.FrameworkDescription}, {RuntimeInformation.RuntimeIdentifier}");
 
 // The net8.0 build must RUN on .NET 8, or it is a second .NET 10 run (review T-N1). A local
 // rehearsal on a machine with only a newer runtime rolls forward and opts out.
@@ -65,19 +73,43 @@ if (Environment.Version.Major != TargetMajor && Environment.GetEnvironmentVariab
 
 // ── 1. Natively, through the shim in the package ──
 Check("native rows", NativeRows(sent), expected, failures);
-Check("native batch", NativeBatch(sent), expected, failures);
+if (serverBuild)
+{
+    Check("native batch", NativeBatch(sent), expected, failures);
+}
+else
+{
+    CheckBatchedSubscribeRefused(sent, failures);
+}
+
 Check("native fastdds", NativeFastDds(sent), expected, failures);
 
-string shim = OperatingSystem.IsWindows() ? "fletcher-c-abi.dll" : "libfletcher-c-abi.so";
+// Exactly ONE shim is loaded, and it is this configuration's own, from the package's asset (d10 L5:
+// never both, never the edge shim in place of a present server shim). A check that took either
+// file would tolerate that fallback.
+string edgeShim = OperatingSystem.IsWindows() ? "fletcher-c-abi.dll" : "libfletcher-c-abi.so";
+string serverShim = OperatingSystem.IsWindows() ? "fletcher-c-abi-server.dll" : "libfletcher-c-abi-server.so";
+string shim = serverBuild ? serverShim : edgeShim;
 string packaged = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "runtimes", OperatingSystem.IsWindows() ? "win-x64" : "linux-x64", "native", shim));
 string[] loaded = Process.GetCurrentProcess().Modules.Cast<ProcessModule>()
     .Select(m => m.FileName)
-    .Where(f => string.Equals(Path.GetFileName(f), shim, StringComparison.OrdinalIgnoreCase))
+    .Where(f => string.Equals(Path.GetFileName(f), edgeShim, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(Path.GetFileName(f), serverShim, StringComparison.OrdinalIgnoreCase))
     .ToArray();
 Console.WriteLine("shim loaded from: " + string.Join(", ", loaded));
 if (loaded.Length != 1 || !string.Equals(Path.GetFullPath(loaded[0]), packaged, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
 {
-    failures.Add($"the shim was not loaded from the package's asset {packaged}");
+    failures.Add($"exactly one shim must be loaded, {packaged}; loaded: {string.Join(", ", loaded)}");
+}
+
+// The base package's output holds no server shim anywhere (d10 L7).
+if (!serverBuild)
+{
+    string[] serverFiles = Directory.GetFiles(AppContext.BaseDirectory, "*fletcher-c-abi-server*", SearchOption.AllDirectories);
+    if (serverFiles.Length > 0)
+    {
+        failures.Add($"the base configuration's output holds the server shim: {string.Join(", ", serverFiles)}");
+    }
 }
 
 // ── 2. Through the bundle's gateway ──
@@ -123,6 +155,29 @@ static List<Fix> NativeRows(Fix[] fixes)
     publisher.Publish(fixes);
     // </snippet>
     return received;
+}
+
+// d10 L6: on the base package a batched subscribe is refused with a named NotSupported that says
+// to add Eiva.Fletcher.Server, in the shim's own words (naming fletcher-c-abi-server) plus the
+// binding's sentence naming the package (ledger :575 (2)). A call that succeeds is a failure: the base configuration has no
+// batches (and, with no server shim in its output, could not get any).
+static void CheckBatchedSubscribeRefused(Fix[] fixes, List<string> failures)
+{
+    try
+    {
+        NativeBatch(fixes);
+        failures.Add("native batch: the base configuration's batched subscribe succeeded; it must be refused (NotSupported, naming Eiva.Fletcher.Server)");
+    }
+    catch (FletcherException e) when (e.Status == FletcherStatus.NotSupported && e.Origin == FletcherOrigin.Seam && e.Message.Contains("Eiva.Fletcher.Server", StringComparison.Ordinal)
+        && e.Message.Contains("fletcher-c-abi-server", StringComparison.Ordinal))
+    {
+        Console.WriteLine($"native batch: refused, as the base package must: {e.Message}");
+    }
+    catch (Exception e)
+    {
+        failures.Add($"native batch: expected FletcherException NotSupported/Seam naming Eiva.Fletcher.Server, got {e.GetType().Name}"
+            + (e is FletcherException f ? $" {f.Status}/{f.Origin}" : string.Empty) + $": {e.Message}");
+    }
 }
 
 // The same rows as one Arrow batch: a window of MaxRows rows, read through the generated accessor.
