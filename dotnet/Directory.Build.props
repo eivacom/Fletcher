@@ -56,15 +56,14 @@
          dotnet pack -p:FletcherLicenceDir=<dir>
        A local pack without it still builds; ci.dotnet's pack checks refuse a
        package without them.
-       D-BIND-175 (approved by EIVA legal, ruling 2026-11-17): the four managed packages also
-       carry LICENSE-EXCEPTION, the Fletcher Linking Exception, from the same folder. A
-       package that carries only a native library (Eiva.Fletcher.Server), which the exception
-       leaves under the LGPL alone, sets FletcherPacksLinkingException to false. -->
+       D-BIND-175 (approved by EIVA legal, ruling 2026-11-17) and D-BIND-200: every package
+       also carries LICENSE-EXCEPTION, the Fletcher Linking Exception, from the same folder;
+       Eiva.Fletcher.Server too, although the exception leaves its native library under the
+       LGPL alone, because the exception is part of the licence of Fletcher as a whole. -->
   <ItemGroup Condition="'$(FletcherLicenceDir)' != '' And '$(IsPackable)' != 'false'">
     <None Include="$(FletcherLicenceDir)/LICENSE" Pack="true" PackagePath="" Visible="false" />
     <None Include="$(FletcherLicenceDir)/COPYING" Pack="true" PackagePath="" Visible="false" />
-    <None Include="$(FletcherLicenceDir)/LICENSE-EXCEPTION" Pack="true" PackagePath="" Visible="false"
-          Condition="'$(FletcherPacksLinkingException)' != 'false'" />
+    <None Include="$(FletcherLicenceDir)/LICENSE-EXCEPTION" Pack="true" PackagePath="" Visible="false" />
     <None Include="$(FletcherLicenceDir)/THIRD-PARTY-LICENSES.txt" Pack="true" PackagePath="" Visible="false" />
   </ItemGroup>
 

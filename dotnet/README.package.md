@@ -313,10 +313,10 @@ work under the LGPL, with the obligations that brings.
 
 ## Licence: the Fletcher Linking Exception
 
-`Eiva.Fletcher`, `Eiva.Fletcher.Interop`, `Eiva.Fletcher.Model` and `Eiva.Fletcher.GatewayClient`
-carry `LICENSE-EXCEPTION` beside `LICENSE` and `COPYING`: the Fletcher Linking Exception, version
-1.1, an additional permission under section 7 of the GNU GPL-3.0 that EIVA A/S gives for Fletcher,
-approved by EIVA A/S's legal counsel. It takes effect for a Release that EIVA A/S publishes with it
+Every Fletcher NuGet package, this one included, carries `LICENSE-EXCEPTION` beside `LICENSE` and
+`COPYING`: the Fletcher Linking Exception, version 1.1, an additional permission under section 7
+of the GNU GPL-3.0 that EIVA A/S gives for Fletcher, approved by EIVA A/S's legal counsel.
+It takes effect for a Release that EIVA A/S publishes with it
 beside `LICENSE` and `COPYING` (its section 9). This is a summary; the text in the package is what
 grants the permission.
 
@@ -333,7 +333,8 @@ Code that `Eiva.Fletcher.Protoc` generates is covered too; its README says how.
 It does not extend to a modified assembly, which stays under the LGPL alone, nor to the native
 shims: the edge shim in `Eiva.Fletcher.Interop` and the server shim in `Eiva.Fletcher.Server` stay
 under the LGPL alone, so the relinking route above applies to them as before.
-`Eiva.Fletcher.Server`, which carries only the server shim, does not carry `LICENSE-EXCEPTION`.
+`Eiva.Fletcher.Server` carries `LICENSE-EXCEPTION` too, because the exception is part of the
+licence of Fletcher as a whole, but it permits nothing more for the server shim than the LGPL does.
 One limitation is stated: whether LGPL sections 4(b) and 4(c) can be met for a single-file, mobile
 or embedded build is unresolved, and the exception does not relax them.
 

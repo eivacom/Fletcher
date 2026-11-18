@@ -21,9 +21,10 @@
 #     group; no package carries the probe shim;
 #   * every package carries LICENSE, COPYING (the GPL-3.0 text the LGPL incorporates,
 #     D-BIND-152) and THIRD-PARTY-LICENSES.txt at its root, and the notice is not empty;
-#   * D-BIND-175 (approved by EIVA legal, ruling 2026-11-17): the four managed packages carry
-#     LICENSE-EXCEPTION, the Fletcher Linking Exception, at their root, the tree's text; the
-#     server package, a native library the exception leaves under the LGPL alone, does not;
+#   * D-BIND-175 (approved by EIVA legal, ruling 2026-11-17) and D-BIND-200: every package
+#     carries LICENSE-EXCEPTION, the Fletcher Linking Exception, at its root, the tree's text;
+#     the server package too, although the exception leaves its native library under the LGPL
+#     alone;
 #   * BIND-9a-2 (D-BIND-140 to 142, D-BIND-149): every package carries its README.md at
 #     its root, named by the nuspec, and it is dotnet/README.package.md with exactly the
 #     version and the commit filled in (so nothing was lost or mangled on the way, and
@@ -144,13 +145,10 @@ for id in Eiva.Fletcher Eiva.Fletcher.Interop $SERVER_ID Eiva.Fletcher.Model Eiv
   if echo "$ENTRIES" | grep -qx THIRD-PARTY-LICENSES.txt; then
     [ "$(member "$PKG" THIRD-PARTY-LICENSES.txt | wc -c)" -gt 200 ] || err "$PKG: THIRD-PARTY-LICENSES.txt is empty"
   fi
-  # D-BIND-175: the linking exception covers the managed assemblies, not the native libraries.
-  if [ "$id" = "$SERVER_ID" ]; then
-    if echo "$ENTRIES" | grep -qx LICENSE-EXCEPTION; then
-      err "$PKG carries LICENSE-EXCEPTION, which D-BIND-175 does not put in a native-library package (the server shim stays under the LGPL alone)"
-    fi
-  elif ! echo "$ENTRIES" | grep -qx LICENSE-EXCEPTION; then
-    err "$PKG does not carry LICENSE-EXCEPTION at its root (D-BIND-175)"
+  # D-BIND-175, D-BIND-200: every package carries the linking exception, the server package
+  # too; its text says what it permits (the managed assemblies, not the native libraries).
+  if ! echo "$ENTRIES" | grep -qx LICENSE-EXCEPTION; then
+    err "$PKG does not carry LICENSE-EXCEPTION at its root (D-BIND-175, D-BIND-200)"
   elif ! member "$PKG" LICENSE-EXCEPTION | tr -d '\r' | cmp -s - <(tr -d '\r' < "$EXCEPTION"); then
     err "$PKG: its LICENSE-EXCEPTION is not the tree's (D-BIND-175)"
   fi
@@ -199,7 +197,7 @@ for id in Eiva.Fletcher Eiva.Fletcher.Interop $SERVER_ID Eiva.Fletcher.Model Eiv
   [ -z "$STRAY" ] || err "$PKG: carries a shim outside its own runtimes/ entries (BC-17, d10 L15):$STRAY"
   if [ "$id" = "$SERVER_ID" ]; then
     # No assembly, no managed file: the package is the shim and NuGet's own metadata.
-    EXTRA=$(echo "$ENTRIES" | grep -vE '^(\[Content_Types\]\.xml|_rels/.*|package/.*|[^/]+\.nuspec|LICENSE|COPYING|THIRD-PARTY-LICENSES\.txt|README\.md|lib/[^/]+/_\._|runtimes/.*)$' | tr '\n' ' ' || true)
+    EXTRA=$(echo "$ENTRIES" | grep -vE '^(\[Content_Types\]\.xml|_rels/.*|package/.*|[^/]+\.nuspec|LICENSE|COPYING|LICENSE-EXCEPTION|THIRD-PARTY-LICENSES\.txt|README\.md|lib/[^/]+/_\._|runtimes/.*)$' | tr '\n' ' ' || true)
     [ -z "$EXTRA" ] || err "$PKG: carries entries outside its allow-list (BC-17, d10 L15): $EXTRA"
   fi
   if echo "$ENTRIES" | grep -qi 'probe'; then

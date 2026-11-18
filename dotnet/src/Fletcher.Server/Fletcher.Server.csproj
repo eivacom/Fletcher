@@ -14,9 +14,8 @@
     <IncludeSymbols>false</IncludeSymbols>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <!-- The package is a native library only, which the Fletcher Linking Exception leaves under
-         the LGPL alone, so it does not carry LICENSE-EXCEPTION (D-BIND-175 names the four
-         managed packages and Eiva.Fletcher.Protoc; check_dotnet_packages.sh refuses it here). -->
-    <FletcherPacksLinkingException>false</FletcherPacksLinkingException>
+         the LGPL alone; it still carries LICENSE-EXCEPTION beside LICENSE and COPYING, as every
+         Fletcher package does (D-BIND-200, amending D-BIND-175). -->
   </PropertyGroup>
 
   <ItemGroup>

@@ -4453,3 +4453,20 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   not change: ILLink and ILCompiler are build-time tools no package depends on. **Declined:**
   suppressing NU1903 for this advisory in the test project (CI would build with a vulnerable
   compiler, and the pin would have to move before the release anyway).
+- **D-BIND-200 - every NuGet package carries `LICENSE-EXCEPTION`, `Eiva.Fletcher.Server` too.
+  Amends D-BIND-175's wiring and D10C-5's package rule; the exception's text and what it permits
+  do not change.** *LOCKED BY THE MAINTAINER 2026-11-18.* The wiring merged from
+  `feature/csharp-switch` (`4a8fb96`) packed the exception into the four managed packages and
+  `Eiva.Fletcher.Protoc` and refused it in `Eiva.Fletcher.Server`, a package of the server shim
+  only, which the exception leaves under the LGPL alone. The exception is written as part of the
+  licence of Fletcher as a whole (its preamble and section 5), and its own text says that a Native
+  Library gets nothing beyond the LGPL, so carrying it in the server package widens nothing; leaving
+  it out could be read as the additional permission removed from that copy (GPL-3.0 section 7, the
+  exception's section 7), and one rule for every package is plainer for consumers, scanners and the
+  check. **How:** `Fletcher.Server.csproj` drops `FletcherPacksLinkingException=false` and
+  `Directory.Build.props` the switch; `check_dotnet_packages.sh` requires the tree's text in all
+  five .NET packages and lets it through the server package's entry allow-list; control C16 of
+  `test_check_dotnet_packages.py` now has the check refuse a server package without it; the package
+  README, `dotnet/README.md` and the root `README.md` say that every NuGet package carries it and
+  that it permits nothing more for either native shim. The npm packages are unchanged (D-BIND-175).
+  **Declined:** keeping it out of the server package, as D10C-5 ruled.

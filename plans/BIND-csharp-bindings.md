@@ -3241,7 +3241,8 @@ runs, since BIND-T and BIND-10 land in between.
    (C#'s own batcher is gone, D10C-7); `BatchOptions.MaxTimeout` is removed (D10C-9); a failed
    hand-over reaches the handler in `BatchStatus.Failure` (D10C-10); and one `SubscriberArrow`
    refuses a per-row and a batched subscription to the same topic (D10C-6). The `dotnet` and
-   `protoc` Releases carry `LICENSE-EXCEPTION`, which takes effect with them (D-BIND-175).
+   `protoc` Releases carry `LICENSE-EXCEPTION`, which takes effect with them (D-BIND-175), and so
+   does every NuGet package, `Eiva.Fletcher.Server` included (D-BIND-200).
 8. **Archive the rest of the round** (D-BIND-194's second step, D-BIND-198), once every tag is
    green and its record is written here: this tracker, `BIND-locked-decisions.md` and
    `BIND-progress-log.md` move to `docs/archive/BIND/`, and the links into them are updated
@@ -3596,6 +3597,10 @@ bindings should not follow C++, every codec takes C++'s spelling (`readings[].x`
   the licence step before the runbook is done; the fifth package `Eiva.Fletcher.Server`; and C#
   batches served by the native shim. Runbook step 7 now names five packages and the D10C
   release notes. Its CI runs for the first time on PR #129, with this merge.
+  **Then D-BIND-200:** on the maintainer's ruling, `Eiva.Fletcher.Server` carries
+  `LICENSE-EXCEPTION` too, so all six NuGet packages do; the package check requires it in every
+  .NET package (control C16 inverted), and the READMEs say it permits nothing more for the shims.
+  The check's controls need the five packed packages, so they run on CI, not locally.
 
 ---
 

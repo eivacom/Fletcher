@@ -26,7 +26,7 @@
 #   C13 a nuspec with no target-framework group at all
 #   C14 a shipped server notice that lacks a library one platform's graph lists
 #   C15 a managed package without LICENSE-EXCEPTION (D-BIND-175)
-#   C16 the server package carrying LICENSE-EXCEPTION (D-BIND-175: a native library only)
+#   C16 the server package without LICENSE-EXCEPTION (D-BIND-200: every package carries it)
 #
 # A refusal counts only if the check exits non-zero AND one single `::error::` line names
 # the package it refused and the thing that is wrong with it. A check that exits 1 for
@@ -347,14 +347,14 @@ def main() -> int:
         report('C15 a managed package without LICENSE-EXCEPTION is refused',
                refusal(out, code, [pkg.name, 'LICENSE-EXCEPTION', 'D-BIND-175']))
 
-        # C16: and the server package, a native library the exception leaves under the LGPL
-        # alone, does not. Its allow-list refuses the entry too; this needle is the named rule's.
+        # C16: D-BIND-200, the server package carries it too, although the exception leaves its
+        # native library under the LGPL alone.
         folder = scratch(tmp)
         pkg = package(folder, SERVER)
-        mutate(pkg, add={'LICENSE-EXCEPTION': read(package(folder, BASE), 'LICENSE-EXCEPTION')})
+        mutate(pkg, drop=('LICENSE-EXCEPTION',))
         code, out = run_check(folder, commit)
-        report('C16 the server package carrying LICENSE-EXCEPTION is refused',
-               refusal(out, code, [pkg.name, 'LICENSE-EXCEPTION', 'D-BIND-175', 'native-library']))
+        report('C16 the server package without LICENSE-EXCEPTION is refused',
+               refusal(out, code, [pkg.name, 'LICENSE-EXCEPTION', 'D-BIND-200']))
 
     print('every control refuses for its own reason' if failures == 0 else f'{failures} control(s) misbehaved')
     return 1 if failures else 0
