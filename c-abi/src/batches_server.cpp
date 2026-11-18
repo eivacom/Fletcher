@@ -41,7 +41,9 @@ static_assert(FLETCHER_C_ABI_VARIANT == FL_VARIANT_SERVER,
 // D-D9S-4: the hand-over's fault point. Set only on the test-only `fletcher-c-abi-handover-fault`
 // shim (tests/CMakeLists.txt), whose `tests/handover_fault.cpp` defines it; never on a shipped one.
 #ifdef FLETCHER_C_ABI_HANDOVER_FAULT
-namespace fletcher::abi::internal { void HandoverFaultPoint(); }
+namespace fletcher::abi::internal {
+void HandoverFaultPoint();
+}
 #define FLETCHER_HANDOVER_FAULT_POINT() ::fletcher::abi::internal::HandoverFaultPoint()
 #else
 #define FLETCHER_HANDOVER_FAULT_POINT() ((void)0)
@@ -157,7 +159,7 @@ BatchedSubscription SubscribeBatches(fl_subscriber& subscriber, std::vector<std:
             // failure with it (d9 §1, ruling :504), borrowed for the call. Whatever the attempt
             // built is released after the call, like an unmoved batch. `Capture` is `noexcept`.
             fletcher::abi::Capture(&failure, FL_ORIGIN_HANDOVER);
-            out = fl_batch{reason, status.rows_dropped + offered, 0, nullptr, nullptr, nullptr,
+            out = fl_batch{reason,  status.rows_dropped + offered, 0, nullptr, nullptr, nullptr,
                            &failure};
         }
         // The callback must not throw (binding.h); one that does anyway has already been handed

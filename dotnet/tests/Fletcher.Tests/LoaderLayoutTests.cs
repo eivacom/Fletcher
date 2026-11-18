@@ -202,7 +202,7 @@ public sealed class LoaderLayoutTests
         {
             string host = Metadata("FletcherTestHostDir");
             Assert.True(
-                Directory.Exists(host) && File.Exists(Path.Combine(host, HostDll)),
+                Directory.Exists(host) && File.Exists(Path.Combine(host, _hostDll)),
                 $"the test host was not built at '{host}'.");
 
             Leaf = "fletcher-layout-" + Guid.NewGuid().ToString("N");
@@ -225,7 +225,7 @@ public sealed class LoaderLayoutTests
             }
         }
 
-        private const string HostDll = "Fletcher.TestHost.dll";
+        private const string _hostDll = "Fletcher.TestHost.dll";
 
         /// <summary>The staged folder's own name, unique to this row.</summary>
         private string Leaf { get; }
@@ -347,7 +347,7 @@ public sealed class LoaderLayoutTests
                 UseShellExecute = false,
                 WorkingDirectory = _root,
             };
-            start.ArgumentList.Add(Path.Combine(_root, HostDll));
+            start.ArgumentList.Add(Path.Combine(_root, _hostDll));
             if (osSearchFolder is not null)
             {
                 string variable = OperatingSystem.IsWindows() ? "PATH" : "LD_LIBRARY_PATH";

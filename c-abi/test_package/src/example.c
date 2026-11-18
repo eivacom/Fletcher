@@ -25,7 +25,8 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (strcmp(name, argv[1]) != 0) {
-        fprintf(stderr, "the package records the %s build, and its shim answers %s\n", argv[1], name);
+        fprintf(stderr, "the package records the %s build, and its shim answers %s\n", argv[1],
+                name);
         return 1;
     }
     return version == FL_BINDING_ABI_VERSION ? 0 : 1;

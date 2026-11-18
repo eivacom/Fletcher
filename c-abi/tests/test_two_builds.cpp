@@ -102,8 +102,7 @@ const LoadedBuild& Other() {
         b.abi_version = Resolve<decltype(b.abi_version)>(b.handle, "fl_binding_abi_version");
         b.marker = Resolve<decltype(b.marker)>(b.handle, "fl_single_copy_marker");
         b.provider_create = Resolve<decltype(b.provider_create)>(b.handle, "fl_provider_create");
-        b.provider_destroy =
-            Resolve<decltype(b.provider_destroy)>(b.handle, "fl_provider_destroy");
+        b.provider_destroy = Resolve<decltype(b.provider_destroy)>(b.handle, "fl_provider_destroy");
         b.error_dispose = Resolve<decltype(b.error_dispose)>(b.handle, "fl_error_dispose");
         return b;
     }();

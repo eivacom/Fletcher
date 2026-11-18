@@ -261,10 +261,10 @@ typedef enum fl_status {
  * carries FL_PAYLOAD_TOO_LARGE, a valid row that did not fit its window, and
  * FL_INTERNAL, a defect - neither is malformed input. */
 typedef enum fl_origin {
-    FL_ORIGIN_NONE = 0,    /* status == FL_OK */
-    FL_ORIGIN_SEAM = 1,    /* a PubSubError, or a std::exception, from the seam, or the shim's own
-                              refusal of an argument or of a call this build cannot serve */
-    FL_ORIGIN_CODEC = 2,   /* malformed bytes: the positional reader, envelope parsing */
+    FL_ORIGIN_NONE = 0,     /* status == FL_OK */
+    FL_ORIGIN_SEAM = 1,     /* a PubSubError, or a std::exception, from the seam, or the shim's own
+                               refusal of an argument or of a call this build cannot serve */
+    FL_ORIGIN_CODEC = 2,    /* malformed bytes: the positional reader, envelope parsing */
     FL_ORIGIN_CALLBACK = 3, /* a caller-supplied writer or handler reported failure */
     FL_ORIGIN_HANDOVER = 4  /* the shim could not hand a closed window over to a batch callback
                                (server build; only ever in fl_batch.failure, since ABI 0.8) */
@@ -1051,8 +1051,9 @@ typedef struct fl_batch {
     int64_t num_rows;           /* rows in `array`; 0 when there is no array */
     struct ArrowArray* array;   /* NULL: no batch could be built */
     struct ArrowSchema* schema; /* NULL exactly when `array` is NULL */
-    const fl_attachments* const* attachments; /* `num_rows` sets, none NULL; NULL iff num_rows == 0 */
-    const fl_error* failure;  /* NULL unless the hand-over failed; borrowed, never disposed */
+    const fl_attachments* const*
+        attachments;         /* `num_rows` sets, none NULL; NULL iff num_rows == 0 */
+    const fl_error* failure; /* NULL unless the hand-over failed; borrowed, never disposed */
 } fl_batch;
 
 /* Invoked once per window, on domain 7's batch thread: one batch at a time, in window

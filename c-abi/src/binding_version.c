@@ -17,7 +17,8 @@ uint32_t fl_binding_abi_version(void) { return FL_BINDING_ABI_VERSION; }
 // does not state its build does not compile. Plain C, outside the containment
 // wrapper.
 #ifndef FLETCHER_C_ABI_VARIANT
-#error "FLETCHER_C_ABI_VARIANT is not defined: every target compiling this file must say which build it is (FL_VARIANT_EDGE or FL_VARIANT_SERVER), see c-abi/CMakeLists.txt"
+#error \
+    "FLETCHER_C_ABI_VARIANT is not defined: every target compiling this file must say which build it is (FL_VARIANT_EDGE or FL_VARIANT_SERVER), see c-abi/CMakeLists.txt"
 #endif
 
 fl_variant fl_binding_variant(void) { return FLETCHER_C_ABI_VARIANT; }

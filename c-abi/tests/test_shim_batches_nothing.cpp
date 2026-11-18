@@ -27,7 +27,8 @@
 #include <vector>
 
 #ifndef FLETCHER_C_ABI_SRC_DIR
-#error "FLETCHER_C_ABI_SRC_DIR is not defined: tests/CMakeLists.txt passes the shim's src directory as a forward-slash literal."
+#error \
+    "FLETCHER_C_ABI_SRC_DIR is not defined: tests/CMakeLists.txt passes the shim's src directory as a forward-slash literal."
 #endif
 
 namespace {
@@ -39,10 +40,10 @@ namespace fs = std::filesystem;
 /// it is exactly as wide as the ways this code base could start a thread or arm a timer.
 const std::vector<std::string>& ForbiddenPatterns() {
     static const std::vector<std::string> patterns = {
-        "std::thread",  "jthread",    "pthread_create", "CreateThread",
-        "_beginthread", "condition_variable", "_clock", "sleep_for",
-        "sleep_until",  "wait_for",   "wait_until",     "std::future",
-        "std::async",   "timer_create", "SetTimer",     "CreateTimerQueueTimer"};
+        "std::thread",          "jthread",     "pthread_create", "CreateThread", "_beginthread",
+        "condition_variable",   "_clock",      "sleep_for",      "sleep_until",  "wait_for",
+        "wait_until",           "std::future", "std::async",     "timer_create", "SetTimer",
+        "CreateTimerQueueTimer"};
     return patterns;
 }
 

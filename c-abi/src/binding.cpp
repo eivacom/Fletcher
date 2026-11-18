@@ -906,8 +906,8 @@ fl_status fl_subscriber_subscribe_batches(fl_subscriber* subscriber, fl_topic to
         auto arrival = std::make_unique<fl_schema_arrival>(fletcher::SchemaArrival{});
 
         auto result = fletcher::abi::internal::SubscribeBatches(
-            *subscriber, ToSegments(topic), max_rows, timeout_ms, ToTopicOptions(options),
-            on_batch, ctx);
+            *subscriber, ToSegments(topic), max_rows, timeout_ms, ToTopicOptions(options), on_batch,
+            ctx);
 
         arrival->arrival = std::move(result.arrival);
         *out_id = result.id | kBatchedIdTag;

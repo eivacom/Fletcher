@@ -48,7 +48,8 @@ TEST(BindingAbi, VersionIsPackedMajorMinor) {
 // accepted either build would pass on the wrong one, so an executable with no
 // expectation does not compile.
 #ifndef FLETCHER_EXPECTED_VARIANT
-#error "FLETCHER_EXPECTED_VARIANT is not defined: the executable must say which build its shim is (1 = edge, 2 = server). Do not make it optional, and do not accept either."
+#error \
+    "FLETCHER_EXPECTED_VARIANT is not defined: the executable must say which build its shim is (1 = edge, 2 = server). Do not make it optional, and do not accept either."
 #endif
 static_assert(FLETCHER_EXPECTED_VARIANT == 1 || FLETCHER_EXPECTED_VARIANT == 2,
               "FLETCHER_EXPECTED_VARIANT is one build's wire value: 1 (edge) or 2 (server)");
@@ -64,8 +65,9 @@ TEST(BindingAbi, TheVariantIsAnsweredBeforeAnyOtherCall) {
     const fl_variant variant = fl_binding_variant();
     EXPECT_NE(static_cast<int>(variant), 0) << "0 is not a build";
     EXPECT_EQ(static_cast<int>(variant), FLETCHER_EXPECTED_VARIANT)
-        << "this artefact answered " << static_cast<int>(variant) << ", the build it is linked to is "
-        << FLETCHER_EXPECTED_VARIANT << " (1 = edge, 2 = server)";
+        << "this artefact answered " << static_cast<int>(variant)
+        << ", the build it is linked to is " << FLETCHER_EXPECTED_VARIANT
+        << " (1 = edge, 2 = server)";
     EXPECT_EQ(variant, static_cast<fl_variant>(FLETCHER_EXPECTED_VARIANT));
     EXPECT_EQ(static_cast<int>(FL_VARIANT_EDGE), 1) << "edge is 1 on the wire, by the header";
     EXPECT_EQ(static_cast<int>(FL_VARIANT_SERVER), 2) << "server is 2 on the wire, by the header";
@@ -99,7 +101,8 @@ TEST(BindingAbi, TheVariantAndVersionAnswerAlikeFromManyThreads) {
             ready.fetch_add(1);
             while (!go.load()) std::this_thread::yield();
             for (std::size_t i = 0; i < kAsksPerThread; ++i) {
-                if (static_cast<int>(fl_binding_variant()) != FLETCHER_EXPECTED_VARIANT) ++answers[t].wrong_variant;
+                if (static_cast<int>(fl_binding_variant()) != FLETCHER_EXPECTED_VARIANT)
+                    ++answers[t].wrong_variant;
                 if (fl_binding_abi_version() != FL_BINDING_ABI_VERSION) ++answers[t].wrong_version;
             }
         });
@@ -112,7 +115,8 @@ TEST(BindingAbi, TheVariantAndVersionAnswerAlikeFromManyThreads) {
         EXPECT_EQ(answers[t].wrong_variant, 0u)
             << "thread " << t << " was told a build other than " << FLETCHER_EXPECTED_VARIANT
             << " (1 = edge, 2 = server)";
-        EXPECT_EQ(answers[t].wrong_version, 0u) << "thread " << t << " was told a version other than the header's";
+        EXPECT_EQ(answers[t].wrong_version, 0u)
+            << "thread " << t << " was told a version other than the header's";
     }
 }
 

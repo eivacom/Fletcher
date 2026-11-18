@@ -270,7 +270,7 @@ public sealed class BatchOptionsTests : IDisposable
 
     // ── The scans (rung 10; BC-8, BC-14) ────────────────────────────────────
 
-    private const string OptionRead = @"\.(?:MaxRows|Timeout)\b";
+    private const string _optionRead = @"\.(?:MaxRows|Timeout)\b";
 
     /// <summary>A relational operator between operands, however the operand is named (<c>maxRows</c>, <c>options.Timeout</c>), or an <c>is &lt;</c> pattern.</summary>
     private static readonly Regex Relational = new(@"\s[<>]=?\s|\bis\s+(?:not\s+)?[<>]", RegexOptions.CultureInvariant);
@@ -281,7 +281,7 @@ public sealed class BatchOptionsTests : IDisposable
     /// <summary>Any clamp or bound, for the two places batch options are read and held.</summary>
     private static readonly Regex AnyBound = new(@"\bMath\.(?:Clamp|Min|Max)\s*\(", RegexOptions.CultureInvariant);
 
-    private const string TheOptionsSignature = "class BatchOptions";
+    private const string _theOptionsSignature = "class BatchOptions";
 
     /// <summary>
     /// The lines that check or clamp a batch option: a relational operator or a <c>Math</c> bound inside
@@ -291,8 +291,8 @@ public sealed class BatchOptionsTests : IDisposable
     private static string[] CheckedOrClamped((string File, int Line, string Text)[] code)
     {
         (int From, int To)?[] places =
-            [BodyOf(code, TheCaller, TheCallerSignature), BodyOf(code, TheCaller, TheOptionsSignature)];
-        bool InAPlace((string File, int Line, string Text) l) => Path.GetFileName(l.File) == TheCaller
+            [BodyOf(code, _theCaller, _theCallerSignature), BodyOf(code, _theCaller, _theOptionsSignature)];
+        bool InAPlace((string File, int Line, string Text) l) => Path.GetFileName(l.File) == _theCaller
             && places.Any(r => r is { } b && l.Line >= b.From && l.Line <= b.To);
         return code
             .Where(l => ClampedMaxRows.IsMatch(l.Text) || (InAPlace(l) && (Relational.IsMatch(l.Text) || AnyBound.IsMatch(l.Text))))
@@ -303,11 +303,11 @@ public sealed class BatchOptionsTests : IDisposable
     /// <summary>A stand-in tree: the options class, <c>SubscribeBatched</c> holding <paramref name="line"/>, and <paramref name="elsewhere"/> in another file.</summary>
     private static (string File, int Line, string Text)[] Tree(string line, string elsewhere = "int unrelated = 0;") =>
     [
-        (TheCaller, 1, "public sealed class BatchOptions"), (TheCaller, 2, "{"),
-        (TheCaller, 3, "public long MaxRows { get; init; } = 8000;"), (TheCaller, 4, "}"),
-        (TheCaller, 5, "public unsafe SubscribeResult SubscribeBatched("), (TheCaller, 6, "{"),
-        (TheCaller, 7, line), (TheCaller, 8, "}"),
-        (TheOneFile, 1, elsewhere),
+        (_theCaller, 1, "public sealed class BatchOptions"), (_theCaller, 2, "{"),
+        (_theCaller, 3, "public long MaxRows { get; init; } = 8000;"), (_theCaller, 4, "}"),
+        (_theCaller, 5, "public unsafe SubscribeResult SubscribeBatched("), (_theCaller, 6, "{"),
+        (_theCaller, 7, line), (_theCaller, 8, "}"),
+        (_theOneFile, 1, elsewhere),
     ];
 
     /// <summary>
@@ -354,9 +354,9 @@ public sealed class BatchOptionsTests : IDisposable
         Assert.Single(CheckedOrClamped(Tree("int x = 0;", elsewhere: "int m = Math.Clamp(o.MaxRows, 1, 5);")));
 
         (string File, int Line, string Text)[] code = ManagedBatcherGoneTests.FletcherCode();
-        Assert.NotNull(BodyOf(code, TheCaller, TheCallerSignature));
-        Assert.NotNull(BodyOf(code, TheCaller, TheOptionsSignature));
-        Assert.Contains(code, l => Regex.IsMatch(l.Text, OptionRead));
+        Assert.NotNull(BodyOf(code, _theCaller, _theCallerSignature));
+        Assert.NotNull(BodyOf(code, _theCaller, _theOptionsSignature));
+        Assert.Contains(code, l => Regex.IsMatch(l.Text, _optionRead));
 
         string[] found = CheckedOrClamped(code);
         Assert.True(found.Length == 0, "d10 L3: dotnet/src/Fletcher checks or clamps a batch option:\n" + string.Join("\n", found));
@@ -365,10 +365,10 @@ public sealed class BatchOptionsTests : IDisposable
     private static readonly Regex Conversion = new(
         @"\bTicksPerMillisecond\b|\.TotalMilliseconds\b|\.TotalSeconds\b|\.Ticks\b|\.Milliseconds\b|\b10_?000\b", RegexOptions.CultureInvariant);
 
-    private const string TheOneFile = "SchemaArrival.cs";
-    private const string TheOneSignature = "static long ToNativeMilliseconds(";
-    private const string TheCaller = "SubscriberArrow.cs";
-    private const string TheCallerSignature = "SubscribeResult SubscribeBatched(";
+    private const string _theOneFile = "SchemaArrival.cs";
+    private const string _theOneSignature = "static long ToNativeMilliseconds(";
+    private const string _theCaller = "SubscriberArrow.cs";
+    private const string _theCallerSignature = "SubscribeResult SubscribeBatched(";
 
     /// <summary>The first and last line number of the braced body that starts at the line holding <paramref name="signature"/>.</summary>
     private static (int From, int To)? BodyOf((string File, int Line, string Text)[] code, string file, string signature)
@@ -397,10 +397,10 @@ public sealed class BatchOptionsTests : IDisposable
     /// <summary>Every ticks-to-milliseconds expression that is not inside the one conversion method.</summary>
     private static string[] StrayConversions((string File, int Line, string Text)[] code)
     {
-        (int From, int To)? body = BodyOf(code, TheOneFile, TheOneSignature);
+        (int From, int To)? body = BodyOf(code, _theOneFile, _theOneSignature);
         return code
             .Where(l => Conversion.IsMatch(l.Text))
-            .Where(l => !(Path.GetFileName(l.File) == TheOneFile && body is { } b && l.Line >= b.From && l.Line <= b.To))
+            .Where(l => !(Path.GetFileName(l.File) == _theOneFile && body is { } b && l.Line >= b.From && l.Line <= b.To))
             .Select(l => $"{l.File}:{l.Line}: {l.Text}")
             .ToArray();
     }
@@ -435,27 +435,27 @@ public sealed class BatchOptionsTests : IDisposable
 
         (string, int, string)[] synthetic =
         [
-            (TheOneFile, 1, "internal static long ToNativeMilliseconds(TimeSpan timeout)"),
-            (TheOneFile, 2, "{"),
-            (TheOneFile, 3, "return timeout.Ticks / TimeSpan.TicksPerMillisecond;"),
-            (TheOneFile, 4, "}"),
-            (TheOneFile, 5, "double total = timeout.TotalMilliseconds;"),
+            (_theOneFile, 1, "internal static long ToNativeMilliseconds(TimeSpan timeout)"),
+            (_theOneFile, 2, "{"),
+            (_theOneFile, 3, "return timeout.Ticks / TimeSpan.TicksPerMillisecond;"),
+            (_theOneFile, 4, "}"),
+            (_theOneFile, 5, "double total = timeout.TotalMilliseconds;"),
             ("Other.cs", 1, "long ms = options.Timeout.Ticks / 10_000;"),
         ];
         Assert.Equal(new[] { "SchemaArrival.cs:5: double total = timeout.TotalMilliseconds;", "Other.cs:1: long ms = options.Timeout.Ticks / 10_000;" },
             StrayConversions(synthetic).Select(s => s.Replace(@"\", "/")).ToArray());
-        (string, int, string)[] callerWith = [(TheCaller, 1, "public unsafe SubscribeResult SubscribeBatched("), (TheCaller, 2, "{"),
-            (TheCaller, 3, "long t = SchemaArrival.ToNativeMilliseconds(options.Timeout);"), (TheCaller, 4, "}")];
-        (string, int, string)[] callerWithout = [(TheCaller, 1, "public unsafe SubscribeResult SubscribeBatched("), (TheCaller, 2, "{"),
-            (TheCaller, 3, "long t = (long)options.Timeout.TotalMilliseconds;"), (TheCaller, 4, "}")];
-        Assert.True(Calls(callerWith, TheCaller, TheCallerSignature));
-        Assert.False(Calls(callerWithout, TheCaller, TheCallerSignature));
+        (string, int, string)[] callerWith = [(_theCaller, 1, "public unsafe SubscribeResult SubscribeBatched("), (_theCaller, 2, "{"),
+            (_theCaller, 3, "long t = SchemaArrival.ToNativeMilliseconds(options.Timeout);"), (_theCaller, 4, "}")];
+        (string, int, string)[] callerWithout = [(_theCaller, 1, "public unsafe SubscribeResult SubscribeBatched("), (_theCaller, 2, "{"),
+            (_theCaller, 3, "long t = (long)options.Timeout.TotalMilliseconds;"), (_theCaller, 4, "}")];
+        Assert.True(Calls(callerWith, _theCaller, _theCallerSignature));
+        Assert.False(Calls(callerWithout, _theCaller, _theCallerSignature));
 
         (string File, int Line, string Text)[] code = ManagedBatcherGoneTests.FletcherCode();
-        Assert.Contains(code, l => Path.GetFileName(l.File) == TheOneFile && Conversion.IsMatch(l.Text));
+        Assert.Contains(code, l => Path.GetFileName(l.File) == _theOneFile && Conversion.IsMatch(l.Text));
 
         string[] stray = StrayConversions(code);
         Assert.True(stray.Length == 0, "d10 L12: a ticks-to-milliseconds conversion outside SchemaArrival.ToNativeMilliseconds:\n" + string.Join("\n", stray));
-        Assert.True(Calls(code, TheCaller, TheCallerSignature), "SubscribeBatched does not call SchemaArrival.ToNativeMilliseconds");
+        Assert.True(Calls(code, _theCaller, _theCallerSignature), "SubscribeBatched does not call SchemaArrival.ToNativeMilliseconds");
     }
 }

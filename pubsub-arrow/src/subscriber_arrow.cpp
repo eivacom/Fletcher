@@ -34,15 +34,13 @@ class SubscriberArrow::RecordBatchBatcher {
    public:
     RecordBatchBatcher(RecordBatchCallback cb, int64_t max_rows, std::chrono::milliseconds timeout,
                        const void* provider)
-        : cb_(std::move(cb)),
-          max_rows_(max_rows),
-          timeout_(timeout),
-          provider_(provider) {
+        : cb_(std::move(cb)), max_rows_(max_rows), timeout_(timeout), provider_(provider) {
         // L15 / BC-8: the one answer to "are these options acceptable?". Refused, never adjusted.
         if (max_rows_ < 1 || timeout_ < std::chrono::milliseconds::zero()) {
             throw PubSubError(PubSubStatus::kInvalidArgument,
                               "batch options out of range: max_rows must be >= 1 (got " +
-                                  std::to_string(max_rows_) + ") and timeout must be >= 0 ms (got " +
+                                  std::to_string(max_rows_) +
+                                  ") and timeout must be >= 0 ms (got " +
                                   std::to_string(timeout_.count()) + " ms)");
         }
     }
@@ -226,10 +224,10 @@ class SubscriberArrow::RecordBatchBatcher {
         cv_.notify_all();
     }
 
-    // Room set aside for the next window: a hint, never a limit or a verdict. Bounded, so the number
-    // a subscriber asks for never sizes an allocation (L15: max_rows decides only when a window
-    // closes). A failure is ignored: the next Append() grows the builders. A failed Reserve can
-    // leave a builder part-grown (Arrow records its capacity before the validity bitmap is
+    // Room set aside for the next window: a hint, never a limit or a verdict. Bounded, so the
+    // number a subscriber asks for never sizes an allocation (L15: max_rows decides only when a
+    // window closes). A failure is ignored: the next Append() grows the builders. A failed Reserve
+    // can leave a builder part-grown (Arrow records its capacity before the validity bitmap is
     // allocated), which a later Append would write through; so a failure resets every builder
     // with a Finish(), as DiscardPending does. The decoder holds no rows at either call site, so
     // nothing is lost. Caller holds mu_ and has a decoder.
@@ -489,7 +487,7 @@ SubscriberArrow::SubscribeResult SubscriberArrow::Subscribe(
 }
 
 SubscriberArrow::TopicCodec SubscriberArrow::AcquireCodec(const std::string& key,
-                                                           const SharedSchema& schema) {
+                                                          const SharedSchema& schema) {
     std::lock_guard lock(mu_);
     auto it = codecs_.find(key);
     if (it != codecs_.end()) return it->second;  // copies both owners; nothing is looked up again

@@ -34,7 +34,7 @@ namespace Eiva.Fletcher.Tests;
 
 public sealed class AbiNumberTableTests
 {
-    private const string HeaderFile = "binding.h";
+    private const string _headerFile = "binding.h";
 
     /// <summary>One row per table: the C header's table against its C# mirror.</summary>
     /// <remarks>
@@ -93,7 +93,7 @@ public sealed class AbiNumberTableTests
 
     private static string ReadHeader()
     {
-        string path = Path.Combine(AppContext.BaseDirectory, HeaderFile);
+        string path = Path.Combine(AppContext.BaseDirectory, _headerFile);
         Assert.True(File.Exists(path), $"the C header was not staged beside the test binary ({path}): check the csproj item for binding.h");
         return File.ReadAllText(path);
     }

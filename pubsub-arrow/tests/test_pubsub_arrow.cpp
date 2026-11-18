@@ -877,7 +877,8 @@ void ExpectLateSchemaRowsAssembled(const std::vector<BatchSink::Delivery>& ds, s
         const auto& d = ds[i];
         ASSERT_NE(d.batch, nullptr) << "delivery " << i;
         EXPECT_EQ(d.status.rows_dropped, 0) << "delivery " << i;
-        ASSERT_EQ(d.attachments.size(), static_cast<size_t>(d.batch->num_rows())) << "delivery " << i;
+        ASSERT_EQ(d.attachments.size(), static_cast<size_t>(d.batch->num_rows()))
+            << "delivery " << i;
         const auto x = std::static_pointer_cast<arrow::Int32Array>(d.batch->column(0));
         for (int64_t r = 0; r < d.batch->num_rows(); ++r) {
             if (r > 0) EXPECT_LT(x->Value(r - 1), x->Value(r)) << "delivery " << i;
@@ -973,7 +974,8 @@ enum class AssemblyState { kAwaitingSchema, kUndecodableSchema, kUnimportableSch
 enum class Ending { kDeadline, kClose };
 
 // A struct whose child has a format string Arrow does not know: Publisher::CreateTopic accepts it
-// (the declaration's encoder never throws) and a provider hands it on, but ImportArrowSchema throws.
+// (the declaration's encoder never throws) and a provider hands it on, but ImportArrowSchema
+// throws.
 OwnedSchema UnimportableSchema() {
     OwnedSchema schema;
     ArrowSchemaInit(schema.get());
@@ -1007,14 +1009,13 @@ void RunAssemblyCell(AssemblyState state, Ending ending) {
         pub.CreateTopic(kTopic, TestSchema());
     }  // kAwaitingSchema: the topic is never declared
 
-    auto result = sub.Subscribe(kTopic, sink.callback(),
-                                ending == Ending::kDeadline ? DeadlineBatchOptions()
-                                                            : NoTriggerBatchOptions());
+    auto result = sub.Subscribe(
+        kTopic, sink.callback(),
+        ending == Ending::kDeadline ? DeadlineBatchOptions() : NoTriggerBatchOptions());
     pub.PublishDirect(kTopic, [](WriteBuffer& buf) { buf.AppendByte(0x00); });
 
     if (ending == Ending::kDeadline) {
-        ASSERT_TRUE(sink.WaitFor(1, std::chrono::seconds(2)))
-            << "no report at the deadline";
+        ASSERT_TRUE(sink.WaitFor(1, std::chrono::seconds(2))) << "no report at the deadline";
     }
 
     // Rows lost in each expected delivery: one, or (unimportable) a second row that a revived
@@ -1043,7 +1044,8 @@ void RunAssemblyCell(AssemblyState state, Ending ending) {
         expected_reason.push_back(BatchStatus::Reason::kClosing);
     }
     std::lock_guard<std::mutex> lk(sink.mu);
-    ASSERT_EQ(sink.deliveries.size(), expected_dropped.size());  // exactly these: not none, not more
+    ASSERT_EQ(sink.deliveries.size(),
+              expected_dropped.size());  // exactly these: not none, not more
     for (size_t i = 0; i < expected_dropped.size(); ++i) {
         const auto& d = sink.deliveries[i];
         EXPECT_EQ(d.status.reason, expected_reason[i]) << "delivery " << i;
@@ -2077,8 +2079,8 @@ void RunClosingFromInside(InsideClosing closing) {
     EXPECT_EQ(at_unsubscribe_return.load(), 1u)
         << "a batch was delivered before the closing call returned";
     if (from_row_delivery) {
-        EXPECT_TRUE(released_by_unsubscribe.load())
-            << "the batch callback was released by its own timeout, not by the returned Unsubscribe";
+        EXPECT_TRUE(released_by_unsubscribe.load()) << "the batch callback was released by its own "
+                                                       "timeout, not by the returned Unsubscribe";
     }
     std::vector<Expected> expected;
     switch (closing) {
@@ -2288,8 +2290,8 @@ TEST(SubscriberArrowBatchTest, RowsConservedAtEveryEnding) {
         const int rows = 10 + static_cast<int>(rng() % 21);
         const bool inside = rng() % 2 == 0;
         SCOPED_TRACE("seed " + std::to_string(seed) + ": max_rows " + std::to_string(max_rows) +
-                     ", " + std::to_string(schema_less) + " schema-less + " +
-                     std::to_string(rows) + " rows, ended " + (inside ? "inside" : "outside"));
+                     ", " + std::to_string(schema_less) + " schema-less + " + std::to_string(rows) +
+                     " rows, ended " + (inside ? "inside" : "outside"));
 
         DeliveryLog log;
         Latch all_published, closed;
@@ -2471,9 +2473,8 @@ TEST(SubscriberArrowBatchTest, OutOfRangeBatchOptionsAreRefusedAndLeaveNothingBe
     std::this_thread::sleep_for(std::chrono::milliseconds(200));  // one-sided observation window
     for (size_t i = 0; i < sinks.size(); ++i) {
         std::lock_guard<std::mutex> lk(sinks[i].mu);
-        EXPECT_TRUE(sinks[i].deliveries.empty())
-            << "arm " << arms[i].name << " received " << sinks[i].deliveries.size()
-            << " deliveries";
+        EXPECT_TRUE(sinks[i].deliveries.empty()) << "arm " << arms[i].name << " received "
+                                                 << sinks[i].deliveries.size() << " deliveries";
     }
 
     // Positive control: the topic is alive, and a valid Subscribe reaches the provider.
@@ -2639,7 +2640,7 @@ int32_t XAt(const BatchSink::Delivery& d, int64_t row) {
 // nothing for a whole observation window; the ending delivers exactly one more, kClosing, row 6;
 // and nothing follows it (L9).
 void ExpectBodyAClosesOnlyWhenFullOrAtClosing(std::chrono::milliseconds timeout,
-                                               NoTimeoutEnding ending) {
+                                              NoTimeoutEnding ending) {
     BatchSink sink;
     BodyRun run(Body::kSevenRowsMaxThree, timeout, sink);
 
@@ -2853,8 +2854,8 @@ Totals Sum(BatchSink& sink) {
     return t;
 }
 
-// Waits (up to `timeout`) until `n` rows are accounted for, delivered or counted lost. A row that is
-// reported lost counts, so a run that loses its rows fails on its assertions at once instead of
+// Waits (up to `timeout`) until `n` rows are accounted for, delivered or counted lost. A row that
+// is reported lost counts, so a run that loses its rows fails on its assertions at once instead of
 // waiting out the clock; a run that delivers them all leaves exactly as the plain wait would.
 bool WaitForAccounted(BatchSink& sink, int64_t n, std::chrono::milliseconds timeout) {
     std::unique_lock<std::mutex> lk(sink.mu);
@@ -3072,8 +3073,8 @@ struct TimedSink {
         return [this](std::shared_ptr<arrow::RecordBatch> batch, std::vector<Attachments>,
                       BatchStatus status) {
             std::lock_guard<std::mutex> lk(mu);
-            got.push_back({status, batch ? batch->num_rows() : 0, !batch,
-                           std::chrono::steady_clock::now()});
+            got.push_back(
+                {status, batch ? batch->num_rows() : 0, !batch, std::chrono::steady_clock::now()});
             cv.notify_all();
         };
     }

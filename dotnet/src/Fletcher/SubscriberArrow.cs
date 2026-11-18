@@ -342,7 +342,7 @@ public sealed class SubscriberArrow : IDisposable
         bool quiet = _subscriber.InDeliveryOnThisProvider;
 
         // The ABI's id rule: bit 63 set is a batched id, never a row id (binding.h).
-        if ((subscription.Id & BatchedIdBit) != 0)
+        if ((subscription.Id & _batchedIdBit) != 0)
         {
             _subscriber.UnsubscribeBatches(subscription);
         }
@@ -365,7 +365,7 @@ public sealed class SubscriberArrow : IDisposable
         }
     }
 
-    private const ulong BatchedIdBit = 1UL << 63;
+    private const ulong _batchedIdBit = 1UL << 63;
 
     /// <summary>Watch a topic's schema without its data - <see cref="Subscriber.SubscribeSchema"/>, forwarded.</summary>
     public SchemaArrival SubscribeSchema(TopicPath topic)

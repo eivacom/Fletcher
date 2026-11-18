@@ -58,7 +58,7 @@ internal static class NativeLoader
         NativeLibrary.SetDllImportResolver(typeof(NativeLoader).Assembly, Resolve);
 
     /// <summary>The server build's base name (ruling 2026-11-13, "its own name"; d10 D11).</summary>
-    private const string ServerLibraryName = "fletcher-c-abi-server";
+    private const string _serverLibraryName = "fletcher-c-abi-server";
 
     /// <summary>
     /// The one decision, made on the first import that resolves and kept: every later import
@@ -152,11 +152,11 @@ internal static class NativeLoader
         }
         catch (Exception e) when (e is DllNotFoundException or BadImageFormatException)
         {
-            bool server = string.Equals(Path.GetFileName(chosen), NativeFileName(ServerLibraryName), StringComparison.OrdinalIgnoreCase);
+            bool server = string.Equals(Path.GetFileName(chosen), NativeFileName(_serverLibraryName), StringComparison.OrdinalIgnoreCase);
             throw new DllNotFoundException(
                 $"Fletcher found its native shim for RID '{rid}', but the operating system could not " +
                 $"load it: {chosen}: {e.Message}. That file is the " +
-                (server ? $"server build ('{ServerLibraryName}')" : $"edge build ('{NativeMethods.LibraryName}')") +
+                (server ? $"server build ('{_serverLibraryName}')" : $"edge build ('{NativeMethods.LibraryName}')") +
                 ". No other copy is tried: a server build present in the app's folders is always chosen over " +
                 $"the edge build ('{NativeMethods.LibraryName}'), and a present file that will not load stops " +
                 "the app. To run, remove that file" +
@@ -276,7 +276,7 @@ internal static class NativeLoader
             }
         }
 
-        foreach (string name in new[] { NativeFileName(ServerLibraryName), NativeFileName(NativeMethods.LibraryName) })
+        foreach (string name in new[] { NativeFileName(_serverLibraryName), NativeFileName(NativeMethods.LibraryName) })
         {
             foreach (string directory in directories)
             {

@@ -8,10 +8,11 @@
 // `test_binding_abi.cpp` is: `c_abi_tests` against the shipped shim (edge in the edge package,
 // server in the server package), `c_abi_probe_tests` against the test-only probe shim (always
 // edge) and, in the server package, `c_abi_handover_tests` against the test-only hand-over fault
-// shim (D9S-6, `FLETCHER_HANDOVER_FAULT_TESTS`). The expectation of each is the literal `FLETCHER_EXPECTED_VARIANT` that
-// `tests/CMakeLists.txt` writes by its own mapping and never reads back from the shim: a test that
-// took the answer from the shim would agree with the shim whatever the shim said. Rows that are
-// about the build get ONE expected answer per artefact and never "either".
+// shim (D9S-6, `FLETCHER_HANDOVER_FAULT_TESTS`). The expectation of each is the literal
+// `FLETCHER_EXPECTED_VARIANT` that `tests/CMakeLists.txt` writes by its own mapping and never reads
+// back from the shim: a test that took the answer from the shim would agree with the shim whatever
+// the shim said. Rows that are about the build get ONE expected answer per artefact and never
+// "either".
 //
 // The three rows that need a batch to cross exist only in the server binary (`#if` below): an edge
 // build has no batcher, so there is nothing for them to assert there, and the fourth row is the one
@@ -49,7 +50,8 @@
 #endif
 
 #ifndef FLETCHER_EXPECTED_VARIANT
-#error "FLETCHER_EXPECTED_VARIANT is not defined: the executable must say which build its shim is (1 = edge, 2 = server). Do not make it optional, and do not accept either."
+#error \
+    "FLETCHER_EXPECTED_VARIANT is not defined: the executable must say which build its shim is (1 = edge, 2 = server). Do not make it optional, and do not accept either."
 #endif
 static_assert(FLETCHER_EXPECTED_VARIANT == 1 || FLETCHER_EXPECTED_VARIANT == 2,
               "FLETCHER_EXPECTED_VARIANT is one build's wire value: 1 (edge) or 2 (server)");
@@ -193,9 +195,9 @@ class BatchSink {
             if (s.had_array && s.had_schema) {
                 s.array_live_on_entry = batch->array->release != nullptr;
                 s.schema_live_on_entry = batch->schema->release != nullptr;
-                ArrowArray array = *batch->array;     // the move: copy the struct ...
+                ArrowArray array = *batch->array;  // the move: copy the struct ...
                 ArrowSchema schema = *batch->schema;
-                batch->array->release = nullptr;      // ... and mark the source moved-from
+                batch->array->release = nullptr;  // ... and mark the source moved-from
                 batch->schema->release = nullptr;
                 auto imported = arrow::ImportRecordBatch(&array, &schema);
                 if (imported.ok()) {
@@ -236,9 +238,9 @@ class PublishedRows {
         std::shared_ptr<arrow::Array> label_array;
         EXPECT_TRUE(seq.Finish(&seq_array).ok());
         EXPECT_TRUE(label.Finish(&label_array).ok());
-        batch_ = arrow::RecordBatch::Make(
-            arrow::schema({arrow::field("seq", arrow::int64()), arrow::field("label", arrow::utf8())}),
-            count, {seq_array, label_array});
+        batch_ = arrow::RecordBatch::Make(arrow::schema({arrow::field("seq", arrow::int64()),
+                                                         arrow::field("label", arrow::utf8())}),
+                                          count, {seq_array, label_array});
 
         EXPECT_TRUE(arrow::ExportRecordBatch(*batch_, &array_, &schema_).ok());
         fl_error err = {};
@@ -324,8 +326,9 @@ class BatchFixture {
 
     void Publish(fl_topic topic, const PublishedRows& rows, int64_t first, int64_t count) {
         fl_error err = {};
-        EXPECT_EQ(fl_publisher_publish_rows(publisher_, topic, rows.rows(), first, count, nullptr, &err),
-                  FL_OK)
+        EXPECT_EQ(
+            fl_publisher_publish_rows(publisher_, topic, rows.rows(), first, count, nullptr, &err),
+            FL_OK)
             << MessageOf(err);
         fl_error_dispose(&err);
     }
@@ -486,8 +489,9 @@ TEST(Batches, EachClosedWindowCrossesAsAnImportableBatchInWindowOrder) {
     EXPECT_NE(id & (uint64_t{1} << 63), 0U)
         << "a batched subscription id has bit 63 set, so it can never equal a row id (review B1)";
 
-    ASSERT_EQ(fl_publisher_publish_rows(fx.publisher(), topic, published.rows(), 0, 5, nullptr, &err),
-              FL_OK)
+    ASSERT_EQ(
+        fl_publisher_publish_rows(fx.publisher(), topic, published.rows(), 0, 5, nullptr, &err),
+        FL_OK)
         << MessageOf(err);
     fl_error_dispose(&err);
 
@@ -541,9 +545,9 @@ TEST(Batches, EachClosedWindowCrossesAsAnImportableBatchInWindowOrder) {
 /// d9 L14 and d7 L6, L7: a window domain 7 could not build is not a zero-row batch, it is no batch
 /// at all, and its rows are counted (while open, a deadline with nothing pending delivers nothing,
 /// d7 L6, so each delivery here exists because of drops; the snapshot is taken before the close,
-/// whose empty closing delivery is not this test's subject). The topic is never declared, so `inprocess` (as-declared mode)
-/// delivers raw rows with no schema and domain 7 has nothing to decode them with: every window is
-/// a null batch with its rows in `rows_dropped`.
+/// whose empty closing delivery is not this test's subject). The topic is never declared, so
+/// `inprocess` (as-declared mode) delivers raw rows with no schema and domain 7 has nothing to
+/// decode them with: every window is a null batch with its rows in `rows_dropped`.
 ///
 /// The wait is one-sided: the windows may split at any deadline, so only the total is asserted.
 TEST(Batches, AWindowThatCouldNotBeBuiltArrivesAsNoBatchWithItsRowsCounted) {
@@ -612,13 +616,13 @@ SetPtr MakeSet(const Seen::Entries& entries) {
     EXPECT_EQ(fl_attachments_builder_create(&builder, &err), FL_OK) << MessageOf(err);
     for (const auto& [key, value] : entries) {
         fl_blob blob = {};
-        EXPECT_EQ(fl_blob_create(reinterpret_cast<const uint8_t*>(value.data()), value.size(), &blob,
-                                 &err),
+        EXPECT_EQ(fl_blob_create(reinterpret_cast<const uint8_t*>(value.data()), value.size(),
+                                 &blob, &err),
                   FL_OK)
             << MessageOf(err);
         EXPECT_EQ(fl_attachments_builder_set(
-                      builder, fl_str{reinterpret_cast<const uint8_t*>(key.data()), key.size()}, &blob,
-                      &err),
+                      builder, fl_str{reinterpret_cast<const uint8_t*>(key.data()), key.size()},
+                      &blob, &err),
                   FL_OK)
             << MessageOf(err);
         fl_blob_release(&blob);
@@ -672,8 +676,9 @@ TEST(Batches, EachBatchRowCarriesItsOwnAttachments) {
         << MessageOf(err);
     fl_error_dispose(&err);
 
-    ASSERT_EQ(fl_publisher_publish_rows(fx.publisher(), topic, published.rows(), 0, 5, per_row, &err),
-              FL_OK)
+    ASSERT_EQ(
+        fl_publisher_publish_rows(fx.publisher(), topic, published.rows(), 0, 5, per_row, &err),
+        FL_OK)
         << MessageOf(err);
     fl_error_dispose(&err);
 
@@ -735,7 +740,8 @@ TEST(Batches, ClosingFromOutsideDeliversTheRestThenTheClosingBatch) {
             second, &fl_subscriber_destroy);
 
         const uint64_t id = SubscribeBatches(fx.subscriber(), closed.topic(), 2, INT64_MAX, sink);
-        SubscribeBatches(by_destroy ? second : fx.subscriber(), live.topic(), 2, INT64_MAX, control);
+        SubscribeBatches(by_destroy ? second : fx.subscriber(), live.topic(), 2, INT64_MAX,
+                         control);
 
         fx.Publish(closed.topic(), published, 0, 5);
         if (by_destroy) {
@@ -743,8 +749,9 @@ TEST(Batches, ClosingFromOutsideDeliversTheRestThenTheClosingBatch) {
         } else {
             CloseBatches(fx.subscriber(), id, FL_OK);
         }
-        ExpectWindows(sink.Snapshot(), published,
-                      {{FL_BATCH_ROW_LIMIT, 0, 2}, {FL_BATCH_ROW_LIMIT, 2, 2}, {FL_BATCH_CLOSING, 4, 1}});
+        ExpectWindows(
+            sink.Snapshot(), published,
+            {{FL_BATCH_ROW_LIMIT, 0, 2}, {FL_BATCH_ROW_LIMIT, 2, 2}, {FL_BATCH_CLOSING, 4, 1}});
 
         fx.Publish(closed.topic(), published, 0, 2);
         fx.Publish(live.topic(), published, 0, 2);
@@ -852,10 +859,10 @@ TEST(Batches, ABatchIsTheCallersOnlyIfMoved) {
         fl_error err = {};
         uint64_t id = 0;
         fl_schema_arrival* arrival = nullptr;
-        ASSERT_EQ(fl_subscriber_subscribe_batches(fx->subscriber(), topic.topic(), 2, INT64_MAX,
-                                                  nullptr, &MoveOrLeaveSink::OnBatch, &sink, &id,
-                                                  &arrival, &err),
-                  FL_OK)
+        ASSERT_EQ(
+            fl_subscriber_subscribe_batches(fx->subscriber(), topic.topic(), 2, INT64_MAX, nullptr,
+                                            &MoveOrLeaveSink::OnBatch, &sink, &id, &arrival, &err),
+            FL_OK)
             << MessageOf(err);
         fl_error_dispose(&err);
         fl_schema_arrival_dispose(arrival);
@@ -877,7 +884,7 @@ TEST(Batches, ABatchIsTheCallersOnlyIfMoved) {
                     << (*imported)->ToString();
             }
             MoveOrLeaveSink::Taken& w1 = sink.taken(1);
-            w1.array.release(&w1.array);    // the stashed originals are the test's
+            w1.array.release(&w1.array);  // the stashed originals are the test's
             w1.schema.release(&w1.schema);
         }).join();
 
@@ -888,13 +895,15 @@ TEST(Batches, ABatchIsTheCallersOnlyIfMoved) {
         const std::thread::id batch_thread = sink.taken(0).thread;
         for (const auto& [name, counter] : left) {
             SCOPED_TRACE(name);
-            EXPECT_EQ(counter->calls.load(), 1) << "the shim releases what was not moved exactly once";
+            EXPECT_EQ(counter->calls.load(), 1)
+                << "the shim releases what was not moved exactly once";
             EXPECT_EQ(counter->before_return.load(), 0) << "released before the callback returned";
             EXPECT_EQ(counter->thread, batch_thread) << "released off the batch thread";
         }
         EXPECT_NE(batch_thread, std::this_thread::get_id());
         const int32_t reasons[] = {FL_BATCH_ROW_LIMIT, FL_BATCH_ROW_LIMIT, FL_BATCH_CLOSING};
-        for (size_t i = 0; i < 3; ++i) EXPECT_EQ(sink.taken(i).reason, reasons[i]) << "window " << i;
+        for (size_t i = 0; i < 3; ++i)
+            EXPECT_EQ(sink.taken(i).reason, reasons[i]) << "window " << i;
     }
 }
 
@@ -904,11 +913,12 @@ TEST(Batches, ABatchIsTheCallersOnlyIfMoved) {
 std::string Domain7Refusal(int64_t max_rows, int64_t timeout_ms) {
     fletcher::SubscriberArrow d7(std::make_shared<fletcher::InProcessPubSubProvider>());
     try {
-        (void)d7.Subscribe({"d9s5", "oracle"},
-                           [](std::shared_ptr<arrow::RecordBatch>, std::vector<fletcher::Attachments>,
-                              fletcher::SubscriberArrow::BatchStatus) {},
-                           fletcher::SubscriberArrow::BatchOptions{
-                               max_rows, std::chrono::milliseconds(timeout_ms)});
+        (void)d7.Subscribe(
+            {"d9s5", "oracle"},
+            [](std::shared_ptr<arrow::RecordBatch>, std::vector<fletcher::Attachments>,
+               fletcher::SubscriberArrow::BatchStatus) {},
+            fletcher::SubscriberArrow::BatchOptions{max_rows,
+                                                    std::chrono::milliseconds(timeout_ms)});
     } catch (const fletcher::PubSubError& e) {
         return e.what();
     }
@@ -927,8 +937,14 @@ std::string Domain7Refusal(int64_t max_rows, int64_t timeout_ms) {
 TEST(Batches, EveryBatchOptionReachesDomain7AsGiven) {
     const int64_t row_counts[] = {INT64_MIN, -1, 0, 1, 2, INT64_MAX};
     const int64_t timeouts[] = {
-        INT64_MIN, -1, 0, 1, INT64_MAX, 3'155'760'000'000LL /* 100 years */,
-        std::chrono::duration_cast<milliseconds>(std::chrono::steady_clock::duration::max()).count()};
+        INT64_MIN,
+        -1,
+        0,
+        1,
+        INT64_MAX,
+        3'155'760'000'000LL /* 100 years */,
+        std::chrono::duration_cast<milliseconds>(std::chrono::steady_clock::duration::max())
+            .count()};
     struct Cell {
         int64_t max_rows;
         int64_t timeout_ms;
@@ -940,7 +956,8 @@ TEST(Batches, EveryBatchOptionReachesDomain7AsGiven) {
     };
     constexpr uint64_t kSentinelId = 0x5A5A5A5A5A5A5A5AULL;
     static char sentinel_byte;
-    fl_schema_arrival* const kSentinelArrival = reinterpret_cast<fl_schema_arrival*>(&sentinel_byte);
+    fl_schema_arrival* const kSentinelArrival =
+        reinterpret_cast<fl_schema_arrival*>(&sentinel_byte);
 
     std::deque<BatchSink> sinks;  // one per cell, then the control's; they outlive the fixture
     RowSink rows;
@@ -956,9 +973,9 @@ TEST(Batches, EveryBatchOptionReachesDomain7AsGiven) {
             fx.DeclareTopic(topics.back().topic(), published);
             Cell c{max_rows, timeout_ms, FL_OK, 0, {}, kSentinelId, kSentinelArrival};
             fl_error err = {};
-            c.status = fl_subscriber_subscribe_batches(fx.subscriber(), topics.back().topic(), max_rows,
-                                                       timeout_ms, nullptr, &BatchSink::OnBatch,
-                                                       &sinks.back(), &c.id, &c.arrival, &err);
+            c.status = fl_subscriber_subscribe_batches(
+                fx.subscriber(), topics.back().topic(), max_rows, timeout_ms, nullptr,
+                &BatchSink::OnBatch, &sinks.back(), &c.id, &c.arrival, &err);
             c.origin = err.origin;
             c.message = MessageOf(err);
             fl_error_dispose(&err);
@@ -977,7 +994,8 @@ TEST(Batches, EveryBatchOptionReachesDomain7AsGiven) {
     // the rest of the 2 s before the cells that must see nothing are judged.
     const auto window_end = std::chrono::steady_clock::now() + seconds(2);
     const auto left = [&] {
-        return std::chrono::duration_cast<milliseconds>(window_end - std::chrono::steady_clock::now());
+        return std::chrono::duration_cast<milliseconds>(window_end -
+                                                        std::chrono::steady_clock::now());
     };
     for (size_t i = 0; i < cells.size(); ++i) {
         const Cell& c = cells[i];
@@ -1030,9 +1048,9 @@ TEST(Batches, EveryBatchOptionReachesDomain7AsGiven) {
     uint64_t batch_id = 0;
     fl_schema_arrival* row_arrival = nullptr;
     fl_schema_arrival* batch_arrival = nullptr;
-    const fl_status row_status = fl_subscriber_subscribe_with_options(
-        fx.subscriber(), row_topic.topic(), &RowSink::OnRow, &rows, &options, &row_id, &row_arrival,
-        &row_err);
+    const fl_status row_status =
+        fl_subscriber_subscribe_with_options(fx.subscriber(), row_topic.topic(), &RowSink::OnRow,
+                                             &rows, &options, &row_id, &row_arrival, &row_err);
     const fl_status batch_status = fl_subscriber_subscribe_batches(
         fx.subscriber(), batch_topic.topic(), 100, INT64_MAX, &options, &BatchSink::OnBatch,
         &sinks.front(), &batch_id, &batch_arrival, &batch_err);
@@ -1575,7 +1593,8 @@ TEST(Batches, TheBuildAnswersABatchedSubscribeAsItAnswersTheQuery) {
     // Sentinels the refusal must leave alone: not zero, not a plausible id, not a real handle.
     constexpr uint64_t kSentinelId = 0x5A5A5A5A5A5A5A5AULL;
     static char sentinel_byte;
-    fl_schema_arrival* const kSentinelArrival = reinterpret_cast<fl_schema_arrival*>(&sentinel_byte);
+    fl_schema_arrival* const kSentinelArrival =
+        reinterpret_cast<fl_schema_arrival*>(&sentinel_byte);
     uint64_t id = kSentinelId;
     fl_schema_arrival* arrival = kSentinelArrival;
 
@@ -1595,9 +1614,9 @@ TEST(Batches, TheBuildAnswersABatchedSubscribeAsItAnswersTheQuery) {
     // One row, then two seconds of looking. On the edge there is no subscription for it to reach;
     // on the server the 10 ms window closes by its deadline.
     fl_error publish_err = {};
-    EXPECT_EQ(fl_publisher_publish_row(fx.publisher(), topic, published.rows(), 0, nullptr,
-                                       &publish_err),
-              FL_OK)
+    EXPECT_EQ(
+        fl_publisher_publish_row(fx.publisher(), topic, published.rows(), 0, nullptr, &publish_err),
+        FL_OK)
         << MessageOf(publish_err);
     fl_error_dispose(&publish_err);
     const bool delivered = sink.WaitForDeliveries(1, seconds(2));
@@ -1671,7 +1690,8 @@ TEST(Batches, TheBuildAnswersABatchedCloseAsItAnswersTheQuery) {
     const fl_status null_status = fl_subscriber_unsubscribe_batches(nullptr, row_id, &null_err);
 
     if (kServerBuild) {
-        const uint64_t id = SubscribeBatches(fx.subscriber(), batched.topic(), 100, INT64_MAX, sink);
+        const uint64_t id =
+            SubscribeBatches(fx.subscriber(), batched.topic(), 100, INT64_MAX, sink);
         fx.Publish(batched.topic(), published, 0, 1);
         for (const uint64_t bare : {row_id, id & ~kBatchedIdTag}) {
             SCOPED_TRACE("untagged id " + std::to_string(bare));

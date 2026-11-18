@@ -11,7 +11,8 @@
 // since the last arm, so a run in which nothing failed cannot pass for a green one. State is two
 // atomics, per process (each gtest TEST runs in its own process under ctest).
 #ifndef FLETCHER_C_ABI_HANDOVER_FAULT
-#error "handover_fault.cpp belongs to the test-only fletcher-c-abi-handover-fault shim, which defines FLETCHER_C_ABI_HANDOVER_FAULT; it is never compiled into a shipped shim"
+#error \
+    "handover_fault.cpp belongs to the test-only fletcher-c-abi-handover-fault shim, which defines FLETCHER_C_ABI_HANDOVER_FAULT; it is never compiled into a shipped shim"
 #endif
 
 #include <atomic>
