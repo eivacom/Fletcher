@@ -3213,7 +3213,8 @@ runs, since BIND-T and BIND-10 land in between.
 7. **Tag `0.6.0-alpha`**, each tag on the merge commit and its workflow green before the next:
    `core`, `pubsub`, `arrow-bridge`, `pubsub-arrow`, `fastdds-pubsub-provider`,
    `xrcedds-pubsub-provider`, then `gateway`, `gateway-client`, `protoc` (also
-   `Eiva.Fletcher.Protoc`, to nuget.org), and `dotnet` last (the four packages to nuget.org).
+   `Eiva.Fletcher.Protoc`, to nuget.org), and `dotnet` last (the five packages to nuget.org: the
+   four managed packages and `Eiva.Fletcher.Server`, which has no `.snupkg`; D10C-5).
    Every CD builds from its own tree, so the order is for reading the results, not a build
    dependency. The nuget.org login and push run for the first time here; a failed `nuget-org`
    job is re-run after the cause is fixed (`--skip-duplicate`). The `protoc` and `dotnet`
@@ -3233,10 +3234,17 @@ runs, since BIND-T and BIND-10 land in between.
    `unsubscribe` stops delivery at once, so a row in flight is no longer delivered (D-BIND-186);
    and the new `subscribeBatched`, `undecodableRows`, `MAX_BATCH_TIMEOUT_MS` and their types;
    and `reconnectDelay`, documented in 0.5.x, is accepted and ignored: the client never
-   reconnected, and a closed connection ends every subscription (D-BIND-190).
+   reconnected, and a closed connection ends every subscription (D-BIND-190). The `dotnet` notes
+   (from the D10C round, merged at `ed51d47`) say: a new package, `Eiva.Fletcher.Server`, carries
+   the server-tier shim, and the loader takes it when it is present (D10C-4, D10C-5);
+   `SubscriberArrow.SubscribeBatched` is served by that shim, so without it the call is refused
+   (C#'s own batcher is gone, D10C-7); `BatchOptions.MaxTimeout` is removed (D10C-9); a failed
+   hand-over reaches the handler in `BatchStatus.Failure` (D10C-10); and one `SubscriberArrow`
+   refuses a per-row and a batched subscription to the same topic (D10C-6). The `dotnet` and
+   `protoc` Releases carry `LICENSE-EXCEPTION`, which takes effect with them (D-BIND-175).
 8. **Archive the rest of the round** (D-BIND-194's second step, D-BIND-198), once every tag is
    green and its record is written here: this tracker, `BIND-locked-decisions.md` and
-   `../docs/archive/BIND/BIND-progress-log.md` move to `docs/archive/BIND/`, and the links into them are updated
+   `BIND-progress-log.md` move to `docs/archive/BIND/`, and the links into them are updated
    (`c-abi/include/fletcher/abi/binding.h:86`, `c-abi/benchmarks/README.md:5`,
    `integration-tests/gateway-dotnet-end-to-end/README.md:10`, and whatever cites them by then).
    In the same commit the test-matrix check retires: `scripts/check_test_matrix.py`,
@@ -3582,6 +3590,12 @@ bindings should not follow C++, every codec takes C++'s spelling (`readings[].x`
   both, pack, `dotnet format`; the restricted lookup finds the packaged `protoc` and its
   `include/`. **Done on CI** at `6196cbe` (`ci.pr` 42794398094, 61/61 on the first attempt,
   the devcontainer image rebuilt with SDK 10.0.403; every side workflow green).
+- **2026-11-18: `feature/csharp-switch` merged (`ed51d47`), the licence exception wired.** That
+  branch, the D10C round, started at `6196cbe` and merged without conflicts. It carries
+  `LICENSE-EXCEPTION` v1.1, approved by EIVA legal and wired as D-BIND-175 says (`4a8fb96`), so
+  the licence step before the runbook is done; the fifth package `Eiva.Fletcher.Server`; and C#
+  batches served by the native shim. Runbook step 7 now names five packages and the D10C
+  release notes. Its CI runs for the first time on PR #129, with this merge.
 
 ---
 
