@@ -47,7 +47,7 @@ Without the flag the document is empty and each provider uses its own defaults, 
 
 ## Installing
 
-Pre-built archives are attached to each [`gateway-v*`](https://github.com/eivacom/Fletcher/releases?q=gateway) GitHub Release. Each archive holds the executable, the two [licence files](#licences-in-the-archive) a binary distribution has to carry — `LICENSE` and `THIRD-PARTY-LICENSES.txt` — and, in a shared build, the runtime libraries that belong beside the exe. Pick the asset for your platform:
+Pre-built archives are attached to each [`gateway-v*`](https://github.com/eivacom/Fletcher/releases?q=gateway) GitHub Release. Each archive holds the executable, the [licence files](#licences-in-the-archive) — `LICENSE`, `COPYING`, `LICENSE-EXCEPTION` and `THIRD-PARTY-LICENSES.txt` — and, in a shared build, the runtime libraries that belong beside the exe. Pick the asset for your platform:
 
 **Windows** — download and unpack `gateway-windows.zip`:
 
@@ -71,9 +71,9 @@ To build from source instead of using a release binary, see [Building](#building
 
 ### Licences in the archive
 
-Both archives carry two licence files next to the executable. Keep both with the binary if you redistribute the gateway.
+Both archives carry four licence files next to the executable. Keep them with the binary if you redistribute the gateway.
 
-`LICENSE` is the gateway's own: the exe and the `fletcher-*` libraries inside it are LGPL-3.0-or-later, which asks for its text to accompany the binary. It is a verbatim copy of the [repository LICENSE](../LICENSE).
+`LICENSE` is the gateway's own: the exe and the `fletcher-*` libraries inside it are LGPL-3.0-or-later, which asks for its text to accompany the binary. It is a verbatim copy of the [repository LICENSE](../LICENSE). `COPYING` is the GPL-3.0 text the LGPL-3.0 incorporates. `LICENSE-EXCEPTION` is the Fletcher Linking Exception, which every Fletcher package carries as part of Fletcher's licence as a whole; it permits nothing beyond the LGPL for the gateway.
 
 `THIRD-PARTY-LICENSES.txt` covers everything else linked in. The gateway pulls in a stack of permissively licensed libraries — boost (BSL-1.0), Fast DDS and Fast CDR (Apache-2.0), asio (BSL-1.0), foonathan_memory, tinyxml2 and zlib (Zlib), bzip2 (BSD-style), nlohmann_json (MIT) — and every one of those licences asks that its copyright notice and licence text be reproduced when the binary is redistributed. The default build is static, so those libraries are *inside* `gateway(.exe)` and there is nothing else in the archive for the texts to travel with; the file is how the release satisfies that condition.
 
@@ -81,7 +81,7 @@ Both archives carry two licence files next to the executable. Keep both with the
 
 If any third-party package in the graph contributes no licence text, the deployer raises and the build fails rather than publishing a notice that quietly omits a library.
 
-`ci.gateway.yml` stages both files on both platforms on **every** run, not only on a tag push, so a dependency change the deployer cannot describe fails the pull request that introduces it instead of the release weeks later. On a tag push the same `dist/` is then filled by `runtime_deploy` and archived, and the workflow unpacks the finished archive and fails unless the exe and both licence files are in it — so a change to the archiving step cannot drop one silently either. To produce the notice locally:
+`ci.gateway.yml` stages the files on both platforms on **every** run, not only on a tag push, so a dependency change the deployer cannot describe fails the pull request that introduces it instead of the release weeks later. On a tag push the same `dist/` is then filled by `runtime_deploy` and archived, and the workflow unpacks the finished archive and fails unless the exe and the four licence files are in it — so a change to the archiving step cannot drop one silently either. To produce the notice locally:
 
 ```bash
 cd gateway

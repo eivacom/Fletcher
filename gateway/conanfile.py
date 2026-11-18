@@ -4,8 +4,9 @@
 import os
 
 from conan import ConanFile
+from conan.errors import ConanException
 from conan.tools.cmake import CMake, CMakeDeps, CMakeToolchain, cmake_layout
-from conan.tools.files import load
+from conan.tools.files import copy, load
 
 
 class GatewayConan(ConanFile):
@@ -77,6 +78,15 @@ class GatewayConan(ConanFile):
         # run_tests only affects the build/test loop, not the shipped exe.
         del self.info.options.run_tests
 
+    def export_sources(self):
+        # D-BIND-201: Fletcher's LICENSE, COPYING (the LGPL-3.0 and the GPL-3.0 text it
+        # incorporates) and LICENSE-EXCEPTION are at the repository root, above this recipe;
+        # package() ships all three.
+        for name in ("LICENSE", "COPYING", "LICENSE-EXCEPTION"):
+            if not copy(self, name, src=os.path.join(self.recipe_folder, ".."),
+                        dst=self.export_sources_folder):
+                raise ConanException(f"{name} is not at the repository root above {self.recipe_folder}")
+
     def layout(self):
         cmake_layout(self)
 
@@ -96,6 +106,9 @@ class GatewayConan(ConanFile):
             cmake.test()
 
     def package(self):
+        # D-BIND-201: Fletcher's own licence texts, under licenses/ as Conan packages carry them.
+        for name in ("LICENSE", "COPYING", "LICENSE-EXCEPTION"):
+            copy(self, name, src=self.source_folder, dst=os.path.join(self.package_folder, "licenses"))
         # Installs the exe (with its $ORIGIN rpath) per the CMakeLists
         # install() rule. runtime_deploy then places the runtime libs beside it.
         cmake = CMake(self)

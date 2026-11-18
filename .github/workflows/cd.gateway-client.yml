@@ -71,6 +71,20 @@ jobs:
             echo "tag=$PRE" >> "$GITHUB_OUTPUT"
           fi
 
+      # D-BIND-201: the tarball carries Fletcher's LICENSE, COPYING (the LGPL-3.0 and the GPL-3.0
+      # text it incorporates) and LICENSE-EXCEPTION, staged from the repository root;
+      # package.json's "files" lists them, and the publish is refused if the tarball would not
+      # carry all three.
+      - name: Stage and require the licence files in the tarball
+        working-directory: gateway-client-ts
+        run: |
+          set -euo pipefail
+          cp ../LICENSE ../COPYING ../LICENSE-EXCEPTION .
+          for f in LICENSE COPYING LICENSE-EXCEPTION; do
+            test -s "$f" || { echo "::error::gateway-client-ts/$f is missing or empty"; exit 1; }
+            npm pack --dry-run --json | grep -q "\"path\": *\"$f\"" || { echo "::error::npm pack would not carry $f"; exit 1; }
+          done
+
       - name: Publish to npm
         working-directory: gateway-client-ts
         run: npm publish --access public --provenance --tag ${{ steps.dist-tag.outputs.tag }}

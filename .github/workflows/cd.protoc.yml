@@ -132,8 +132,9 @@ jobs:
       # BIND-9b-7 (review T13, M6): the package ships LICENSE, COPYING and the plugin's
       # THIRD-PARTY-LICENSES.txt, the files ci.protoc's Linux leg wrote and checked, so a
       # consumer who never opens the Release still receives the notices of what the native
-      # plugin it downloads links statically. package.json's "files" lists them; the publish
-      # is refused if the tarball would not carry all three.
+      # plugin it downloads links statically; and LICENSE-EXCEPTION, as every Fletcher package
+      # does (D-BIND-201). package.json's "files" lists them; the publish is refused if the
+      # tarball would not carry all four.
       - name: Stage the licence files into the package
         uses: actions/download-artifact@v8.0.1
         with:
@@ -144,16 +145,10 @@ jobs:
         working-directory: protoc/npm
         run: |
           set -euo pipefail
-          for f in LICENSE COPYING THIRD-PARTY-LICENSES.txt; do
+          for f in LICENSE COPYING LICENSE-EXCEPTION THIRD-PARTY-LICENSES.txt; do
             test -s "$f" || { echo "::error::protoc/npm/$f is missing or empty"; exit 1; }
             npm pack --dry-run --json | grep -q "\"path\": *\"$f\"" || { echo "::error::npm pack would not carry $f"; exit 1; }
           done
-          # D-BIND-175 names Eiva.Fletcher.Protoc and the Release, not this package: the artifact
-          # brings LICENSE-EXCEPTION here, and package.json's "files" leaves it out.
-          if npm pack --dry-run --json | grep -q '"path": *"LICENSE-EXCEPTION"'; then
-            echo "::error::npm pack would carry LICENSE-EXCEPTION, which D-BIND-175 does not put in the npm package"
-            exit 1
-          fi
 
       - name: Resolve dist-tag
         id: dist-tag

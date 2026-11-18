@@ -54,6 +54,13 @@ jobs:
               npm ci
               npm run build
               npm test
+              # D-BIND-201: the tarball carries LICENSE, COPYING and LICENSE-EXCEPTION, staged
+              # from the root as cd.gateway-client does before it publishes.
+              cp ../LICENSE ../COPYING ../LICENSE-EXCEPTION .
+              for f in LICENSE COPYING LICENSE-EXCEPTION; do
+                npm pack --dry-run --json | grep -q "\"path\": *\"$f\"" \
+                  || { echo "::error::npm pack would not carry $f"; exit 1; }
+              done
             '
 
       - name: Upload artifact

@@ -121,6 +121,15 @@ class FletcherCAbiConan(ConanFile):
     def package_id(self):
         del self.info.options.run_tests
 
+    def export_sources(self):
+        # D-BIND-201: Fletcher's LICENSE, COPYING (the LGPL-3.0 and the GPL-3.0 text it
+        # incorporates) and LICENSE-EXCEPTION are at the repository root, above this recipe;
+        # package() ships all three.
+        for name in ("LICENSE", "COPYING", "LICENSE-EXCEPTION"):
+            if not copy(self, name, src=os.path.join(self.recipe_folder, ".."),
+                        dst=self.export_sources_folder):
+                raise ConanException(f"{name} is not at the repository root above {self.recipe_folder}")
+
     def layout(self):
         cmake_layout(self)
 
@@ -145,6 +154,9 @@ class FletcherCAbiConan(ConanFile):
             cmake.test()
 
     def package(self):
+        # D-BIND-201: Fletcher's own licence texts, under licenses/ as Conan packages carry them.
+        for name in ("LICENSE", "COPYING", "LICENSE-EXCEPTION"):
+            copy(self, name, src=self.source_folder, dst=os.path.join(self.package_folder, "licenses"))
         copy(self, "*.h",
              src=os.path.join(self.source_folder, "include"),
              dst=os.path.join(self.package_folder, "include"),

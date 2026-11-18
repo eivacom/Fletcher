@@ -4470,3 +4470,20 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   README, `dotnet/README.md` and the root `README.md` say that every NuGet package carries it and
   that it permits nothing more for either native shim. The npm packages are unchanged (D-BIND-175).
   **Declined:** keeping it out of the server package, as D10C-5 ruled.
+- **D-BIND-201 - every Fletcher package carries `LICENSE`, `COPYING` and `LICENSE-EXCEPTION`:
+  the two npm packages, every Conan package and the gateway archives, as the NuGet packages do
+  (D-BIND-200).** *LOCKED BY THE MAINTAINER 2026-11-18.* The LGPL asks that a recipient get a
+  copy of the licence with the work. D-BIND-175 found that the `@eiva/fletcher-gateway-client`
+  tarball (its `files` held only `dist`) and the C++ Conan packages, which the Conan CD workflows
+  attach to their GitHub Releases, carried neither `LICENSE` nor `COPYING`, and left them outside
+  its scope. The maintainer also ruled that the exception goes with them, for D-BIND-200's
+  reason: it is part of the licence of Fletcher as a whole, and its text grants nothing for the
+  C++ libraries or the client, so carrying it widens nothing. This reverses D-BIND-175's "absent
+  from npm" for `@eiva/protoc-gen-fletcher`. **How:** both `package.json` files list the three;
+  `ci.gateway-client` and `cd.gateway-client` stage them from the repository root and refuse a
+  tarball that would not carry them, and `cd.protoc` now requires the exception in its tarball
+  where it refused it; the nine recipes (`core`, `pubsub`, `arrow-bridge`, `pubsub-arrow`, the
+  two providers, `protoc`, `c-abi`, `gateway`) export the three from the root in an
+  `export_sources()` method, which refuses when one is missing, and `package()` puts them under
+  `licenses/`; `ci.gateway` stages the exception into the gateway archives and requires it there.
+  The notice deployer skips `fletcher-*` packages, so the third-party notices do not change.

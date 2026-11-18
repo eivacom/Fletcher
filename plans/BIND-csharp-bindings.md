@@ -3601,6 +3601,12 @@ bindings should not follow C++, every codec takes C++'s spelling (`readings[].x`
   `LICENSE-EXCEPTION` too, so all six NuGet packages do; the package check requires it in every
   .NET package (control C16 inverted), and the READMEs say it permits nothing more for the shims.
   The check's controls need the five packed packages, so they run on CI, not locally.
+  **Then D-BIND-201:** every Fletcher package carries `LICENSE`, `COPYING` and
+  `LICENSE-EXCEPTION`: the two npm packages, the nine Conan packages and the gateway archives
+  (the first two had been found without `LICENSE` and `COPYING`, D-BIND-175). Verified in the
+  devcontainer: all nine recipes export the three, an export without them is refused, the built
+  `fletcher-core` package has the three under `licenses/`, and `npm pack` of both npm packages
+  lists them.
 
 ---
 

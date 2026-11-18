@@ -34,7 +34,12 @@ debug.log
 # review T13, M6): copies of ci.protoc's artifact, never tracked here.
 protoc/npm/LICENSE
 protoc/npm/COPYING
+protoc/npm/LICENSE-EXCEPTION
 protoc/npm/THIRD-PARTY-LICENSES.txt
+# And the three ci.gateway-client and cd.gateway-client stage from the root (D-BIND-201).
+gateway-client-ts/LICENSE
+gateway-client-ts/COPYING
+gateway-client-ts/LICENSE-EXCEPTION
 
 # .NET build output (dotnet/). Scoped to that directory rather than a bare
 # **/bin/: protoc/npm/bin/protoc-gen-fletcher.js is a tracked launcher script,

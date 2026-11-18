@@ -27,6 +27,7 @@
     "README.md",
     "LICENSE",
     "COPYING",
+    "LICENSE-EXCEPTION",
     "THIRD-PARTY-LICENSES.txt"
   ],
   "engines": {
