@@ -4487,3 +4487,30 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   `export_sources()` method, which refuses when one is missing, and `package()` puts them under
   `licenses/`; `ci.gateway` stages the exception into the gateway archives and requires it there.
   The notice deployer skips `fletcher-*` packages, so the third-party notices do not change.
+- **D-BIND-202 - the Windows server shim may load OLE32, SHELL32 and NTDLL; the edge shim's list
+  stays as measured.** *LOCKED BY THE MAINTAINER 2026-11-18.* The first CI run of the D10C code
+  (`c513fb4`, `ci.pr` 44290755200) failed `dotnet / windows` only in `check_shim_dependencies.sh`
+  on `fletcher-c-abi-server.dll`: it loads `ole32.dll`, `SHELL32.dll` and `ntdll.dll`, which the
+  exact Windows list of D-BIND-148 does not name. The edge shim passed the same check in the same
+  job. The server shim alone links Arrow C++ and its graph (Boost among it: in its recipe Boost's
+  `process` component links NTDLL and SHELL32, and its Windows stack-trace backend OLE32); which
+  symbols pull each one in was not measured, as the failed job uploaded no shim. All three are part
+  of every Windows installation, so the stated floor does not move. **How:** the script allows the
+  three when the file is `fletcher-c-abi-server.dll` and refuses them for any other shim, so a new
+  DLL in the edge shim is still caught. **Declined:** one Windows list for both shims (d10 Q7's
+  "same list"), which would let the edge shim gain them unnoticed; configuring them out of the
+  server build, which would need Arrow's or Boost's build options changed for no gain on any
+  supported Windows.
+- **D-BIND-203 - the 32 batch cases D10C added to `test_pubsub_arrow` and
+  `test_pubsub_arrow_heavy` are counted in bucket 3 and excluded from the C# port.**
+  *LOCKED BY THE MAINTAINER 2026-11-18.* `ci.check-test-matrix` failed at `c513fb4`:
+  `test_pubsub_arrow` holds 61 cases where the table said 33, and `test_pubsub_arrow_heavy` (4)
+  sat in no bucket. All 32 new cases are `SubscriberArrowBatchTest` cases of the C++ batcher
+  (domain 7). Since D10C-7 C# has no batcher of its own: `SubscribeBatched` calls that batcher
+  through the server shim, so a C# port would run the same native code a second time. D10C's own
+  C# tests cover what C# adds (the options passed through as given, the edge shim's refusal,
+  `BatchStatus.Failure`). **How:** bucket 3 names `test_pubsub_arrow` 61 and
+  `test_pubsub_arrow_heavy` 4, total 114, and records the 32 as excluded; the 28 run in C++ on
+  every pull request, the 4 heavy ones on request (`ctest -L heavy`, d7 D11). **Declined:**
+  porting them to C# (a second run of the same native code, and rows near the 2 GiB offset budget
+  for the heavy four); retiring the check before runbook step 8 (D-BIND-198).

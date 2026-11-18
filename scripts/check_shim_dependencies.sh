@@ -23,6 +23,9 @@
 #              MSVCP140_ATOMIC_WAIT, VCRUNTIME140, VCRUNTIME140_1) and the UCRT
 #              (api-ms-win-crt-*). The debug runtime (msvcp140d, ucrtbased) is not
 #              in it, and a new DLL needs a ruling before it is added here.
+#              D-BIND-202: the server shim (fletcher-c-abi-server.dll) may also load
+#              OLE32, SHELL32 and NTDLL, which its Arrow C++ graph brings and every
+#              Windows has; the edge shim's list stays as measured.
 # A list that parses empty fails, and libc.so.6 or KERNEL32.dll must be in it: every
 # real shim loads one, so an empty or truncated parse cannot pass as self-contained
 # (BIND-9a review, B1).
@@ -64,6 +67,10 @@ case "$SHIM" in
   *.dll)
     DUMPBIN=${2:?a .dll needs the path to dumpbin.exe}
     anchor=kernel32.dll
+    case "$(basename "$SHIM" | tr 'A-Z' 'a-z')" in
+      fletcher-c-abi-server.dll) server=1 ;;
+      *) server=0 ;;
+    esac
     # dumpbin lists the dependents indented under "Image has the following dependencies:".
     deps=$("$DUMPBIN" //nologo //dependents "$SHIM" | tr -d '\r' \
       | awk '/following dependencies/ {on=1; next} on && /^ *$/ && seen {exit} on && NF {seen=1; print $1}')
@@ -74,6 +81,7 @@ case "$SHIM" in
         kernel32.dll|advapi32.dll|ws2_32.dll|mswsock.dll|iphlpapi.dll|shlwapi.dll) ;;
         msvcp140.dll|msvcp140_atomic_wait.dll|vcruntime140.dll|vcruntime140_1.dll) ;;
         api-ms-win-crt-*.dll) ;;
+        ole32.dll|shell32.dll|ntdll.dll) [ "$server" -eq 1 ] || bad+=("$dep") ;;
         *) bad+=("$dep") ;;
       esac
     done <<< "$deps"
