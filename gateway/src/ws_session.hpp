@@ -89,6 +89,10 @@ class WsSession : public std::enable_shared_from_this<WsSession> {
     // Action handlers.
     void OnCreateTopic(const nlohmann::json& msg);
     void OnSubscribe(const std::string& topic);
+    // The `subscribed` reply for `sub_id`, its schema included when one is already known; may
+    // throw, which OnSubscribe answers by releasing the subscription (D-BIND-123).
+    static nlohmann::json BuildSubscribedReply(uint64_t sub_id, const std::string& topic,
+                                               const SchemaArrival& schema_future);
     void OnUnsubscribe(uint64_t sub_id);
     void OnPublish(const uint8_t* data, size_t len);
     void OnListTopics();

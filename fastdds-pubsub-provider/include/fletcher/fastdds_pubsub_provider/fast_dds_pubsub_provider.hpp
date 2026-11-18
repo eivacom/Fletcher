@@ -326,8 +326,9 @@ class FastDDSPubSubProvider : public PubSubProvider {
     /// VOLATILE, KEEP_LAST 1) sends the newest value, resent if lost, and never replays to a late
     /// subscriber; `store_latest` (RELIABLE, TRANSIENT_LOCAL, KEEP_LAST 1) replays the last value
     /// to a late subscriber; `store_history` (RELIABLE, TRANSIENT_LOCAL, KEEP_LAST 25) replays the
-    /// last 25; `lossless` (RELIABLE, VOLATILE, KEEP_ALL, an infinite `max_blocking_time`, 20 ms
-    /// heartbeat) delivers every sample in order and blocks the writer rather than drop one. Start
+    /// last 25; `lossless` (RELIABLE, VOLATILE, KEEP_ALL, a 30 s `max_blocking_time`, 20 ms
+    /// heartbeat) delivers every sample in order and blocks the writer, for up to 30 s per sample,
+    /// rather than drop one (Fast DDS 3.4.3 refuses an infinite blocking time). Start
     /// a custom document from this text and add named profiles inside `<profiles>`; a custom
     /// document replaces all of this one, so copy the pairs you keep. The two `is_default_profile`
     /// profiles are what every topic without a profile of its own runs on.

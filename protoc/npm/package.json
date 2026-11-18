@@ -24,7 +24,11 @@
   },
   "files": [
     "bin/",
-    "README.md"
+    "README.md",
+    "LICENSE",
+    "COPYING",
+    "LICENSE-EXCEPTION",
+    "THIRD-PARTY-LICENSES.txt"
   ],
   "engines": {
     "node": ">=18"

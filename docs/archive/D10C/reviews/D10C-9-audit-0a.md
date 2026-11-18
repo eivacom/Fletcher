@@ -1,0 +1,16 @@
+# D10C-9 — step 0a test-authority audit (corpus) — **CLEAR**
+
+HEAD `8d241a3`. Proof-of-read: `plans/RIX-rulings.md` read in full, **667 lines, 52 entries**, last "## 2026-11-16 — D10C-7: the switch and the deletion are one stage" (:660). Yardstick: d10 §1, L3, L11, L12, L14 (V5-V8, V14), §8 rule 6; d7 L5, L9, L15; register BC-8, BC-14; rulings :174 (1)/(2), :235, :290, :536 (3), :575 (4), :650 (1).
+
+**Scope covered** (`dotnet/tests`, `integration-tests`; no `Skip`/ignored test in scope):
+- *Dispose/Unsubscribe inside handlers, per-row* — `SubscriberArrowTests.DisposingInsideAPerRowDeliveryIsRefusedAndNothingIsTornDown` :797, `.APerRowHandlerThatUnsubscribesItselfStopsCleanly` :870, `.AQuietCloseKeepsTheTopicForItsKind` :2244; `ReentrancyTests` :169, :324, :414, :448, :488. **LAWFUL** (L11's row half; 2026-09-05; :174 (2)).
+- *Batched* — `.UnsubscribingFromTheHandlerDuringARowLimitFlushStopsDelivery` :1422, `.UnsubscribingFromInsideATimeoutFlushIsSafe` :1466, `.ATimerHandlerThatCancelsDuringADeliveryDoesNotDeadlock` :1985, `.UnsubscribeWaitsForATimerHandlerStillRunning` :2029, `.ClosingASiblingFromABatchHandlerWaitsForItsClosing` :2189, `.AnIdleCloseDeliversOneEmptyClosing` :1108. **LAWFUL** (d7 L9, :484). None asserts that a batch-handler Dispose is refused, which L11 forbids.
+- *Options* — `Options(...)` helper :145 (in range only); `.ABatchedSubscribeOnTheEdgeShimIsRefusedNamingTheServerPackage` :361, `.TopicOptionsReachTheProviderThroughBothForms` :332; `TopicOptionsOverFastDdsTests` :369/:381 (`MaxRows = 1`); `PreviewConsumer/Program.cs:152` (T46, a declared red window, :650 (2)). **LAWFUL.** `SchemaArrivalTests.ARefusedTimeoutAndADisposedArrivalThrowSynchronously` :240 (`ArgumentOutOfRangeException` for the *arrival*): **LAWFUL**, because L12 keeps the arrival's managed refusal and only batch options lose it.
+- **T31 `AWindowAtTheMaximumTimeoutWaits` :1617 — LEGITIMATE-BUT-ADJACENT → RE-ANCHOR, not delete.** Its subject is lawful: a long timeout never fires early (d7 L5: "never an early or wrapped one"). Both legs (:1622, :1626) are built on `BatchOptions.MaxTimeout`, which :536 (3) retires ("the 49.7-day cap goes"). Re-anchor it on a finite timeout *past* 49.7 days (V7) or `TimeSpan.MaxValue`. Drop the "timer's maximum" wording from its name and summary, because no such maximum exists any more.
+- **No C# test asserts an `ArgumentException`/`ArgumentOutOfRangeException`, a clamp or a `MaxTimeout` refusal for `BatchOptions`.** T30 is deleted. Nothing schedules its return: d10:184 says "deleted, not re-anchored", the D10C-7 design :123 says "never re-anchored", and :650 (1) rules both.
+
+**Scheduled restoration:** none. **Tier-1 disagreement:** none.
+
+**Laws with no test (gaps; rungs 9 and 10 own them):** L11's batch half (`[designed-not-built]`; V14). L3 and L14 V5-V8: out-of-range options are marked "built but untested", and no C# test drives BC-8's grid. L12/BC-14: neither the −1-tick arm nor the one-site scan exists.
+
+**Out of scope, noted only:** `Fletcher.GatewayClient.Tests/BatchedSubscriptionTests.cs:230`, `:240` assert `GatewayBatchOptions` → `ArgumentOutOfRangeException` and pin `GatewayBatchOptions.MaxTimeout`. This is domain 5's (ladder "Out of scope"; BC-8 "`GatewayBatch.cs` stays domain 5's").

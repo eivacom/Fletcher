@@ -14,6 +14,8 @@ For every scenario:
 - **Forward decode**: C++ `Encode()` produces bytes; TS `ObjectBackend.decode()` decodes them; values match the original input.
 - **Byte equality**: TS `encodePositional()` produces bytes; the C++ bytes are byte-identical.
 
+**The generated pair** (`test/pair.test.ts`, from `proto/pair.proto`, TypeScript only): the `Feed_SendPublisher` and `Feed_SendSubscriber` the plugin writes for a pub/sub method, driven over a stub WebSocket that plays the gateway. It checks the bound topic and schema, that `create` declares the topic with `schemaIpc`, what `publish` sends, and what `subscribe`, `subscribeBatched` and `unsubscribe` do. `npm run typecheck` compiles the generated pair against `gateway-client-ts`, and its `@ts-expect-error` lines fail it if the pair stops typing its rows. The live gateway runs the pair in `integration-tests/gateway-end-to-end/` and `integration-tests/gateway-dotnet-crosslang/`.
+
 The companion test in `integration-tests/protoc-arrow-bridge/` proves the same invariant for `protoc + arrow-bridge` within C++. Together they cover all three directions: protoc → arrow-bridge::Codec, protoc → TS codec, TS codec ↔ arrow-bridge::Codec.
 
 ## How it runs in CI
@@ -22,7 +24,8 @@ The workflow `.github/workflows/ci.integration-test.protoc-gateway-client-ts.yml
 
 1. Builds each component locally via `conan create <component>/.`, putting the branch's in-flight versions in the Conan cache.
 2. `conan build .` produces the `emit_vectors` C++ binary that emits canonical scenario vectors as JSON lines.
-3. `npm ci` + `npm test` runs vitest against the binary — the TS test spawns it, parses the vectors, and asserts both decode-correctness and byte-equality.
+3. `npm ci` + `npm test` runs vitest against the binary — the TS test spawns it, parses the vectors, and asserts both decode-correctness and byte-equality — and the pair test.
+4. `npm run typecheck` type-checks the tests and the generated files.
 
 ## Running locally
 

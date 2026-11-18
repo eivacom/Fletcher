@@ -1,0 +1,47 @@
+<!-- SPDX-License-Identifier: LGPL-3.0-or-later
+     Copyright (C) 2026 The Fletcher Authors
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <RootNamespace>Eiva.Fletcher.TransportConformance</RootNamespace>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <RollForward>LatestMajor</RollForward>
+
+    <!-- One TFM, for the reason the binding-abi-conformance suite gives: the
+         unit tests multi-target because the PACKAGE supports net8.0 and net10.0
+         and both must be exercised. What this suite asks is whether one body of
+         C# reaches three transports, which does not change with the runtime.
+         Running it twice would double a lane that already pays for DDS discovery. -->
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- By PATH, not by package: the thing under test is the working tree's
+         binding. A PackageReference would test whatever was last published. -->
+    <ProjectReference Include="../../../../dotnet/src/Fletcher/Fletcher.csproj" />
+  </ItemGroup>
+
+  <!-- The native shim, staged beside the test binary. Absent, the rows FAIL
+       rather than skip - a transport suite that silently ran on no transport is
+       the vacuity this round keeps catching. -->
+  <ItemGroup Condition="'$(FletcherNativeShim)' != '' And Exists('$(FletcherNativeShim)')">
+    <None Include="$(FletcherNativeShim)"
+          Link="%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Apache.Arrow" Version="[23.0.0]" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="[18.10.0]" />
+    <PackageReference Include="xunit" Version="[2.9.3]" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="[3.1.5]" />
+  </ItemGroup>
+
+</Project>

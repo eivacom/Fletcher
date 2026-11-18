@@ -1,0 +1,156 @@
+<!-- SPDX-License-Identifier: LGPL-3.0-or-later
+     Copyright (C) 2026 The Fletcher Authors
+
+     Maintainers: every fenced code block here is checked when the package is packed
+     (scripts/check_readme_snippets.py, run by ci.protoc's pack-nuget job; BIND-9b review B1). A
+     block must equal the region of the same name in
+     integration-tests/preview-bundle-consumer/dotnet/PreviewConsumer/PreviewConsumer.csproj, which
+     the consumer test builds and runs; dotnet/README.package.md says how the markers work.
+-->
+# Eiva.Fletcher.Protoc
+
+`protoc-gen-fletcher`, the Fletcher protoc plugin, for C# projects. It generates the C# that the
+`Eiva.Fletcher` packages consume (model classes, Arrow schemas, topics, the native and gateway
+publisher and subscriber pairs, the accessor) from your `.proto` files.
+
+The package only locates the plugin. You write the protoc call in your own project, as C++ and
+TypeScript projects do, and take protoc itself from your side, for example from
+`Google.Protobuf.Tools`.
+
+## What it gives you
+
+| Property | Value |
+|---|---|
+| `FletcherProtocPlugin` | The plugin for this machine (linux-x64 or win-x64), for protoc's `--plugin=protoc-gen-fletcher=...` |
+| `FletcherProtoInclude` | The folder holding `fletcher/options.proto`, for protoc's `-I` |
+
+On Linux the package makes the plugin executable before your build steps run. On any other
+platform `FletcherProtocPlugin` is empty and the build warns (`FLETCHERPROTOC001`).
+
+## Platform requirements
+
+The plugin loads the C++ runtime of the compiler it is built with, so the machine that builds
+your project needs:
+
+- **linux-x64:** glibc 2.34 and the GCC 13 C++ runtime (libstdc++ with `GLIBCXX_3.4.32`) or
+  newer; for example Ubuntu 24.04, Debian 13 or RHEL 10. On Ubuntu 22.04, Debian 12 or RHEL 9 the
+  plugin does not start, and the system reports `GLIBCXX_3.4.32' not found`.
+- **win-x64:** the Visual C++ 2015-2022 redistributable (x64), 14.40 or newer; without it the
+  plugin does not start, because `MSVCP140.dll` and `VCRUNTIME140.dll` are missing.
+
+These are the floors of the build profiles, `Linux-gcc13-x86_64-Release` and
+`Windows-msvc194-x86_64-Release`, the same as the `Eiva.Fletcher` packages' native shim.
+
+## Generating C#
+
+Reference the packages; `FletcherVersion` is the `Eiva.Fletcher` packages' version and
+`FletcherProtocVersion` this package's, with the same `MAJOR.MINOR`. `Google.Protobuf.Tools`
+brings `protoc`. A project that only generates code needs `Eiva.Fletcher.Model` and the package
+its generated code uses (`Eiva.Fletcher` for the native pair, `Eiva.Fletcher.GatewayClient` for
+the gateway pair).
+
+<!-- snippet: csproj-references -->
+```xml
+<ItemGroup>
+  <PackageReference Include="Eiva.Fletcher" Version="[$(FletcherVersion)]" />
+  <PackageReference Include="Eiva.Fletcher.GatewayClient" Version="[$(FletcherVersion)]" />
+  <PackageReference Include="Eiva.Fletcher.Model" Version="[$(FletcherVersion)]" />
+  <!-- The plugin, and protoc with the well-known .proto files, used at build time only. -->
+  <PackageReference Include="Eiva.Fletcher.Protoc" Version="[$(FletcherProtocVersion)]" PrivateAssets="all" />
+  <PackageReference Include="Google.Protobuf.Tools" Version="[3.36.1]" GeneratePathProperty="true" PrivateAssets="all" />
+</ItemGroup>
+```
+
+Then call protoc with the plugin on your `.proto` files (`fix.proto` here) before every compile.
+Its output folder must exist, and on Linux protoc from a NuGet package must be made executable
+(this package does that for the plugin).
+`--fletcher_opt` chooses the output: `csharp` (the model, topics and the native pair),
+`csharp_gateway`, `csharp_accessor`, and `csharp_model_only` to leave the native pair out.
+
+<!-- snippet: csproj-generate -->
+```xml
+<PropertyGroup>
+  <Protoc Condition="$([MSBuild]::IsOSPlatform('Windows'))">$(PkgGoogle_Protobuf_Tools)/tools/windows_x64/protoc.exe</Protoc>
+  <Protoc Condition="!$([MSBuild]::IsOSPlatform('Windows'))">$(PkgGoogle_Protobuf_Tools)/tools/linux_x64/protoc</Protoc>
+</PropertyGroup>
+
+<Target Name="FletcherGenerate" BeforeTargets="BeforeCompile;CoreCompile">
+  <PropertyGroup>
+    <FletcherOut>$(IntermediateOutputPath)fletcher</FletcherOut>
+  </PropertyGroup>
+  <!-- A NuGet package does not keep the executable bit (Eiva.Fletcher.Protoc sets its own). -->
+  <Exec Condition="!$([MSBuild]::IsOSPlatform('Windows'))" Command="chmod +x &quot;$(Protoc)&quot;" />
+  <RemoveDir Directories="$(FletcherOut)" />
+  <MakeDir Directories="$(FletcherOut)" />
+  <Exec Command="&quot;$(Protoc)&quot; --plugin=protoc-gen-fletcher=&quot;$(FletcherProtocPlugin)&quot; --fletcher_out=&quot;$(FletcherOut)&quot; --fletcher_opt=csharp,csharp_gateway,csharp_accessor -I . -I &quot;$(FletcherProtoInclude)&quot; -I &quot;$(PkgGoogle_Protobuf_Tools)/tools&quot; fix.proto" />
+  <ItemGroup>
+    <Compile Include="$(FletcherOut)/*.cs" />
+  </ItemGroup>
+</Target>
+```
+
+Both blocks are the project the release's consumer test builds and runs on Linux and Windows; the
+`Eiva.Fletcher` package README walks through the rest of it.
+
+## Standard gRPC projects
+
+In a project that compiles `.proto` files with `Grpc.Tools` (`<Protobuf>` items), the package also
+lets those files import `fletcher/options.proto`: it adds `FletcherProtoInclude` to every
+`<Protobuf>` item's `AdditionalImportDirs` and compiles `options.proto` itself, so the options can
+be read from C# (`Eiva.Fletcher.Protobuf.OptionsExtensions`). Set
+`FletcherCompileOptionsProto=false` when a project you reference already compiles it. Neither
+`Grpc.Tools` nor `Google.Protobuf.Tools` is a dependency.
+
+## Which protoc
+
+The plugin is built with protobuf 3.21.12 and is tested with the protoc of
+`Google.Protobuf.Tools` 3.36.1 and of `Grpc.Tools` 2.80.0. It supports proto2 and proto3, including
+proto3 `optional`; it does not support editions (`edition = "2023"`), and protoc refuses such a
+file.
+
+## Versions
+
+Generated code and the `Eiva.Fletcher` runtime packages are compatible when their
+`MAJOR.MINOR` versions are equal.
+
+Released versions are on nuget.org, and the GitHub Release `protoc-v<version>` of
+[eivacom/Fletcher](https://github.com/eivacom/Fletcher) carries the same file. A prerelease
+version (`-alpha`) is taken only when the reference names one, or with
+`dotnet add package --prerelease`.
+
+## Licence
+
+LGPL-3.0-or-later (`LICENSE`, with the GPL text it incorporates in `COPYING`). The plugin links
+protobuf and zlib statically and compiles in nanoarrow; their licences are in
+`THIRD-PARTY-LICENSES.txt`.
+
+The package also carries `LICENSE-EXCEPTION`, the Fletcher Linking Exception, version 1.1: an
+additional permission under section 7 of the GNU GPL-3.0 that EIVA A/S gives for Fletcher,
+approved by EIVA A/S's legal counsel. It takes effect for a Release that EIVA A/S publishes with
+it beside `LICENSE` and `COPYING` (its section 9). This is a summary; the text in the package is
+what grants the permission. It permits:
+
+- the code that protoc, its plugins or a build tool running them generate from
+  `fletcher/options.proto`, and the object code compiled from it, to be used, modified and
+  conveyed under terms of your choice, so the default wiring that compiles `options.proto` into
+  your assembly brings no LGPL obligation;
+- the files the plugin writes from your definitions to be used, modified and conveyed under terms
+  of your choice, as far as the unmodified plugin of a Release writes the same material from the
+  same definitions and options. It does not cover a file that is itself a code generator built on
+  that material, or one that reproduces a Fletcher library beyond the interface generated code
+  calls.
+
+Your own definitions, and what derives from them alone, are yours. The plugin itself stays under
+the LGPL. Generated C# code runs on the managed assemblies of `Eiva.Fletcher`, which the same
+exception covers when they are unmodified (see that package's README); whether LGPL sections 4(b)
+and 4(c) can be met for a single-file, mobile or embedded build is unresolved, and the exception
+does not relax them.
+
+Fletcher's C++ libraries and `@eiva/fletcher-gateway-client`, which the code the plugin
+generates for C++ and TypeScript uses at run time, stay under the LGPL alone. An application
+that links them statically or bundles them must meet LGPL section 4(d)(0), and 4(e), for them.
+The Fletcher Linking Exception does not change that.
+
+EIVA A/S's copy, in the Fletcher repository and its Releases, is the authoritative text; a copy
+changed by anyone else does not alter it. The earlier public draft (v1.0) in the repository's
+history was never in force.

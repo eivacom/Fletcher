@@ -203,6 +203,90 @@ TEST_P(CopyAccounting, InPlaceEncodeWritesIntoTheDeliveredWindow) {
 INSTANTIATE_TEST_SUITE_P(CopySubjects, CopyAccounting,
                          ::testing::ValuesIn(CopyAccountingSubjects()));
 
+// ── The binding producer: the stand-in retires ──────────────────────
+//
+// `InPlaceEncodeWritesIntoTheDeliveredWindow` above measures a producer written
+// in this harness, and the README says so in as many words: the number "claims
+// what the interface PERMITS, and no more". That caveat had one cause — no
+// binding existed to measure. One does now, and this is it: the codec behind
+// `fletcher-c-abi`, the artifact `Eiva.Fletcher.Interop` ships per RID, driven
+// through `fl_codec_open` → `fl_rows_bind` → `fl_encode_row` into a span of the
+// probe's own window.
+//
+// The claim is narrower than "a C# application copies nothing" and the
+// difference is worth keeping straight. What is measured is the ENCODER behind
+// the C boundary. What is not measured is the managed tier above it, which does
+// not exist until BIND-3, and the publisher wrapper, which cannot be measured
+// here at all (D-BIND-34: the oracle can only score a producer it lends a
+// window to, and the fusion owns its own provider). What the leg does retire is
+// the reason the caveat existed: the producer is no longer a stand-in written
+// for the instrument.
+//
+// `StagingProducerIsCaught` remains the live negative control for this leg as
+// much as for the harness one — it is the same sampler.
+TEST(CopyAccounting, BindingProducerWritesInPlace) {
+    for (size_t row_bytes : {kSmallRowBytes, kLargeRowBytes}) {
+        SCOPED_TRACE(std::to_string(row_bytes) + "B");
+
+        const CopySubject positive = SubjectNamed("SeamProbe");
+        std::unique_ptr<CopyRunner> runner = positive();
+        ASSERT_NE(runner, nullptr);
+
+        RoundTrip trip = RunBindingProducerRoundTrip(
+            *runner, FreshTopic("CopyAccountingBindingProducer"), row_bytes);
+
+        COPY_MUST_DELIVER_CLEANLY(trip, row_bytes, static_cast<size_t>(0));
+        COPY_MUST_HAVE_PRODUCED(trip, row_bytes);
+
+        const CopyVerdict verdict = Judge(trip.ledger);
+        ASSERT_TRUE(verdict.encode_copies.has_value())
+            << "the verdict carries no producer number, so nothing here is a measurement";
+        EXPECT_EQ(*verdict.encode_copies, static_cast<size_t>(0))
+            << "the BINDING's encoder did not write into the window it was lent: produced_at="
+            << Hex(trip.ledger.produced_at) << ". The row exists at a second address before the "
+            << "seam sees it, which is the whole-row copy the ABI's three-step shape "
+            << "(open/bind/encode) exists to make unnecessary";
+
+        EXPECT_EQ(verdict.row_copies, static_cast<size_t>(0))
+            << "the delivered row is not the encode window: encode_base="
+            << Hex(trip.ledger.encode_base) << " vs delivered=" << Hex(trip.ledger.delivered_data);
+    }
+}
+
+// ── The binding leg's own live negative control ─────────────────────
+//
+// `BindingProducerWritesInPlace` reports where it wrote, because this harness
+// cannot see inside a producer it does not own. That self-report is what makes
+// the leg a measurement rather than a tautology — and it is also what could make
+// it worthless, if the reporting were wired to the lent span regardless of what
+// the producer did. (It was, in the first draft of that leg, and this row is why
+// that did not ship.)
+//
+// So: the SAME ABI, composing the row in its own storage and copying it in,
+// reporting where it actually wrote. If this scores 0, the leg above is scoring
+// 0 by construction and proves nothing.
+TEST(CopyAccounting, BindingProducerStagingIsCaught) {
+    const CopySubject positive = SubjectNamed("SeamProbe");
+    std::unique_ptr<CopyRunner> runner = positive();
+    ASSERT_NE(runner, nullptr);
+
+    RoundTrip trip = RunBindingStagingProducerRoundTrip(
+        *runner, FreshTopic("CopyAccountingBindingStaged"), kSmallRowBytes);
+
+    COPY_MUST_DELIVER_CLEANLY(trip, kSmallRowBytes, static_cast<size_t>(0));
+    COPY_MUST_HAVE_PRODUCED(trip, kSmallRowBytes);
+
+    const CopyVerdict verdict = Judge(trip.ledger);
+    ASSERT_TRUE(verdict.encode_copies.has_value());
+    EXPECT_EQ(*verdict.encode_copies, static_cast<size_t>(1))
+        << "the instrument did not see a whole-row staging copy through the ABI, so "
+           "BindingProducerWritesInPlace is reporting the span it was lent rather than where "
+           "the producer wrote, and its encode_copies==0 is a tautology";
+    EXPECT_EQ(verdict.row_copies, static_cast<size_t>(0))
+        << "the provider half must stay clean here, or this control is measuring the provider "
+           "rather than the producer";
+}
+
 // ── The producer-side live negative control ─────────────────────────
 //
 // The blindness itself, pinned as a test. A producer that composes its row in

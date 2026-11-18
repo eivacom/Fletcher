@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+name: ci.check-caller-tier-mapping
+
+concurrency:
+  group: ci.check-caller-tier-mapping-${{ github.ref }}
+  cancel-in-progress: true
+
+# BIND-4d-iv. Seam §9 hands BIND the CallerTier suite as an ORACLE, and BIND-4's
+# acceptance asks for a C# arm of it "with a total mapping onto the C++ cases".
+# This lane is what makes that a contract rather than a claim: it fails if any C++
+# case has no `Mirrors CallerTier.<Name>` marker in the arm, if a marker names a
+# case that no longer exists, or if one case is mirrored twice.
+#
+# ── Why a lane of its own ───────────────────────────────────────────────────
+# The check compares a C++ SOURCE FILE against a C# one and builds neither. No
+# existing lane checks out both: ci.dotnet.yml has no
+# integration-tests/pubsub-conformance, and ci.integration-test.pubsub-conformance
+# has no dotnet/. Adding the missing half to either would make that lane check out
+# a tree it has no other use for, and would tie a five-second Python check to a
+# twenty-minute build.
+#
+# Standalone and self-triggering, like the format-check lanes: it is NOT part of
+# ci.pr.yml's pr_gate aggregation. Configure it as a separate required status
+# check on the branch protection rule if it should block.
+#
+# ── The trigger names every file the check reads ────────────────────────────
+# All three, and that is the point rather than caution: a step whose trigger does
+# not reach its inputs is DEAD for exactly the changes it exists to catch, which
+# is how ci.format-check-cs came to be silently skipping the integration suites
+# (BIND-4d-iii) and how BIND-3c went red. Renaming either file without touching
+# this list would leave the mapping unenforced and green.
+on:
+  pull_request:
+    paths:
+      - "integration-tests/pubsub-conformance/src/caller_tier.cpp"
+      - "dotnet/tests/Fletcher.Tests/CallerTierArmTests.cs"
+      - "scripts/check_caller_tier_mapping.py"
+      - "scripts/test_check_caller_tier_mapping.py"
+      - ".github/workflows/ci.check-caller-tier-mapping.yml"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      # Sparse, because the check reads two files and needs no build tree at all.
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            scripts
+            dotnet/tests/Fletcher.Tests
+            integration-tests/pubsub-conformance/src
+
+      # The runner's own Python. No dependencies: the script is stdlib only, which
+      # is deliberate - a mapping check that needed a package install would cost
+      # more to run than the thing it checks.
+      - name: Check the CallerTier mapping is total
+        run: python3 scripts/check_caller_tier_mapping.py
+
+      # A check that cannot fail proves nothing, and this one is cheap enough to
+      # prove on every run rather than trusting a note that someone once tested it.
+      # The first version proved ONE failure mode here (a marker removed), and a
+      # skipped, commented-out or assertion-free mirror all passed as "total"
+      # (BIND-4 review, B4). The fixture test applies each of those - and a renamed
+      # method, a stale marker and an unparsed C++ macro - to COPIES of the two
+      # files, requires each to be rejected FOR ITS OWN REASON, and requires the
+      # real files to be accepted. If this step ever passes while the check above
+      # has stopped checking, a fixture is missing.
+      - name: Prove the check refuses every way a mirror can be faked
+        run: python3 scripts/test_check_caller_tier_mapping.py

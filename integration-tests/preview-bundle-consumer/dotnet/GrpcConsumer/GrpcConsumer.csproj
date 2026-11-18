@@ -1,0 +1,34 @@
+<!-- SPDX-License-Identifier: LGPL-3.0-or-later
+     Copyright (C) 2026 The Fletcher Authors
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- BIND-9b-5 (D-BIND-158): a standard gRPC project, consuming Eiva.Fletcher.Protoc and
+       nothing else of Fletcher's. Grpc.Tools compiles reading.proto, which imports
+       fletcher/options.proto; the package adds its folder to the import path and compiles
+       options.proto, so Program.cs reads the options back through
+       Eiva.Fletcher.Protobuf.OptionsExtensions. protoc is Grpc.Tools' own, not
+       Google.Protobuf.Tools'. run.sh copies this project out of the checkout, as it does the
+       Fletcher consumer, and restores Eiva.Fletcher.Protoc from the bundle alone. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <RootNamespace>GrpcConsumer</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Eiva.Fletcher.Protoc" Version="[$(FletcherProtocVersion)]" PrivateAssets="all" />
+    <PackageReference Include="Grpc.Tools" Version="[2.80.0]" PrivateAssets="all" />
+    <PackageReference Include="Google.Protobuf" Version="[3.31.1]" />
+    <Protobuf Include="reading.proto" GrpcServices="None" />
+  </ItemGroup>
+
+  <Target Name="FletcherCheckInputs" BeforeTargets="CollectPackageReferences">
+    <Error Condition="'$(FletcherProtocVersion)' == ''" Text="Set FletcherProtocVersion to the bundle's Eiva.Fletcher.Protoc version (run.sh reads it from nuget/)." />
+  </Target>
+
+</Project>

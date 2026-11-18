@@ -1,0 +1,36 @@
+<!-- SPDX-License-Identifier: LGPL-3.0-or-later
+     Copyright (C) 2026 The Fletcher Authors
+-->
+<Project>
+
+  <!-- BIND-9b-5 (D-BIND-71): the plugin is usable before the project's own build steps run.
+       A NuGet package does not keep the executable bit. Measured 2026-10-23: NuGet of SDK
+       10.0.400 extracts every file with mode 0744, executable by its owner only, so the plugin
+       runs for the user who restored it without this; it is set here for everyone else (a
+       shared package cache) and for clients that extract without it, on Linux, before anything
+       a consumer hooks to BeforeCompile. -->
+  <Target Name="FletcherProtocPrepare" BeforeTargets="PrepareForBuild">
+    <Warning Condition="'$(FletcherProtocPlugin)' == ''" Code="FLETCHERPROTOC001"
+             Text="Eiva.Fletcher.Protoc has no protoc-gen-fletcher for this machine (it ships linux-x64 and win-x64), so FletcherProtocPlugin is empty." />
+    <Exec Condition="'$(FletcherProtocPlugin)' != '' And !$([MSBuild]::IsOSPlatform('Windows'))"
+          Command="chmod +x &quot;$(FletcherProtocPlugin)&quot;" />
+  </Target>
+
+  <!-- D-BIND-158: a project that compiles .proto files with Grpc.Tools (Protobuf items) can
+       import fletcher/options.proto and read the options from C#. Imported after the project's
+       own items, so @(Protobuf) is complete here:
+         * every Protobuf item gets the folder in its AdditionalImportDirs, in front of its own;
+         * options.proto itself becomes a Protobuf item (messages only), rooted at that folder so
+           protoc sees it as the same "fletcher/options.proto" the imports name, and its
+           descriptor (Eiva.Fletcher.Protobuf.OptionsExtensions) is compiled.
+       Opt out of the second with FletcherCompileOptionsProto=false, for a project that gets the
+       options' C# from a project it references (two copies of the same types would clash).
+       Nothing here without Protobuf items, and no dependency on Grpc.Tools either way. -->
+  <ItemGroup Condition="'@(Protobuf)' != ''">
+    <Protobuf Update="@(Protobuf)" AdditionalImportDirs="$(FletcherProtoInclude);%(Protobuf.AdditionalImportDirs)" />
+  </ItemGroup>
+  <ItemGroup Condition="'@(Protobuf)' != '' And '$(FletcherCompileOptionsProto)' != 'false'">
+    <Protobuf Include="$(FletcherProtoInclude)/fletcher/options.proto" ProtoRoot="$(FletcherProtoInclude)" GrpcServices="None" />
+  </ItemGroup>
+
+</Project>

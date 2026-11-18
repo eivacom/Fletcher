@@ -4,19 +4,26 @@
 # accessor-capstone — RBA-7 cross-language parity capstone
 
 This directory is the **single shared source of truth** for the RBA-7 capstone
-(`accessor_cpp_and_rust_agree_on_same_batch`, D-RBA-8). The C++ gtest and the
-Rust cargo test both consume the **same three files** here:
+(`accessor_cpp_and_rust_agree_on_same_batch`, D-RBA-8). Three arms consume the
+**same three files** here, C# joining C++ and Rust in BIND-7d (D-BIND-11):
+
+| Arm | Test | Lane |
+|---|---|---|
+| C++ | [`test_accessor_capstone.cpp`](../protoc-arrow-bridge/tests/test_accessor_capstone.cpp), over the generated `CapstoneBatchAccessor` (`--fletcher_opt=accessor`) | `ci.integration-test.protoc-arrow-bridge` |
+| Rust | [`accessor_capstone.rs`](../protoc-gen-fletcher-rust/tests/accessor_capstone.rs) (`--fletcher_opt=rust`) | `ci.integration-test.protoc-gen-fletcher-rust` |
+| C# | [`CapstoneTests.cs`](../protoc-dotnet/dotnet/ProtocDotnet/CapstoneTests.cs), over the generated `CapstoneBatchAccessor` and `CapstoneBatchView` (`--fletcher_opt=csharp,csharp_model_only,csharp_accessor`) | `ci.integration-test.protoc-dotnet` |
+
+Each lane's path filter and checkout include this directory, so a change here runs all three.
 
 | File | Role |
 |---|---|
-| [`proto/accessor_capstone.proto`](proto/accessor_capstone.proto) | the **one** schema — both accessors are generated from it (`--fletcher_opt=accessor` / `--fletcher_opt=rust`), so they cannot be hand-aligned. |
-| [`fixtures/accessor_capstone_fixture.json`](fixtures/accessor_capstone_fixture.json) | the **one** logical fixture — both build an in-memory Arrow batch from it (native Arrow builders, not IPC), so both carry identical rows, nulls and metadata. |
-| [`fixtures/accessor_capstone_expected.json`](fixtures/accessor_capstone_expected.json) | the **one** oracle — both normalize what their accessor reads into this shape and assert `observed == expected`. |
+| [`proto/accessor_capstone.proto`](proto/accessor_capstone.proto) | the **one** schema — all three accessors are generated from it, so they cannot be hand-aligned. |
+| [`fixtures/accessor_capstone_fixture.json`](fixtures/accessor_capstone_fixture.json) | the **one** logical fixture — each arm builds an in-memory Arrow batch from it (its language's Arrow arrays, not IPC), so all carry identical rows, nulls and metadata. |
+| [`fixtures/accessor_capstone_expected.json`](fixtures/accessor_capstone_expected.json) | the **one** oracle — each arm normalizes what its accessor reads into this shape and asserts `observed == expected`. |
 
-Because **both** languages compare against the **one** committed expected file,
-`observed_cpp == expected ∧ observed_rust == expected ⇒ observed_cpp ==
-observed_rust` — the C++ readout equals the Rust readout transitively, without
-hand-transcribing expected values into either test.
+Because **every** language compares against the **one** committed expected file,
+`observed_cpp == expected ∧ observed_rust == expected ∧ observed_cs == expected` makes the
+three readouts equal transitively, without hand-transcribing expected values into any test.
 
 ## What is covered
 

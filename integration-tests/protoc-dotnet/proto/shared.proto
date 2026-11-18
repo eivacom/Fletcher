@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// BIND-6e's other file: a package of its own, generated into an assembly of its own
+// (ProtocDotnetShared), which ProtocDotnet references. model.proto's Route uses these types
+// as a field, a list element, a map value, an enum and a list of enums.
+//
+// That topology is why D-BIND-80 exists: a class here is compiled into ANOTHER assembly than
+// Route, so Route cannot reach its internal ToArrowColumns and builds its columns through
+// the public ToArrow instead. Fix embeds Pos within this file, so the same-file path, the
+// internal one, is compiled here too.
+syntax = "proto3";
+
+package integration.shared_types;
+
+enum Quality {
+  QUALITY_UNSPECIFIED = 0;
+  QUALITY_GOOD = 1;
+  QUALITY_POOR = 2;
+}
+
+message Pos {
+  double lat = 1;
+  double lon = 2;
+  optional string label = 3;
+}
+
+message Fix {
+  Pos pos = 1;
+  repeated Pos trail = 2;
+  Quality quality = 3;
+}

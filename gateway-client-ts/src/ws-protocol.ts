@@ -80,7 +80,12 @@ export function buildCreateTopic(topic: string, schema?: SchemaDescriptor): stri
   // Schema is optional. Publishers that want subscribers to receive
   // the schema in their `subscribed` response announce it here; pure
   // byte-routers can omit it. Gateway forwards what it gets and does
-  // not validate.
+  // not validate. A generated schema carries its Arrow IPC bytes, which are
+  // announced as `schemaIpc` instead of the JSON descriptor: full fidelity, so
+  // the declaration matches a native publisher's of the same message.
+  if (schema?.schemaIpc) {
+    return JSON.stringify({ action: 'create_topic', topic, schemaIpc: schema.schemaIpc });
+  }
   return JSON.stringify(
     schema ? { action: 'create_topic', topic, schema } : { action: 'create_topic', topic },
   );

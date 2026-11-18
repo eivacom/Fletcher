@@ -1,0 +1,219 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+name: ci.integration-test.binding-abi-conformance
+
+concurrency:
+  group: ci.integration-test.binding-abi-conformance-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_call:
+    inputs:
+      devcontainer-image:
+        description: >-
+          Pre-built devcontainer image reference (e.g.
+          eivaorg/fletcher-devcontainer:<sha>). The caller is
+          responsible for invoking ci.setup-devcontainer-image.yml; this
+          workflow only consumes the resulting image. ci.pr.yml passes the
+          image it built once and shares across all callers. Only the
+          Linux job needs it; the Windows job runs natively on the
+          windows-2022 runner.
+        required: true
+        type: string
+
+# Two halves in one lane, and they have to be in one lane: the C# half consumes a
+# directory the C++ half writes, so splitting them across jobs would mean
+# publishing the corpus as an artifact for no gain. The order is emit, then test.
+#
+# THE EMITTER NEEDS ITS SHARED LIBRARIES FOUND, and the two legs say so
+# differently on purpose. The shim is a shared library by design, so a freshly
+# built `emit_corpus` cannot run without help from either platform's loader.
+# Linux sources Conan's own generated `conanrun.sh`, which sets LD_LIBRARY_PATH
+# for EVERY dependency rather than the one someone remembered — worth more here
+# than on Windows, because whether a given Conan package is shared or static on
+# Linux is not something this file should have to know. Windows puts the shim's
+# own directory on PATH: its `conanrun` equivalent is a .bat, which these bash
+# steps cannot source, and the shim is the only shared dependency there.
+# Both legs fail loudly if what they need is missing, because a corpus that was
+# never emitted makes the C# half a theory with no cases, and a theory with no
+# cases passes.
+#
+# THE SERVER PASS (D9S-7, rung 10; D10C-4). The same C# rows run a second time against the
+# SERVER build, so d9 L13 ("the server build only adds") is checked from C# as well as from C++.
+# The server file is staged beside the tests UNDER ITS OWN NAME, `fletcher-c-abi-server`, which
+# the C# loader prefers when present (ruling 2026-11-15, "Distinct names, loader prefers"; the
+# renamed copy of 2026-11-14 retires with it). The corpus is the one the EDGE build emitted: C#
+# round-trips it through each build, so the server pass compares server bytes with edge bytes
+# (a corpus emitted by the server build would compare it with itself). Three guards keep the
+# pass honest. It runs into its own fresh output folder, which must hold the server file
+# (`test -f`), so a stale edge file left from the first pass cannot answer. The suite's
+# TheShimBesideTheTestsIsTheOneLoaded reads the process's module list: on each pass, the one
+# shim loaded is the one beside the tests. And each shim is found by the identity of its
+# package (scripts/locate_shim.sh), never as the first file with that name: the cache holds
+# both builds, and the lookup refuses none or several.
+#
+# THE CHECKOUT INCLUDES c-abi/tests, and that is not a stray entry: the emitter
+# includes `codec_corpus.hpp` from there, because the scenarios this suite
+# round-trips must be the SAME objects the codec's byte-identity test uses
+# (D-BIND-35, D-BIND-40). A copy would drift and both copies would keep passing.
+# A new consumer of a path outside this lane's checkout adds it HERE and to
+# ci.pr.yml's filter, in the same commit — BIND-3c went red for exactly that.
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            core
+            pubsub
+            arrow-bridge
+            fastdds-pubsub-provider
+            xrcedds-pubsub-provider
+            c-abi
+            pubsub-arrow
+            scripts
+            dotnet
+            integration-tests/binding-abi-conformance
+            .conan-profiles
+            .github
+
+      - name: Pull devcontainer image
+        uses: ./.github/actions/pull-devcontainer-image
+        with:
+          image: ${{ inputs.devcontainer-image }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build the chain, emit the corpus, and round-trip it from C#
+        run: |
+          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace \
+            fletcher-build \
+            bash -c "set -e && \
+                     PROFILE=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release && \
+                     for COMPONENT in core pubsub arrow-bridge pubsub-arrow fastdds-pubsub-provider xrcedds-pubsub-provider c-abi; do \
+                       echo '::group::conan create '\$COMPONENT && \
+                       (cd \$COMPONENT && conan create . --build=missing -pr:a=\$PROFILE) && \
+                       echo '::endgroup::'; \
+                     done && \
+                     echo '::group::conan create c-abi (server build)' && \
+                     (cd c-abi && conan create . --build=missing -pr:a=\$PROFILE -o '&:variant=server') && \
+                     echo '::endgroup::' && \
+                     echo '::group::build the emitter' && \
+                     (cd integration-tests/binding-abi-conformance && conan build . --build=missing -pr:a=\$PROFILE) && \
+                     echo '::endgroup::' && \
+                     SHIM=\$(bash scripts/locate_shim.sh fletcher-c-abi variant=edge) && \
+                     SERVER=\$(bash scripts/locate_shim.sh fletcher-c-abi-server variant=server) && \
+                     EMITTER=\$(find integration-tests/binding-abi-conformance -name emit_corpus -type f -print -quit) && \
+                     if [ -z \"\$EMITTER\" ]; then echo '::error::emit_corpus was not built'; exit 1; fi && \
+                     RUNENV=\$(find integration-tests/binding-abi-conformance -name conanrun.sh -print -quit) && \
+                     if [ -z \"\$RUNENV\" ]; then echo '::error::conanrun.sh was not generated; the emitter would not find its shared libraries'; exit 1; fi && \
+                     echo '::group::emit the corpus' && \
+                     . \"\$RUNENV\" && \
+                     \$EMITTER /workspace/corpus-out && \
+                     echo '::endgroup::' && \
+                     echo '::group::dotnet test (edge build)' && \
+                     (cd integration-tests/binding-abi-conformance/dotnet/BindingAbiConformance && \
+                      FLETCHER_CORPUS_DIR=/workspace/corpus-out dotnet test -c Release -p:FletcherNativeShim=\$SHIM) && \
+                     echo '::endgroup::' && \
+                     echo '::group::dotnet test (server build, under its own name)' && \
+                     OUT=\$(mktemp -d) && \
+                     (cd integration-tests/binding-abi-conformance/dotnet/BindingAbiConformance && \
+                      env -u LD_LIBRARY_PATH FLETCHER_CORPUS_DIR=/workspace/corpus-out dotnet test -c Release -o \"\$OUT\" -p:FletcherNativeShim=\"\$SERVER\") && \
+                     if [ ! -f \"\$OUT/libfletcher-c-abi-server.so\" ]; then echo '::error::the server pass output folder holds no server shim; the server pass did not test the server build'; exit 1; fi && \
+                     echo '::endgroup::'"
+
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            core
+            pubsub
+            arrow-bridge
+            fastdds-pubsub-provider
+            xrcedds-pubsub-provider
+            c-abi
+            pubsub-arrow
+            scripts
+            dotnet
+            integration-tests/binding-abi-conformance
+            .conan-profiles
+            .github
+
+      - name: Install Conan
+        uses: ./.github/actions/conan-install
+
+      # global-json-file, not a literal version: dotnet/global.json is the single
+      # pin, and the runner's own pre-installed SDKs must not decide this.
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: dotnet/global.json
+
+      - name: Build components into the local Conan cache
+        shell: bash
+        run: |
+          set -e
+          PROFILE=.conan-profiles/Windows-msvc194-x86_64-Release
+          for COMPONENT in core pubsub arrow-bridge pubsub-arrow fastdds-pubsub-provider xrcedds-pubsub-provider c-abi; do
+            echo "::group::conan create $COMPONENT"
+            (cd "$COMPONENT" && conan create . --build=missing -pr:a="../$PROFILE")
+            echo "::endgroup::"
+          done
+          # The server build too (no tests: ci.c-abi.yml runs them). Both builds are in the
+          # cache for the whole lane, which is why every lookup below is by package identity.
+          echo "::group::conan create c-abi (server build)"
+          (cd c-abi && conan create . --build=missing -pr:a="../$PROFILE" -o "&:variant=server")
+          echo "::endgroup::"
+
+      - name: Build the emitter
+        shell: bash
+        working-directory: integration-tests/binding-abi-conformance
+        run: conan build . --build=missing -pr:a=../../.conan-profiles/Windows-msvc194-x86_64-Release
+
+      # Checked, not trusted: the suite FAILS rather than skips when either the
+      # shim or the corpus is missing, so a lookup that finds none or several must
+      # stop the job here with a diagnostic rather than produce a green run over
+      # nothing. The edge shim is found by its package's identity (locate_shim.sh).
+      - name: Emit the corpus
+        shell: bash
+        run: |
+          set -e
+          SHIM=$(bash scripts/locate_shim.sh fletcher-c-abi variant=edge)
+          echo "path=$SHIM" >> "$GITHUB_OUTPUT"
+          EMITTER=$(find integration-tests/binding-abi-conformance -name emit_corpus.exe -type f -print -quit)
+          if [ -z "$EMITTER" ]; then
+            echo "::error::emit_corpus.exe was not built"
+            exit 1
+          fi
+          # The shim and Arrow are beside the emitter's dependencies in the cache;
+          # PATH is how a Windows process finds them.
+          PATH="$(dirname "$SHIM"):$PATH" "$EMITTER" "$(pwd -W)/corpus-out"
+        id: emit
+
+      - name: Round-trip the corpus from C# (edge build)
+        shell: bash
+        working-directory: integration-tests/binding-abi-conformance/dotnet/BindingAbiConformance
+        env:
+          FLETCHER_CORPUS_DIR: ${{ github.workspace }}\corpus-out
+        run: dotnet test -c Release -p:FletcherNativeShim="${{ steps.emit.outputs.path }}"
+
+      # The server pass (D9S-7, rung 10; D10C-4): the corpus the edge build emitted, round-tripped
+      # by C# through the SERVER shim, staged under its own name (see the header). Into a fresh
+      # output folder, which must hold the server file; TheShimBesideTheTestsIsTheOneLoaded checks
+      # it is the one that loaded.
+      - name: Round-trip the corpus from C# (server build, under its own name)
+        shell: bash
+        working-directory: integration-tests/binding-abi-conformance/dotnet/BindingAbiConformance
+        env:
+          FLETCHER_CORPUS_DIR: ${{ github.workspace }}\corpus-out
+        run: |
+          set -e
+          SERVER=$(bash "$GITHUB_WORKSPACE/scripts/locate_shim.sh" fletcher-c-abi-server variant=server)
+          OUT=$(mktemp -d)
+          dotnet test -c Release -o "$(cygpath -m "$OUT")" -p:FletcherNativeShim="$(cygpath -m "$SERVER")"
+          if [ ! -f "$OUT/fletcher-c-abi-server.dll" ]; then
+            echo "::error::the server pass output folder holds no server shim; the server pass did not test the server build"
+            exit 1
+          fi

@@ -237,6 +237,13 @@ inline gen::CompositeCoverage MakeCompositeWithMapsNonSorted() {
     return c;
 }
 
+// BIND-6 review B1 (D-BIND-83): nothing set, so every plain message field is a default
+// instance: scalars, branch and the leaf inside it, the message- and field-flattened
+// structs. C++ writes each of them PRESENT. A C# row that wrote a null there instead could
+// not be decoded by C++ (PositionalReader: buffer underrun, reproduced 2026-10-08); the
+// C# transcription of this fixture is `new CompositeCoverage()`.
+inline gen::CompositeCoverage MakeCompositeDefaulted() { return gen::CompositeCoverage{}; }
+
 inline gen::ServiceRequest MakeServiceRequest() {
     gen::ServiceRequest req;
     req.set_payload(MakeComposite());

@@ -839,17 +839,16 @@ TEST(Registry, TwoInstancesStayIsolatedUnderConcurrentTraffic) {
 // that a row over one instance's bound is dropped there and delivered on the
 // other.
 //
-// The middle row is dropped SILENTLY on the low-bound instance and does not
-// throw: the overflow is caught inside `serialize()`, which zeroes the payload
-// length, so the sample never enters history, `write()` returns non-OK and
-// `WriteSample` only logs it. That is pre-existing behaviour of the serialising
-// publish flow (the one an empty document selects), pinned by
-// `FastDDSPubSubProviderTest.DataSharingOversizedRowDoesNotThrow`; a typed
-// `kPayloadTooLarge` exists only on the loaned flow, which is kept in the tree but not
-// selectable (no `fletcher.loan_publish` property exists). So delivery is what is
-// asserted here, in both directions, and no new timing number is introduced: the
-// third row goes AFTER the oversized one and must arrive, so nothing dead can
-// pose as a working instance.
+// The middle row is REFUSED on the low-bound instance, by name: `Publish` throws
+// `kPayloadTooLarge`, the status the seam spec's normative overflow mapping names,
+// and the sample is not sent. It is delivered on the high-bound instance. Until
+// 2026-09 the serialising publish flow (the one an empty document selects) dropped
+// it SILENTLY instead - caught inside `serialize()`, only logged, `Publish`
+// returning normally - and this case asserted that no-throw; the provider now
+// records the overflow and reports it (BIND review, D-BIND-53). Delivery is still
+// asserted in both directions, and no new timing number is introduced: the third
+// row goes AFTER the refused one and must arrive, so nothing dead can pose as a
+// working instance.
 TEST(Registry, TwoInstancesKeepTheirOwnPayloadBounds) {
     ProviderRegistry registry;
     RegisterFastDDSProvider(registry);
@@ -860,11 +859,18 @@ TEST(Registry, TwoInstancesKeepTheirOwnPayloadBounds) {
     ASSERT_EQ(low.AwaitSubscriptionsLive(), PubSubStatus::kOk) << low.SchemaWaitMessage();
     ASSERT_EQ(high.AwaitSubscriptionsLive(), PubSubStatus::kOk) << high.SchemaWaitMessage();
 
-    for (Instance* instance : {&low, &high}) {
-        instance->PublishPrivate(0);
-        instance->PublishPrivate(1, kBetweenBoundsRowBytes);
-        instance->PublishPrivate(2);
+    high.PublishPrivate(0);
+    high.PublishPrivate(1, kBetweenBoundsRowBytes);
+    high.PublishPrivate(2);
+
+    low.PublishPrivate(0);
+    try {
+        low.PublishPrivate(1, kBetweenBoundsRowBytes);
+        ADD_FAILURE() << "a row over the 4096-byte instance's bound was accepted silently";
+    } catch (const PubSubError& e) {
+        EXPECT_EQ(e.status(), PubSubStatus::kPayloadTooLarge) << e.what();
     }
+    low.PublishPrivate(2);
 
     EXPECT_TRUE(WaitForCount(high.PrivateJournal(), 3, kClauseBudget))
         << "the high-bound instance received " << high.PrivateJournal().Count() << " of 3 rows";

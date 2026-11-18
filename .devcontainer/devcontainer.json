@@ -12,11 +12,13 @@
         "ms-vscode.cpptools",
         "xaver.clang-format",
         "esbenp.prettier-vscode",
-        "ms-vscode.cmake-tools"
+        "ms-vscode.cmake-tools",
+        "ms-dotnettools.csharp"
       ],
       "settings": {
         "editor.formatOnSave": true,
         "[cpp]": { "editor.defaultFormatter": "xaver.clang-format" },
+        "[csharp]": { "editor.defaultFormatter": "ms-dotnettools.csharp" },
         "[c]": { "editor.defaultFormatter": "xaver.clang-format" },
         "[typescript]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
         "[typescriptreact]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },

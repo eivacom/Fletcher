@@ -1,0 +1,29 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (C) 2026 The Fletcher Authors
+//
+// D-BIND-85 negative fixture. COMMITTED BUT NOT WIRED into the coverage
+// generation set: invoked ONLY by GenErrors.MapFlattenWrapperFailsBuild.
+//
+// A flatten wrapper is always inlined where it is used, so no backend generates
+// a class for it. As a map VALUE, BuildMapNode() used to build a STRUCT pointing
+// at the wrapper, and every backend emitted code naming that absent class (C++
+// "'Wrapper' was not declared", C# CS0117). The map value is now classified as
+// NodeKind::UNSUPPORTED, so ValidateNoUnsupportedIr() fails generation here
+// with the flatten-wrapper reason.
+syntax = "proto3";
+package integration.coverage.unsupported;
+
+import "fletcher/options.proto";
+
+message WrapperLeaf {
+  int32 a = 1;
+}
+
+message Wrapper {
+  option (fletcher.flatten) = true;
+  repeated WrapperLeaf items = 1;
+}
+
+message MapFlattenWrapperCoverage {
+  map<string, Wrapper> wrapper_map = 1;
+}

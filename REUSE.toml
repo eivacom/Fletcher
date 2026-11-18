@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Copyright (C) 2026 The Fletcher Authors
+#
+# REUSE annotations (https://reuse.software/spec-3.3/), so that licence scanners see the
+# Fletcher Linking Exception (LICENSE-EXCEPTION, D-BIND-175, approved by EIVA legal, ruling
+# 2026-11-17) on the parts it names, while every source file keeps its exact
+# `SPDX-License-Identifier: LGPL-3.0-or-later` header and ci.license-headers its exact check.
+#
+# Annotated: the C# source of the four Covered Libraries (the assemblies Fletcher,
+# Fletcher.Interop, Fletcher.Model and Fletcher.GatewayClient) and the Options File. Not
+# annotated: the native libraries and Fletcher.Server (a package of the server shim only), which
+# the exception leaves under the LGPL alone, and the generator's own source under protoc/, whose
+# permission (section 3) is for the files the generator writes, not for the generator.
+# "override" because every annotated file carries a header, which "closest" would prefer.
+#
+# The exception's text is LICENSE-EXCEPTION at the root; it is not copied into a LICENSES/
+# folder, so that EIVA A/S's copy stays the one authoritative text.
+
+version = 1
+
+[[annotations]]
+path = [
+  "dotnet/src/Fletcher/**",
+  "dotnet/src/Fletcher.Interop/**",
+  "dotnet/src/Fletcher.Model/**",
+  "dotnet/src/Fletcher.GatewayClient/**",
+  "protoc/include/fletcher/options.proto",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 The Fletcher Authors"
+SPDX-License-Identifier = "LGPL-3.0-or-later WITH LicenseRef-Fletcher-Linking-Exception"

@@ -6,8 +6,8 @@ between Fletcher and a protocol. On any contradiction with the plan or a per-ite
 **this document wins**. **§12 states what "frozen" binds, who may act on each class, and how
 each handoff condition was actually verified** — read it before proposing any change here.
 Locked-decision digest:
-[plans/PDA-decouple-locked-decisions.md](../plans/PDA-decouple-locked-decisions.md).
-Plan + tracker: [plans/PDA-decouple-interface.md](../plans/PDA-decouple-interface.md).
+[docs/archive/PDA-decouple/PDA-decouple-locked-decisions.md](archive/PDA-decouple/PDA-decouple-locked-decisions.md).
+Plan + tracker: [docs/archive/PDA-decouple/PDA-decouple-interface.md](archive/PDA-decouple/PDA-decouple-interface.md).
 
 **This document is also the meeting point for two later rounds that do not
 otherwise touch each other** — see §1.
@@ -450,6 +450,16 @@ No trimming, no case folding, no Unicode normalisation, no escaping: identity is
 bytes, and there is no normalisation step anywhere on this path for two providers to
 disagree about. The checks live once, in `internal::RequireSegments`, which all three
 providers already route every topic through.
+
+**A generated topic** (D-BIND-180). The code generator derives a service method's
+segment list from the `.proto`: one segment per part of the package, split on `.`,
+then the service, then the method. `package nexus.topics.v1;` with
+`LivePoints.Snapshot` is `{"nexus", "topics", "v1", "LivePoints", "Snapshot"}`, joined
+`nexus/topics/v1/LivePoints/Snapshot`; a file with no package gives
+`{"LivePoints", "Snapshot"}`. Every backend emits that one list (C++'s
+`TopicSegments()`, C#'s `Segments` and `Key`, TypeScript's topic constant, which the
+gateway splits back on `/`), so a method names the same topic in every language. A `.`
+in a segment a caller writes by hand is an ordinary byte, as above.
 
 ---
 
@@ -1059,7 +1069,7 @@ modernization merge shipped a receive-side data-sharing defect that lost
 `TRANSIENT_LOCAL` samples for cross-process late joiners, and the provider's
 entire 70-test suite was green throughout, because every test ran in one process
 (see `fastdds-pubsub-provider/README.md` and
-[plans/PDA-decouple-progress-log.md](../plans/PDA-decouple-progress-log.md)).
+[docs/archive/PDA-decouple/PDA-decouple-progress-log.md](archive/PDA-decouple/PDA-decouple-progress-log.md)).
 
 So the suite must have a **cross-process subject** for the DDS providers. A
 conformance suite that cannot observe the transport would certify the seam on
@@ -1076,7 +1086,7 @@ mix and count of data-sharing endpoints per participant, which needs a subscribi
 peer this harness does not have. The evidence table lives in
 `integration-tests/pubsub-conformance/README.md`, the defect is owned by
 **PDA-ABI-7**, and the owner ruled on 2026-09-01 that the suite ships with the
-blind spot documented (`plans/PDA-DEC-rulings.md`). **Do not read a green
+blind spot documented (`docs/archive/PDA-decouple/PDA-DEC-rulings.md`). **Do not read a green
 conformance run as evidence about that defect class.**
 
 ---

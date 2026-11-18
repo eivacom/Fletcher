@@ -11,7 +11,8 @@
 # script FATAL_ERRORs (test red) until GIR-8 lands.
 #
 # Parametrised so the singular / repeated / map google.protobuf.Any variants
-# (review 4b) share one script:
+# (review 4b), and a map whose value is a flatten wrapper (D-BIND-85), share one
+# script:
 #   PROTO_FILE     fixture basename under PROTO_DIR (e.g. coverage_unsupported.proto)
 #   EXPECT_FIELD   the offending field's proto name the error must mention
 #   EXPECT_REASON  the UnsupportedNode reason substring the error must carry

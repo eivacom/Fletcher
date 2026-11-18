@@ -19,6 +19,20 @@ describe('Text frame builders (client → server)', () => {
     expect(json.topic).toBe('demo/telemetry');
   });
 
+  it('buildCreateTopic announces a generated schema as schemaIpc, not as JSON', () => {
+    // D-BIND-130: the generator writes the schema's Arrow IPC on the TypedSchema; the JSON
+    // descriptor would lose types and conflict with a native declaration of the same message.
+    const json = JSON.parse(buildCreateTopic('demo/telemetry', { fields: [], schemaIpc: 'QUJD' }));
+    expect(json.schemaIpc).toBe('QUJD');
+    expect(json.schema).toBeUndefined();
+  });
+
+  it('buildCreateTopic still sends a hand-built descriptor as JSON', () => {
+    const json = JSON.parse(buildCreateTopic('demo/telemetry', { fields: [] }));
+    expect(json.schema).toEqual({ fields: [] });
+    expect(json.schemaIpc).toBeUndefined();
+  });
+
   it('buildSubscribe returns JSON with action and topic', () => {
     const json = JSON.parse(buildSubscribe('test/topic'));
     expect(json.action).toBe('subscribe');

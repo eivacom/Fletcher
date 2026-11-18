@@ -6,6 +6,10 @@
 syntax = "proto2";
 package fletcher;
 
+// BIND-9b-5 (D-BIND-158): where protoc's C# output for this file goes, for Grpc.Tools projects
+// that compile it to read the options (Eiva.Fletcher.Protoc adds it to them).
+option csharp_namespace = "Eiva.Fletcher.Protobuf";
+
 import "google/protobuf/descriptor.proto";
 
 // See docs/fletcher-options.md for the full specification.

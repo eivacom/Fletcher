@@ -341,6 +341,9 @@ TEST(ParityOracle, EncodeEqualsEncodeRowAndRoundTrips) {
     CheckFixture<gen::CompositeCoverageView>(fx::MakeCompositeWithMapsNonSorted(),
                                              gen::CompositeCoverageSchema,
                                              "coverage.CompositeCoverage.maps-non-sorted.v1.bin");
+    CheckFixture<gen::CompositeCoverageView>(fx::MakeCompositeDefaulted(),
+                                             gen::CompositeCoverageSchema,
+                                             "coverage.CompositeCoverage.defaulted.v1.bin");
     CheckFixture<gen::BranchView>(fx::MakeBranch(), gen::BranchSchema, "coverage.Branch.v1.bin");
     CheckFixture<gen::LeafView>(fx::MakeLeaf(42, "leaf", fx::kTopLevelStatusError), gen::LeafSchema,
                                 "coverage.Leaf.v1.bin");
@@ -387,6 +390,7 @@ TEST(ParityOracle, RegenerateGoldens) {
           fx::MakeCompositeWithAlternateNullsAndEmpties().Encode());
     write("coverage.CompositeCoverage.maps-non-sorted.v1.bin",
           fx::MakeCompositeWithMapsNonSorted().Encode());
+    write("coverage.CompositeCoverage.defaulted.v1.bin", fx::MakeCompositeDefaulted().Encode());
     write("coverage.Branch.v1.bin", fx::MakeBranch().Encode());
     write("coverage.Leaf.v1.bin", fx::MakeLeaf(42, "leaf", fx::kTopLevelStatusError).Encode());
     write("coverage.NestedEnums.v1.bin", fx::MakeNestedEnums().Encode());

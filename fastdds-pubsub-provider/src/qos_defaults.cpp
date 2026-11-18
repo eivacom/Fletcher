@@ -47,8 +47,11 @@ using eprosima::fastdds::dds::TRANSIENT_LOCAL_DURABILITY_QOS;
 // than retransmit it; `latest` (RELIABLE, VOLATILE, KEEP_LAST 1) newest value only, resent if
 // lost, no replay; `store_latest` (RELIABLE, TRANSIENT_LOCAL, KEEP_LAST 1) replays the last value
 // to a late subscriber; `store_history` (RELIABLE, TRANSIENT_LOCAL, KEEP_LAST 25) replays the last
-// 25; `lossless` (RELIABLE, VOLATILE, KEEP_ALL, an infinite `max_blocking_time`, 20 ms heartbeat)
-// delivers every sample in order and blocks the writer rather than drop one.
+// 25; `lossless` (RELIABLE, VOLATILE, KEEP_ALL, a 30 s `max_blocking_time`, 20 ms heartbeat)
+// delivers every sample in order and blocks the writer, for up to 30 s per sample, rather than drop
+// one. Infinite until BIND-9b-7 (D-BIND-168): Fast DDS 3.4.3 refuses an infinite reliable
+// blocking time (eProsima's "Fix several CVEs"), and 30 s is past the 20 s participant lease, so a
+// vanished reader still frees the writer first.
 // `default_writer`/`default_reader` are this file's own "stream" semantics -- RELIABLE, VOLATILE,
 // KEEP_LAST 25 -- and are what every topic without a profile of its own runs on.
 const char* FletcherDefaultProfilesDocument() {
@@ -209,14 +212,16 @@ const char* FletcherDefaultProfilesDocument() {
       </topic>
     </data_reader>
     <!-- every sample, in order: commands, events, logs. A reader that stops taking samples stalls
-         the publisher; a crashed peer frees it when its participant lease expires (20 s by
-         default); the slowest reader can hold the publisher back once 25 samples are in flight -->
+         the publisher, for up to 30 s per sample, after which that sample is dropped and logged
+         (Fast DDS 3.4.3 refuses an infinite blocking time); a crashed peer frees it sooner, when
+         its participant lease expires (20 s by default); the slowest reader can hold the
+         publisher back once 25 samples are in flight -->
     <data_writer profile_name="lossless">
       <qos>
         <durability><kind>VOLATILE</kind></durability>
         <reliability>
           <kind>RELIABLE</kind>
-          <max_blocking_time>DURATION_INFINITY</max_blocking_time>
+          <max_blocking_time><sec>30</sec><nanosec>0</nanosec></max_blocking_time>
         </reliability>
       </qos>
       <topic>
@@ -303,6 +308,15 @@ DataWriterQos MakeSchemaChannelWriterQos() {
     return qos;
 }
 
+// As the writer, and data-sharing OFF (BIND-9b-6, D-BIND-165). The schema is written ONCE, so a
+// reader that matches the publisher after that write must get it from the TRANSIENT_LOCAL backlog,
+// and Fast DDS 3.4.0's data-sharing reader can drop that backlog for a late joiner with no error at
+// either end (README, "Zero-copy: the plain sample"). For a data topic that loses rows; here it
+// lost the only sample, so the arrival never resolved and the subscription delivered nothing, ever:
+// the cross-language lane's subscriber-first row did this on the Linux runner, its reader matched
+// and no schema delivered. The writer keeps Fast DDS's default; the channel carries one small
+// sample per topic, so shared memory buys it nothing. Revisit with the Fast DDS upgrade that fixes
+// the defect.
 DataReaderQos MakeSchemaChannelReaderQos() {
     DataReaderQos qos = DATAREADER_QOS_DEFAULT;
     qos.reliability().kind = RELIABLE_RELIABILITY_QOS;
@@ -314,6 +328,7 @@ DataReaderQos MakeSchemaChannelReaderQos() {
     qos.resource_limits().max_instances = 1;
     qos.resource_limits().max_samples_per_instance = 1;
     qos.resource_limits().allocated_samples = 1;
+    qos.data_sharing().off();
     return qos;
 }
 

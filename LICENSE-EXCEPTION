@@ -1,0 +1,196 @@
+                      FLETCHER LINKING EXCEPTION
+                             Version 1.1
+
+ Copyright (C) 2026 EIVA A/S
+
+  EIVA A/S (the "Licensor"), which the file AUTHORS lists as "The
+Fletcher Authors", gives this additional permission under section 7 of
+the GNU General Public License, version 3 (the "GPL", the file COPYING),
+which the GNU Lesser General Public License, version 3 (the "LGPL", the
+file LICENSE) incorporates.
+
+  The permission is part of the licence of the whole of Fletcher. What it
+allows beyond the LGPL is limited, by the conditions below, to the
+Covered Libraries, the Options File and the output of the Generator. For
+every other part of Fletcher, the Native Libraries included, it allows
+nothing that the LGPL does not already allow.
+
+  0. Definitions.
+
+  "Fletcher" is the software the Licensor publishes under that name, at
+<https://github.com/eivacom/Fletcher> or at another location the Licensor
+names as its home.
+
+  A "Release" is a version of Fletcher that the Licensor publishes as a
+release, under a version number, through a channel the Licensor controls,
+such as a GitHub Release of Fletcher or a package published under the
+Licensor's account on nuget.org or npmjs.com. A preview or test build, or
+any other commit, is not a Release unless the Licensor says it is. The
+"source of a Release" is Fletcher's source code at the commit that the
+Release names.
+
+  A "Covered Library" is any of the .NET assemblies Fletcher,
+Fletcher.Interop, Fletcher.Model and Fletcher.GatewayClient, built from
+Fletcher's C# source (and, at the time of writing, published in the
+packages Eiva.Fletcher, Eiva.Fletcher.Interop, Eiva.Fletcher.Model and
+Eiva.Fletcher.GatewayClient), and any other .NET assembly that a later
+version of this Exception names. A Covered Library is "unmodified" if it
+is the assembly a Release contains, or an assembly built from the source
+of a Release with no change to that source or to the build settings it
+specifies, other than the toolchain version, a target framework or
+runtime that the source supports, and the signing key. Using it with
+another version of a library it depends on does not modify it.
+
+  A "Native Library" is any library of machine code built from Fletcher's
+source other than the C# source of a Covered Library, among them the
+edge and server shims that the packages Eiva.Fletcher.Interop and
+Eiva.Fletcher.Server carry, and Fletcher's C++ libraries. A Covered
+Library compiled to machine code (for example by .NET Native AOT or
+ReadyToRun) is still a Covered Library, not a Native Library.
+
+  An "Independent Module" is code that uses an interface a Covered
+Library provides, or requires a Covered Library to run, but is not
+otherwise based on Fletcher. Code that contains a copy or an adaptation
+of any part of Fletcher's source or object code is not an Independent
+Module, except for code that sections 2 and 3 cover and for code that an
+Eligible Compilation Process copies from a Covered Library into Target
+Code. Code that reaches a Covered Library's non-public members, for
+example by taking the name of an assembly to which the Covered Library
+opens its internals, is not an Independent Module.
+
+  An "Eligible Compilation Process" is a process that turns Independent
+Modules and unmodified Covered Libraries into code for execution, such
+as compiling, ahead-of-time compilation to machine code, bundling into a
+single file, and trimming, and that changes a Covered Library only by:
+  (a) removing code and metadata that the resulting program does not
+      reach; and
+  (b) transformations that the toolchain applies in the ordinary course
+      to every assembly it processes and that preserve the Covered
+      Library's behaviour, such as compiling, inlining, optimising and
+      laying out code.
+Any other change, such as rewriting, weaving, patching, replacing or
+adding to a Covered Library's code (including a substitution that the
+Covered Library does not itself declare), makes it a modified Covered
+Library, and the process is then not an Eligible Compilation Process.
+
+  "Target Code" is the output of an Eligible Compilation Process, in one
+file or several, in machine code, intermediate language or both.
+
+  The "Options File" is the file protoc/include/fletcher/options.proto
+in Fletcher, which the package Eiva.Fletcher.Protoc also carries.
+
+  The "Generator" is protoc-gen-fletcher, the protoc plugin built from
+Fletcher's source under protoc/.
+
+  "Convey", "object code" and "Corresponding Source" have the meanings
+the GPL gives them.
+
+  1. Target Code built with Covered Libraries.
+
+  You may convey Target Code that combines Independent Modules with
+unmodified Covered Libraries, under terms of your choice for the
+Independent Modules, without complying with sections 4(d) and 4(e) of
+the LGPL for the Covered Libraries it contains, provided that:
+  (a) as to the Covered Libraries, you comply with sections 4(a), 4(b)
+      and 4(c) of the LGPL and with its other terms except 4(d) and 4(e),
+      including section 4's condition that your terms not restrict
+      modification of the Covered Libraries' portions of the work and
+      reverse engineering for debugging such modifications; and
+  (b) you meet, for the Independent Modules, the terms of the licences
+      that apply to them.
+An Eligible Compilation Process does not make a Covered Library a
+modified version. This Exception does not relax sections 4(b) and 4(c)
+of the LGPL, including for Target Code in a single file or for a mobile
+or embedded device, and does not say how they are met there.
+
+  This section does not apply to a modified Covered Library, which stays
+under the LGPL alone, nor to any Native Library, however Target Code
+uses it. A Native Library stays under the LGPL alone, section 4(d) and
+4(e) included: an application that loads it at run time as a shared
+library the user can replace takes the route of section 4(d)(1); one that
+links it into its executable takes the route of section 4(d)(0).
+
+  2. Code generated from the Options File.
+
+  Code that a Protocol Buffers compiler (protoc, any of its plugins, or a
+build tool that runs them) generates from the Options File of a Release,
+or from a copy of it changed only in comments, formatting or the
+file-level options that name the generated code, and object code
+compiled from that code, may be used, modified and conveyed under terms
+of your choice. The same holds for anything that code generated from
+your own definitions takes from the Options File when they import it and
+use the options it declares.
+
+  3. Output of the Generator.
+
+  The files the Generator writes from your definitions, including the
+parts of them it copies or adapts from its own source, may be used,
+modified and conveyed under terms of your choice, within these limits:
+  (a) this permission covers material of Fletcher in those files only to
+      the extent that the Generator of a Release, unmodified, writes the
+      same material from the same definitions and options;
+  (b) it does not cover a file that is itself a code generator using that
+      material as its template, or a file that reproduces any part of a
+      Covered Library, a Native Library or another library of Fletcher,
+      beyond the names, declarations and calls through which generated
+      code uses that library's interface; and
+  (c) it does not extend to the libraries the generated files use when
+      they run. For C#, those are the Covered Libraries, under section 1.
+      For C++ and TypeScript, they are Fletcher's C++ libraries and the
+      package @eiva/fletcher-gateway-client, which stay under the LGPL
+      alone: an application that links them statically or bundles them
+      must meet sections 4(d) and 4(e) of the LGPL for them.
+
+  4. What the Licensor grants.
+
+  The Licensor gives this permission only for material in which it holds
+the copyright or the right to grant it. Material of others in Fletcher or
+in the output of a code generator, such as Protocol Buffers, nanoarrow
+and flatcc, and code that a third party's code generator writes, keeps
+its own licence. Your own definitions, and what derives from them alone,
+are yours; this Exception does not license them.
+
+  5. The Program as a whole.
+
+  This permission is given for Fletcher as a whole, the "Program" of
+section 7 of the GPL. If it is nevertheless held to apply to only part of
+the Program, the Licensor also permits you to use that part under it
+while it is combined or used with other parts of Fletcher in the ways
+sections 1 to 3 describe, and, for the Licensor's copyright, waives as to
+such use section 7's rule that the entire Program remains governed by
+the GPL without regard to additional permissions.
+
+  6. Later versions of the LGPL.
+
+  If you follow a later version of the LGPL, as the LGPL allows, this
+permission continues to apply as far as that version permits, and a
+reference here to a section of the LGPL or the GPL means the
+corresponding provision of the version you follow.
+
+  7. Removing this permission.
+
+  As section 7 of the GPL allows, when you convey a copy of Fletcher or
+of a part of it, you may remove this additional permission from that
+copy. Recipients of that copy then have no permission under it from you;
+copies the Licensor conveys are not affected.
+
+  8. Versions of this Exception.
+
+  The Licensor may publish revised versions of this Exception. A Release
+is covered by the version it carries, and you may instead apply to it any
+later version the Licensor publishes.
+
+  9. When this permission takes effect.
+
+  This permission takes effect for a Release when the Licensor publishes
+that Release with this text, without the DRAFT notice, beside the files
+LICENSE and COPYING. It applies to that Release and to later Releases
+that carry it, and to an earlier Release only if the Licensor says so in
+writing.
+
+  10. Invalidity; nothing else changes.
+
+  If a court holds part of this Exception invalid or unenforceable, the
+rest stands; but if a condition is held invalid, the permission it
+qualifies does not apply. Except as stated here, the LGPL and the GPL
+apply unchanged.

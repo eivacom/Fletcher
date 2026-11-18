@@ -1,0 +1,16 @@
+{
+  "name": "gateway-dotnet-crosslang-ts-peer",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The TypeScript peer of the C# gateway client's cross-language lane: gateway-client-ts with the generated module of crosslang.proto, started by the C# tests.",
+  "type": "module",
+  "scripts": {
+    "peer": "tsx src/peer.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0"
+  }
+}

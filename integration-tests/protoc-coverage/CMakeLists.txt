@@ -93,6 +93,10 @@ set(GENERATED_CPP_HEADERS
     "${GENERATED_DIR}/${_stem}.fletcher.pb.h"
     "${GENERATED_DIR}/${_stem}.fletcher.arrow.pb.h"
     "${GENERATED_DIR}/${_stem}.fletcher.accessor.pb.h")
+# BIND-6d-2: the C# model, compiled by dotnet/tests/Fletcher.Tests against the .v1.bin
+# goldens below, so the C# write path is held to the bytes C++ writes.
+set(GENERATED_CS
+    "${GENERATED_DIR}/${_stem}.fletcher.cs")
 set(GENERATED_TS
     "${GENERATED_DIR}/${_stem}.fletcher.ts")
 set(GENERATED_RUST
@@ -141,13 +145,13 @@ endforeach()
 string(REPLACE ";" "|" _expected_ipc_arg "${_expected_ipc_names}")
 
 set(GENERATED_OUTPUTS
-    ${GENERATED_CPP_HEADERS} ${GENERATED_TS} ${GENERATED_RUST} ${GENERATED_IPC})
+    ${GENERATED_CPP_HEADERS} ${GENERATED_TS} ${GENERATED_RUST} ${GENERATED_IPC} ${GENERATED_CS})
 
 add_custom_command(
     OUTPUT  ${GENERATED_OUTPUTS}
     COMMAND "$<TARGET_FILE:protobuf::protoc>"
             "--plugin=protoc-gen-fletcher=$<TARGET_FILE:fletcher-protoc::plugin>"
-            "--fletcher_opt=ipc,accessor,ts,rust"
+            "--fletcher_opt=ipc,accessor,ts,rust,csharp,csharp_model_only"
             "--fletcher_out=${GENERATED_DIR}"
             "-I" "${PROTO_DIR}"
             "-I" "${FLETCHER_PROTO_INCLUDE_DIR}"
@@ -164,7 +168,7 @@ add_custom_command(
     DEPENDS "${_src}" fletcher-protoc::plugin
             "${FLETCHER_PROTO_INCLUDE_DIR}/fletcher/options.proto"
             "${CMAKE_CURRENT_SOURCE_DIR}/cmake/validate_generated_ipc.cmake"
-    COMMENT "protoc-gen-fletcher (ipc,accessor,ts,rust): ${_stem}.proto"
+    COMMENT "protoc-gen-fletcher (ipc,accessor,ts,rust,csharp): ${_stem}.proto"
     VERBATIM
 )
 
@@ -387,6 +391,19 @@ target_compile_definitions(coverage_ts_visitor_tests PRIVATE
 target_link_libraries(coverage_ts_visitor_tests PRIVATE GTest::gtest_main)
 
 # ---------------------------------------------------------------------------
+# BIND-6d-2: the C# model the plugin emits for coverage.proto must be byte-identical
+# to the committed golden (golden/coverage.fletcher.cs). dotnet/tests/Fletcher.Tests
+# compiles that golden and holds its ToArrow/encode path to the .v1.bin bytes C++
+# writes, so this check is what keeps the compiled C# the plugin's real output.
+# ---------------------------------------------------------------------------
+add_executable(coverage_cs_golden_tests tests/test_cs_golden.cpp)
+add_dependencies(coverage_cs_golden_tests generate_coverage_outputs)
+target_compile_definitions(coverage_cs_golden_tests PRIVATE
+    GENERATED_CS_PATH="${GENERATED_DIR}/${_stem}.fletcher.cs"
+    CS_GOLDEN_PATH="${CMAKE_CURRENT_SOURCE_DIR}/golden/${_stem}.fletcher.cs")
+target_link_libraries(coverage_cs_golden_tests PRIVATE GTest::gtest_main)
+
+# ---------------------------------------------------------------------------
 # GIR-9 (#75) forcing test: EnumEmit.GeneratedEnumSymbolsRoundTrip. Compiles and
 # runs the generated enum classes + typed accessors for enum_coverage.proto
 # (and the additive typed accessors on the existing coverage.proto enum fields).
@@ -475,6 +492,8 @@ gtest_discover_tests(coverage_view_visitor_tests DISCOVERY_MODE PRE_TEST
     PROPERTIES TIMEOUT 60)
 gtest_discover_tests(coverage_ts_visitor_tests DISCOVERY_MODE PRE_TEST
     PROPERTIES TIMEOUT 60)
+gtest_discover_tests(coverage_cs_golden_tests DISCOVERY_MODE PRE_TEST
+    PROPERTIES TIMEOUT 60)
 gtest_discover_tests(coverage_enum_emit_tests DISCOVERY_MODE PRE_TEST
     PROPERTIES TIMEOUT 60)
 gtest_discover_tests(coverage_enum_ts_visitor_tests DISCOVERY_MODE PRE_TEST
@@ -506,15 +525,20 @@ gtest_discover_tests(coverage_scalar_nested_ts_visitor_tests DISCOVERY_MODE PRE_
 # ---------------------------------------------------------------------------
 # Singular, repeated, and map google.protobuf.Any (review 4b) each in their own
 # single-message fixture so one protoc invocation isolates one shape and the
-# error must name that shape's field. All three carry the same Any reason.
+# error must name that shape's field. All three carry the same Any reason. The
+# fourth, a map whose value is a flatten wrapper (D-BIND-85), carries its own, and
+# so does the fifth, a field-level flatten inlining a host field's name (D-BIND-89).
 foreach(_variant
-        "UnsupportedTypeFailsBuild|coverage_unsupported.proto|payload"
-        "RepeatedUnsupportedTypeFailsBuild|coverage_unsupported_repeated.proto|payloads"
-        "MapUnsupportedTypeFailsBuild|coverage_unsupported_map.proto|payload_map")
+        "UnsupportedTypeFailsBuild|coverage_unsupported.proto|payload|google.protobuf.Any is dynamically typed"
+        "RepeatedUnsupportedTypeFailsBuild|coverage_unsupported_repeated.proto|payloads|google.protobuf.Any is dynamically typed"
+        "MapUnsupportedTypeFailsBuild|coverage_unsupported_map.proto|payload_map|google.protobuf.Any is dynamically typed"
+        "MapFlattenWrapperFailsBuild|coverage_unsupported_map_wrapper.proto|wrapper_map|is a flatten wrapper"
+        "FlattenedNameClashFailsBuild|coverage_unsupported_flatten_name.proto|FlattenNameCoverage.x|and .integration.coverage.unsupported.Position.x. .inlined by the field-level flatten")
     string(REPLACE "|" ";" _parts "${_variant}")
     list(GET _parts 0 _test_name)
     list(GET _parts 1 _proto_file)
     list(GET _parts 2 _expect_field)
+    list(GET _parts 3 _expect_reason)
     add_test(NAME GenErrors.${_test_name}
         COMMAND "${CMAKE_COMMAND}"
             -DPROTOC=$<TARGET_FILE:protobuf::protoc>
@@ -522,7 +546,7 @@ foreach(_variant
             -DPROTO_DIR=${PROTO_DIR}
             -DPROTO_FILE=${_proto_file}
             -DEXPECT_FIELD=${_expect_field}
-            "-DEXPECT_REASON=google.protobuf.Any is dynamically typed"
+            "-DEXPECT_REASON=${_expect_reason}"
             -DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/unsupported-generated
             -DFLETCHER_PROTO_INCLUDE_DIR=${FLETCHER_PROTO_INCLUDE_DIR}
             -DPROTOBUF_WKT_INCLUDE_DIR=${PROTOBUF_WKT_INCLUDE_DIR}

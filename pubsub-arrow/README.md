@@ -64,8 +64,24 @@ class — `TopicOptions` is not nested in `SubscriberArrow`, so it defaults fine
 Rows arrive one at a time, but analytics wants columns. `SubscriberArrow`
 provides a batched `Subscribe` overload that accumulates incoming rows and
 delivers an `arrow::RecordBatch` when **either** a row-count limit is reached
-**or** a timeout elapses since the batch started filling — whichever comes
-first (defaults: 8000 rows, 1 minute).
+**or** the window's deadline passes — `timeout` after the previous delivery, but
+never sooner than 1 ms after the window's first row — whichever comes first
+(defaults: 8000 rows, 1 minute). This holds whether or not a usable schema has
+arrived: rows lost for want of one are reported at the deadline, not only when
+you unsubscribe.
+
+`BatchOptions::kNoTimeout` asks for no timeout at all: a batch then arrives only when it is full
+(or hits the offset budget), and whatever is left arrives, with reason `kClosing`, when you
+unsubscribe or destroy the `SubscriberArrow` (an empty `kClosing` batch when nothing is left). When rows are lost, see the `Subscribe` doc in the
+header for when the loss is reported. A timeout too long for the clock to reach means the same as
+`kNoTimeout`; a long timeout the clock can reach gives a deadline at its true time.
+
+`max_rows` must be at least 1 and `timeout` at least 0. Any `max_rows` of 1 or more is used as
+given. A value out of range is
+refused: `Subscribe` throws `PubSubError(kInvalidArgument)` before anything is
+subscribed, so no thread is started and your callback is released. A zero
+timeout is accepted and delivers no sooner than 1 ms after the window's first
+row.
 
 ```cpp
 fletcher::SubscriberArrow sub(provider);
@@ -80,22 +96,49 @@ sub.Subscribe(
         process(batch);
     },
     {.max_rows = 4096, .timeout = std::chrono::seconds(5)});  // or omit for defaults
+
+// No timeout: batches of 4096 rows, plus the remainder when you unsubscribe.
+//   {.max_rows = 4096, .timeout = fletcher::SubscriberArrow::BatchOptions::kNoTimeout}
 ```
 
 The callback's third argument, `BatchStatus`, says **why** the batch was
 delivered (`reason`) and whether any samples were lost (`rows_dropped`). A row
 that fails to decode is counted in `rows_dropped` and contributes neither a row
 nor an attachment, so a window with only dropped rows still delivers a zero-row
-batch to report the loss. The partial batch is flushed with reason `kClosing`
-on `Unsubscribe`. The callback target must outlive the subscription.
+(or null) batch to report the loss. The callback target must outlive the subscription.
+
+No batch is delivered unless `Subscribe` succeeds; the first may arrive while it is returning,
+before you hold the subscription id, so correlate by what the callback captured. A `Subscribe`
+that throws never delivers anything, so what its callback uses may be freed once it returns.
+
+The callback runs on a thread the subscription owns, one batch at a time, in window order;
+never inside `Publish` or on the transport's delivery thread, so publishing never waits on it.
+A callback slower than the data lets finished batches queue up in memory.
+
+`Unsubscribe`, or destroying the `SubscriberArrow`, delivers every finished batch and then
+exactly one batch with reason `kClosing`, before it returns: the partial window, or an empty
+batch when nothing is pending (zero rows once a row has brought a usable schema, null before).
+Nothing is delivered after it, so the `kClosing` batch is always the end signal. Two
+cases do not wait for that subscription's batches: a call made from inside the subscription's
+own batch callback (`Unsubscribe`, or destroying the `SubscriberArrow`, which still waits for
+its other batched subscriptions), and an `Unsubscribe` made from a thread that is delivering
+rows on the subscription's own transport, such as a per-row callback. The remaining batches,
+then `kClosing`, still arrive in order after that call returns, so what those callbacks use may
+not be freed until the `kClosing` batch has arrived. Destroying the `SubscriberArrow` from a
+thread delivering rows on its transport stays forbidden.
+
+Any other close made inside a batch callback waits, so two can wait on each other forever: two
+subscriptions whose callbacks each `Unsubscribe` the other, or one callback destroying the
+`SubscriberArrow` while another subscription's callback unsubscribes the first.
 
 Rows are decoded straight into Arrow builders (`fletcher::BatchDecoder`, from
 `fletcher-arrow-bridge`) rather than through per-row scalars, so the batched
-path never pays for the ArrowRow round trip. A topic whose schema
-`BatchDecoder`'s constructor rejects delivers a null `batch` with **every**
-row counted in `rows_dropped` instead, for the entire life of the
-subscription — there is no later recovery once the schema is known, and no
-partial decoding.
+path never pays for the ArrowRow round trip. `batch` is null when no batch
+could be built for this window: no usable schema has arrived yet, the schema
+was rejected (permanent), or finishing the batch failed; `rows_dropped` counts
+the window's rows in every case. A rejected schema stays rejected for the life
+of the subscription: there is no later recovery once the schema is known, and
+no partial decoding. A non-null `batch` may have zero rows.
 
 That refusal has two different causes, and only one of them has a fallback.
 Null, extension, decimal32/64, run-end-encoded, and list-view types are not

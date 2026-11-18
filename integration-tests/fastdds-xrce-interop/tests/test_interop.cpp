@@ -5,7 +5,7 @@
 //
 // Drives the deployment scenario from Fletcher's architecture: an MCU
 // speaks XRCE-DDS over UDP to a MicroXRCEAgent, which bridges into the
-// full DDS network where a vessel workstation runs FastDDS. Neither
+// full DDS network where a workstation or server runs FastDDS. Neither
 // provider's unit tests exercise the bridged path — this suite is the
 // only place that proves topic naming, envelope serialisation, and the
 // /__schema companion topic stay byte-compatible across the Agent.
@@ -1028,7 +1028,7 @@ TEST(FastDdsXrceInteropTest, AFailedOwnershipQueryDoesNotSatisfyTheHarness) {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Forward: XRCE publishes → FastDDS subscribes. The MCU→vessel path.
+// Forward: XRCE publishes → FastDDS subscribes. The MCU→workstation path.
 // ─────────────────────────────────────────────────────────────────────
 TEST(FastDdsXrceInteropTest, XrcePublishReachesFastDDSSubscriber) {
     // Capture state must outlive the providers so a late DDS callback
@@ -1162,7 +1162,7 @@ TEST(FastDdsXrceInteropTest, XrcePublishAtAnotherBoundReachesAFastDDSSubscriber)
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Reverse: FastDDS publishes → XRCE subscribes. The vessel→MCU path.
+// Reverse: FastDDS publishes → XRCE subscribes. The workstation→MCU path.
 // Exercises a different subscribe implementation in
 // XrceDDSPubSubProvider (global on_topic callback demultiplexed by
 // reader object id), so this is not redundant with the forward test.
