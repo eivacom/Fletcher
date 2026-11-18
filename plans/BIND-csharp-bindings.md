@@ -3569,7 +3569,8 @@ bindings should not follow C++, every codec takes C++'s spelling (`readings[].x`
   lookup already did. Verified in the devcontainer: SDK 10.0.403, a locked restore with the audit,
   the .NET suites on .NET 8 and 10 (434, 223, 71, 5), the AOT smoke test published and run on
   both, pack, `dotnet format`; the restricted lookup finds the packaged `protoc` and its
-  `include/`.
+  `include/`. **Done on CI** at `6196cbe` (`ci.pr` 42794398094, 61/61 on the first attempt,
+  the devcontainer image rebuilt with SDK 10.0.403; every side workflow green).
 
 ---
 
