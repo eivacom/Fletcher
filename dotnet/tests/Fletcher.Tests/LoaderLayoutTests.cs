@@ -88,10 +88,12 @@ public sealed class LoaderLayoutTests
     /// <remarks>
     /// <c>File.Exists</c> answers <c>false</c>, with no error, for a path it cannot examine, so a
     /// loader that asks it walks on to the edge file: a present server file the app cannot load
-    /// would end in the edge build. The unreadable folder is made per platform. On Windows, the
-    /// folder denies this user the right to list it and to read its files' attributes. Elsewhere,
-    /// the folder is a symbolic link to itself, which cannot be resolved (ELOOP); a permission bit
-    /// would not do, because the CI container runs as root, which ignores permission bits. The
+    /// would end in the edge build. The unreadable folder is a symbolic link to itself, which cannot
+    /// be resolved (ELOOP; on Windows, ERROR_CANT_RESOLVE_FILENAME): a permission would not do,
+    /// because the Linux CI container runs as root and the Windows runner as an administrator, and
+    /// neither is stopped by one (D-BIND-204). Where Windows will not let this user create a link
+    /// (no Developer Mode, no create-symbolic-link right), the folder instead denies this user the
+    /// right to list it and to read its files' attributes, which holds for a non-administrator. The
     /// first assertion checks the premise: from this process, <c>File.Exists</c> on the server path
     /// really answers <c>false</c>.
     /// </remarks>
@@ -288,7 +290,8 @@ public sealed class LoaderLayoutTests
         {
             string folder = Path.Combine(_root, LoadedShim.PackageNativeFolder);
             string target = Path.Combine(folder, Path.GetFileName(server));
-            if (OperatingSystem.IsWindows())
+            Directory.CreateDirectory(Path.GetDirectoryName(folder)!);
+            if (OperatingSystem.IsWindows() && !TryLinkToItself(folder))
             {
                 Directory.CreateDirectory(folder);
                 File.Copy(server, target);
@@ -296,15 +299,31 @@ public sealed class LoaderLayoutTests
                 System.Security.AccessControl.DirectorySecurity acl = info.GetAccessControl();
                 acl.AddAccessRule(DenyRule());
                 info.SetAccessControl(acl);
+                _unreadable = folder;
             }
-            else
+            else if (!OperatingSystem.IsWindows())
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(folder)!);
                 Directory.CreateSymbolicLink(folder, Path.GetFileName(folder));
             }
 
-            _unreadable = folder;
             return target;
+        }
+
+        /// <summary>
+        /// Make <paramref name="folder"/> a symbolic link to itself. False where Windows refuses this
+        /// user a link (no Developer Mode, no create-symbolic-link right).
+        /// </summary>
+        private static bool TryLinkToItself(string folder)
+        {
+            try
+            {
+                Directory.CreateSymbolicLink(folder, Path.GetFileName(folder));
+                return true;
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                return false;
+            }
         }
 
         /// <summary>Make the folder <see cref="StageUnreadableServer"/> made unreadable removable again.</summary>

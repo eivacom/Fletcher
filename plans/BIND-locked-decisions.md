@@ -4514,3 +4514,17 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   every pull request, the 4 heavy ones on request (`ctest -L heavy`, d7 D11). **Declined:**
   porting them to C# (a second run of the same native code, and rows near the 2 GiB offset budget
   for the heavy four); retiring the check before runbook step 8 (D-BIND-198).
+- **D-BIND-204 - on Windows the unreadable-folder test makes the folder a symbolic link to
+  itself, as on Linux, and falls back to the deny rule only where a link is refused.** *LOCKED BY
+  THE MAINTAINER 2026-11-18.* At `34a3490` (`ci.pr` 44296771173) the last red job was
+  `dotnet / windows`: D10C's `LoaderLayoutTests.AServerFileWhosePresenceCannotBeCheckedIsChosenNotSkipped`
+  failed its own premise on both target frameworks, because a rule denying this user the rights to
+  list the folder and read attributes did not make `File.Exists` answer false for GitHub's Windows
+  runner, which runs as an administrator; 486 other cases passed. A folder that is a symbolic link
+  to itself cannot be resolved by anyone (ELOOP on Linux, ERROR_CANT_RESOLVE_FILENAME on Windows),
+  and `NativeLoader.IsPresent` counts that failure as present, as the test requires. **How:**
+  `StageUnreadableServer` tries the link first on Windows; where Windows refuses it (no Developer
+  Mode, no create-symbolic-link right, as on a developer's own machine, where it throws
+  `IOException`), it uses the deny rule, which holds for a non-administrator. The Linux leg is
+  unchanged. **Declined:** reporting the case as not applicable where its premise fails (the case
+  would check nothing on CI Windows); leaving it to the D10C author with PR #129 red.

@@ -3615,6 +3615,10 @@ bindings should not follow C++, every codec takes C++'s spelling (`readings[].x`
   allowed for that shim only (D-BIND-202). The test matrix counts `test_pubsub_arrow`'s 61 cases
   and the new `test_pubsub_arrow_heavy`'s 4 in bucket 3, the 32 batch cases excluded from the C#
   port as tests of the native batcher C# calls (D-BIND-203).
+  **At `34a3490`** (`ci.pr` 44296771173): every side workflow green and the server shim's list
+  accepted; the last red job, `dotnet / windows`, was D10C's unreadable-folder case, whose deny
+  rule does not stop the runner's administrator. It now uses a symbolic link to itself on Windows
+  too, with the deny rule as the fallback where a link is refused (D-BIND-204).
 
 ---
 
