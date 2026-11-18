@@ -97,6 +97,25 @@ public sealed class ErrorTests
         Assert.Equal(FletcherOrigin.Codec, error.Origin);
     }
 
+    /// <summary>Origin 4, the shim's "could not hand a batch over", is named Handover.</summary>
+    /// <remarks>
+    /// D10C-2 (d9 D32, ruling :551 (3)). The header numbers it 4, so a failed hand-over
+    /// reaches C# as origin 4; the throw site's cast must yield a DEFINED member, not the
+    /// bare number "4" an unnamed value prints as. Built by hand: the shipped shims cannot
+    /// fail a hand-over on demand (Fletcher.Handover.Tests does, with d9's test-only fault shim).
+    /// </remarks>
+    [Fact]
+    public void OriginFourIsHandover()
+    {
+        FlError err = new() { Status = (int)FletcherStatus.Internal, Origin = 4 };
+
+        FletcherException error =
+            Assert.Throws<FletcherException>(() => Errors.ThrowIfFailed((int)FletcherStatus.Internal, ref err));
+
+        Assert.Equal(FletcherOrigin.Handover, error.Origin);
+        Assert.Equal(FletcherStatus.Internal, error.Status);
+    }
+
     /// <summary>
     /// The native message crosses VERBATIM, and it is worth carrying.
     /// </summary>

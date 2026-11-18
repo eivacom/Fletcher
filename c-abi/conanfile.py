@@ -2,6 +2,7 @@
 # Copyright (C) 2026 The Fletcher Authors
 #
 from conan import ConanFile
+from conan.errors import ConanException, ConanInvalidConfiguration
 from conan.tools.cmake import CMake, CMakeToolchain, CMakeDeps, cmake_layout
 from conan.tools.files import copy
 import os
@@ -31,10 +32,18 @@ class FletcherCAbiConan(ConanFile):
     # (D-BIND-62). Unlike `run_tests` it stays in the package ID: a package built
     # with it CONTAINS the probe, so it must never be mistaken for the release
     # one, which is built without it.
-    options = {"run_tests": [True, False], "with_probe_shim": [True, False]}
+    #
+    # `variant` is which build the package's shim is (d9 L12, BC-10, BC-11): `edge`
+    # as always, or `server`, from the same sources, answering "server" to
+    # `fl_binding_variant`. It stays in the package ID (only `run_tests` is deleted
+    # from it), so the two can never share an identity, and the server file has its
+    # own name (owner ruling 2026-11-13) so both can sit in one folder.
+    options = {"run_tests": [True, False], "with_probe_shim": [True, False],
+               "variant": ["edge", "server"]}
     default_options = {
         "run_tests": False,
         "with_probe_shim": False,
+        "variant": "edge",
         # Inherited in spirit from the fastdds-pubsub-provider recipe, and
         # restated here because THIS is the artifact the decision is about: the
         # eProsima chain is linked statically INTO the shim, so the NuGet package
@@ -43,6 +52,9 @@ class FletcherCAbiConan(ConanFile):
         "fast-cdr/*:shared": False,
         "foonathan-memory/*:shared": False,
         "tinyxml2/*:shared": False,
+        # The server build links Arrow statically for the same reason: one native
+        # file per RID. Ignored where Arrow is not in the graph (the edge build).
+        "arrow/*:shared": False,
     }
 
     exports_sources = (
@@ -54,6 +66,21 @@ class FletcherCAbiConan(ConanFile):
         "tests/*",
         "probe/*",
     )
+
+    @property
+    def _shim_stem(self):
+        # The one shim this package holds. CMake names the file from the same variant
+        # (c-abi/CMakeLists.txt); package() refuses an empty copy, so a disagreement
+        # between the two is loud.
+        return "fletcher-c-abi-server" if self.options.variant == "server" else "fletcher-c-abi"
+
+    def validate(self):
+        if self.options.variant == "server" and self.options.with_probe_shim:
+            # The probe shim is a test-only EDGE artefact (D-BIND-62). A server
+            # package that carried it would hold two builds under one identity.
+            raise ConanInvalidConfiguration(
+                "variant=server cannot be combined with with_probe_shim=True: the probe shim "
+                "answers edge, and a package's identity must say which build its shims are")
 
     def requirements(self):
         # NO transitive_headers anywhere in this recipe, on purpose: binding.h
@@ -68,9 +95,16 @@ class FletcherCAbiConan(ConanFile):
             # TEST-ONLY and never released: the copy oracle's instrument, which
             # the probe shim registers and scores with (D-BIND-62).
             self.requires("fletcher-copy-probe/0.5.0-alpha")
+        if self.options.variant == "server":
+            # The SERVER build's batcher (d9 L8, L12, BC-11): domain 7's batched
+            # subscribe, linked into the shim and reached only through the one
+            # `fl_subscriber_subscribe_batches` door. `variant` is in the package ID, so
+            # the edge package's graph, and its binary, never name Arrow (the edge
+            # graph is unchanged; `check_edge_arrow_free.sh` proves it).
+            self.requires("fletcher-pubsub-arrow/0.5.1-alpha")
         if self.options.run_tests:
             self.requires("gtest/1.17.0")
-            # The byte-identity oracle, and TEST-ONLY. The shipped shim must not
+            # The byte-identity oracle, and TEST-ONLY. The EDGE shim must not
             # link arrow-bridge or Arrow C++ - that is what keeps the per-RID
             # native asset to nanoarrow - but the oracle has to be the real
             # encoder rather than a transcription of it, so the test binary links
@@ -78,8 +112,10 @@ class FletcherCAbiConan(ConanFile):
             # package is unaffected by their presence here.
             self.requires("fletcher-arrow-bridge/0.5.1-alpha")
             self.requires("arrow/23.0.1")
+        if self.options.run_tests or self.options.variant == "server":
             # The same zlib conflict arrow-bridge and pubsub-arrow resolve:
-            # arrow pins 1.2.13, openssl pulls 1.3.1.
+            # arrow pins 1.2.13, openssl pulls 1.3.1. Needed wherever Arrow is in
+            # the graph: the tests, and the server shim.
             self.requires("zlib/1.3.1", override=True)
 
     def package_id(self):
@@ -92,6 +128,7 @@ class FletcherCAbiConan(ConanFile):
         deps = CMakeDeps(self)
         deps.generate()
         tc = CMakeToolchain(self)
+        tc.cache_variables["FLETCHER_SHIM_VARIANT"] = str(self.options.variant)
         if self.options.run_tests:
             tc.cache_variables["FLETCHER_BUILD_TESTS"] = "ON"
         if self.options.with_probe_shim:
@@ -120,18 +157,26 @@ class FletcherCAbiConan(ConanFile):
         # path RELATIVE to src, so a bare "fletcher-c-abi.lib" matches nothing)
         # but name the file: the tests build a C99 probe object library beside
         # the shim, and a plain "*.lib" packages that too.
-        copy(self, "*fletcher-c-abi.dll",
-             src=self.build_folder,
-             dst=os.path.join(self.package_folder, "bin"),
-             keep_path=False)
-        copy(self, "*libfletcher-c-abi.so*",
-             src=self.build_folder,
-             dst=os.path.join(self.package_folder, "lib"),
-             keep_path=False)
-        copy(self, "*fletcher-c-abi.lib",
-             src=self.build_folder,
-             dst=os.path.join(self.package_folder, "lib"),
-             keep_path=False)
+        # `copy` returns [] without complaint when a pattern matches nothing, which
+        # would leave a valid package ID with headers and no shim, so an empty copy
+        # of the shipped shim (or, on Windows, of its import library) is refused.
+        stem = self._shim_stem
+        shim = copy(self, f"*{stem}.dll",
+                    src=self.build_folder,
+                    dst=os.path.join(self.package_folder, "bin"),
+                    keep_path=False)
+        shim += copy(self, f"*lib{stem}.so*",
+                     src=self.build_folder,
+                     dst=os.path.join(self.package_folder, "lib"),
+                     keep_path=False)
+        implib = copy(self, f"*{stem}.lib",
+                      src=self.build_folder,
+                      dst=os.path.join(self.package_folder, "lib"),
+                      keep_path=False)
+        if not shim or (self.settings.os == "Windows" and not implib):
+            raise ConanException(
+                f"package(): no shim named '{stem}' (.dll with its .lib, or .so) was found in "
+                f"{self.build_folder}; the recipe and the build disagree on the shim's file name")
         # The probe shim, when built: beside the shipped one, under its own name,
         # so no pattern above can pick it up by accident and a lane has to ask for
         # it by name.
@@ -154,7 +199,7 @@ class FletcherCAbiConan(ConanFile):
              keep_path=False)
 
     def package_info(self):
-        self.cpp_info.libs = ["fletcher-c-abi"]
+        self.cpp_info.libs = [self._shim_stem]
         self.cpp_info.includedirs = ["include"]
         self.cpp_info.set_property("cmake_file_name", "fletcher-c-abi")
         self.cpp_info.set_property("cmake_target_name", "fletcher-c-abi::fletcher-c-abi")

@@ -74,7 +74,7 @@ The system provides nine composable layers:
 6. **gateway** — a Boost.Beast WebSocket server that exposes the Driver to browser clients over a split text/binary protocol. (Migrated from the prototype's `WebGateway`.)
 7. **gateway-client-ts** — a TypeScript client library (npm package `@eiva/fletcher-gateway-client`) with a pure-TypeScript positional codec and a plain-object decoder backend. Apache Arrow JS support is stubbed and not implemented.
 8. **c-abi** — the C ABI shim `fletcher-c-abi`: a pure C99 surface over the seam's registry, publisher and subscriber and a schema-driven nanoarrow codec, shipped as one self-contained shared library per RID. It is what the .NET binding calls, and what a second binding (Rust, a Node.js add-on) would call. See [`c-abi/README.md`](../c-abi/README.md).
-9. **dotnet** — the .NET binding, four NuGet packages: `Eiva.Fletcher` (publishers, subscribers and the codec over the shim), `Eiva.Fletcher.Interop` (the P/Invoke surface, carrying the shim), `Eiva.Fletcher.Model` (the types generated C# refers to) and `Eiva.Fletcher.GatewayClient` (a managed client for the gateway, the C# counterpart of `gateway-client-ts`). See [`dotnet/README.md`](../dotnet/README.md).
+9. **dotnet** — the .NET binding, five NuGet packages (the fifth, `Eiva.Fletcher.Server`, carries only the server shim; D10C-5): `Eiva.Fletcher` (publishers, subscribers and the codec over the shim), `Eiva.Fletcher.Interop` (the P/Invoke surface, carrying the shim), `Eiva.Fletcher.Model` (the types generated C# refers to) and `Eiva.Fletcher.GatewayClient` (a managed client for the gateway, the C# counterpart of `gateway-client-ts`). See [`dotnet/README.md`](../dotnet/README.md).
 
 Each layer is independent. You can use the codec without pub/sub, the web gateway without DDS, or the full pipeline end-to-end.
 
@@ -349,9 +349,11 @@ The packages call the C ABI shim, so `c-abi/` goes into the Conan cache after th
 ```bash
 conan create integration-tests/copy-probe --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 conan create c-abi/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release -o "&:with_probe_shim=True"
+conan create c-abi/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release -o "&:variant=server"
+(cd c-abi && conan build . --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release -o "&:variant=server" -o "&:run_tests=True" -c tools.build:skip_test=True)
 cd dotnet
 dotnet build Fletcher.slnx -c Release
-dotnet test Fletcher.slnx -c Release -p:FletcherNativeShim=<path to libfletcher-c-abi.so or fletcher-c-abi.dll> -p:FletcherProbeShim=<path to libfletcher-c-abi-probe.so or fletcher-c-abi-probe.dll>
+dotnet test Fletcher.slnx -c Release -p:FletcherNativeShim=<path to libfletcher-c-abi.so or fletcher-c-abi.dll> -p:FletcherProbeShim=<path to libfletcher-c-abi-probe.so or fletcher-c-abi-probe.dll> -p:FletcherServerShim=<path to libfletcher-c-abi-server.so or fletcher-c-abi-server.dll> -p:FletcherHandoverFaultShim=<path under c-abi/build to libfletcher-c-abi-handover-fault.so or fletcher-c-abi-handover-fault.dll>
 ```
 
 See [`dotnet/README.md`](../dotnet/README.md) for the probe shim, NativeAOT and locked restores.
@@ -388,7 +390,7 @@ C++ tests run through GTest in each component's `tests/` directory and are disco
 | protoc-arrow-bridge integration | `integration-tests/protoc-arrow-bridge/tests/` | Byte-compat invariants between protoc-generated row classes and `Codec` across every wire-format scenario (scalars, WKT, nested, collections, maps, complex, pubsub wrappers, flatten, schema evolution). Also exercises native (no Arrow C++) and ArrowRowView paths. |
 | gateway-client-ts | `gateway-client-ts/test/` | Envelope roundtrips, WebSocket protocol frames, positional codec roundtrips, end-to-end client behaviour against a mock WebSocket. |
 | c-abi | `c-abi/tests/` | Every entry point of the C ABI, the nanoarrow codec byte-identical to `arrow-bridge`'s, error containment, the single-copy check, a C99 self-containment probe |
-| dotnet | `dotnet/tests/` | The four packages (xUnit, .NET 8 and .NET 10): codec, pub/sub over the real shim, generated C# against the C++ goldens, the managed gateway codec against the native one, the copy oracle over C#'s publish, a NativeAOT consumer |
+| dotnet | `dotnet/tests/` | The five packages (xUnit, .NET 8 and .NET 10), including `Fletcher.Handover.Tests` over d9's fault shim: codec, pub/sub over the real shim (edge and server), generated C# against the C++ goldens, the managed gateway codec against the native one, the copy oracle over C#'s publish, a NativeAOT consumer |
 | .NET integration lanes | `integration-tests/protoc-dotnet/`, `pubsub-transport-conformance/`, `binding-abi-conformance/`, `gateway-dotnet-end-to-end/`, `gateway-dotnet-crosslang/` | Generated C# from a project's own build, one body of C# over every transport, C# and C++ handing the codec the same arrays, the C# client against the real gateway, and the cross-language matrix's C# rows |
 
 See [Technology Decision Log](technology-decisions.md) for rationale behind each technology choice.

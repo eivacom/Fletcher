@@ -2,9 +2,11 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 # Copyright (C) 2026 The Fletcher Authors
 #
-# BIND-9a-0 (D-BIND-134): the shim is the NuGet packages' only unmanaged file, and it
-# is self-contained: Fletcher's core and pubsub, both providers, the eProsima chain,
-# Micro XRCE-DDS and nanoarrow are linked INTO it. So what it loads at run time must
+# BIND-9a-0 (D-BIND-134): the shims (the edge shim, and since D10C-5 the server shim, one
+# per package) are the NuGet packages' only unmanaged files, and each is self-contained:
+# Fletcher's core and pubsub, both providers, the eProsima chain, Micro XRCE-DDS and
+# nanoarrow (the server shim also Arrow C++) are linked INTO it. The same list and floors
+# hold for both (d10 Q7). So what it loads at run time must
 # be the operating system and the C/C++ runtime and nothing else; a dependency of
 # ours appearing here would install from the package and then fail to load on a
 # tester's machine.

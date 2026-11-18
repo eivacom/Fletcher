@@ -1,0 +1,48 @@
+<!-- SPDX-License-Identifier: LGPL-3.0-or-later
+     Copyright (C) 2026 The Fletcher Authors
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- D10C-10 (rung 11): a window the server shim cannot hand over reaches the C# handler,
+       with the shim's failure in BatchStatus (d10 L9, L14; ruling :551 (3)).
+
+       A project of its own because it loads a DIFFERENT native shim: d9's test-only hand-over
+       fault shim, `fletcher-c-abi-handover-fault`, the server shim rebuilt with a fault point
+       that `fl_test_handover_fault_arm` arms. One shim per process (d9 L17), so this assembly
+       never sees the shipped one, and cannot share another test project's output directory.
+       The CopyOracle pattern, under the SERVER name. -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <RootNamespace>Eiva.Fletcher.Handover.Tests</RootNamespace>
+    <!-- LibraryImport's generator: the fault shim's two test-only exports. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RollForward>LatestMajor</RollForward>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Fletcher/Fletcher.csproj" />
+  </ItemGroup>
+
+  <!-- The FAULT shim, staged beside the test binary UNDER THE SERVER SHIM'S NAME, so
+       `Eiva.Fletcher.Interop` loads it as the server build (d10 L5) and the batched path under
+       test is the one that ships. It is built only by c-abi's test build of the server variant,
+       and no Conan package carries it:
+         (cd c-abi && conan build . -o "&:variant=server" -o "&:run_tests=True" -c tools.build:skip_test=True)
+       then `dotnet test -p:FletcherHandoverFaultShim=<path>`, as ci.dotnet.yml does.
+
+       Absent, every test here FAILS rather than skips, naming this property: "the fault shim
+       was never built" must not read green. -->
+  <ItemGroup Condition="'$(FletcherHandoverFaultShim)' != '' And Exists('$(FletcherHandoverFaultShim)')">
+    <None Include="$(FletcherHandoverFaultShim)"
+          Link="$([System.IO.Path]::GetFileName('$(FletcherHandoverFaultShim)').Replace('-handover-fault', '-server'))"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="[18.10.0]" />
+    <PackageReference Include="xunit" Version="[2.9.3]" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="[3.1.5]" />
+  </ItemGroup>
+
+</Project>

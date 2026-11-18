@@ -23,21 +23,37 @@ gateway and plugin working together as shipped, on Linux and Windows.
   [`reading.proto`](dotnet/GrpcConsumer/reading.proto), a file that imports
   `fletcher/options.proto` and sets both options; the package puts its folder on the import path
   and compiles `options.proto`, and the program reads both options back from C#.
-- **Publish and subscribe natively** through `Eiva.Fletcher` over `inprocess`, row by row and as one
-  Arrow batch read through the generated accessor; then over `fastdds`, in this one process on a
-  domain of its own (D-BIND-151; `FLETCHER_PREVIEW_DDS_DOMAIN`, 157 by default), after a probe
-  row shows discovery is done; and check that the shim that answered is the one
-  `Eiva.Fletcher.Interop` put under `runtimes/<rid>/native/`.
+- **Publish and subscribe natively** through `Eiva.Fletcher` over `inprocess`, row by row; then over
+  `fastdds`, in this one process on a domain of its own (D-BIND-151; `FLETCHER_PREVIEW_DDS_DOMAIN`,
+  157 by default), after a probe row shows discovery is done. The same program runs in **two
+  configurations** (D10C-11), told which it is by its second argument, `base` or `server`:
+  - **base**, [`PreviewConsumer`](dotnet/PreviewConsumer), which references `Eiva.Fletcher` and nothing
+    more (the README's `csproj-references` snippet, unedited). A batched subscribe must be refused
+    with `FletcherException` `NotSupported`, origin `Seam`, in the shim's words plus the sentence
+    naming `Eiva.Fletcher.Server` (d10 L6); exactly one shim is loaded, `fletcher-c-abi` from
+    `Eiva.Fletcher.Interop`'s `runtimes/<rid>/native/`; and no `*fletcher-c-abi-server*` file is
+    anywhere in its output (L7).
+  - **server**, a copy `run.sh` makes (`PreviewConsumerServer`) to which it adds
+    `Eiva.Fletcher.Server` with `dotnet add package`, as a user does. The rows come back as one Arrow
+    batch read through the generated accessor, from Fletcher's one batcher; exactly one shim is
+    loaded, `fletcher-c-abi-server` from the server package's `runtimes/<rid>/native/`, and the edge
+    shim, which sits beside it, is not (L5).
+  A wrong argument fails both ways (the base build told `server` dies on the refusal, the server
+  build told `base` fails three checks), and a missing or unknown one is refused with the usage line.
 - **Reach the bundled gateway** through `Eiva.Fletcher.GatewayClient`: the bundle's gateway is
   started over `inprocess`, and the generated gateway pair carries the same rows across it, row by
   row and as one batch.
 - **On minimal machines, at and below the floor** ([`minimal.sh`](minimal.sh), Linux; BIND-9b-7,
-  review T14, D-BIND-172). The Fletcher consumer `run.sh` built, with the bundle's gateway, runs
+  review T14, D-BIND-172). Both configurations `run.sh` built, with the bundle's gateway, run
   in Microsoft's .NET runtime images, which hold the operating system and .NET and nothing else:
   on Ubuntu 24.04 (`runtime:8.0-noble`, `runtime:10.0-noble`), the oldest distribution the
-  package README names, every route must pass; on Debian 12 (`runtime:8.0-bookworm-slim`, glibc
-  2.36 and GCC 12's C++ runtime) it must fail with the loader's message for a shim that is there
-  and refused, quoting the operating system's reason (`GLIBCXX_3.4.32' not found`) and the floor.
+  package README names, every route must pass in each; on Debian 12 (`runtime:8.0-bookworm-slim`,
+  glibc 2.36 and GCC 12's C++ runtime) each must fail with the loader's message for a shim that is
+  there and refused, quoting the operating system's reason and the floor. The base build's reason is
+  `GLIBCXX_3.4.32' not found`; the server build's is matched as `GLIBCXX_3.4.3[12]' not found`,
+  because the loader names the first unmet version it reaches, not the highest (the floor's value is
+  proven at pack time by `check_shim_dependencies.sh`), and its message must say that file is the
+  server build and never the edge build, which would mean it fell back (L5).
   The Windows floor rests on the exact `dumpbin` list `ci.dotnet` checks and on the same message.
 
 Each route must deliver exactly the rows sent, field for field (a nested message, a Timestamp, a
@@ -50,7 +66,7 @@ on a machine with only a newer runtime).
 ## Snippets: the package README's code is this test's code
 
 Every fenced code block in [`dotnet/README.package.md`](../../dotnet/README.package.md), the
-README all four packages carry, is checked by
+README all five packages carry, is checked by
 [`scripts/check_readme_snippets.py`](../../scripts/check_readme_snippets.py), which `ci.dotnet`'s
 pack job runs before packing (D-BIND-144, D-BIND-147):
 
@@ -73,7 +89,7 @@ bash integration-tests/preview-bundle-consumer/run.sh <unpacked bundle> [<work f
 bash integration-tests/preview-bundle-consumer/minimal.sh <the same work folder>
 ```
 
-The project is copied into the work folder (a temporary folder by default) so that nothing of the
+The projects are copied into the work folder (a temporary folder by default) so that nothing of the
 repository's build applies to it. Linux, or Git Bash on Windows; it needs the .NET 8 and .NET 10
 runtimes and network access to nuget.org. `minimal.sh` needs Docker with Linux containers and
 access to `mcr.microsoft.com`; from Git Bash on Windows, Docker Desktop does not map the `/c/...`

@@ -55,7 +55,7 @@
   </Target>
 
   <!-- BIND-9a-2 (D-BIND-140, D-BIND-141): every package carries README.package.md as its
-       README.md, the same text in all four, with the version and the commit filled in so the
+       README.md, the same text in all five, with the version and the commit filled in so the
        relinking route names its source. CI passes the commit:
          dotnet pack -p:FletcherSourceCommit=<sha>
        A local pack without it says so in place of the commit. Here and not in the props,

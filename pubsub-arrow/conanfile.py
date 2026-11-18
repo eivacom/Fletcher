@@ -15,8 +15,14 @@ class FletcherPubsubArrowConan(ConanFile):
     package_type = "static-library"
     settings = "os", "compiler", "build_type", "arch"
 
-    options = {"run_tests": [True, False]}
-    default_options = {"run_tests": False}
+    # fPIC (owner ruling 2026-11-13, D9S-4): the server build of `c-abi/` links this archive
+    # into `libfletcher-c-abi-server.so`, the same case `pubsub/conanfile.py` states in full -
+    # without the option Conan never sets CMAKE_POSITION_INDEPENDENT_CODE and a Linux shared
+    # object fails to link ("relocation R_X86_64_TPOFF32 ... can not be used when making a
+    # shared object"). Deleted on Windows in config_options(), as in `pubsub`, so Windows
+    # package IDs do not change.
+    options = {"run_tests": [True, False], "fPIC": [True, False]}
+    default_options = {"run_tests": False, "fPIC": True}
 
     exports_sources = (
         "CMakeLists.txt",
@@ -43,6 +49,10 @@ class FletcherPubsubArrowConan(ConanFile):
     def package_id(self):
         del self.info.options.run_tests
 
+    def config_options(self):
+        if self.settings.os == "Windows":
+            del self.options.fPIC
+
     def layout(self):
         cmake_layout(self)
 
@@ -59,7 +69,9 @@ class FletcherPubsubArrowConan(ConanFile):
         cmake.configure()
         cmake.build()
         if self.options.run_tests:
-            cmake.test()
+            # Everything but the `heavy` label (domain 7 D11): those tests run on request with
+            # `ctest -L heavy`. CMake.ctest runs under the run environment, like cmake.test().
+            cmake.ctest(cli_args=["-LE", "heavy", "--output-on-failure"])
 
     def package(self):
         copy(self, "*.hpp",

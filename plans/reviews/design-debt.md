@@ -5,22 +5,22 @@ in the per-item review file; this register is the index, not a copy.
 
 ## PDA-DEC-1 — conformance suite (APPROVE-WITH-DEBT(6), cycle 2 of 2)
 
-Review: [PDA-DEC-1-design-review.md](PDA-DEC-1-design-review.md).
+Review: [../../docs/archive/PDA-decouple/reviews/PDA-DEC-1-design-review.md](../../docs/archive/PDA-decouple/reviews/PDA-DEC-1-design-review.md).
 Cycle-1 DEBT-1..11 were folded into the design revision (`154a1a2`) and are closed.
 Cycle-2 items below are open and owed by the implementer.
 
 | Id | Owed | Where |
 |----|------|-------|
-| DEBT-C2-1 | **Must land in this PR.** `pubsub/include/fletcher/pubsub/provider.hpp:68` still documents re-declaration rejection as optional ("may reject"); the owner's ruling makes it mandatory. One word plus one Files-to-touch line. | review §DEBT register — cycle 2 |
+- ~~C2-1~~ resolved: ceiling measured from the devcontainer pack, CI re-confirms without gating (design §4, brief :9, :49; PM record fix).
 | DEBT-C2-2 | Key *retention* by provider but leave *schema_mode* per subject, or the promised PDA-DEC-3 handoff collides with rung-1 item 3. | ditto |
 | DEBT-C2-3 | State that clause 12 observes overlap and cannot force it. | ditto |
 | DEBT-C2-4 | Reuse the conflict comparison already shipping above the seam (`pubsub/src/publisher.cpp:46-78`); note the gateway cannot regress, because `Publisher` never forwards a conflicting or identical re-declaration to the provider. | ditto |
-| DEBT-C2-5 | Two `Files-to-touch` entries owed, both one line. (`plans/PDA-decouple-interface.md` is already updated by the PM at `ea5287b`.) | ditto |
+| DEBT-C2-5 | Two `Files-to-touch` entries owed, both one line. (`docs/archive/PDA-decouple/PDA-decouple-interface.md` is already updated by the PM at `ea5287b`.) | ditto |
 | DEBT-C2-6 | Informational, nothing owed — the sparse-checkout gotcha was mis-targeted in the design. | ditto |
 
 ## PDA-DEC-2 — copy-accounting oracle (APPROVE-WITH-DEBT(7), cycle 1 of 2)
 
-Review: [PDA-DEC-2-design-review.md](PDA-DEC-2-design-review.md). All seven open
+Review: [../../docs/archive/PDA-decouple/reviews/PDA-DEC-2-design-review.md](../../docs/archive/PDA-decouple/reviews/PDA-DEC-2-design-review.md). All seven open
 and owed by the implementer. No BLOCKERs; premise **P1** (`WriteBuffer::Data()` is
 PDA-DEC-2's to add) is answered YES in the review — do not stop-and-ask on it.
 
@@ -36,7 +36,7 @@ PDA-DEC-2's to add) is answered YES in the review — do not stop-and-ask on it.
 
 ## PDA-DEC-3 — crossing vocabulary (NEEDS-REWORK, 4 BLOCKERs, cycle 1 of 2)
 
-Review: [PDA-DEC-3-design-review.md](PDA-DEC-3-design-review.md). The nine items
+Review: [../../docs/archive/PDA-decouple/reviews/PDA-DEC-3-design-review.md](../../docs/archive/PDA-decouple/reviews/PDA-DEC-3-design-review.md). The nine items
 below are DEBT and do **not** loop the design; the four BLOCKERs are in the review.
 Two rulings the implementer may rely on without re-asking: premise **P2** is
 answered YES (§3.3 does *not* require reshaping `SharedSchema`), and the Fast DDS
@@ -75,7 +75,7 @@ the implementer.
 
 ## PDA-DEC-4 — provider registry (APPROVE-WITH-DEBT(10), cycle 1 of 2)
 
-Review: [PDA-DEC-4-design-review.md](PDA-DEC-4-design-review.md). No BLOCKERs. Two
+Review: [../../docs/archive/PDA-decouple/reviews/PDA-DEC-4-design-review.md](../../docs/archive/PDA-decouple/reviews/PDA-DEC-4-design-review.md). No BLOCKERs. Two
 rulings the implementer may rely on **without stop-and-asking**: premise **P2** is
 answered — §4 clause 2 is satisfied under *both* readings, because `SetPathResolver`
 lands and is exercised in this item, so PDA-ABI adds no registry method (review §A);
@@ -98,7 +98,7 @@ item as the expected exception.
 
 ## PDA-DEC-5 — InProcess as a built-in (APPROVE-WITH-DEBT(5), cycle 1 of 2)
 
-Review: [PDA-DEC-5-design-review.md](PDA-DEC-5-design-review.md). No BLOCKERs.
+Review: [../../docs/archive/PDA-decouple/reviews/PDA-DEC-5-design-review.md](../../docs/archive/PDA-decouple/reviews/PDA-DEC-5-design-review.md). No BLOCKERs.
 Two rulings the implementer may rely on **without stop-and-asking**: premise
 **P1 does not fire** — `TranslateSeamFailure` rethrows a `PubSubError`
 untouched (`core/status.hpp:136`) and `Registry.AFactoryThatFailsIsReportedAsA
@@ -119,7 +119,7 @@ in `in_process_provider.cpp` (review §B).
 
 ## PDA-DEC-6 — Fast DDS by document (NEEDS-REWORK, 3 BLOCKERs, cycle 1 of 2)
 
-Review: [PDA-DEC-6-design-review.md](PDA-DEC-6-design-review.md). The eleven items
+Review: [../../docs/archive/PDA-decouple/reviews/PDA-DEC-6-design-review.md](../../docs/archive/PDA-decouple/reviews/PDA-DEC-6-design-review.md). The eleven items
 below are DEBT and do **not** loop the design; the three BLOCKERs are in the review.
 Two rulings the implementer may rely on without re-asking: **P1's API half is
 verified** — `get_participant_qos_from_xml` / `get_datawriter_qos_from_xml` /
@@ -165,7 +165,7 @@ domains. The five items below are open and owed by the implementer.
 
 ## PDA-DEC-7 — XRCE by document (NEEDS-REWORK, 1 BLOCKER, cycle 1 of 2)
 
-Review: [PDA-DEC-7-design-review.md](PDA-DEC-7-design-review.md). The nine items below
+Review: [../../docs/archive/PDA-decouple/reviews/PDA-DEC-7-design-review.md](../../docs/archive/PDA-decouple/reviews/PDA-DEC-7-design-review.md). The nine items below
 are DEBT and do **not** loop the design; the single BLOCKER (B1 — four of six document
 keys have no guard that an accepted value lands anywhere) is in the review.
 
@@ -237,7 +237,7 @@ README — not in the design doc.**
 
 ## PDA-DEC-8 — multi-instance proof (NEEDS-REWORK, 3 BLOCKERs, cycle 1 of 2)
 
-Review: [PDA-DEC-8-design-review.md](PDA-DEC-8-design-review.md). The six items
+Review: [../../docs/archive/PDA-decouple/reviews/PDA-DEC-8-design-review.md](../../docs/archive/PDA-decouple/reviews/PDA-DEC-8-design-review.md). The six items
 below are DEBT and do **not** loop the design; the three BLOCKERs are in the review
 (B1 unequal payload bounds make the two instances undiscoverable on any domain, so
 M1 cannot redden and the positive control cannot cross; B2 an oversized row is not
@@ -343,7 +343,7 @@ sentences already there and must not grow the file.
 
 ## PDA-DEC-9 — seam spec, taxonomy, handoff (NEEDS-REWORK, 6 BLOCKERs, cycle 1 of 2)
 
-Review: [PDA-DEC-9-design-review.md](PDA-DEC-9-design-review.md). The eight items below are
+Review: [../../docs/archive/PDA-decouple/reviews/PDA-DEC-9-design-review.md](../../docs/archive/PDA-decouple/reviews/PDA-DEC-9-design-review.md). The eight items below are
 DEBT and do **not** loop the design; the six BLOCKERs are in the review (B1 the totality
 `static_assert` cannot fail on an append, so the item's one new guard does not do what it
 claims; B2 "ships with the package" is false — `package()` copies only `*.hpp`/`*.cmake`;
@@ -385,7 +385,7 @@ Conan cache on both platforms (`ci.core.yml:55,107`); the P2 precedent is exactl
 
 ## PDA-DEC-9 — cycle 2 (APPROVE-WITH-DEBT(10), no BLOCKERs stand)
 
-Review: [PDA-DEC-9-design-review.md](PDA-DEC-9-design-review.md) §Cycle 2. All six cycle-1
+Review: [../../docs/archive/PDA-decouple/reviews/PDA-DEC-9-design-review.md](../../docs/archive/PDA-decouple/reviews/PDA-DEC-9-design-review.md) §Cycle 2. All six cycle-1
 BLOCKERs are closed and all eight cycle-1 DEBT items are folded into the design. The ten items
 below do **not** loop the design; **C3-1 and C3-2 are the two an implementer must not skip.**
 
@@ -418,7 +418,7 @@ suite names.
 
 ## PDA-DEC-A4 — §7 clause 6 at the caller tier (NEEDS-REWORK, 2 BLOCKERs, cycle 1 of 2)
 
-Review: [PDA-DEC-A4-design-review.md](PDA-DEC-A4-design-review.md). The five items
+Review: [../../docs/archive/PDA-decouple/reviews/PDA-DEC-A4-design-review.md](../../docs/archive/PDA-decouple/reviews/PDA-DEC-A4-design-review.md). The five items
 below are DEBT and do **not** loop the design; the two BLOCKERs and the ruled
 STOP-AND-ASK (idempotence needs its own owner authorisation) are in the review.
 
@@ -447,7 +447,7 @@ the review's cycle-2 section.
 
 ## PDA-DEC-A5 — topic name integrity (NEEDS-REWORK, 2 BLOCKERs, cycle 1 of 2)
 
-Review: [PDA-DEC-A5-design-review.md](PDA-DEC-A5-design-review.md). The three items
+Review: [../../docs/archive/PDA-decouple/reviews/PDA-DEC-A5-design-review.md](../../docs/archive/PDA-decouple/reviews/PDA-DEC-A5-design-review.md). The three items
 below are DEBT and do **not** loop the design; the two BLOCKERs (both in the
 evidence, not the mechanism) are in the review. Claims 2, 3 and 4 were ruled in the
 design's favour and the PM carries nothing to the owner.
@@ -479,7 +479,7 @@ beyond 2026-09-03 except for the `__` rule itself.
 
 ## PDA-DEC-A1 — a row composed *in* the delivered window (APPROVE-WITH-DEBT(5), cycle 1 of 2)
 
-Review: [PDA-DEC-A1-design-review.md](PDA-DEC-A1-design-review.md). **No BLOCKERs**; the
+Review: [../../docs/archive/PDA-decouple/reviews/PDA-DEC-A1-design-review.md](../../docs/archive/PDA-decouple/reviews/PDA-DEC-A1-design-review.md). **No BLOCKERs**; the
 five below are DEBT and do **not** loop the design. Things the implementer may rely on
 without re-deriving them: **P1 is verified TRUE for all three in-tree subclasses** with the
 arithmetic (`write_buffer.hpp:164-175`, `copy_accounting.cpp:83-95`, `write_buffer.hpp:198-200`
@@ -503,7 +503,7 @@ verified.
 
 ## PDA-DEC-AG1 — the misbehaving callback (NEEDS-REWORK, 3 BLOCKERs, cycle 1 of 2)
 
-Review: [PDA-DEC-AG1-design-review.md](PDA-DEC-AG1-design-review.md). The eight below
+Review: [../../docs/archive/PDA-decouple/reviews/PDA-DEC-AG1-design-review.md](../../docs/archive/PDA-decouple/reviews/PDA-DEC-AG1-design-review.md). The eight below
 are DEBT and do **not** loop the design; the three BLOCKERs are in the review.
 
 Things the implementer may rely on **without re-deriving them**, all verified against the
@@ -661,7 +661,7 @@ call never enters the rollback path at all.
 
 ## PDA-DEC-AG2 — the two crossing types with no form (NEEDS-REWORK, 3 BLOCKERs, cycle 1 of 2)
 
-Review: [PDA-DEC-AG2-design-review.md](PDA-DEC-AG2-design-review.md). All seven open and owed by
+Review: [../../docs/archive/PDA-decouple/reviews/PDA-DEC-AG2-design-review.md](../../docs/archive/PDA-decouple/reviews/PDA-DEC-AG2-design-review.md). All seven open and owed by
 the implementer. The three BLOCKERs are **not** here — they are in the review and must be
 discharged in the design revision.
 
@@ -677,7 +677,7 @@ discharged in the design revision.
 
 ### Cycle 2 (NEEDS-REWORK, 1 BLOCKER) — revision 3
 
-Review: [PDA-DEC-AG2-design-review-c2.md](PDA-DEC-AG2-design-review-c2.md). The single
+Review: [../../docs/archive/PDA-decouple/reviews/PDA-DEC-AG2-design-review-c2.md](../../docs/archive/PDA-decouple/reviews/PDA-DEC-AG2-design-review-c2.md). The single
 BLOCKER (C2-B1, A7's forcing test is green at base) is **not** here — it is in the review.
 
 **Discharged in revision 3, closed:** AG2-DEBT-1 (`Clear()` added, surface still 1),
@@ -791,3 +791,138 @@ per-envelope ceiling in the wire format and refuse past it in both decoders (`re
 `std::invalid_argument`). Measure first — the bound must be evidence, not a guess.
 **Addressed to:** PDA-ABI, at the item that gives the decode path its C form, or any round that
 first has a measured deployment figure.
+
+## D7F-1 — loss before a usable schema, reported at close (APPROVE-WITH-DEBT(2), cycle 1 of 2)
+
+Review: [../../docs/archive/D7F/reviews/D7F-1-design-review.md](../../docs/archive/D7F/reviews/D7F-1-design-review.md). No BLOCKERs; P1–P4 verified, rely on them.
+
+| Id | Owed | Where |
+|----|------|-------|
+| ~~DEBT-1~~ | ~~BC-3 status note in the register edits~~ | Landed in `dbaa2b6`: `docs/domains/bounded-context-register.md:17` (BC-3). |
+| ~~DEBT-2~~ | ~~d7 L1 mark~~ | Landed in `dbaa2b6`: `docs/domains/d7-batch-assembly.md:59-60` (violation 1 built, closing D7F-1, deadline D7F-2). |
+
+## Carried from D7F-1 code review to D7F-2
+- ~~**DEBT-3 (S1):** second codec lookup in the batched `call_once`~~ Landed in `dbaa2b6`: `AcquireCodec` returns `TopicCodec` by value (`subscriber_arrow.cpp:338-343`, `:368-384`; `subscriber_arrow.hpp:162-165`).
+- ~~**DEBT-4 (S2):** drops-then-good-rows test~~ Landed in `dbaa2b6`: `test_pubsub_arrow.cpp:902-939` (forcing, with the `:877-894` helper) and `:1076` (leg).
+- ~~**DEBT-5 (record):** header timeout sentence~~ Landed in `dbaa2b6`: `subscriber_arrow.hpp:95-99` and `README.md:66-70`.
+
+## D7F-2 — loss before a usable schema, reported at each deadline (APPROVE-WITH-DEBT(3), cycle 1 of 2) — [review](../../docs/archive/D7F/reviews/D7F-2-design-review.md)
+- ~~**DEBT-1 (must land):** only a throw decides "unusable"~~ Landed in `dbaa2b6`: `subscriber_arrow.cpp:341` and `:380`; P3 corrected in `docs/archive/D7F/D7F-2-schema-loss-at-deadline.md:176` (`7170ca9`).
+- ~~**DEBT-2:** BC-3 row, d7 L8 placement, `max_rows` sentence~~ Landed in `dbaa2b6`: `bounded-context-register.md:17` (a), `d7-batch-assembly.md:138-142` (b), `subscriber_arrow.hpp:95-99` and `README.md:66-70` (c, sentence dropped).
+- ~~**DEBT-3:** forcing test order assertions~~ Landed in `dbaa2b6` (tweaked `7170ca9`): `test_pubsub_arrow.cpp:877-894` (order within a delivery, the set {1,2,3} across deliveries).
+
+## Carried from D7F-2 code review to D7F-3
+- ~~**DEBT-6 (S2):** the schema decision in three places.~~ Landed in D7F-3 (`5b4e807`): the batcher's `decided_`, set under its `mu_`; `SetSchema` refuses a second decision.
+
+## D7F-3 — one batch thread, in order, nothing lost at close (cycle 1 NEEDS-REWORK; cycle 2 APPROVE-WITH-DEBT(2)) — [review](../../docs/archive/D7F/reviews/D7F-3-design-review.md)
+- ~~DEBT-1..3 (deadline forbid, `notify_all`, benchmark and fastdds Files-to-touch)~~ Folded into design revision 2 (§2, §1, Files-to-touch).
+- **C2-1 (PM-facing, before the owner reads the brief):** *(Left open for D7F's own round to confirm; not D10C's, noted at D10C close, 2026-11-17.)* Remove the destructor from Decision 2. Destroying over a provider inside its own delivery is already forbidden (§6 clause 5, ruling 2026-09-05; `sub:556-578`), and the program stops under either option. Scope (b)'s "No hang" to the subscription's own provider.
+- ~~**C2-2:** the provider token and the third `Stop` case.~~ Landed in D7F-3 (`5b4e807`): `SubscriberArrow::provider_token_` (private, hpp), `Stop`'s `InsideDeliveryOn(provider_)` case moves and detaches `thread_`; the "may not free" case is in the hpp `Unsubscribe` doc, the README and d7 L9.
+
+## D7O-1 — nonsensical options are refused (APPROVE-WITH-DEBT(1), cycle 1 of 2) — [review](../../docs/archive/D7O/reviews/D7O-1-design-review.md)
+- ~~DEBT-1 (step 3): red run kept the refused arms live~~ Landed in `9abb0c7` (phase A); counter observed 1 on the red run, 0 → 1 on green (`docs/archive/D7O/D7O-progress-log.md`, D7O-1).
+
+## D7O-2 — no timeout (APPROVE-WITH-DEBT(2), cycle 1 of 2) — [review](../../docs/archive/D7O/reviews/D7O-2-design-review.md)
+- ~~DEBT-1 (step 3): control asserts only that some `kTimeout` arrives~~ Landed in `7a0cc64` (`ShortTimeoutControlSeesTheDeadlineInEveryBody`).
+- ~~DEBT-2 (step 3): BC-4 site, rung-3 red record~~ Landed in `7a0cc64` (BC-4) and `docs/archive/D7O/D7O-progress-log.md` (red record); `ratio_less` not taken.
+
+## D7O-3 — any row count (APPROVE-WITH-DEBT(4), cycle 1 of 2) — [review](../../docs/archive/D7O/reviews/D7O-3-design-review.md)
+- ~~DEBT-1 (PM): Decision 1 (b) breaks L10~~ Folded into the brief as a disclosure, `957a514`.
+- ~~DEBT-2 (PM): Decision 2 is already law~~ Folded into the brief's Risks accepted, `957a514`.
+- ~~DEBT-3 (step 3): verdict/pre-size split test~~ Landed in `c18e95e` (`AFailedPreSizeDoesNotMakeTheSchemaUnusable`).
+- ~~DEBT-4 (step 3, docs): BC-3 gap, d7 Findings, BC-8 hint clause, bitmap residue~~ Landed in `c18e95e` (d7 Q8 and Findings (d); register BC-3, BC-8).
+
+## D9S-2 — the shim's server build (APPROVE-WITH-DEBT(4), cycle 1 of 2) — [review](../../docs/archive/D9S/reviews/D9S-2-design-review.md)
+- ~~DEBT-1 (D9S-7): P3 fires when rung 10 creates a server package in the conformance lane. Re-anchor `ci.integration-test.binding-abi-conformance.yml:86, :150` with `locate_shim.sh` in that commit, and annotate ladder rung 9's "Builds on" with R1's 10–20 lines.~~ Landed in the D9S-7 stage commit `f1a099e` (both lookups by package identity; `docs/archive/D9S/D9S-test-ladder.md` rung 9 annotated).
+- ~~DEBT-2~~ Applied to the brief before the owner read it (`fd6dcd2`).
+- ~~DEBT-3~~ Recorded at close: production +339/−74 (D9S-2 brief As landed).
+- ~~DEBT-4~~ Landed in `0a43e99` (server shim size printed on both legs, not enforced).
+
+## D9S-3 — the edge build carries no Arrow C++, by name (APPROVE-WITH-DEBT(3), cycle 1 of 2) — [review](../../docs/archive/D9S/reviews/D9S-3-design-review.md)
+- ~~DEBT-1~~ Applied to the brief and design (`3dcfd69`).
+- ~~DEBT-2~~ Landed in `52a0103` (check runs before the size ceilings on both legs).
+- ~~DEBT-3~~ Landed before 0b (graph control uses step 1's test; both packages required).
+
+## D9S-4 — batches cross the shim (cycle 1 NEEDS-REWORK; cycle 2 APPROVE-WITH-DEBT(3)) — [review](../../docs/archive/D9S/reviews/D9S-4-design-review.md)
+- ~~DEBT-1~~ Applied in design cycle 2 (H3 says "a failed hand-over"; the catch encloses thunk steps 1–4).
+- ~~DEBT-2 (step 3, 4a): a fourth `Reason` must fail the build~~ Landed in `e766c3e` (exhaustive `switch` in `batches_server.cpp`, switch warning as error; d9 L1, `ReasonOf`).
+- ~~DEBT-3 (step 3, 4a header doc): the same-topic arrival wording~~ Landed in `e766c3e` (`binding.h` same-topic bullet; d9 Findings b2).
+- ~~DEBT-4 (PM): D-D9S-8 fPIC annotation, tracker rows~~ Landed in `5b36a63` (`docs/archive/D9S/D9S-locked-decisions.md`, `docs/archive/D9S/D9S-plan.md`).
+
+## D9S-5a — close from outside, borrow-and-move, options as given (APPROVE-WITH-DEBT(4), cycle 1 of 2) — [review](../../docs/archive/D9S/reviews/D9S-5a-design-review.md)
+- ~~DEBT-1 (step 3, docs): BC-13 / d9 L14 marks, the untagged id, the row-delivery clause~~ Landed in `ea49aa3` and `640e8cd` (register BC-13, d9 L14 and §4, `binding.h`).
+- ~~DEBT-2 (step 3, tests): one sink per subscription, counts before teardown~~ Test item, landed with `ea49aa3` (`test_batches.cpp`).
+- ~~DEBT-3 (PM): trim the brief~~ Process item, landed in `c7220e2`.
+- ~~DEBT-4 (step 3, close): shared truth-table body, table-driven G2, test-line report~~ Test and process item, reported at close (`ad69f4a`, `docs/archive/D9S/D9S-progress-log.md`).
+
+## D9S-5b — every close ends with one closing delivery (cycle 1 NEEDS-REWORK, B1 answered by ruling :493; cycle 2 APPROVE-WITH-DEBT(3)) — [review](../../docs/archive/D9S/reviews/D9S-5b-design-review.md)
+- ~~**DEBT-1**~~ Resolved in cycle 2: brief :8-9 and :40-42, design :22.
+- ~~**DEBT-2**~~ Resolved in cycle 2: F1 has cell (d); D18/D19 record only the rulings.
+- ~~DEBT-3 (PM)~~ landed: D-D9S-8 annotated with both 2026-11-14 widenings.
+- ~~DEBT-4 (step 3): m4 is an equivalent mutant~~ Landed in `3903911` (design rule 3 and m4 restated as DEBT-4 (b); F2 reported as the external proof).
+- ~~DEBT-5 (code commit): "no batch arrives before the call returns" is false~~ Landed in `60ff057` (`binding.h`, the C++ hpp and README: correlate by `ctx`).
+
+## D9S-6 — a batch the shim cannot hand over still arrives, counted (cycle 1 NEEDS-REWORK, B1 + B2 STOP-AND-ASK; cycle 2 APPROVE-WITH-DEBT(2), B2 answered by ruling :504) — [review](../../docs/archive/D9S/reviews/D9S-6-design-review.md)
+- ~~DEBT-1~~ Resolved in cycle 2: restated as "held by name" (design 4(iii), P2, corner case 7; brief risk).
+- ~~DEBT-2~~ Applied in cycle 2: design step 6 (d9 L1). Lands with the docs.
+- ~~DEBT-3~~ Applied in cycle 2: design l.103-104 (one batched subscription per cell).
+- ~~DEBT-4 (step 3, docs; PM): `fl_error` paragraph, D32, d9 §6 domain 10~~ Landed in `abc0776` (`binding.h`; d9 L2, D32, §6).
+- ~~DEBT-5 (step 3, code): a half-built attachment set leaks on OOM~~ Landed in `abc0776` (`handles.hpp`, `fl_attachments`' constructor deletes the built blocks; untested, d9 Findings c).
+
+## D9S-7 — two builds in one process; C# against both (APPROVE-WITH-DEBT(4), cycle 1 of 2) — [review](../../docs/archive/D9S/reviews/D9S-7-design-review.md)
+- ~~DEBT-1~~ landed `157d3c3` (`env -u LD_LIBRARY_PATH`).
+- ~~DEBT-2 (round close or a later d9 stage): one CMake function for every shim~~ Migrated to d9 §7 Q13 (D9S close, 2026-11-14); `c-abi/tests/CMakeLists.txt` points there.
+- ~~DEBT-3~~ landed `157d3c3` (dead line and design paragraph deleted).
+- ~~DEBT-4~~ landed: d9 §6 domain-10 list notes the staging retires with Q5a; ladder rung 10 credits :516 for the staging only.
+
+## D10C-3 — per-row `SubscriberArrow.Subscribe` on the native path (APPROVE-WITH-DEBT(3), cycle 1 of 2) — [review](../../docs/archive/D10C/reviews/D10C-3-design-review.md)
+- ~~DEBT-1~~ resolved: leg remarks name the delivery-exit free; release observed by `ReentrancyTests.TheReleaseRunsExactlyOnceWhereverTheSubscriptionIsFreed` (D10C-3 close).
+- ~~DEBT-2~~ resolved: release after `Self.Free()`, no catch, must-not-throw contract (`Subscriber.cs:380`, 4a F1) (D10C-3 close).
+- ~~DEBT-3~~ resolved: brief/design restated to 130–160 (commits 5b311af, 779dbda); landed net 125 excl. comments.
+
+## D10C-4 — the loader picks the shim (cycle 1 NEEDS-REWORK, 1 BLOCKER; cycle 2 APPROVE-WITH-DEBT(2)) — [review](../../docs/archive/D10C/reviews/D10C-4-design-review.md)
+- ~~DEBT-1~~ resolved: Decision 1 became a disclosure (brief :34-40; PM decision).
+- ~~DEBT-2~~ resolved: `env -u LD_LIBRARY_PATH` kept on the conformance server pass (design :61-62, :148).
+- ~~DEBT-3~~ resolved: one decision per `AssemblyLoadContext`, with d9 L17 across contexts (design :18-22, :80).
+- ~~DEBT-4~~ resolved: the full-suite commands and the `ci.dotnet.yml` comments are listed under docs (design :135-137).
+- DEBT-5 (tests in place; **Linux green locally** in the devcontainer, 2026-11-16, evidence row): the CI run ID is still owed, and the d10/BC-10 `[built]` qualifiers lift only with it, per d10 :31's convention. **Open; tracked as `docs/domains/d10-csharp-binding.md` §7 Q13** (D10C close, 2026-11-17).
+- ~~DEBT-6~~ disclosed: brief :35-37 and `dotnet/README.md` (single-file self-extract; plus NuGet-cache hosts, 4b S3).
+
+## D10C-5 — the server package (cycle 1 NEEDS-REWORK, B1 Q7 formula; cycle 2 APPROVE-WITH-DEBT(1)) — [review](../../docs/archive/D10C/reviews/D10C-5-design-review.md)
+- ~~DEBT-1~~ Resolved in cycle 2: C7 and the override (design :66, forcing table); the provenance half became C2-1.
+- ~~DEBT-2~~ Resolved in cycle 2: the entry allow-list, per-TFM-group dependency sets, and `arrow` refused everywhere but the server (design :42-54).
+- ~~DEBT-3~~ Resolved in cycle 2: the pack job calls the notice check on the server notice (design :55-56).
+- ~~DEBT-4~~ Resolved in cycle 2: same-ABI skew disclosed as lawful (design :93-95, brief :24-25).
+- C2-1 (PM before the owner reads the brief; then step 3): set `SERVER_CEILING` at this stage from the devcontainer pack
+  (`fletcher-build:latest`, the pack job's commands, Linux stripped, Windows msvc194 Release), with bytes, image and commit
+  beside it. CI re-confirms rather than gates close (bytes and run ID go to the evidence ledger with D10C-4 DEBT-5); the
+  constant changes only if CI's bytes round to a different whole MB. Strike design :65-66 "replaced from CI before close",
+  brief :9 "CI-measured" and brief :49 "which also fixes the size limit".
+  **Open (the CI re-confirmation); tracked as `docs/domains/d10-csharp-binding.md` §7 Q13** (D10C close, 2026-11-17).
+
+## D10C-6 → D10C-7 (forward note from the D10C-6 brief, PM)
+- ~~FWD-1b~~ Landed in D10C-7: the edge-leg arms of the three same-topic tests re-anchored (`SubscriberArrowTests.ARowAndABatchedSubscriptionToOneTopicAreRefusedWhicheverComesSecond`, `.TheSameKindTwiceAndDifferentTopicsAreNotRefused`, `.TwoArrowSubscribersOnOneProviderDoNotRefuseEachOther`).
+- ~~FWD-1~~ Landed in D10C-7: the batched-first arms re-anchored on the edge leg; the claim is released only after the native close returns (d10 L3, "When the topic is freed").
+
+## D10C-6 — same-topic refusal (APPROVE-WITH-DEBT(4), cycle 1 of 2) — [review](../../docs/archive/D10C/reviews/D10C-6-design-review.md)
+- ~~DEBT-1~~ Landed in D10C-6: claim after building the delivery, `try` around the inner subscribe only, `_claims` keyed by `TopicPath` (`SubscriberArrow.cs`, `Claim`/`Release`).
+- ~~DEBT-2~~ Landed in D10C-6: the refusal no longer says "or use another SubscriberArrow".
+- ~~DEBT-3~~ Landed in D10C-6: the test asserts "holds a per-row" / "holds a batched" (`SubscriberArrowTests.cs:522`).
+- ~~DEBT-4 = FWD-1c~~ Landed in D10C-7 (design D5): a quiet close keeps the claim for its kind (`SubscriberArrow.cs:40-45`; `SubscriberArrowTests.AQuietCloseKeepsTheTopicForItsKind`; d10 L3).
+
+## D10C-7 — the switch and the deletion (cycle 1 APPROVE-WITH-DEBT(3); cycle 2 APPROVE-WITH-DEBT(1)) — [review](../../docs/archive/D10C/reviews/D10C-7-design-review.md)
+- ~~DEBT-1~~ Resolved in cycle 2: (d) ruled at :660; brief Decision 1 rewritten (purpose wording, :643 note).
+- ~~DEBT-2~~ Resolved in cycle 2: design D2 (`ref bool accepted`, `catch when (!accepted)`) and D3 step 6 (null-check); lands in code at step 3.
+- ~~DEBT-3~~ Resolved in cycle 2: pricing taken (switch net +215-245), counting rule stated (brief :51-52); stage net-negative.
+- ~~C2-1~~ Landed in D10C-7: the scans are scoped to the class, `Stopwatch` allowed only in `SchemaArrival`, the packed leg reads the pack output (`ManagedBatcherGoneTests`; d10 L4).
+
+## D10C-10 — a failed hand-over reaches C# in `BatchStatus` (APPROVE-WITH-DEBT(3), cycle 1 of 2) — [review](../../docs/archive/D10C/reviews/D10C-10-design-review.md)
+- ~~DEBT-1~~ Landed in D10C-10: the copy case is named and the leg is `SubscriberArrowTests.TheBatchThunkNeverDisposesTheBorrowedFailure` with a source scan (d10 L8).
+- ~~DEBT-2~~ Landed in D10C-10: brief Decision 1 (b) rewritten before the owner read it; ruled at :669 (d10 L9, D26).
+- ~~DEBT-3~~ Landed in D10C-10: leg `SubscriberArrowTests.ACopiedFailureThatCannotBeDecodedStillDeliversTheWindow` (`SubscriberArrowTests.cs:2261`); the residue is named in d10 L9 (ruling :694 (1)).
+
+## D10C-11 — the purpose, proven from the packages (APPROVE-WITH-DEBT(4), cycle 1 of 2) — [review](../../docs/archive/D10C/reviews/D10C-11-design-review.md)
+- ~~DEBT-1~~ Landed in D10C-11: the base arm also requires `fletcher-c-abi-server` (`integration-tests/preview-bundle-consumer/dotnet/PreviewConsumer/Program.cs:171-172`).
+- ~~DEBT-2~~ Landed in D10C-11: the premise re-pointed at `check_shim_dependencies.sh`; `minimal.sh:100` matches `GLIBCXX_3\.4\.3[12]' not found`.
+- ~~DEBT-3~~ Landed in D10C-11: the qualifier states exactly what ran (d10 L5, L6, L7 "From packages").
+- ~~DEBT-4~~ Landed in D10C-11: d10 L5 and L6 cite T46 and `minimal.sh` as from-packages tests.

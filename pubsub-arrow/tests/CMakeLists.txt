@@ -21,17 +21,48 @@ include(GoogleTest)
 # in full are in `xrcedds-pubsub-provider/tests/CMakeLists.txt`, whose first Linux run spent
 # 2 h 04 m inside one hung test before the job was cancelled with no result at all.
 #
-# 30 s, chosen from this suite's own measured wall clock: the two slowest gtest rows are
-# `SubscriberArrowBatchTest.FlushesAtTimeout` and
-# `SubscriberArrowBatchTest.OnlyDroppedRowsStillDeliversEmptyBatch` at 0.15 s each, with the
-# rest well under 0.1 s (msvc-194 x86_64 Release). Both slow rows are WAITS, not work - they set
-# `opt.timeout = 100 ms` and then wait for the batch flush timer to fire, which is wall clock and
-# therefore does not stretch on a slower or more contended runner. 30 s is ~200x the slowest row
-# for a suite whose real ceiling is fixed by a 100 ms timer, and it turns a future hang into a
-# 30-second red instead of a cancelled job. The NodiscardTest entry below is a compile
-# invocation, not a gtest row, and gets its own longer cap for that reason.
+# 30 s, chosen from this suite's own measured wall clock (re-measured at D7F-3 fix cycle 1,
+# msvc-194 x86_64 Release). Green: the slowest gtest rows are
+# `SubscriberArrowBatchTest.DeliveryOrderStress` 2.38 s, `RowsConservedAtEveryEnding` 1.07 s and
+# `UnsubscribeFromInsideACallbackNeverDeliversNested` 0.68 s; the rest are under 0.7 s. They are
+# mostly WAITS, not work (1-200 ms batch timers, 2-3 ms pauses between seeded bursts, 100 ms helper
+# delays), which are wall clock and do not stretch on a slower runner; what does stretch is the
+# thread hand-off between publisher, batch and test threads. A FAILING run must also end inside
+# the cap: every wait in the D7F-3 rows is bounded (1 s; 2 s in the seeded guards, which stop at
+# the first failed seed, so a red seeded row costs at most ~2.5 s of passing seeds plus two 2 s
+# waits), so a row's worst case is about 4 s per case and 20 s for the five-case rung-6 row. Measured
+# against the pre-D7F-3 production code (all D7F-3 rows red): rung 6 5.7 s, rung 4 4.5 s, the
+# stress guard 2.3 s. 30 s is ~13x the slowest green row and above every red row's bound, and it
+# turns a future hang into a 30-second red instead of a cancelled job. The NodiscardTest entry
+# below is a compile invocation, not a gtest row, and gets its own longer cap for that reason.
 gtest_discover_tests(pubsub_arrow_tests DISCOVERY_MODE PRE_TEST
     PROPERTIES TIMEOUT 30)
+
+# ---------------------------------------------------------------------------
+# `heavy`: tests that allocate hundreds of MiB (owner ruling 2026-11-10, "Label it 'heavy'";
+# domain 7 D11). Their own executable, so a direct run of pubsub_arrow_tests stays light, and
+# their own label, which `conanfile.py` excludes from the default run (`ctest -LE heavy`). Run
+# them on request: `conan build . -o "&:run_tests=True" ...`, then, under
+# `build\generators\conanrun.bat`, `ctest --test-dir build -C Release -L heavy`.
+#
+# TIMEOUT 60 s, stated for the reason the light suite states its own (no default cap applies).
+# Measured on msvc-194 x86_64 Release, before D7F-3's production change: the control
+# `CraftedRowExceedsTheOffsetBudgetEvenAlone` 0.11 s, and the forcing row
+# `OverBudgetRowAroundInCallbackUnsubscribeIsCounted` 5.13 s, of which 5 s is its own bounded wait
+# for the closing batch that tree never delivers; the work itself (building and handing over one
+# ~256 MiB row) is ~0.1 s. Unlike the light suite's timer waits, that allocation and fill DOES
+# stretch on a slower or memory-starved runner, so 60 s is ~12x the slowest measured row and
+# ~500x its real work.
+# ---------------------------------------------------------------------------
+add_executable(pubsub_arrow_heavy_tests
+    test_pubsub_arrow_heavy.cpp)
+
+target_link_libraries(pubsub_arrow_heavy_tests PRIVATE
+    GTest::gtest_main
+    fletcher-pubsub-arrow)
+
+gtest_discover_tests(pubsub_arrow_heavy_tests DISCOVERY_MODE PRE_TEST
+    PROPERTIES LABELS heavy TIMEOUT 60)
 
 # ---------------------------------------------------------------------------
 # HARD-6 forcing test: compile-fails-on-discard of a [[nodiscard]] return.

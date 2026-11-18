@@ -6,7 +6,7 @@ architect / architect-reviewer / compliance steps must honour. Full rationale:
 [BIND-native-transport.md](../docs/archive/BIND/BIND-native-transport.md).
 
 **Upstream oracles that win on any conflict:**
-[GIR-locked-decisions.md](GIR-locked-decisions.md) (the generator IR — merged) and
+[../docs/archive/GIR/GIR-locked-decisions.md](../docs/archive/GIR/GIR-locked-decisions.md) (the generator IR — merged) and
 `docs/protocol-driver-abi-spec.md` + `plans/PDA-locked-decisions.md`
 (the driver ABI — **in flight on `feature/protocol-driver-abi`**; both paths
 resolve once PDA merges, so they are deliberately not links yet). A proposed deviation from anything here is
@@ -91,11 +91,18 @@ commit.
      edge/server split exists because MCUs cannot link Arrow C++, and **a .NET
      process is never the microcontroller** — so the two-tier split may not need
      mirroring in C# at all, possibly collapsing `Core` + `Arrow`.
+     *Revised 2026-11-15 by ledger :536 (D10C pre-round): C# keeps the edge/server split (an edge base package, a server package), revised by :363 (4); the rider's "may not need mirroring in C#" no longer holds.*
   2. **The native artifact links nanoarrow only, not Arrow C++.**
      `arrow-bridge/codec.hpp` includes `<arrow/api.h>`, so wrapping *that* codec
      would drag full Arrow C++ into `Eiva.Fletcher.Interop`. GIR-8's
      descriptor-driven codec must stay nanoarrow-only to keep the NuGet package
      small; verified by a packed-size check in CI.
+     *(Annotated 2026-11-13, D9S pre-round, audit F17: **partially superseded** by the owner ruling
+     of 2026-11-12, "C# moves onto the C++ batcher: one shim, two variants" (`plans/RIX-rulings.md`).
+     The rider still holds for the edge build, which ships in `Eiva.Fletcher.Interop` and never links
+     Arrow C++; the server-tier build links Arrow C++ through `pubsub-arrow` and ships in a separate
+     package (ruling 2026-11-13, "Packaging: Separate server package"). See `docs/domains/d9-c-abi-shim.md` L8, L12,
+     D3, D22. The text above is kept as ruled.)*
 
 - **D-BIND-1b — The zero-copy guarantee has a stated boundary.** PDA-L4 zero-copy
   covers the **row buffer and attachments**. It does **not** cover individual
@@ -240,6 +247,7 @@ commit.
   value type), so implementing it invents nothing. **DICT still owns** re-folding
   decoded values into a `DictionaryArray` and anything involving dictionary IPC.
   The enum half of this decision is untouched.
+  *Revised 2026-11-15 by ledger :551 (D10C pre-round): a batched dictionary column reaches C# re-folded as a `DictionaryArray`, as domain 7 delivers it; per-row decode still gives the value type.*
 
 - **D-BIND-9 — The accessor emitter builds on the IR, not on `FieldKind`.** RBA
   stays on the thin `FieldKind` projection this round (GIR-3) and round **RIR**
@@ -331,6 +339,12 @@ commit.
   *Owner of the LGPL relinking review: the maintainer (assigned 2026-09-11, Q9). Decision due
   before BIND-9 designs packaging; the notice half is mechanised by #127's graph-derived
   `THIRD-PARTY-LICENSES.txt`, which BIND-9 reuses for the shim.*
+  *(Annotated 2026-11-13, D9S pre-round, audit F18: **revised** by the owner ruling of 2026-11-13,
+  "Domain 9 (C ABI shim): packaging, wrong build, codec owner, laws confirmed", Packaging: "Separate
+  server package" (`plans/RIX-rulings.md`). Two packages carry native assets: the base
+  `Eiva.Fletcher.Interop` (the edge shim) and a separate server package (the server-tier shim), each
+  a full shim; every other managed package stays asset-free. That ruling was this decision's
+  STOP-AND-ASK. See `docs/domains/d9-c-abi-shim.md` D8, D22. The text above is kept as ruled.)*
 
 - **D-BIND-14 — One `dotnet/` component; `c-abi/` is separate.** The managed
   packages ship from **one** top-level `dotnet/` directory, versioned by **one**
@@ -405,6 +419,12 @@ is a copy-paste from the RBA feature; the ADO text is corrected to say what is m
   future consumer host Fletcher twice, P1's own note applies: **STOP-AND-ASK before design**,
   never a registration handshake papering over a forked thread-local. The .NET README states
   the rule.
+  *(Annotated 2026-11-13, D9S pre-round, audit F19: **revised** by the owner ruling of 2026-11-13,
+  "Domain 9 (C ABI shim): …", Packaging: "Separate server package" (`plans/RIX-rulings.md`): two
+  packages ship a shim each, a full shim with the marker; one shim per process still holds, and a
+  second one loaded is refused by this check. Wording note: only the copy loaded second refuses, and
+  it still loads; "refuses to initialise" overstates. See `docs/domains/d9-c-abi-shim.md` L5, L17, D9, D22. The
+  text above is kept as ruled.)*
 
 - **D-BIND-18 — The delivery thunk owns the lifetime bookkeeping; re-entrant `Subscribe` is
   refused in managed code and the sanctioned route is an explicit async helper.** *LOCKED BY
@@ -459,6 +479,7 @@ is a copy-paste from the RBA feature; the ADO text is corrected to say what is m
   AND raised as a `HandlerFaulted` event, never silent and never escaping. A second containment
   site, a wrapped user exception, a per-thread error slot, or a fixed-size message buffer →
   STOP-AND-ASK.
+  *Revised 2026-11-15 by ledger :536 (D10C pre-round): rule 4's managed pre-check does not apply to batch options; an out-of-range one raises domain 7's refusal passed through as `FletcherException(InvalidArgument)` (topics and selectors unchanged).*
 
 - **D-BIND-20 — The two mapping details are code, not comments.** *LOCKED BY THE MAINTAINER
   2026-09-11.* `Timeout.Infinite` / `Timeout.InfiniteTimeSpan` (−1) map to `INT64_MAX`, the
@@ -471,6 +492,7 @@ is a copy-paste from the RBA feature; the ADO text is corrected to say what is m
   over UTF-8 differs from C#'s ordinal UTF-16 order (U+FF5E sorts before U+10000 in one and
   after it in the other). A managed comparer or a `Length` check standing in for a byte bound →
   STOP-AND-ASK.
+  *Revised 2026-11-15 by ledger :536 (D10C pre-round): for batch options the timeout is not pre-checked in managed code; `Timeout.InfiniteTimeSpan` still maps to `INT64_MAX`, any other value goes to domain 7, which refuses out-of-range ones, and the 49.7-day `MaxTimeout` cap goes.*
 
 - **D-BIND-21 — Toolchain: .NET 10 LTS SDK; libraries multi-target `net8.0;net10.0`.**
   *LOCKED BY THE MAINTAINER 2026-09-11 (Q7).* The SDK is pinned in `.devcontainer/Dockerfile`
@@ -537,6 +559,7 @@ is a copy-paste from the RBA feature; the ADO text is corrected to say what is m
   A managed scalar tree (`IReadOnlyList<object?>` or a Fletcher scalar hierarchy) would box
   every value and re-create on the receive side the per-value shape D-BIND-1a rejected on the
   send side → STOP-AND-ASK.
+  *Revised 2026-11-15 by ledger :575 (D10C): retired for SubscriberArrow (the per-row half, "a one-row batch (`BatchOptions.MaxRows = 1`)").*
 
 - **D-BIND-26 — Temporal values are LOSSLESS by default in generated C#.** *LOCKED BY THE
   MAINTAINER 2026-09-11 (Q5).* `DateTime`/`DateTimeOffset` ticks are 100 ns; an Arrow
@@ -1962,6 +1985,7 @@ and keeps `Metadata(key)` as a shortcut.)*
 
   **Declined:** a second delegate for the per-row form (two shapes for one window rule); a new
   owned-attachments type (the builder already holds exactly an owned key/value set).
+  *Revised 2026-11-15 by ledger :536 and :551 (D10C pre-round): (1) per-row Arrow delivery is no longer a batch of one but the native per-row path, on both packages (:536 (1)); a batched dictionary column arrives re-folded, as domain 7 delivers it (:551 (2)); (3) a null batch means "no batch could be built" as in d7 L7 (and a failed hand-over), and a schema-less first row no longer makes a subscription undecodable for life (:551 (4)); the handler still owns the batch.*
 
 - **D-BIND-60 — the shim refuses rows bound under a schema other than the topic's.** *LOCKED BY THE
   MAINTAINER 2026-09-28,* in two questions, when BIND-5a's port found the defect.
@@ -2116,6 +2140,7 @@ and keeps `Metadata(key)` as a shortcut.)*
   **Declined:** a public `BatchOptions.MaxBytes` (a knob with no C++ counterpart, and a surface
   change); documenting the limit only (rows lost as handler faults, and C++ behaving differently for
   the same topic).
+  *Revised 2026-11-15 by ledger :575 (D10C): retired for SubscriberArrow.*
 
 - **D-BIND-64 - `SubscriberArrow` does not serialise its handler calls, matching C++; `Stop` waits
   for an in-flight timer flush, so no handler call runs after `Unsubscribe` or `Dispose` returns.**
@@ -2149,6 +2174,7 @@ and keeps `Metadata(key)` as a shortcut.)*
   closing flush (breaks `UnsubscribeFromInsideATimeoutFlushIsSafe`, which C++ requires to work);
   dropping the lock without the wait (a timer handler could run after `Unsubscribe` returned, which
   C++ does not allow).
+  *Revised 2026-11-15 by ledger :551 (D10C pre-round): handlers are no longer concurrent or out of order and an in-handler closing is no longer nested; C# follows domain 7 (one batch thread, window order, d7 L9, L12), by :203.*
 
 - **D-BIND-65 - the D-BIND-60 publish check compares WIRE LAYOUT, not IPC bytes.** *LOCKED BY THE
   MAINTAINER 2026-09-29,* in one question, answering the BIND-5 review's Q1.
@@ -2200,6 +2226,7 @@ and keeps `Metadata(key)` as a shortcut.)*
   **Declined:** surfacing the losses as handler faults (a fault in code the caller did not write,
   with `RowsDropped` still undercounting); reporting through both channels (one lost row reported
   twice, with two meanings).
+  *Revised 2026-11-15 by ledger :575 (D10C): retired for SubscriberArrow (the batched half; the per-row half governs the native per-row path, :575 (3)).*
 
 - **D-BIND-67 - the bound-rows publishes refuse a topic THIS publisher did not declare,
   `FL_TOPIC_NOT_DECLARED`, as C++ `PublisherArrow` does.** *LOCKED BY THE MAINTAINER 2026-09-29,* in
@@ -2261,6 +2288,7 @@ and keeps `Metadata(key)` as a shortcut.)*
   **Declined:** decoding each row alone with today's call (N native calls and N arrays per window,
   undoing D-BIND-25); fixing B3 alone and documenting B4 (a publisher of malformed data could
   misalign rows and attachments silently).
+  *Revised 2026-11-15 by ledger :575 (D10C): retired for SubscriberArrow (Scope and B3 put-back; the entry point stays, d10 Q8).*
 
 - **D-BIND-69 - generated C# takes its namespace and nesting from Fletcher's backends, and its
   identifiers from protoc's C# rule.** *LOCKED BY THE MAINTAINER 2026-09-29,* in one question, at
@@ -3456,7 +3484,9 @@ public.
   test-only probe shim (`fletcher-c-abi-probe`) is never packed; `THIRD-PARTY-LICENSES.txt` lists
   the libraries linked into the shim. **Declined:** `GatewayClient` and `Model` alone first (the
   managed pair, ready today).
+  *Extended 2026-11-16 (D10C-5, ledger :605 (2)) to five packages / two shims (:337 (1)): the server package `Eiva.Fletcher.Server` carries the server shim and depends on `Eiva.Fletcher.Interop`; text kept.*
 
+  *Annotated 2026-11-16 (ruling :615): the server package's notice lists the union of both platforms' server graphs, so on Windows it also lists libbacktrace, which only the Linux shim links.*
 - **D-BIND-135 - testers get a gateway that speaks to the C# client as gateway BINARIES in the
   per-push preview bundle (D-BIND-139), built from this branch exactly as `cd.gateway.yml` would
   release them (`gateway-linux.tar.gz`, `gateway-windows.zip`); no gateway release before the
@@ -3516,6 +3546,7 @@ public.
   merge removes the bundle job (tracker, BIND-9). **Declined:** a rolling GitHub prerelease as the
   carrier; building the bundle on request only (`workflow_dispatch` or a label); a NuGet-only bundle
   (testers need the gateway and the plugin).
+  *Extended 2026-11-16 (D10C-5, ledger :605 (2)) to five packages / two shims (:337 (1)): the server package `Eiva.Fletcher.Server` carries the server shim and depends on `Eiva.Fletcher.Interop`; text kept.*
 
 - **D-BIND-140 - LGPL, for the preview: the shared-shim relinking route.** *LOCKED BY THE MAINTAINER
   2026-10-20 (BIND-9a Q7; answers Q9 for the preview).* The shim is a shared library the .NET
@@ -3528,6 +3559,7 @@ public.
   named commit, with the command) and the NativeAOT static-linking caveat (N-8); the artifact names
   its commit. An engineering route chosen by the maintainer, not a legal opinion. **Declined:**
   managed packages only until a legal answer exists.
+  *Extended 2026-11-16 (D10C-5, ledger :605 (2)) to five packages / two shims (:337 (1)): the server package `Eiva.Fletcher.Server` carries the server shim and depends on `Eiva.Fletcher.Interop`; text kept.*
 
 - **D-BIND-141 - the shim ships as CI builds it, and the package README states both floors:
   linux-x64 needs glibc 2.38 (measured by `ci.c-abi` at `e268f1a`) and libstdc++ `GLIBCXX_3.4.32`,
@@ -3551,6 +3583,7 @@ Three more, ruled 2026-10-21 while slices 9a-2 and 9a-4 were built:
   the commit (`-p:FletcherSourceCommit`); `scripts/check_dotnet_packages.sh` refuses a package
   without the README, with a placeholder left, without the floors and the relinking route, or
   naming another commit. **Declined:** four READMEs, one per package (the shared text repeated).
+  *Extended 2026-11-16 (D10C-5, ledger :605 (2)) to five packages / two shims (:337 (1)): the server package `Eiva.Fletcher.Server` carries the server shim and depends on `Eiva.Fletcher.Interop`; text kept.*
 
 - **D-BIND-143 - a preview bundle names the commit it was built from, or is not made.** *LOCKED
   BY THE MAINTAINER 2026-10-21 (BIND-9a-2).* A `pull_request` run builds the PR head MERGED into
@@ -3685,6 +3718,11 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   11.6 MB unpacked, measured in 9b-1; the package to about 7.7 MB); N-10's 3531 Windows exports
   (ConanCenter's fast-dds static build) are recorded and revisited only if the ceiling is hit. **Declined:**
   owning a fast-dds build now.
+  *(Annotated 2026-11-13, D9S pre-round: **kept for the base package** by the owner ruling of
+  2026-11-13, "Domain 9 (C ABI shim): …", Packaging ("keeps D-BIND-157 for the base package";
+  `plans/RIX-rulings.md`). The 12 MB ceiling stays on `Eiva.Fletcher.Interop`, which carries the edge
+  shim; whether the separate server package gets a ceiling of its own is not ruled (domain-10
+  question, `docs/domains/d9-c-abi-shim.md` §6, Q5a). The text above is kept as ruled.)*
 
 - **D-BIND-158 - `Eiva.Fletcher.Protoc` carries `fletcher/options.proto`, and wires it into
   `Grpc.Tools` projects.** *LOCKED BY THE MAINTAINER 2026-10-22 (BIND-9b Q6, revised with the
@@ -3978,6 +4016,7 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   README's commands are single lines and it holds no backslash, the stamping target says why, and the comparison stays the guard; escaping `\` as `%5C`
   in `Directory.Build.targets` was the alternative, not taken (untestable here: Windows does not
   convert).
+  *Extended 2026-11-16 (D10C-5, ledger :605 (2)) to five packages / two shims (:337 (1)): the server package `Eiva.Fletcher.Server` carries the server shim and depends on `Eiva.Fletcher.Interop`; text kept.*
 - **D-BIND-174 - 9b-8 is the fresh-context review of BIND-9b and a merge runbook; the
   `0.6.0-alpha` bump and the preview retirement are the last two commits before the merge.**
   *LOCKED BY THE MAINTAINER 2026-10-27 (BIND-9b-8, option A of two).* BIND-T and BIND-10 still
@@ -4025,6 +4064,25 @@ glibc 2.38 comes from five `__isoc23_*` functions (the build image's headers) an
   C++ libraries (static Conan packages) and `gateway-client-ts` (which a bundler merges into a
   web application) raise the same section 4(d)(0) question for their consumers; they are outside
   this ruling.
+  *Annotated 2026-11-16 (ledger :624, owner rulings on `LICENSE-EXCEPTION` v1.1's open issues; text kept):*
+  *(1) v1.1's provisions stand as drafted: wrapper SDKs allowed; LGPL section 4's chapeau kept; every
+  deployment form, 4(e) waived; C++/TS disclosure only; a named assembly list; previews are not Releases;
+  generated output tied to an unmodified released generator; later exception versions selectable.
+  (2) The whole-Program framing with section 5, the eligible-process line, no governing-law clause and
+  section 6 are accepted; 4(b)/(c) for single-file, mobile and embedded builds is a stated limitation
+  (`LICENSE-EXCEPTION:102-104`). (3) The author question above is answered: the noreply-account commits
+  are EIVA employees' work, so EIVA holds the copyright and can grant the exception, and the generators do
+  not reproduce library code. (5) The new risks the walkthrough listed are accepted. (4), the repo changes,
+  was execution and has landed. The walkthrough's `license-exception-revision-notes.md` is not in git.*
+  *Annotated 2026-11-16 (ledger :636, m6): friend assemblies need no code change; the exception's text alone
+  (code reaching a Covered Library's non-public members is not an Independent Module, `LICENSE-EXCEPTION:57`)
+  carries it; strong-naming and a separate test build were declined.*
+  *Annotated 2026-11-17 (ledger :677, :694 (3)): **approved by EIVA legal 2026-11-17; wired (packed, CI,
+  Releases).** The DRAFT status above is lifted: `LICENSE-EXCEPTION` is packed beside `LICENSE` and
+  `COPYING` in the packages named above, staged by CI, required by the package checks and attached to
+  Releases, and the READMEs and CONTRIBUTING say what it permits. Per its section 9 it takes effect with
+  the first Release that carries it. `PackageLicenseExpression` stays `LGPL-3.0-or-later`. REUSE.toml (M9)
+  may land. Text above kept.*
 - **D-BIND-176 - the NuGet packages go to nuget.org, pushed from a GitHub-hosted runner with
   Trusted Publishing; there is no self-hosted runner and no internal feed.** *LOCKED BY THE
   MAINTAINER 2026-10-28 (BIND-9b review Q2, recast).* The maintainer's correction: Fletcher is a

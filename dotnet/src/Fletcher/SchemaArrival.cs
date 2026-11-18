@@ -227,8 +227,26 @@ public sealed class SchemaArrival : IDisposable
                 "a negative timeout is refused: use Timeout.InfiniteTimeSpan to wait without a deadline");
         }
 
-        double total = timeout.TotalMilliseconds;
-        return total >= long.MaxValue ? long.MaxValue : (long)total;
+        return ToNativeMilliseconds(timeout);
+    }
+
+    /// <summary>
+    /// THE ONE place a <see cref="TimeSpan"/> becomes the ABI's <c>int64_t</c> milliseconds
+    /// (BC-14; d10 L12): <see cref="Timeout.InfiniteTimeSpan"/> is INT64_MAX (no deadline);
+    /// otherwise whole milliseconds, truncated toward zero when non-negative and FLOORED when
+    /// negative, so -1 tick crosses as -1 and is refused by whoever owns the rule, never
+    /// rounded to 0. Refuses nothing itself.
+    /// </summary>
+    internal static long ToNativeMilliseconds(TimeSpan timeout)
+    {
+        if (timeout == Timeout.InfiniteTimeSpan)
+        {
+            return long.MaxValue;
+        }
+
+        long ticks = timeout.Ticks;
+        long whole = ticks / TimeSpan.TicksPerMillisecond;
+        return ticks < 0 && ticks % TimeSpan.TicksPerMillisecond != 0 ? whole - 1 : whole;
     }
 
     /// <summary>Release the arrival handle.</summary>

@@ -18,6 +18,17 @@ if(MSVC)
     endif()
 endif()
 
+# Which build of the shim this configure makes (d9 L12, BC-10, BC-11): `edge`, the
+# build that runs on embedded devices and never links Arrow C++, or `server`, made
+# from the same sources and answering "server" to `fl_binding_variant`. The Conan
+# recipe's `variant` option passes it; a direct configure gets `edge`. Anything
+# else is refused here, because a third build value has no meaning.
+set(FLETCHER_SHIM_VARIANT "edge" CACHE STRING "Which shim build to make: edge or server")
+set_property(CACHE FLETCHER_SHIM_VARIANT PROPERTY STRINGS edge server)
+if(NOT FLETCHER_SHIM_VARIANT STREQUAL "edge" AND NOT FLETCHER_SHIM_VARIANT STREQUAL "server")
+    message(FATAL_ERROR "FLETCHER_SHIM_VARIANT is '${FLETCHER_SHIM_VARIANT}': it must be 'edge' or 'server'")
+endif()
+
 find_package(fletcher-pubsub CONFIG REQUIRED)
 find_package(fletcher-fastdds-pubsub-provider CONFIG REQUIRED)
 find_package(fletcher-xrcedds-pubsub-provider CONFIG REQUIRED)
@@ -103,6 +114,41 @@ set_target_properties(fletcher-c-abi PROPERTIES
 
 target_compile_definitions(fletcher-c-abi PRIVATE FLETCHER_C_ABI_BUILDING)
 
+# The per-target constant BC-10's single site (src/binding_version.c) answers with,
+# and the server build's own file name (owner ruling 2026-11-13), so both builds can
+# sit in one folder. OUTPUT_NAME renames the DLL, its import library and the .so (and
+# its SONAME); the CMake target stays `fletcher-c-abi` for every consumer. The name
+# follows the variant on every configure, so a direct configure and a folder
+# reconfigured from one variant to the other both get the right file. The Conan
+# recipe names the same file when it packages, and refuses an empty copy.
+#
+# The same block picks the backend of `fl_subscriber_subscribe_batches` (D9S-4), because the two
+# facts are one: the server shim links domain 7's batcher (`batches_server.cpp`, the only place
+# Arrow C++ enters a shim); the edge shim and the probe shim get `batches_edge.cpp`, which names no
+# Arrow. Each backend `static_assert`s the constant above, so a backend in the wrong artefact does
+# not compile. PRIVATE like every other link here: no consumer needs an Arrow header, and the
+# visibility settings, the version script and `--exclude-libs` below keep Arrow's symbols out of the
+# export table.
+if(FLETCHER_SHIM_VARIANT STREQUAL "server")
+    find_package(fletcher-pubsub-arrow CONFIG REQUIRED)
+    target_compile_definitions(fletcher-c-abi PRIVATE FLETCHER_C_ABI_VARIANT=FL_VARIANT_SERVER)
+    set_target_properties(fletcher-c-abi PROPERTIES OUTPUT_NAME fletcher-c-abi-server)
+    target_sources(fletcher-c-abi PRIVATE src/batches_server.cpp)
+    target_link_libraries(fletcher-c-abi PRIVATE
+        fletcher-pubsub-arrow::fletcher-pubsub-arrow)
+    # A fourth domain-7 batch reason (d7 Q4) must fail the build in batches_server.cpp's reason
+    # `switch` (no `default`), never cross as 0 (design debt DEBT-2): the "enumerator not handled"
+    # warning is an error for this one file.
+    if(MSVC)
+        set_source_files_properties(src/batches_server.cpp PROPERTIES COMPILE_OPTIONS "/we4062")
+    else()
+        set_source_files_properties(src/batches_server.cpp PROPERTIES COMPILE_OPTIONS "-Werror=switch")
+    endif()
+else()
+    target_compile_definitions(fletcher-c-abi PRIVATE FLETCHER_C_ABI_VARIANT=FL_VARIANT_EDGE)
+    target_sources(fletcher-c-abi PRIVATE src/batches_edge.cpp)
+endif()
+
 # ...and the half of the same rule that visibility settings cannot reach on
 # gcc/clang: CXX_VISIBILITY_PRESET governs only THIS target's own translation
 # units, while symbols arriving from a static archive keep the visibility they
@@ -181,6 +227,7 @@ if(FLETCHER_BUILD_PROBE_SHIM)
     add_library(fletcher-c-abi-probe SHARED
         src/binding_version.c
         src/binding.cpp
+        src/batches_edge.cpp
         probe/src/builtins_probe.cpp
         probe/src/probe_exports.cpp)
     target_compile_features(fletcher-c-abi-probe PRIVATE c_std_99 cxx_std_20)
@@ -188,7 +235,9 @@ if(FLETCHER_BUILD_PROBE_SHIM)
         C_VISIBILITY_PRESET hidden
         CXX_VISIBILITY_PRESET hidden
         VISIBILITY_INLINES_HIDDEN ON)
-    target_compile_definitions(fletcher-c-abi-probe PRIVATE FLETCHER_C_ABI_BUILDING)
+    # The probe shim is always the edge build (D-BIND-62), in whatever package.
+    target_compile_definitions(fletcher-c-abi-probe PRIVATE FLETCHER_C_ABI_BUILDING
+        FLETCHER_C_ABI_VARIANT=FL_VARIANT_EDGE)
     if(NOT MSVC)
         target_link_options(fletcher-c-abi-probe PRIVATE
             "LINKER:--exclude-libs,ALL"

@@ -16,13 +16,14 @@
 
 Arrow-typed publish/subscribe for .NET over Fletcher's one wire format, with the codec running
 natively. Version `@VERSION@`, built from commit `@COMMIT@` of
-[eivacom/Fletcher](https://github.com/eivacom/Fletcher). The four packages share one version and
+[eivacom/Fletcher](https://github.com/eivacom/Fletcher). The five packages share one version and
 are used together at the same version.
 
 | Package | What it is | Native assets |
 |---|---|---|
 | `Eiva.Fletcher` | Publishers, subscribers, the codec and the Arrow tier, over a provider chosen by name (`inprocess`, `fastdds`, `xrce`) | through `Eiva.Fletcher.Interop` |
-| `Eiva.Fletcher.Interop` | The P/Invoke surface and the native shim for `linux-x64` and `win-x64`; referenced by `Eiva.Fletcher`, not used directly | **yes**, `runtimes/{rid}/native/` |
+| `Eiva.Fletcher.Interop` | The P/Invoke surface and the native shim for `linux-x64` and `win-x64`, the small one that never carries Arrow C++; referenced by `Eiva.Fletcher`, not used directly | **yes**, `runtimes/{rid}/native/` |
+| `Eiva.Fletcher.Server` | The server build of the shim for `linux-x64` and `win-x64`, which adds Arrow C++ and Fletcher's one batcher; add it beside `Eiva.Fletcher`, and only when you want that build. It depends on `Eiva.Fletcher.Interop` and has no assembly of its own | **yes**, `runtimes/{rid}/native/` |
 | `Eiva.Fletcher.GatewayClient` | A managed WebSocket client for the Fletcher gateway | none |
 | `Eiva.Fletcher.Model` | The types generated C# refers to: lossless `Timestamp` and `Duration`, `ListView` and `MapView` | none |
 
@@ -143,14 +144,14 @@ publisher.Publish(fixes);
 
 **5. Or receive them as Arrow batches**, for volume: `SubscriberArrow` collects rows into a
 window, flushed at `MaxRows` or after `Timeout` (8000 rows or one minute by default), and the
-generated accessor reads the batch, as model objects (`ToRow`) or in place (`At`). An Arrow
-subscriber reads rows with the topic's schema, which comes from its publisher. Over `fastdds` the
-schema arrives with the data, so the order does not matter. Over the default `inprocess` provider,
-a subscription made before the topic is declared stays without a schema, and every row on it is
-dropped and counted, so declare the publisher first. The handler owns the batch, and its calls are
-not serialised: a window flushed at `MaxRows` runs on the delivery thread, one flushed by `Timeout`
-on a timer thread, and the last one on the thread that unsubscribes, so two may run at once and
-complete out of order.
+generated accessor reads the batch, as model objects (`ToRow`) or in place (`At`). Batches need
+the server build of the shim: add `Eiva.Fletcher.Server` beside `Eiva.Fletcher`. Without it,
+`SubscribeBatched` throws a `FletcherException` with status `NotSupported` that names the package;
+publishing and subscribing row by row work on either build. An Arrow subscriber reads rows with the
+topic's schema, which comes from its publisher. Rows that arrive before the schema do not stop the
+subscription: they are counted as dropped (`RowsDropped`), and assembly starts once the schema
+arrives, so declare the publisher first to lose none. The handler owns the batch, and its calls
+come one at a time, in window order, on the subscription's own thread.
 
 <!-- snippet: native-batch -->
 ```csharp
@@ -222,38 +223,43 @@ A row handler runs on the provider's or the client's delivery thread, one call a
 into a plain list; over `fastdds` and through a gateway it is another thread, so hand rows to a queue
 or a collection that is safe to use from it.
 
-## The native shim (`Eiva.Fletcher`, `Eiva.Fletcher.Interop`)
+## The native shims (`Eiva.Fletcher.Interop`, `Eiva.Fletcher.Server`)
 
 `Eiva.Fletcher.Interop` carries one native file per platform, the shim `fletcher-c-abi`. It is
 self-contained: Fletcher's core, pub/sub and providers, Fast DDS, Micro XRCE-DDS and nanoarrow are
-linked into it. `Eiva.Fletcher.GatewayClient` and `Eiva.Fletcher.Model` load no native code, and
-nothing in this section applies to them.
+linked into it. `Eiva.Fletcher.Server` carries one native file per platform too, the server build
+`fletcher-c-abi-server`, which links Arrow C++ and the batcher as well, and nothing else: it has no
+assembly. An application that references only `Eiva.Fletcher` gets the small shim; one that also
+references `Eiva.Fletcher.Server` has both files and loads the server build, one shim per
+process. `Eiva.Fletcher.GatewayClient` and `Eiva.Fletcher.Model` load no native code, and nothing
+in this section applies to them.
 
 ### Platform requirements
 
-The shim is built with Fletcher's two Conan build profiles, and each profile sets the floor of
+Both shims are built with Fletcher's two Conan build profiles, and each profile sets the floor of
 the machines it runs on:
 
 - **linux-x64**, built with GCC 13 (profile `Linux-gcc13-x86_64-Release`): glibc 2.34 and the
   GCC 13 C++ runtime (`libstdc++` with `GLIBCXX_3.4.32`) or newer, for example Ubuntu 24.04,
-  Debian 13 or RHEL 10. The shim loads only `libstdc++`, `libgcc_s`, `libm` and `libc`. Every
+  Debian 13 or RHEL 10. Each shim loads only `libstdc++`, `libgcc_s`, `libm` and `libc`. Every
   pull request runs a consumer of these packages on a minimal Ubuntu 24.04 that has only .NET.
 - **win-x64**, built with the Visual Studio 2022 C++ tools, MSVC 14.40 (profile
   `Windows-msvc194-x86_64-Release`): the Visual C++ 2015-2022 redistributable (x64), 14.40 or
-  newer. Otherwise the shim loads only DLLs every Windows has.
+  newer. Otherwise each shim loads only DLLs every Windows has.
 
-Below the floor the shim does not load, and `Eiva.Fletcher.Interop` says so: its message quotes
+Below the floor a shim does not load, and `Eiva.Fletcher.Interop` says so: its message quotes
 the operating system's reason (for example a missing `GLIBCXX_3.4.32`) and states the floor.
 
 When the shim is loaded, `Eiva.Fletcher.Interop` checks that it speaks the binding ABI this
 package was built against, and refuses one that does not, with a message saying so. It does not
 check the package version or the commit, so use a shim built from the commit this package names.
 
-### Replacing the shim (LGPL-3.0)
+### Replacing a shim (LGPL-3.0)
 
 Fletcher is licensed under the LGPL-3.0-or-later (`LICENSE` in this package, with `COPYING`, the
 GNU GPL-3.0 text it incorporates). The shim is a shared library that the .NET assembly loads at run
 time, so you may replace it with one you build from the corresponding source, commit `@COMMIT@`.
+The commands below build the small shim of `Eiva.Fletcher.Interop`; the server route follows them.
 With [Conan 2](https://conan.io), CMake 3.20 or newer (the XRCE-DDS provider requires it) and
 the C++ toolchain the profile names (GCC 13 on Linux, the Visual Studio 2022 C++ tools, MSVC
 14.4x, on Windows), where `<profile>` is `Linux-gcc13-x86_64-Release` or
@@ -281,13 +287,63 @@ The shim is then `shim/direct_deploy/fletcher-c-abi/lib/libfletcher-c-abi.so` (L
 of the same name under `runtimes/<rid>/native/` in this package, or of the copy beside your
 published application.
 
+**The server shim** (`Eiva.Fletcher.Server`) is rebuilt the same way, from its own lockfile,
+`fletcher-shim-server-<rid>.conan.lock`, attached to the same release (in a preview bundle, in its
+`nuget/` folder), and with the two more recipes it links and the server variant:
+
+<!-- snippet: none -->
+```bash
+curl -fLO https://github.com/eivacom/Fletcher/releases/download/dotnet-v@VERSION@/fletcher-shim-server-<rid>.conan.lock
+for component in core pubsub arrow-bridge pubsub-arrow fastdds-pubsub-provider xrcedds-pubsub-provider c-abi; do
+  conan create $component --build=missing -pr:a=.conan-profiles/<profile> -o "fletcher-c-abi/*:variant=server" --lockfile=fletcher-shim-server-<rid>.conan.lock --lockfile-partial
+done
+conan install --requires="fletcher-c-abi/[*, include_prerelease]" -o "fletcher-c-abi/*:variant=server" --deployer=direct_deploy --deployer-folder=shim-server -pr:a=.conan-profiles/<profile> --lockfile=fletcher-shim-server-<rid>.conan.lock --lockfile-partial
+```
+
+The server shim is then `shim-server/direct_deploy/fletcher-c-abi/lib/libfletcher-c-abi-server.so`
+(Linux) or `shim-server/direct_deploy/fletcher-c-abi/bin/fletcher-c-abi-server.dll` (Windows), to put
+in place of the file of that name under `runtimes/<rid>/native/` in `Eiva.Fletcher.Server`, or of
+the copy beside your published application.
+
 **NativeAOT.** The packages are trimming- and NativeAOT-compatible (a NativeAOT consumer is
 published and run in CI on Linux and Windows, for .NET 8 and .NET 10), and the shim stays a
 separate shared library beside a NativeAOT application. Linking the shim statically into the
 application is not supported, and an application that did so would form a different combined
 work under the LGPL, with the obligations that brings.
 
+## Licence: the Fletcher Linking Exception
+
+`Eiva.Fletcher`, `Eiva.Fletcher.Interop`, `Eiva.Fletcher.Model` and `Eiva.Fletcher.GatewayClient`
+carry `LICENSE-EXCEPTION` beside `LICENSE` and `COPYING`: the Fletcher Linking Exception, version
+1.1, an additional permission under section 7 of the GNU GPL-3.0 that EIVA A/S gives for Fletcher,
+approved by EIVA A/S's legal counsel. It takes effect for a Release that EIVA A/S publishes with it
+beside `LICENSE` and `COPYING` (its section 9). This is a summary; the text in the package is what
+grants the permission.
+
+It permits you to convey an application built with the four managed assemblies Fletcher,
+Fletcher.Interop, Fletcher.Model and Fletcher.GatewayClient, unmodified as a Release ships them,
+under terms of your choice, also when NativeAOT, ReadyToRun, single-file publishing or trimming
+compiles or merges them into your executable. You then need not meet LGPL sections 4(d) and 4(e)
+for those assemblies, but you still meet 4(a) to 4(c): state with the application that it uses
+Fletcher and that Fletcher is under the LGPL, ship `LICENSE` and `COPYING` with it, and show
+Fletcher's copyright notice where the application shows such notices; and your terms must not
+restrict modifying the assemblies' part of the work or reverse engineering to debug such changes.
+Code that `Eiva.Fletcher.Protoc` generates is covered too; its README says how.
+
+It does not extend to a modified assembly, which stays under the LGPL alone, nor to the native
+shims: the edge shim in `Eiva.Fletcher.Interop` and the server shim in `Eiva.Fletcher.Server` stay
+under the LGPL alone, so the relinking route above applies to them as before.
+`Eiva.Fletcher.Server`, which carries only the server shim, does not carry `LICENSE-EXCEPTION`.
+One limitation is stated: whether LGPL sections 4(b) and 4(c) can be met for a single-file, mobile
+or embedded build is unresolved, and the exception does not relax them.
+
+EIVA A/S's copy, in the Fletcher repository and its Releases, is the authoritative text; a copy
+changed by anyone else does not alter it. The earlier public draft (v1.0) in the repository's
+history was never in force.
+
 ## Third-party licences
 
-`THIRD-PARTY-LICENSES.txt` in this package lists the third-party libraries linked into the shim,
-with their licence texts.
+`THIRD-PARTY-LICENSES.txt` in this package lists the third-party libraries linked into the shim
+the package carries, with their licence texts. The server package's lists Arrow C++ and what it
+brings, and is one notice for both platforms: the union of the libraries of its two builds. The
+notice of every other package is the small shim's.

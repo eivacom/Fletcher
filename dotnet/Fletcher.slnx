@@ -7,15 +7,18 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Fletcher.Interop/Fletcher.Interop.csproj" />
+    <Project Path="src/Fletcher.Server/Fletcher.Server.csproj" />
     <Project Path="src/Fletcher/Fletcher.csproj" />
     <Project Path="src/Fletcher.GatewayClient/Fletcher.GatewayClient.csproj" />
     <Project Path="src/Fletcher.Model/Fletcher.Model.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Fletcher.CopyOracle.Tests/Fletcher.CopyOracle.Tests.csproj" />
+    <Project Path="tests/Fletcher.Handover.Tests/Fletcher.Handover.Tests.csproj" />
     <Project Path="tests/Fletcher.Tests/Fletcher.Tests.csproj" />
     <Project Path="tests/Fletcher.Model.Tests/Fletcher.Model.Tests.csproj" />
     <Project Path="tests/Fletcher.GatewayClient.Tests/Fletcher.GatewayClient.Tests.csproj" />
     <Project Path="tests/Fletcher.AotSmoke/Fletcher.AotSmoke.csproj" />
+    <Project Path="tests/Fletcher.TestHost/Fletcher.TestHost.csproj" />
   </Folder>
 </Solution>

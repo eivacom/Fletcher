@@ -27,6 +27,7 @@
 // its own - a valid bound, a defined profile - leaving the field-wise check as
 // the only thing that can refuse it.
 using System;
+using System.IO;
 using System.Threading;
 
 using Apache.Arrow;
@@ -347,15 +348,28 @@ public sealed class TopicOptionsOverFastDdsTests : IDisposable
     /// it can only do if it reached the provider as given, and one it does not define
     /// is refused. A SubscriberArrow that dropped the profile, or passed a different
     /// one, fails one half or the other. Both forms, per-row and batched.
+    ///
+    /// D10C-7 (audit 0a M2): the batched form is domain 7's from rung 7, so its half is
+    /// proved on the server shim (this lane's server pass); on the edge shim the batched
+    /// calls are the edge truth table, which proves nothing about options and claims nothing.
     /// </remarks>
     [Fact]
     public void ASubscriberArrowForwardsItsReaderProfileOnBothForms()
     {
         using var arrow = new SubscriberArrow(_provider);
         var profiled = new TopicOptions { Profile = Reader };
+        var undefined = new TopicOptions { Profile = "no_such_profile" };
+        bool server = File.Exists(Path.Combine(AppContext.BaseDirectory, ServerShimFileName));
 
         foreach (bool batched in new[] { false, true })
         {
+            if (batched && !server)
+            {
+                RefusedOnTheEdge(() => arrow.SubscribeBatched(
+                    Unique("arrowreaderbatched"), (_, _, _) => { }, new BatchOptions { MaxRows = 1 }, profiled));
+                continue;
+            }
+
             TopicPath topic = Unique(batched ? "arrowreaderbatched" : "arrowreader");
             using var seen = new ManualResetEventSlim(false);
             RecordBatchHandler handler = (batch, _, _) =>
@@ -380,10 +394,34 @@ public sealed class TopicOptionsOverFastDdsTests : IDisposable
             result.Subscription.Dispose();
         }
 
-        var undefined = new TopicOptions { Profile = "no_such_profile" };
         Refused(FletcherStatus.InvalidArgument,
             () => arrow.Subscribe(Unique("arrownoreader"), (_, _, _) => { }, undefined));
-        Refused(FletcherStatus.InvalidArgument,
-            () => arrow.SubscribeBatched(Unique("arrownoreaderbatched"), (_, _, _) => { }, null, undefined));
+        if (server)
+        {
+            Refused(FletcherStatus.InvalidArgument,
+                () => arrow.SubscribeBatched(Unique("arrownoreaderbatched"), (_, _, _) => { }, null, undefined));
+        }
+        else
+        {
+            RefusedOnTheEdge(() => arrow.SubscribeBatched(Unique("arrownoreaderbatched"), (_, _, _) => { }, null, undefined));
+        }
+    }
+
+    /// <summary>The server build's file name: its presence beside the tests is the server pass (d10 L5).</summary>
+    private static string ServerShimFileName =>
+        OperatingSystem.IsWindows() ? "fletcher-c-abi-server.dll" : "libfletcher-c-abi-server.so";
+
+    /// <summary>
+    /// The edge shim's answer to a batched subscribe (D10C-7; d10 L3 D29, L6; BC-10): NotSupported from
+    /// the seam, the shim's text first and then one sentence naming the server package.
+    /// </summary>
+    private static void RefusedOnTheEdge(Func<SubscribeResult> subscribe)
+    {
+        FletcherException refused = Assert.Throws<FletcherException>(() => subscribe().Schema.Dispose());
+        Assert.Equal(FletcherStatus.NotSupported, refused.Status);
+        Assert.Equal(FletcherOrigin.Seam, refused.Origin);
+        Assert.StartsWith("fl_subscriber_subscribe_batches: the edge build of the shim carries no batcher",
+            refused.Message, StringComparison.Ordinal);
+        Assert.Contains("Eiva.Fletcher.Server", refused.Message, StringComparison.Ordinal);
     }
 }

@@ -73,21 +73,21 @@
 //
 //   A DECLARATION IS EXPORTED ONLY ONCE ITS ITEM LANDS. Nothing here is ever
 //   stubbed out to return FL_NOT_SUPPORTED because it has not been written yet -
-//   that status means "this build cannot do the thing", which is a different and
-//   much more confusing statement than "not linked yet".
+//   that status means "this provider or this build cannot do the thing", not
+//   "not linked yet". A build that cannot do a thing still exports it and
+//   refuses with FL_NOT_SUPPORTED (the edge build's batched entry points, d9
+//   L12); a caller asks which build it holds with the variant query (d9 L16).
 //
-// So an unimplemented entry point is a LINK ERROR, not a run-time surprise, and
-// `fl_binding_abi_version()` is the run-time handshake for everything else: it
-// answers for the shim actually loaded, so a binding compiled against a different
-// FL_BINDING_ABI_VERSION can refuse it rather than crash inside a struct whose
-// layout moved.
-//
-// Which items have landed is deliberately NOT listed here. That inventory has one
-// maintained home - the round's tracker, `plans/BIND-csharp-bindings.md` - and a
-// second copy in a header nobody edits at an item boundary is a copy that goes
-// stale silently. (It did: this paragraph claimed for a while that only
-// `fl_binding_abi_version()` existed, some fifteen entry points after that
-// stopped being true.)
+// So, statically linked, an unimplemented entry point is a LINK ERROR (through
+// P/Invoke, an error at its first call), and `fl_binding_abi_version()` is the
+// run-time handshake for everything else: it answers for the shim actually
+// loaded, so a binding built against another FL_BINDING_ABI_VERSION refuses it
+// rather than crash inside a struct whose layout moved.
+// Which items have landed, and which build implements what, is NOT listed here:
+// its one maintained home is `docs/domains/d9-c-abi-shim.md` (L6, L12, L16), and
+// the loaded shim answers at run time. A second copy in a header nobody edits at
+// an item boundary goes stale silently (it did: this paragraph once claimed only
+// `fl_binding_abi_version()` existed, fifteen entry points after that was false).
 #ifndef FLETCHER_C_ABI_INCLUDE_FLETCHER_ABI_BINDING_H_
 #define FLETCHER_C_ABI_INCLUDE_FLETCHER_ABI_BINDING_H_
 
@@ -161,7 +161,7 @@ extern "C" {
  * fl_binding_abi_version() at load time; `Eiva.Fletcher.Interop` does exactly
  * that in its static constructor. */
 #define FL_BINDING_ABI_VERSION_MAJOR 0
-#define FL_BINDING_ABI_VERSION_MINOR 7
+#define FL_BINDING_ABI_VERSION_MINOR 8
 #define FL_BINDING_ABI_VERSION                                   \
     ((uint32_t)(((uint32_t)FL_BINDING_ABI_VERSION_MAJOR << 16) | \
                 (uint32_t)FL_BINDING_ABI_VERSION_MINOR))
@@ -170,6 +170,21 @@ extern "C" {
  *
  * Callable before anything else and from any thread; it touches no state. */
 FL_ABI_EXPORT uint32_t fl_binding_abi_version(void);
+
+/* Which build of the shim is loaded (d9 L16). One vocabulary for every build;
+ * values are only ever appended, and 0 is never a build. */
+typedef enum fl_variant {
+    FL_VARIANT_EDGE = 1,   /* the embedded-capable build: no Arrow C++ */
+    FL_VARIANT_SERVER = 2, /* the server build, which adds batched subscribe */
+} fl_variant;
+
+/* The build of the loaded shim.
+ *
+ * Callable first, before anything else, and from any thread, like
+ * fl_binding_abi_version(); it touches no state, has no error path, and still
+ * answers in a shim that refuses every other call because a second copy is
+ * loaded. Both builds share one ABI version, so this is how they are told apart. */
+FL_ABI_EXPORT fl_variant fl_binding_variant(void);
 
 /* ══ Status ════════════════════════════════════════════════════════════════ */
 
@@ -210,8 +225,8 @@ typedef enum fl_status {
      * write that did not go out, a session that is gone. */
     FL_TRANSPORT_FAILURE = 5,
 
-    /* This provider does not implement the requested behaviour. Distinct from
-     * FL_REENTRANT_CALL, which says "not from there". */
+    /* This provider, or this build, cannot do the requested thing (d9 L12, D28).
+     * Distinct from FL_REENTRANT_CALL, which says "not from there". */
     FL_NOT_SUPPORTED = 6,
 
     /* The total catch-all. Anything with no better home arrives here carrying
@@ -247,9 +262,12 @@ typedef enum fl_status {
  * FL_INTERNAL, a defect - neither is malformed input. */
 typedef enum fl_origin {
     FL_ORIGIN_NONE = 0,    /* status == FL_OK */
-    FL_ORIGIN_SEAM = 1,    /* a PubSubError, or a std::exception, from the seam */
+    FL_ORIGIN_SEAM = 1,    /* a PubSubError, or a std::exception, from the seam, or the shim's own
+                              refusal of an argument or of a call this build cannot serve */
     FL_ORIGIN_CODEC = 2,   /* malformed bytes: the positional reader, envelope parsing */
-    FL_ORIGIN_CALLBACK = 3 /* a caller-supplied writer or handler reported failure */
+    FL_ORIGIN_CALLBACK = 3, /* a caller-supplied writer or handler reported failure */
+    FL_ORIGIN_HANDOVER = 4  /* the shim could not hand a closed window over to a batch callback
+                               (server build; only ever in fl_batch.failure, since ABI 0.8) */
 } fl_origin;
 
 /* A failure, carried by value to the caller and owned by it.
@@ -274,6 +292,11 @@ typedef enum fl_origin {
  * Zero-initialise before the call (`fl_error err = {0};`). On FL_OK the callee
  * leaves it untouched. On failure the caller owns `message` and releases it with
  * fl_error_dispose, which is why every binding's throw site is a `finally`.
+ *
+ * ONE EXCEPTION, BORROWED: the fl_error a batch callback finds in
+ * `fl_batch.failure` (a window the shim could not hand over) is the shim's, valid
+ * for the call like the rest of the batch. Copy the message to keep it; never pass
+ * it to fl_error_dispose. The shim disposes it when the callback returns.
  *
  * ── The other direction: an fl_error a CALLBACK fills (D-BIND-32) ───────────
  * Everything above describes the SHIM filling an error for the caller. The
@@ -841,11 +864,24 @@ FL_ABI_EXPORT fl_status fl_subscriber_create(fl_provider* provider, fl_subscribe
 
 /* Destroy a subscriber.
  *
- * DESTRUCTION REQUIRES QUIESCENCE, and from inside a delivery on this same
- * subscriber it is not merely refused - the seam's answer is process
- * termination, by design, because the alternative is to leak the transport
- * subscription silently. A binding must refuse this call in its own code, with
- * its own exception, before it can reach the shim (D-BIND-18). */
+ * DESTRUCTION REQUIRES QUIESCENCE, and from inside a ROW delivery on any
+ * subscriber over the same provider (this one, a batched-only one included) it is
+ * not merely refused - the seam's answer is process termination, by design,
+ * because the alternative is to leak the transport subscription silently. A
+ * binding must refuse this call in its own code, with its own exception, before
+ * it can reach the shim (D-BIND-18).
+ *
+ * BATCHED SUBSCRIPTIONS (server build; fl_subscriber_subscribe_batches). Every
+ * batched subscription ends with EXACTLY ONE FL_BATCH_CLOSING delivery, last: the
+ * last window, or an empty one when nothing is pending (an empty table of the
+ * topic's schema once a row has brought a usable schema; `array` NULL before). It is the last
+ * use of that subscription's `on_batch` and `ctx`. Outside a batch callback this
+ * BLOCKS until running batch callbacks finish, and the queued batches, then
+ * CLOSING, are delivered on another thread before it returns: do not hold across
+ * it a lock a batch callback takes. Once it returns nothing runs, so `ctx` may be
+ * freed then. From INSIDE a batch callback it returns without waiting for that
+ * subscription; the queued batches, then CLOSING, arrive afterwards on the batch
+ * thread, and `ctx` may be freed in or after that CLOSING delivery. */
 FL_ABI_EXPORT void fl_subscriber_destroy(fl_subscriber* subscriber);
 
 /* Delivery: raw encoded row bytes, the topic's schema, and any attachments.
@@ -911,7 +947,9 @@ FL_ABI_EXPORT fl_status fl_subscriber_subscribe_with_options(
  * running has finished - for as long as that handler takes, unbounded. On return
  * nothing is running and nothing will run, so the binding may free the context at
  * once. A binding that calls this while holding a lock its own handler takes will
- * deadlock.
+ * deadlock. This holds for ROW ids only: a batched id (bit 63) is not cancelled -
+ * FL_OK is returned, its batches continue and `ctx` stays live until it is closed
+ * with fl_subscriber_unsubscribe_batches or the subscriber is destroyed.
  *
  * FROM INSIDE A DELIVERY ON THIS SUBSCRIBER it is served rather than refused, as a
  * documented carve-out, and it does NOT wait: a cancellation cannot wait for the
@@ -967,6 +1005,128 @@ FL_ABI_EXPORT fl_status fl_subscriber_subscribe_schema(fl_subscriber* subscriber
  * subscriber's to release later or at destruction. */
 FL_ABI_EXPORT fl_status fl_subscriber_unsubscribe_schema(fl_subscriber* subscriber, fl_topic topic,
                                                          fl_error* err);
+
+/* ── Batched subscribe (d9 L12, L14, L15; domain 7) ─────────────────────── */
+
+/* Why a window closed: domain 7's three reasons, as fl_batch.reason values. 0 is
+ * never a reason, so a zeroed field cannot pass for one. */
+#define FL_BATCH_ROW_LIMIT 1 /* max_rows reached, or the offset budget */
+#define FL_BATCH_TIMEOUT 2   /* the window's deadline passed */
+#define FL_BATCH_CLOSING 3   /* the subscription is closing */
+
+/* One closed window, handed to a batch callback. Written by the shim, read through
+ * a pointer, and EVERYTHING IT POINTS TO IS BORROWED FOR THE CALL.
+ *
+ * `array` and `schema` are an Arrow C Data array and schema. A binding keeps the
+ * batch only by Arrow's move: it copies each struct and sets the source's `release`
+ * to NULL. Whatever still has a non-NULL `release` when the callback returns, the
+ * shim releases then, exactly once.
+ *
+ * `array == NULL` (and then `schema == NULL`, `num_rows == 0`) means NO BATCH COULD
+ * BE BUILT for this window (no usable schema, a rejected schema, or a failure
+ * finishing it), or the shim could not hand it over, and then `failure` says why;
+ * `rows_dropped` counts the window's rows in every such case. That
+ * differs from a zero-row batch (`array != NULL`, `num_rows == 0`), which a window
+ * of only dropped rows can be. `rows_dropped` is domain 7's count, as given.
+ *
+ * `attachments` is each row's attachments, beside that row: `num_rows` entries, in
+ * row order, entry i belonging to row i of `array`. NO ENTRY IS NULL: a row that
+ * had no attachments gets an EMPTY set (fl_attachments_size == 0). The list is NULL
+ * exactly when `num_rows == 0` (no batch, or a zero-row one). It is the same type
+ * fl_publisher_publish_rows takes as `atts_per_row`, and it is BORROWED like the
+ * rest of the batch: every set and every value is valid for the call only, a
+ * program never disposes them, and keeps a value past the call only by
+ * fl_blob_retain.
+ *
+ * `failure` is NULL unless the shim could not hand this window over (d9 L18): an
+ * allocation or export failure in the shim, after domain 7 delivered the window.
+ * The window still arrives, once, as no batch, with its own `reason` (CLOSING
+ * included) and its rows in `rows_dropped`; `failure` carries the status
+ * (FL_INTERNAL), FL_ORIGIN_HANDOVER and the message. It is BORROWED like the rest:
+ * copy the message to keep it, never dispose it. Out of memory, the message may
+ * be empty; the status and origin still cross. Since ABI 0.8. */
+typedef struct fl_batch {
+    int32_t reason;             /* an FL_BATCH_* value */
+    int64_t rows_dropped;       /* rows lost since the previous window; 0 == all good */
+    int64_t num_rows;           /* rows in `array`; 0 when there is no array */
+    struct ArrowArray* array;   /* NULL: no batch could be built */
+    struct ArrowSchema* schema; /* NULL exactly when `array` is NULL */
+    const fl_attachments* const* attachments; /* `num_rows` sets, none NULL; NULL iff num_rows == 0 */
+    const fl_error* failure;  /* NULL unless the hand-over failed; borrowed, never disposed */
+} fl_batch;
+
+/* Invoked once per window, on domain 7's batch thread: one batch at a time, in window
+ * order. The callback must not throw. */
+typedef void (*fl_batch_fn)(void* ctx, const fl_batch* batch);
+
+/* Subscribe to a topic's rows assembled into Arrow batches. SERVER BUILD ONLY.
+ * Since ABI 0.8.
+ *
+ * Domain 7 closes a window at `max_rows` rows, at its deadline, on the offset
+ * budget, or when the subscription closes, and each closed window reaches
+ * `on_batch` as one fl_batch. NEVER BLOCKS. `out_id` and `out_arrival` are written
+ * only on success, as fl_subscriber_subscribe's are; the arrival is the topic's
+ * schema, and the caller owns it and disposes it.
+ *
+ * IDS. A batched id has bit 63 set and a row id never does (a counter starting at 1
+ * would need 2^63 subscriptions to reach it), so the two can never be confused.
+ * fl_subscriber_unsubscribe is unchanged: it treats a batched id as unknown and
+ * answers FL_OK without stopping its batches or releasing `ctx`. A batched
+ * subscription is ended by fl_subscriber_unsubscribe_batches, or by
+ * fl_subscriber_destroy with every other subscription of its subscriber. The callback is not
+ * given an id: no batch is delivered unless the call succeeds, but the first may arrive
+ * while it is returning, before `out_id` is written: correlate by `ctx`.
+ *
+ * THREADS. `on_batch` runs on domain 7's batch thread, one batch at a time, in
+ * window order. A REFUSED call (any status but FL_OK) never delivers anything, so
+ * `ctx` may be freed as soon as it returns.
+ *
+ * OPTIONS. `max_rows` and `timeout_ms` go to domain 7 as given: INT64_MAX means no
+ * timeout. A value out of range is refused by domain 7 (FL_INVALID_ARGUMENT, its
+ * message); the shim checks neither. `options` is fl_subscriber_subscribe_with_options'.
+ *
+ * SAME TOPIC, ONE PROVIDER. One provider allows one callback per topic per
+ * instance, and batched subscriptions run on a second subscriber of the provider,
+ * so a row subscription and a batched one to the same topic through one provider
+ * collide, as two subscriber handles do. On `inprocess` the later silently replaces
+ * the earlier: the earlier stops receiving, with no signal (an arrival still pending
+ * then answers FL_SUBSCRIPTION_ENDED; one already ready stays ready). On `fastdds`
+ * the later is refused with FL_INVALID_ARGUMENT ("already subscribed"). Batched
+ * subscriptions to one topic share one provider subscription, as row ones do.
+ * fl_subscriber_destroy ends both kinds.
+ *
+ * THE EDGE BUILD answers FL_NOT_SUPPORTED whatever the arguments, with
+ * FL_ORIGIN_SEAM and a message naming the edge build and `fletcher-c-abi-server`.
+ * Its outputs are untouched and nothing is stored. Ask fl_binding_variant to know
+ * first. On the server build every other rule is fl_subscriber_subscribe's. */
+FL_ABI_EXPORT fl_status fl_subscriber_subscribe_batches(
+    fl_subscriber* subscriber, fl_topic topic, int64_t max_rows, int64_t timeout_ms,
+    const fl_topic_options* options, fl_batch_fn on_batch, void* ctx, uint64_t* out_id,
+    fl_schema_arrival** out_arrival, fl_error* err);
+
+/* End one batched subscription. SERVER BUILD ONLY. Since ABI 0.8.
+ *
+ * OUTSIDE ANY BATCH CALLBACK THIS BLOCKS: every finished batch, then exactly one
+ * closing batch (FL_BATCH_CLOSING; empty when nothing is pending, as
+ * fl_subscriber_destroy describes), is delivered on domain 7's batch thread before
+ * it returns, and nothing is delivered for this id afterwards, so `ctx` may be
+ * freed then. Do not hold across it a lock a batch callback takes.
+ *
+ * From this subscription's own batch callback, or from a row delivery on the same
+ * provider, it does not wait (d7 L9); what then arrives, and when `ctx` may be
+ * freed, is as fl_subscriber_destroy describes for a destroy from inside a batch
+ * callback. Closing ANOTHER batched subscription from inside a batch callback does
+ * wait, so two callbacks that close each other hang.
+ *
+ * IDS. `subscription_id` is the id fl_subscriber_subscribe_batches wrote, on this
+ * subscriber. An id with bit 63 clear is not a batched id: FL_INVALID_ARGUMENT,
+ * and nothing is closed. A batched id that is no longer live (closed already) is
+ * a no-op answering FL_OK. Other subscriptions are untouched.
+ *
+ * THE EDGE BUILD answers FL_NOT_SUPPORTED whatever the arguments, as it answers
+ * fl_subscriber_subscribe_batches. */
+FL_ABI_EXPORT fl_status fl_subscriber_unsubscribe_batches(fl_subscriber* subscriber,
+                                                          uint64_t subscription_id, fl_error* err);
 
 /* ══ The codec ═════════════════════════════════════════════════════════════ */
 

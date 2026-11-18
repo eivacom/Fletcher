@@ -3,11 +3,13 @@
 -->
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- The P/Invoke surface over the binding ABI, and the ONLY package in the
-       round that carries native assets: one shim per RID under
-       runtimes/<rid>/native/. Keeping them in one package is what isolates the
-       RID matrix, the packed-size budget and the LGPL relinking question to a
-       single artifact (D-BIND-13). -->
+  <!-- The P/Invoke surface over the binding ABI, and the package that carries the EDGE
+       shim, one per RID under runtimes/<rid>/native/. Native code ships only in shim
+       packages, one shim per package (d10 L15): this one and Eiva.Fletcher.Server, which
+       carries the server shim and depends on this one; every other package is asset-free
+       (BC-17, checked on the packed packages). Keeping each shim in a package of its own
+       isolates the RID matrix, the packed-size budget and the LGPL relinking question to
+       one artifact per shim (D-BIND-13, extended by D10C-5). -->
   <PropertyGroup>
     <PackageId>Eiva.Fletcher.Interop</PackageId>
     <RootNamespace>Eiva.Fletcher.Interop</RootNamespace>

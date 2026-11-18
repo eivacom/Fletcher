@@ -1,0 +1,36 @@
+<!-- SPDX-License-Identifier: LGPL-3.0-or-later
+     Copyright (C) 2026 The Fletcher Authors
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- D10C-4 (rung 4; reused at rung 11): an application on Eiva.Fletcher's PUBLIC API,
+       run by Fletcher.Tests' LoaderLayoutTests from staged folders, so which shim a C#
+       app loads is observed from outside the binding, one process per layout (one shim
+       per process, d9 L17).
+
+       It publishes one row on `inprocess`, receives it through SubscriberArrow.Subscribe
+       and prints `delivered`; it then prints `module <path>` for every Fletcher shim the
+       process has loaded; on an exception it prints `error <type>: <message>` for each
+       exception in the chain and exits 3.
+
+       NO SHIM IS STAGED HERE. The tests stage the files a layout calls for into a copy
+       of this output folder; a shim in this folder would be in every layout. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <RootNamespace>Eiva.Fletcher.TestHost</RootNamespace>
+    <!-- Both TFMs, as the package ships both; the net8.0 build rolls forward where only a
+         newer runtime is installed, as Fletcher.Tests does. -->
+    <RollForward>LatestMajor</RollForward>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Fletcher/Fletcher.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="../Shared/LoadedShim.cs" Link="Shared/%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>

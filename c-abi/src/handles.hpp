@@ -36,6 +36,7 @@
 #include <utility>
 #include <vector>
 
+#include "fletcher/abi/binding.h"
 #include "nanoarrow_codec.hpp"
 
 namespace fletcher::abi {
@@ -104,18 +105,25 @@ struct fl_provider {
 struct fl_attachments {
     explicit fl_attachments(fletcher::Attachments a) : set(std::move(a)) {
         owners.reserve(set.size());
-        for (size_t i = 0; i < set.size(); ++i) {
-            // The entry's own owner keeps the bytes; this block keeps the entry's
-            // owner. One indirection, and it is what lets a retained blob outlive
-            // the set it came from.
-            // A COPY OF THE BLOB, not its owner: `Blob` keeps `owner_` private
-            // and exposes no accessor, and copying one copies the `shared_ptr`
-            // inside it — so holding the copy keeps the bytes alive exactly as
-            // holding the owner would, without core growing an accessor that
-            // exists only for this boundary.
-            auto* block = new fletcher::abi::BlobOwner();
-            block->keep = std::make_shared<const fletcher::Blob>(set.ValueAt(i));
-            owners.push_back(block);
+        // A throw part-way (an allocation) runs no destructor, so the blocks built so far are
+        // deleted here: none has been handed out yet (D9S-6 DEBT-5).
+        try {
+            for (size_t i = 0; i < set.size(); ++i) {
+                // The entry's own owner keeps the bytes; this block keeps the entry's
+                // owner. One indirection, and it is what lets a retained blob outlive
+                // the set it came from.
+                // A COPY OF THE BLOB, not its owner: `Blob` keeps `owner_` private
+                // and exposes no accessor, and copying one copies the `shared_ptr`
+                // inside it — so holding the copy keeps the bytes alive exactly as
+                // holding the owner would, without core growing an accessor that
+                // exists only for this boundary.
+                auto block = std::make_unique<fletcher::abi::BlobOwner>();
+                block->keep = std::make_shared<const fletcher::Blob>(set.ValueAt(i));
+                owners.push_back(block.release());  // reserved above: cannot throw
+            }
+        } catch (...) {
+            for (auto* block : owners) delete block;
+            throw;
         }
     }
 
@@ -171,9 +179,51 @@ struct fl_subscriber {
     explicit fl_subscriber(std::shared_ptr<fletcher::PubSubProvider> p)
         : provider(std::move(p)), subscriber(std::make_unique<fletcher::Subscriber>(provider)) {}
 
+    /// Detaches the batch host under the lock, then destroys it outside it (domain 7 closes every
+    /// batched subscription there). A close racing this teardown, e.g. from a callback, finds no
+    /// host and is the no-host no-op instead of reaching a host mid-destruction (code review S1).
+    ~fl_subscriber() {
+        std::shared_ptr<void> host;
+        {
+            std::lock_guard<std::mutex> lock(batches_mu);
+            host = std::move(batches);
+        }
+        host.reset();
+    }
+
     std::shared_ptr<fletcher::PubSubProvider> provider;
     std::unique_ptr<fletcher::Subscriber> subscriber;
+
+    /// The server build's batch host (D9S-4), created on the first batched subscribe and
+    /// never otherwise: a row-only caller sees exactly what it saw before. Declared AFTER
+    /// `subscriber` so it is destroyed FIRST: domain 7 then closes every batched
+    /// subscription (d7 L9) while the provider is still alive. Type-erased, so the edge
+    /// build's objects name no domain-7 type; only `batches_server.cpp` knows what it holds.
+    std::mutex batches_mu;
+    std::shared_ptr<void> batches;
 };
+
+namespace fletcher::abi::internal {
+
+/// A batched subscription as the entry point needs it: domain 7's id, untagged (the entry
+/// point sets bit 63), and the topic's schema arrival.
+struct BatchedSubscription {
+    uint64_t id;
+    fletcher::SchemaArrival arrival;
+};
+
+/// Defined in `batches_server.cpp` (server build) or `batches_edge.cpp` (edge and probe,
+/// where the entry point refuses first and this is unreachable): one door, two backends.
+BatchedSubscription SubscribeBatches(fl_subscriber& subscriber, std::vector<std::string> segments,
+                                     int64_t max_rows, int64_t timeout_ms,
+                                     const fletcher::TopicOptions& options, fl_batch_fn on_batch,
+                                     void* ctx);
+
+/// Ends one batched subscription (`id` untagged): domain 7's `Unsubscribe`, forwarded. With no
+/// batch host it is a no-op. Same two backends as `SubscribeBatches`.
+void UnsubscribeBatches(fl_subscriber& subscriber, uint64_t id);
+
+}  // namespace fletcher::abi::internal
 
 /// A waitable arrival the caller owns.
 ///

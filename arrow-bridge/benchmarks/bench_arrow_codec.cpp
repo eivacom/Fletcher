@@ -15,7 +15,7 @@
 //   BM_Memcpy_S                    the wire bytes moved once, nothing else.
 //   BM_Decode_Batch_S/N            the new batched decode (fletcher::BatchDecoder), N pre-encoded
 //                                  wire rows in, one RecordBatch out — Reserve/Append x N/Finish,
-//                                  the same cycle SubscriberArrow::RecordBatchBatcher::Flush runs.
+//                                  the same cycle SubscriberArrow::RecordBatchBatcher::Close runs.
 //   BM_Encode_Codec_S_IntoFixed    Codec::EncodeRow(row, FixedWriteBuffer) into a preallocated
 //                                  buffer — the provider-buffer path BM_Encode_Codec_S's vector
 //                                  overload does not exercise.
@@ -502,13 +502,15 @@ void RegisterShape(const std::string& name) {
     benchmark::RegisterBenchmark(("BM_EndToEnd_Batched_" + name).c_str(),
                                  [=, schema_capture = schema](benchmark::State& state) {
                                      const int64_t n = state.range(0);
+                                     // Declared before `sub`: its destructor delivers the last
+                                     // batches, on the batch thread, into this counter.
+                                     std::atomic<int64_t> received{0};
                                      auto provider = std::make_shared<LoopbackProvider>();
                                      fletcher::PublisherArrow pub(provider);
                                      fletcher::SubscriberArrow sub(provider);
                                      const std::vector<std::string> segments = {"bench", name};
                                      pub.CreateTopic(segments, schema_capture);
 
-                                     std::atomic<int64_t> received{0};
                                      fletcher::SubscriberArrow::BatchOptions options;
                                      options.max_rows = n;
                                      options.timeout = std::chrono::minutes(1);

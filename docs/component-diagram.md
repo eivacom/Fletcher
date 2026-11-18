@@ -321,7 +321,7 @@ graph TB
         end
 
         subgraph dotnet_dir ["dotnet/"]
-            DN_SRC["src/<br/><i>the four packages</i>"]
+            DN_SRC["src/<br/><i>the five packages</i>"]
             DN_TEST["tests/"]
         end
 

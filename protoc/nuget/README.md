@@ -123,3 +123,34 @@ version (`-alpha`) is taken only when the reference names one, or with
 LGPL-3.0-or-later (`LICENSE`, with the GPL text it incorporates in `COPYING`). The plugin links
 protobuf and zlib statically and compiles in nanoarrow; their licences are in
 `THIRD-PARTY-LICENSES.txt`.
+
+The package also carries `LICENSE-EXCEPTION`, the Fletcher Linking Exception, version 1.1: an
+additional permission under section 7 of the GNU GPL-3.0 that EIVA A/S gives for Fletcher,
+approved by EIVA A/S's legal counsel. It takes effect for a Release that EIVA A/S publishes with
+it beside `LICENSE` and `COPYING` (its section 9). This is a summary; the text in the package is
+what grants the permission. It permits:
+
+- the code that protoc, its plugins or a build tool running them generate from
+  `fletcher/options.proto`, and the object code compiled from it, to be used, modified and
+  conveyed under terms of your choice, so the default wiring that compiles `options.proto` into
+  your assembly brings no LGPL obligation;
+- the files the plugin writes from your definitions to be used, modified and conveyed under terms
+  of your choice, as far as the unmodified plugin of a Release writes the same material from the
+  same definitions and options. It does not cover a file that is itself a code generator built on
+  that material, or one that reproduces a Fletcher library beyond the interface generated code
+  calls.
+
+Your own definitions, and what derives from them alone, are yours. The plugin itself stays under
+the LGPL. Generated C# code runs on the managed assemblies of `Eiva.Fletcher`, which the same
+exception covers when they are unmodified (see that package's README); whether LGPL sections 4(b)
+and 4(c) can be met for a single-file, mobile or embedded build is unresolved, and the exception
+does not relax them.
+
+Fletcher's C++ libraries and `@eiva/fletcher-gateway-client`, which the code the plugin
+generates for C++ and TypeScript uses at run time, stay under the LGPL alone. An application
+that links them statically or bundles them must meet LGPL section 4(d)(0), and 4(e), for them.
+The Fletcher Linking Exception does not change that.
+
+EIVA A/S's copy, in the Fletcher repository and its Releases, is the authoritative text; a copy
+changed by anyone else does not alter it. The earlier public draft (v1.0) in the repository's
+history was never in force.

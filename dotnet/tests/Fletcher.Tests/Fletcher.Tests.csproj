@@ -92,6 +92,32 @@
           CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- Which shim a C# app loads (D10C-4, rung 4).
+       LoaderLayoutTests run the test host (Fletcher.TestHost, built here but not referenced
+       as an assembly) from staged folders: the edge file from beside this test binary, the
+       server file from the path passed in, `dotnet test -p:FletcherServerShim=<path>`, as
+       ci.dotnet.yml does. Absent, the server rows FAIL rather than skip. The paths are baked
+       as assembly metadata, not taken from [CallerFilePath], because CI's path maps rewrite
+       that (the protoc-dotnet pattern). FletcherDotnetSrc is the tree the BC-10 source scan
+       (NativeLoaderTests.NoNativeLoadOutsideTheResolver) reads. LoadedShim is the one module
+       filter the host, these tests and the conformance suite share. -->
+  <ItemGroup>
+    <ProjectReference Include="../Fletcher.TestHost/Fletcher.TestHost.csproj" ReferenceOutputAssembly="false" />
+    <Compile Include="../Shared/LoadedShim.cs" Link="Shared/%(Filename)%(Extension)" />
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>FletcherServerShim</_Parameter1>
+      <_Parameter2>$(FletcherServerShim)</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>FletcherTestHostDir</_Parameter1>
+      <_Parameter2>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../Fletcher.TestHost/bin/$(Configuration)/$(TargetFramework)/'))</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>FletcherDotnetSrc</_Parameter1>
+      <_Parameter2>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../../src/'))</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+
   <!-- The plugin's schema goldens, staged beside the test binary.
        They are the generator's OWN output: the .ipc file the schema option emits
        for each message, so opening a codec over every one of them is the only
@@ -102,6 +128,18 @@
   <ItemGroup>
     <None Include="../../../protoc/tests/golden/*.ipc"
           Link="golden/%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- The C header, staged beside the test binary (D10C-2).
+       AbiNumberTableTests reads the REPO's binding.h, not the package's copy and not
+       the Conan cache's, and compares every status, origin, batch reason and build
+       variant it publishes with its C# mirror. Copied for the same reason as the
+       goldens above: the dependency is declared where a build can see it, and a header
+       that moves breaks the build here instead of letting the test skip. -->
+  <ItemGroup>
+    <None Include="../../../c-abi/include/fletcher/abi/binding.h"
+          Link="binding.h"
           CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 

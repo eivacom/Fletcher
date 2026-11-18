@@ -15,7 +15,7 @@
          dotnet pack protoc/nuget -o <dir> -p:Version=<version>
            -p:FletcherPluginLinuxX64=<protoc-gen-fletcher-linux-x64>
            -p:FletcherPluginWinX64=<protoc-gen-fletcher-windows-x64.exe>
-           -p:FletcherLicenceDir=<dir with LICENSE, COPYING, THIRD-PARTY-LICENSES.txt>
+           -p:FletcherLicenceDir=<dir with LICENSE, COPYING, LICENSE-EXCEPTION, THIRD-PARTY-LICENSES.txt>
            -p:FletcherSourceCommit=<sha> -->
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
@@ -50,6 +50,9 @@
     <None Include="README.md" Pack="true" PackagePath="" />
     <None Include="$(FletcherLicenceDir)/LICENSE" Pack="true" PackagePath="" />
     <None Include="$(FletcherLicenceDir)/COPYING" Pack="true" PackagePath="" />
+    <!-- D-BIND-175 (approved by EIVA legal, ruling 2026-11-17): the Fletcher Linking Exception,
+         which covers options.proto and the generator's output. -->
+    <None Include="$(FletcherLicenceDir)/LICENSE-EXCEPTION" Pack="true" PackagePath="" />
     <None Include="$(FletcherLicenceDir)/THIRD-PARTY-LICENSES.txt" Pack="true" PackagePath="" />
   </ItemGroup>
 
@@ -59,8 +62,8 @@
            Text="FletcherPluginLinuxX64 must name protoc-gen-fletcher-linux-x64 (got '$(FletcherPluginLinuxX64)')." />
     <Error Condition="'$(FletcherPluginWinX64)' == '' Or !Exists('$(FletcherPluginWinX64)')"
            Text="FletcherPluginWinX64 must name protoc-gen-fletcher-windows-x64.exe (got '$(FletcherPluginWinX64)')." />
-    <Error Condition="'$(FletcherLicenceDir)' == '' Or !Exists('$(FletcherLicenceDir)/THIRD-PARTY-LICENSES.txt')"
-           Text="FletcherLicenceDir must hold LICENSE, COPYING and the plugin's THIRD-PARTY-LICENSES.txt (got '$(FletcherLicenceDir)')." />
+    <Error Condition="'$(FletcherLicenceDir)' == '' Or !Exists('$(FletcherLicenceDir)/THIRD-PARTY-LICENSES.txt') Or !Exists('$(FletcherLicenceDir)/LICENSE-EXCEPTION')"
+           Text="FletcherLicenceDir must hold LICENSE, COPYING, LICENSE-EXCEPTION and the plugin's THIRD-PARTY-LICENSES.txt (got '$(FletcherLicenceDir)')." />
   </Target>
 
 </Project>

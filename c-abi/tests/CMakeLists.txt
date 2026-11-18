@@ -5,12 +5,14 @@ find_package(GTest REQUIRED)
 
 # The ORACLE's dependencies, and test-only on purpose.
 #
-# `fletcher-c-abi` must never link `arrow-bridge`: that would pull Arrow C++ into
+# The EDGE shim must never link `arrow-bridge`: that would pull Arrow C++ into
 # the per-RID native asset the NuGet package ships, which is most of the reason
-# the codec was written on nanoarrow at all. The byte-identity test links it
-# because the oracle has to be the real encoder rather than a transcription of
-# it. CI's packed-size check measures the packaged shim, not this binary, so the
-# two facts do not fight.
+# the codec was written on nanoarrow at all. (The SERVER shim does link Arrow, by
+# its batcher alone - D9S-4; this test binary's own Arrow is a second, separate
+# copy, and a batch crosses between them only as the C Data Interface.) The
+# byte-identity test links it because the oracle has to be the real encoder
+# rather than a transcription of it. CI's packed-size check measures the packaged
+# shim, not this binary, so the two facts do not fight.
 find_package(fletcher-arrow-bridge CONFIG REQUIRED)
 find_package(Arrow CONFIG REQUIRED)
 
@@ -38,7 +40,9 @@ add_executable(c_abi_tests
     test_nanoarrow_codec.cpp
     test_binding_entry_points.cpp
     test_single_copy.cpp
-    test_containment.cpp)
+    test_containment.cpp
+    test_batches.cpp
+    test_shim_batches_nothing.cpp)
 add_dependencies(c_abi_tests single_copy_decoy)
 # The NAME only, never the path. A generator expression yields a NATIVE path,
 # and on Windows that is full of backslashes which become escape sequences the
@@ -50,12 +54,47 @@ add_dependencies(c_abi_tests single_copy_decoy)
 target_compile_definitions(c_abi_tests PRIVATE
     FLETCHER_DECOY_NAME="$<TARGET_FILE_NAME:single_copy_decoy>")
 
+# D9S-2 (BC-10). Which build `c_abi_tests` is linked to, as a LITERAL the test
+# source compares the shim's answer with: 1 = edge, 2 = server (the wire values
+# `binding.h` promises). It is mapped HERE, from the package's `variant` switch,
+# and not read back from the definition the shim is built with: a test that took
+# its expectation from the shim would agree with the shim whatever the shim said.
+# The same suite is built a second time in the server package (d9 L13), so every
+# row that is not about the build must hold on both; the rows that are about the
+# build get one expected answer per artefact and never "either".
+if(FLETCHER_SHIM_VARIANT STREQUAL "edge")
+    set(FLETCHER_C_ABI_TESTS_EXPECTED_VARIANT 1)
+elseif(FLETCHER_SHIM_VARIANT STREQUAL "server")
+    set(FLETCHER_C_ABI_TESTS_EXPECTED_VARIANT 2)
+else()
+    message(FATAL_ERROR
+        "FLETCHER_SHIM_VARIANT is '${FLETCHER_SHIM_VARIANT}', not 'edge' or 'server': "
+        "the test executables cannot be told which build they are linked to")
+endif()
+target_compile_definitions(c_abi_tests PRIVATE
+    FLETCHER_EXPECTED_VARIANT=${FLETCHER_C_ABI_TESTS_EXPECTED_VARIANT})
+
+# D9S-4a (BC-9). The shim's own source directory, as ONE forward-slash literal, for the scan
+# `ShimBatchesNothing.SourcesHoldNoThreadClockOrTimer` runs over it. CMake spells its source dir with
+# forward slashes on every platform, so the string is a path on Windows and on Linux alike and has
+# no backslash for a C string literal to misread (see the decoy-name comment above).
+target_compile_definitions(c_abi_tests PRIVATE
+    FLETCHER_C_ABI_SRC_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../src")
+
 target_link_libraries(c_abi_tests PRIVATE
     GTest::gtest_main
     fletcher-c-abi
     fletcher-c-abi-impl
     fletcher-arrow-bridge::fletcher-arrow-bridge
     arrow::arrow)
+
+# D9S-5a (rung 7). The server test binary links domain 7 as an ORACLE: the expected refusal message
+# of `Batches.EveryBatchOptionReachesDomain7AsGiven` comes from `SubscriberArrow` itself, a second
+# copy beside the shim's, as `arrow-bridge` is for T13. The parent found the package for the server
+# shim; the edge graph is untouched (BC-11).
+if(FLETCHER_SHIM_VARIANT STREQUAL "server")
+    target_link_libraries(c_abi_tests PRIVATE fletcher-pubsub-arrow::fletcher-pubsub-arrow)
+endif()
 
 # ---------------------------------------------------------------------------
 # The shim is a SHARED library — the only one in the tree — so the loader has to
@@ -84,10 +123,12 @@ include(GoogleTest)
 # `xrcedds-pubsub-provider/tests/CMakeLists.txt`, whose first Linux run spent
 # 2 h 04 m inside one hung test before the job was cancelled with no result.
 #
-# 30 s. Every row here is arithmetic on a constant — no wait, no I/O, no
-# transport — so the measured cost is the process start. The cap exists to turn
-# a future hang (the first row that touches a provider will be in this suite)
-# into a 30-second red instead of a cancelled job.
+# 30 s. Nearly every row here is arithmetic on a constant - no wait, no I/O, no
+# transport - so the measured cost is the process start. The exceptions are the
+# batched-subscribe rows (`test_batches.cpp`), which wait ONE-SIDEDLY on a
+# delivery: at most 10 s for a window, 2 s for an observation window; the longest
+# measured row takes about 4 s (F1: two 2 s windows; G2 just over 2 s). The cap
+# exists to turn a future hang into a 30-second red instead of a cancelled job.
 gtest_discover_tests(c_abi_tests DISCOVERY_MODE PRE_TEST
     PROPERTIES TIMEOUT 30)
 
@@ -145,13 +186,162 @@ set_tests_properties(BindingAbi.CompilesAsC99AndIsSelfContained PROPERTIES
 # synchronous, so every row is work, never a wait.
 if(FLETCHER_BUILD_PROBE_SHIM)
     add_executable(c_abi_probe_tests
-        test_probe_shim.cpp)
+        test_probe_shim.cpp
+        test_binding_abi.cpp
+        test_batches.cpp)
     target_link_libraries(c_abi_probe_tests PRIVATE
         GTest::gtest_main
         fletcher-c-abi-probe
         arrow::arrow)
+    # The probe shim is the test-only EDGE artefact (D-BIND-62, D9S-2): 1, whatever
+    # variant the package around it is. It is never in a server package.
+    target_compile_definitions(c_abi_probe_tests PRIVATE FLETCHER_EXPECTED_VARIANT=1)
     set_target_properties(c_abi_probe_tests PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY $<TARGET_FILE_DIR:fletcher-c-abi-probe>)
+    # `test_binding_abi.cpp` is compiled into this executable as well (D9S-1: the
+    # variant is asked of the probe shim too), so its rows exist in both suites.
+    # The prefix keeps the ctest names unique.
     gtest_discover_tests(c_abi_probe_tests DISCOVERY_MODE PRE_TEST
+        TEST_PREFIX "probe."
+        PROPERTIES TIMEOUT 30)
+endif()
+
+# ---------------------------------------------------------------------------
+# The HAND-OVER FAULT SHIM (D9S-6, D-D9S-4; d9 L18, BC-12), server only. TEST-ONLY, and it can
+# exist only here: this directory is built with FLETCHER_BUILD_TESTS alone. It is the shipped server
+# shim rebuilt from the same four sources, plus `handover_fault.cpp`, with the same visibility,
+# version script and variant, and FLETCHER_C_ABI_HANDOVER_FAULT, which turns the fault point in
+# `batches_server.cpp` into a call and which `handover_fault.cpp` refuses to compile without. CMake
+# compiles a source once per target, so the shipped shim's `batches_server.cpp` never sees the macro.
+# Its file name matches none of `package()`'s patterns, which name the shipped stem (held by name only).
+if(FLETCHER_SHIM_VARIANT STREQUAL "server")
+    set(_c_abi_root ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    add_library(fletcher-c-abi-handover-fault SHARED
+        ${_c_abi_root}/src/binding_version.c
+        ${_c_abi_root}/src/builtins.cpp
+        ${_c_abi_root}/src/binding.cpp
+        ${_c_abi_root}/src/batches_server.cpp
+        handover_fault.cpp)
+    target_compile_features(fletcher-c-abi-handover-fault PRIVATE c_std_99 cxx_std_20)
+    set_target_properties(fletcher-c-abi-handover-fault PROPERTIES
+        C_VISIBILITY_PRESET hidden
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON)
+    target_compile_definitions(fletcher-c-abi-handover-fault PRIVATE FLETCHER_C_ABI_BUILDING
+        FLETCHER_C_ABI_VARIANT=FL_VARIANT_SERVER FLETCHER_C_ABI_HANDOVER_FAULT)
+    # The reason switch as an error, as on the shipped shim. Source properties are per directory,
+    # so the parent's setting does not reach a target made here.
+    if(MSVC)
+        set_source_files_properties(${_c_abi_root}/src/batches_server.cpp PROPERTIES
+            COMPILE_OPTIONS "/we4062")
+    else()
+        set_source_files_properties(${_c_abi_root}/src/batches_server.cpp PROPERTIES
+            COMPILE_OPTIONS "-Werror=switch")
+        target_link_options(fletcher-c-abi-handover-fault PRIVATE
+            "LINKER:--exclude-libs,ALL"
+            "LINKER:--version-script=${_c_abi_root}/cmake/exports.map")
+        set_target_properties(fletcher-c-abi-handover-fault PROPERTIES
+            LINK_DEPENDS ${_c_abi_root}/cmake/exports.map)
+    endif()
+    target_include_directories(fletcher-c-abi-handover-fault PRIVATE ${_c_abi_root}/src)
+    target_link_libraries(fletcher-c-abi-handover-fault PRIVATE
+        fletcher-c-abi-impl
+        fletcher-pubsub::fletcher-pubsub
+        fletcher-fastdds-pubsub-provider::fletcher-fastdds-pubsub-provider
+        fletcher-xrcedds-pubsub-provider::fletcher-xrcedds-pubsub-provider
+        fletcher-pubsub-arrow::fletcher-pubsub-arrow)
+
+    # The whole `Batches` suite against the fault shim: unarmed it is control C1 (the hook is inert),
+    # and the forcing test arms it. One shim per process (D-BIND-17): it links this shim and never
+    # the shipped one, and runs from this shim's directory for the loader reason given above.
+    add_executable(c_abi_handover_tests test_batches.cpp)
+    target_compile_definitions(c_abi_handover_tests PRIVATE
+        FLETCHER_EXPECTED_VARIANT=2 FLETCHER_HANDOVER_FAULT_TESTS=1)
+    target_link_libraries(c_abi_handover_tests PRIVATE
+        GTest::gtest_main
+        fletcher-c-abi-handover-fault
+        fletcher-pubsub-arrow::fletcher-pubsub-arrow
+        arrow::arrow)
+    target_include_directories(c_abi_handover_tests PRIVATE ${_c_abi_root}/include)
+    set_target_properties(c_abi_handover_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY $<TARGET_FILE_DIR:fletcher-c-abi-handover-fault>)
+    gtest_discover_tests(c_abi_handover_tests DISCOVERY_MODE PRE_TEST
+        TEST_PREFIX "handover."
+        PROPERTIES TIMEOUT 30)
+endif()
+
+# ---------------------------------------------------------------------------
+# THE TWO-BUILDS PROOF (D9S-7, rung 9; d9 L5, L16, L17, BC-15), server only, TEST-ONLY. A process that
+# holds BOTH builds, in either load order, gets one working shim; the later copy refuses and names both.
+#
+# One program cannot link both builds (they export the same names), so each executable links ONE and
+# loads the OTHER by path, once. The edge half is `fletcher-c-abi-edge-twin`: the edge build's own sources
+# and settings (`FL_VARIANT_EDGE`, `batches_edge.cpp`, the same visibility and export map) rebuilt under a
+# name of their own, beside the server shim. It exists only here, so it can never ship: this directory is
+# built with FLETCHER_BUILD_TESTS alone, and `package()`'s patterns name the shipped stem
+# (`fletcher-c-abi-server`), which this file name does not match. It links no Arrow, and it lives in the
+# SERVER package: the edge package's graph is untouched (BC-11), so rung 9 cannot put Arrow on the edge.
+# The shipped edge file sits in another package by identity; what L17 needs from it - the marker export,
+# from one source - is the same here. The twin is a hand copy of the edge recipe: `TwoBuilds`'s build
+# assertion catches only a change to the variant define, not drift in sources, flags or links (open
+# question d9 §7 Q13: one CMake function should build every shim).
+if(FLETCHER_SHIM_VARIANT STREQUAL "server")
+    add_library(fletcher-c-abi-edge-twin SHARED
+        ${_c_abi_root}/src/binding_version.c
+        ${_c_abi_root}/src/builtins.cpp
+        ${_c_abi_root}/src/binding.cpp
+        ${_c_abi_root}/src/batches_edge.cpp)
+    target_compile_features(fletcher-c-abi-edge-twin PRIVATE c_std_99 cxx_std_20)
+    set_target_properties(fletcher-c-abi-edge-twin PROPERTIES
+        C_VISIBILITY_PRESET hidden
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON
+        RUNTIME_OUTPUT_DIRECTORY $<TARGET_FILE_DIR:fletcher-c-abi>
+        LIBRARY_OUTPUT_DIRECTORY $<TARGET_FILE_DIR:fletcher-c-abi>)
+    target_compile_definitions(fletcher-c-abi-edge-twin PRIVATE FLETCHER_C_ABI_BUILDING
+        FLETCHER_C_ABI_VARIANT=FL_VARIANT_EDGE)
+    if(NOT MSVC)
+        target_link_options(fletcher-c-abi-edge-twin PRIVATE
+            "LINKER:--exclude-libs,ALL"
+            "LINKER:--version-script=${_c_abi_root}/cmake/exports.map")
+        set_target_properties(fletcher-c-abi-edge-twin PROPERTIES
+            LINK_DEPENDS ${_c_abi_root}/cmake/exports.map)
+    endif()
+    target_include_directories(fletcher-c-abi-edge-twin
+        PUBLIC ${_c_abi_root}/include
+        PRIVATE ${_c_abi_root}/src)
+    target_link_libraries(fletcher-c-abi-edge-twin PRIVATE
+        fletcher-c-abi-impl
+        fletcher-pubsub::fletcher-pubsub
+        fletcher-fastdds-pubsub-provider::fletcher-fastdds-pubsub-provider
+        fletcher-xrcedds-pubsub-provider::fletcher-xrcedds-pubsub-provider)
+
+    # server-first: links the server shim, loads the edge twin. edge-first: the reverse. Same source,
+    # the build each links given as a LITERAL (1 edge, 2 server), the file names as names only.
+    add_executable(c_abi_two_builds_server_first test_two_builds.cpp)
+    target_compile_definitions(c_abi_two_builds_server_first PRIVATE
+        FLETCHER_TWO_BUILDS_LINKED_VARIANT=2
+        FLETCHER_TWO_BUILDS_LINKED_NAME="$<TARGET_FILE_NAME:fletcher-c-abi>"
+        FLETCHER_TWO_BUILDS_OTHER_NAME="$<TARGET_FILE_NAME:fletcher-c-abi-edge-twin>")
+    target_link_libraries(c_abi_two_builds_server_first PRIVATE GTest::gtest_main fletcher-c-abi)
+    add_dependencies(c_abi_two_builds_server_first fletcher-c-abi-edge-twin)
+    set_target_properties(c_abi_two_builds_server_first PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY $<TARGET_FILE_DIR:fletcher-c-abi>)
+    gtest_discover_tests(c_abi_two_builds_server_first DISCOVERY_MODE PRE_TEST
+        TEST_PREFIX "server-first."
+        PROPERTIES TIMEOUT 30)
+
+    add_executable(c_abi_two_builds_edge_first test_two_builds.cpp)
+    target_compile_definitions(c_abi_two_builds_edge_first PRIVATE
+        FLETCHER_TWO_BUILDS_LINKED_VARIANT=1
+        FLETCHER_TWO_BUILDS_LINKED_NAME="$<TARGET_FILE_NAME:fletcher-c-abi-edge-twin>"
+        FLETCHER_TWO_BUILDS_OTHER_NAME="$<TARGET_FILE_NAME:fletcher-c-abi>")
+    target_link_libraries(c_abi_two_builds_edge_first PRIVATE GTest::gtest_main
+        fletcher-c-abi-edge-twin)
+    add_dependencies(c_abi_two_builds_edge_first fletcher-c-abi)
+    set_target_properties(c_abi_two_builds_edge_first PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY $<TARGET_FILE_DIR:fletcher-c-abi>)
+    gtest_discover_tests(c_abi_two_builds_edge_first DISCOVERY_MODE PRE_TEST
+        TEST_PREFIX "edge-first."
         PROPERTIES TIMEOUT 30)
 endif()

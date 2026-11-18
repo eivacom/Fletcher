@@ -21,7 +21,7 @@ C++ → C# interface reference with the class diagrams.
 frozen**; a shape that cannot be mirrored is a stop-and-ask against it) ·
 [docs/wire-format-specification.md](../docs/wire-format-specification.md) (wire
 behaviour) · [docs/recordbatch-accessor-spec.md](../docs/recordbatch-accessor-spec.md)
-(accessor tier) · [GIR-locked-decisions.md](GIR-locked-decisions.md) (the generator
+(accessor tier) · [../docs/archive/GIR/GIR-locked-decisions.md](../docs/archive/GIR/GIR-locked-decisions.md) (the generator
 IR — merged). PDA-ABI ([PDA-ABI-protocol-driver-abi.md](PDA-ABI-protocol-driver-abi.md))
 is a **sibling** round below the seam, not an oracle: neither round depends on the
 other (seam §1).
@@ -62,7 +62,7 @@ All nineteen ruled. ✅ = settled.
 | 3 | **TypeScript scope** = generated `Publisher`/`Subscriber` over the gateway (not a Node native binding) | ✅ **agreed 2026-08-31** | — |
 | 4 | **ABI value-transfer = Arrow C Data Interface** (`ArrowArray` + `ArrowSchema`), with the three-layer encode surface (D-BIND-23) | ✅ **agreed 2026-09-11** (Q1) | — |
 | 5 | **`Apache.Arrow` as a base C# dependency**; collapse `Core` + `Arrow` into one package | ✅ **agreed 2026-09-11** (rider on #4); collapse agreed with Q2: three packages | — |
-| 6 | **Native artifact links nanoarrow only**, not Arrow C++ (package size) | ✅ **agreed 2026-09-11** (rider on #4) | — |
+| 6 | **Native artifact links nanoarrow only**, not Arrow C++ (package size) | ✅ **agreed 2026-09-11** (rider on #4). *Annotated 2026-11-13 (D9S pre-round, audit F17): partially superseded by the owner ruling of 2026-11-12, "one shim, two variants" (`plans/RIX-rulings.md`): holds for the edge build in `Interop`; the server-tier build links Arrow C++ and ships in a separate package (2026-11-13, "Separate server package"). See `docs/domains/d9-c-abi-shim.md` L8, L12.* | — |
 | 7 | **Accessor nesting depth**: match RBA's 2/3 cap | ✅ **agreed 2026-09-11** (Q6): match the cap; the asymmetry is RIR's to remove | — |
 | 8 | Does **"all tests" (18786)** include the 98 protoc generator tests? | ✅ **agreed 2026-09-11** (Q10): no — generator tests stay C++ and are extended; provider-internal cases (24) also excluded, documented; **276 of 302** non-generator cases port *(was 278; bucket 3's two provider-level fan-out cases joined the excluded set 2026-09-24)* — *corrected 2026-09-18: the figure was 275 of 300, low by three. `test_owned_schema` was subtracted from a total that never contained it (the 300 is buckets 1–4; it is bucket 6), and bucket 4 was carrying a stale `test_xrce_document` count. Denominator ruled 302 by the maintainer* | — |
 | 9 | **"Make C# emit Rust-native accessor classes" (16353)** — confirm the reading | ✅ **agreed 2026-09-11** (Q19): read as *C# accessor classes equivalent to the Rust-native ones*; BIND-7 scope; ADO 16353 wording to be corrected | — |
@@ -367,6 +367,11 @@ renames. `Interop` is the *only* package carrying native assets, so the RID matr
 and the LGPL question are isolated to one artifact (D-BIND-13). `GatewayClient`
 has no native dependency at all — that is what keeps a browser/WASM-adjacent story
 alive and mirrors `@eiva/fletcher-gateway-client`.
+*(Annotated 2026-11-13, D9S pre-round, audit F18/F19: D-BIND-13 and D-BIND-17 are **revised** by the
+owner ruling of 2026-11-13, "Packaging: Separate server package" (`plans/RIX-rulings.md`): a separate
+server package carries the server-tier shim beside `Interop`'s edge shim, each a full shim, one per
+process; D-BIND-157's ceiling stays on `Interop`. See `docs/domains/d9-c-abi-shim.md` D22, L17. The text above is kept
+as ruled.)*
 
 **One `dotnet/` component, one version source, one `dotnet-v` tag** — as
 `gateway-client-ts` ships one npm package from one directory. `c-abi/` is a
@@ -1341,8 +1346,10 @@ codec step.
   native call, `RecordBatch` delivered with parallel attachments and a
   `BatchStatus {Reason, RowsDropped}`; `BatchOptions {MaxRows = 8000, Timeout =
   1 min}`; per-row Arrow delivery is `MaxRows = 1`.
+  *Revised 2026-11-15 by ledger :575 (D10C): retired for SubscriberArrow.*
 - `PublisherArrow` folds into `Publisher` (already Arrow-typed via `BoundRows`).
 - Dictionary re-folding deferred to DICT (D-BIND-8).
+  *Revised 2026-11-15 by ledger :575 (D10C): retired for SubscriberArrow.*
 - **The `test_pubsub_arrow` file set** ported over `inprocess` - 33 cases at D-BIND-57,
   which re-derived it from 15 after #128; the options and schema-watch cases among them
   use what D-BIND-57 added.
@@ -1395,14 +1402,17 @@ codec step.
   * **Found by the C++/C# sequence review during 5b's CI, and fixed (D-BIND-63):** the 5a batcher
     had no byte ceiling. Its window now splits where C++'s does (`Array.MaxLength`, just under C++'s
     2^31-2), and a row alone past the ceiling is a counted drop.
+    *Revised 2026-11-15 by ledger :575 (D10C): retired for SubscriberArrow.*
   * **Handler calls are not serialised (D-BIND-64, from the BIND-5 review's Q2):** as in C++,
     handlers may run concurrently and batches may complete out of order, and `Stop` waits for an
     in-flight timer flush. This replaces 5a's lock across the handler, which deadlocked.
+    *Revised 2026-11-15 by ledger :575 (D10C): retired for SubscriberArrow.*
   * **The D-BIND-60 check compares wire layout (D-BIND-65, from the review's Q1):** the codecs'
     field plans, so names, metadata and nullability do not refuse, and dictionary schemas are checked
     rather than skipped. The verdict is cached per (rows, topic).
   * **No row is lost uncounted (D-BIND-66, from the review's Q3):** the intake and the flush contain
     their own failures and count them in `RowsDropped`, as C++'s `AddRow` does.
+    *Revised 2026-11-15 by ledger :575 (D10C): retired for SubscriberArrow (the batched half).*
   * **Bound rows need this publisher's declaration (D-BIND-67, from the review's Q4):** the fused
     publishes refuse `TopicNotDeclared` otherwise, as C++ `PublisherArrow` does; the raw paths stay
     unchecked.
@@ -1410,6 +1420,7 @@ codec step.
     window whose row boundaries are known, skipping and reporting each bad or misframed row, in one
     native call. Only good rows count toward `MaxRows`. Three cases were added; managed is
     now **316/316**, and two mutations are each caught.
+    *Revised 2026-11-15 by ledger :575 (D10C): retired for SubscriberArrow.*
   * **After close, 2026-09-29: the oracle's scope note.** BIND-3 handed BIND-5 the statement
     that the UTF-16↔UTF-8 transcode (D-BIND-1b) happens in `Apache.Arrow`, outside what the
     oracle scores. The close-out missed it. It is now in the header of `CopyOracleTests.cs` and
@@ -3225,7 +3236,7 @@ runs, since BIND-T and BIND-10 land in between.
    reconnected, and a closed connection ends every subscription (D-BIND-190).
 8. **Archive the rest of the round** (D-BIND-194's second step, D-BIND-198), once every tag is
    green and its record is written here: this tracker, `BIND-locked-decisions.md` and
-   `BIND-progress-log.md` move to `docs/archive/BIND/`, and the links into them are updated
+   `../docs/archive/BIND/BIND-progress-log.md` move to `docs/archive/BIND/`, and the links into them are updated
    (`c-abi/include/fletcher/abi/binding.h:86`, `c-abi/benchmarks/README.md:5`,
    `integration-tests/gateway-dotnet-end-to-end/README.md:10`, and whatever cites them by then).
    In the same commit the test-matrix check retires: `scripts/check_test_matrix.py`,
@@ -3538,7 +3549,7 @@ bindings should not follow C++, every codec takes C++'s spelling (`readings[].x`
   (`plans/reviews/BIND-…`) now names its new one, except two sentences that describe the plan at
   its old path (D-BIND-198 and the review's Q3). Checked: no broken relative link in the moved
   files or this tracker, the decisions and the progress log, before or after (0 and 0). This
-  tracker, `BIND-locked-decisions.md` and `BIND-progress-log.md` stay until runbook step 8.
+  tracker, `BIND-locked-decisions.md` and `../docs/archive/BIND/BIND-progress-log.md` stay until runbook step 8.
 - **10-6 archive committed 2026-10-30** (`5a2a107`).
 - **BIND-10 CLOSED 2026-10-30, on CI at `5a2a107`** (`ci.pr` 41062852098, 61/61 on the first
   attempt; `ci.format-check-cpp`, `-cs`, `-ts`, `ci.license-headers`, `ci.action-lint`,
@@ -3644,7 +3655,7 @@ Three actions remain besides, none an engineering one:
 ## Definition of done (round)
 
 - BIND-0 … BIND-10 and BIND-T green, reviewed, logged in
-  `plans/BIND-progress-log.md`, pushed.
+  `docs/archive/BIND/BIND-progress-log.md`, pushed.
 - **One wire format**: byte identity between the nanoarrow codec and `arrow-bridge`
   across the full scenario corpus; no managed code writes wire bytes except
   `GatewayClient`.

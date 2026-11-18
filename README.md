@@ -319,9 +319,11 @@ The packages call the C ABI shim, so build `c-abi/` into the Conan cache first (
 ```bash
 conan create integration-tests/copy-probe --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release
 conan create c-abi/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release -o "&:with_probe_shim=True"
+conan create c-abi/. --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release -o "&:variant=server"
+(cd c-abi && conan build . --build=missing -pr:a=.conan-profiles/Linux-gcc13-x86_64-Release -o "&:variant=server" -o "&:run_tests=True" -c tools.build:skip_test=True)
 cd dotnet
 dotnet build Fletcher.slnx -c Release
-dotnet test Fletcher.slnx -c Release -p:FletcherNativeShim=<path to libfletcher-c-abi.so or fletcher-c-abi.dll> -p:FletcherProbeShim=<path to libfletcher-c-abi-probe.so or fletcher-c-abi-probe.dll>
+dotnet test Fletcher.slnx -c Release -p:FletcherNativeShim=<path to libfletcher-c-abi.so or fletcher-c-abi.dll> -p:FletcherProbeShim=<path to libfletcher-c-abi-probe.so or fletcher-c-abi-probe.dll> -p:FletcherServerShim=<path to libfletcher-c-abi-server.so or fletcher-c-abi-server.dll> -p:FletcherHandoverFaultShim=<path under c-abi/build to libfletcher-c-abi-handover-fault.so or fletcher-c-abi-handover-fault.dll>
 ```
 
 [`dotnet/README.md`](dotnet/README.md) has the details (the probe shim, NativeAOT, locked restores).
@@ -421,7 +423,7 @@ Releases are cut by maintainers by pushing a **component-prefixed git tag** (`<c
 | `protoc/` (also `@eiva/protoc-gen-fletcher` on npm and `Eiva.Fletcher.Protoc` on nuget.org) | `protoc-v` | `protoc/conanfile.py` |
 | `gateway/` | `gateway-v` | `gateway/VERSION` |
 | `gateway-client-ts/` | `gateway-client-v` | `gateway-client-ts/package.json` |
-| `dotnet/` (the four NuGet packages, with the C ABI shim) | `dotnet-v` | `dotnet/Directory.Build.props` |
+| `dotnet/` (the five NuGet packages, with the C ABI shims) | `dotnet-v` | `dotnet/Directory.Build.props` |
 
 For the Conan, gateway and dotnet components the tag version **must match** the version source (CI verifies and fails fast otherwise). Pre-release suffixes (`-alpha`, `-beta`, `-rc1`, …) are part of the version and, for the npm client, select the dist-tag.
 
@@ -464,3 +466,7 @@ Fletcher is licensed under the **GNU Lesser General Public License v3.0 or later
 LGPL-3.0 incorporates GPL-3.0 by reference; the GPL-3.0 text is in [`COPYING`](COPYING). Copyright is held collectively by "The Fletcher Authors" listed in [`AUTHORS`](AUTHORS). The project was started by EIVA A/S in 2026 and is open to outside contributions under the same license.
 
 Third-party code vendored under `pubsub/third_party/nanoarrow/` (nanoarrow, including the bundled flatcc sources) is distributed under its own upstream licenses and is not re-licensed by Fletcher.
+
+**Fletcher Linking Exception.** [`LICENSE-EXCEPTION`](LICENSE-EXCEPTION) (version 1.1) is an additional permission under GPL-3.0 section 7 that EIVA A/S gives for Fletcher, approved by EIVA A/S legal counsel. It permits you to convey an application built with Fletcher's .NET assemblies (`Fletcher`, `Fletcher.Interop`, `Fletcher.Model`, `Fletcher.GatewayClient`), unmodified as a Release ships them, under terms of your choice, including when NativeAOT, ReadyToRun, single-file publishing or trimming compiles them into your executable: LGPL sections 4(d) and 4(e) do not apply to those assemblies, while 4(a) to 4(c) still do. It also lets you use, modify and convey under your own terms the code generated from `protoc/include/fletcher/options.proto` and the files `protoc-gen-fletcher` writes from your definitions, within the limits its sections 2 and 3 state. It is packed beside `LICENSE` and `COPYING` in the packages `Eiva.Fletcher`, `Eiva.Fletcher.Interop`, `Eiva.Fletcher.Model`, `Eiva.Fletcher.GatewayClient` and `Eiva.Fletcher.Protoc`, and attached to the `dotnet-v*` and `protoc-v*` Releases; it takes effect for a Release that EIVA A/S publishes with it beside `LICENSE` and `COPYING` (its section 9). A modified assembly, Fletcher's C++ libraries, its native shims (and so the package `Eiva.Fletcher.Server`, which carries only a shim) and `@eiva/fletcher-gateway-client` stay under the LGPL alone. One limitation is stated: whether LGPL sections 4(b) and 4(c) can be met for single-file, mobile or embedded builds is unresolved, and the exception does not relax them. EIVA A/S's copy in this repository and its Releases is the authoritative text; a copy changed by anyone else does not alter it. The earlier public draft (v1.0) in this repository's history was never in force.
+
+**Code samples.** The code samples in Fletcher's Markdown documentation (README files and `docs/`) are also licensed under [MIT-0](https://spdx.org/licenses/MIT-0.html) (`SPDX-License-Identifier: MIT-0`), so you may copy them into your own code without conditions. Source files in the repository keep their LGPL headers.

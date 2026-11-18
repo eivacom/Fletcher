@@ -1,112 +1,71 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (C) 2026 The Fletcher Authors
 //
-// BIND-5a: the Arrow tier's subscriber, batch-first (D-BIND-25, D-BIND-59).
+// BIND-5a, switched onto domain 7 by D10C-7: the Arrow tier's subscriber (D-BIND-25; d10).
 //
 // ── What it is, in terms of what is below it ────────────────────────────────
-// A Subscriber whose handler COPIES each borrowed row and its attachments into
-// a pending window, and a batcher that decodes the window into one RecordBatch
-// per flush - N rows per native call - and hands it to the caller's handler.
-// It mirrors C++ `SubscriberArrow`'s batched Subscribe, rule for rule:
+// Two kinds of subscription, and one kind per topic on one object (ruling :575 (6)):
 //
-//   * a window flushes at MaxRows (RowLimit), when its deadline passes
-//     (Timeout), or on Unsubscribe/Dispose (Closing);
-//   * the deadline is armed by the window's FIRST event, row or drop, and
-//     anchored to the PREVIOUS flush: a steady stream flushes every Timeout, and
-//     a stream idle longer than one window is delivered at once;
-//   * a row that fails to decode is counted in RowsDropped and contributes
-//     neither a row nor an attachment - its attachment's identity lived in it;
-//   * a window of only dropped rows still delivers a zero-row batch, so the loss
-//     is reported rather than silent;
-//   * a schema the codec cannot open drops every row for the subscription's
-//     life, and each report carries a NULL batch;
-//   * every row that arrives either reaches a batch or is counted in
-//     RowsDropped (D-BIND-66): the intake and the flush contain their own
-//     failures, as C++'s AddRow does, and none reaches the inner Subscriber or
-//     the timer thread;
-//   * a window never holds more than it can decode (D-BIND-63): a row that would
-//     take it past the ceiling flushes it first, as RowLimit, and a row that
-//     alone exceeds the ceiling is dropped and counted.
+//   * PER ROW (Subscribe): the native per-row path, on both builds of the shim.
+//     Each row offered is one handler call: a one-row batch, or a null batch with
+//     RowsDropped = 1 (RowDelivery; d10 L7, L9; BC-16).
+//   * BATCHED (SubscribeBatched): domain 7's batches, through the server build's
+//     fl_subscriber_subscribe_batches (d10 L4, L6). C# holds no window, row count,
+//     deadline, timer or batch thread: each window domain 7 closes arrives on its
+//     batch thread, one at a time, in window order, and every close of an accepted
+//     subscription ends with exactly one Closing, empty when idle (d7 L6, L9, L12).
+//     On the edge build the call is refused: the shim's NotSupported, plus one
+//     sentence naming Eiva.Fletcher.Server (d10 L3, D29).
 //
-// ── The ceiling, and how it differs from C++'s ─────────────────────────────
-// C++'s batcher flushes early when an append would overflow an Arrow 32-bit
-// offset: 2^31-2 bytes (or elements) in one column's builder
-// (`BatchCapacityExceeded`). This batcher holds RAW rows until flush, so it
-// bounds the raw window instead - which bounds every column's value bytes too,
-// since a column's bytes are a subset of the rows'. The number is C++'s, lowered
-// to `Array.MaxLength` (55 bytes less), the most one managed buffer can hold. So
-// the same topic splits at the same place give or take the rows' framing bytes,
-// never later than C++ would. What it does NOT bound, as C++ does, is ELEMENT
-// counts: a list of bit-packed booleans can hold 2^31 elements in 256 MiB. That
-// window fails to decode and is dropped whole, and reported - not silent.
+// ── The batch thunk ─────────────────────────────────────────────────────────
+// One function per window: MOVE the borrowed Arrow array and schema into structs
+// C# allocated (copy each, then NULL the source's release: binding.h, fl_batch),
+// import them, copy each row's attachments, call the handler, and count a throw
+// (AbsorbedCallbackFailures, HandlerFaulted; d10 L9). The handler OWNS what it is
+// handed and may keep it past the call (d10 L8). A window C# cannot take over (out
+// of memory, an import refusal) still arrives, as a null batch with its rows added
+// to RowsDropped, never silently (d9 L18's rule, one layer up), with no error (ruling
+// :669). A window the SHIM could not hand over arrives the same way, carrying the shim's
+// failure in BatchStatus.Failure: copied as given, never disposed, for the shim frees it
+// after the callback (ruling :551 (3); d10 L3, L8, L9). A dictionary column
+// arrives as domain 7 delivers it, re-folded; C# converts nothing (ruling :551 (2)).
 //
-// Per-row delivery is the same thing with MaxRows = 1 (D-BIND-59): a row
-// arrives as a one-row batch, flushed on the delivery thread as it lands.
+// ── Lifetime ────────────────────────────────────────────────────────────────
+// The thunk's context is a GCHandle to a BatchDelivery. A refused subscribe never
+// delivers, so the subscribing frame frees it; once native has accepted, ONLY the
+// Closing batch frees it - the subscription's last delivery, exactly once on every
+// close path. Unsubscribe and Dispose from outside a handler return after the
+// Closing; from inside the handler they return at once and the Closing follows it.
 //
-// ── Decoding N rows at a time, and a corrupt one among them ─────────────────
-// The window is decoded with ONE fl_decode_rows_framed call (D-BIND-68), which
-// knows where each message ended: a row that fails to decode, or does not end at
-// its boundary, is skipped and reported, and the good rows come back together.
-// So a corrupt row costs no second pass, and two messages that are each malformed
-// but valid together are dropped rather than decoded into the wrong rows.
-//
-// Only GOOD rows count toward MaxRows, as in C++, whose BatchDecoder counts what
-// it decoded. A RowLimit flush that finds bad rows puts the good ones back at the
-// front of the window and waits for more; its drops ride with the batch that is
-// finally delivered. (It delivers short instead if the window was stopped in the
-// meantime, or if putting them back would pass the byte ceiling.) The rows it put
-// back can then trail rows another flush cut meanwhile - batches were already
-// allowed to complete out of order (D-BIND-64).
-//
-// ── Threads, and what a handler may assume (D-BIND-64) ─────────────────────
-// A RowLimit flush runs on the transport's delivery thread (inside the
-// delivery, so the seam's re-entrancy rules bind the handler there), a Timeout
-// flush on a timer thread, a Closing flush on the thread that unsubscribes.
-// Handler calls are NOT serialised, exactly as in C++: those three may run the
-// handler at once, and batches may complete out of order. Each window is still
-// cut in order, under the state lock, so no row is in two batches and none is
-// skipped; a handler must be thread-safe. (5a held a lock across the handler to
-// promise one call at a time. It deadlocked: a timer-thread handler that
-// cancelled waited, in the native drain, for a delivery that was itself waiting
-// for that lock.)
-//
-// What IS promised: no handler call runs after Unsubscribe or Dispose returns.
-// A delivery-thread flush is covered by the native cancel, which drains the
-// delivery it runs in; a timer flush on another thread is waited for by Stop,
-// as C++'s Stop joins its timer thread - unless Stop runs ON that flush, as a
-// handler that cancels itself does. A limit shared with C++: a delivery-thread
-// handler that cancels while a timer-thread handler also cancels can still
-// deadlock, each cancel waiting for the other's flush.
-//
-// THE HANDLER OWNS WHAT IT IS HANDED. The batch is the codec's, handed over as
-// FletcherCodec.DecodeBatch hands it - the caller disposes it - and each
-// AttachmentsBuilder is a managed copy it may keep, read or republish with. A
-// batch disposed after the handler returned would make a kept reference a
-// use-after-free; one the caller forgets is only a leak.
-//
-// A handler that throws is absorbed, counted in AbsorbedCallbackFailures and
-// Diagnostics.AbsorbedTotal, and raised as HandlerFaulted (D-BIND-19 rule 5):
-// none of the three threads may be taken down by user code.
-//
-// ── Dictionaries ────────────────────────────────────────────────────────────
-// Delivered as their VALUE type (FletcherCodec.DecodedSchema): re-folding into a
-// DictionaryArray is deferred to the DICT round (D-BIND-8). C++'s BatchDecoder
-// re-folds; that difference is by ruling.
+// ── A quiet close keeps its topic (D10C-7 D5) ───────────────────────────────
+// A close made inside a row delivery on the provider leaves the transport
+// subscription open and quiet until the subscriber is disposed or the topic is
+// subscribed again (pubsub subscriber.hpp). Its claim then stays, with a count of
+// 0: the same kind may take it again; the other kind, which would silently replace
+// the quiet subscription, is refused.
 using System;
-using System.Buffers;
 using System.Collections.Generic;
-using System.Diagnostics;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Threading;
 
 using Apache.Arrow;
+using Apache.Arrow.C;
+
+using Eiva.Fletcher.Interop;
 
 namespace Eiva.Fletcher;
 
 /// <summary>Receives one flushed batch.</summary>
 /// <param name="batch">
-/// The decoded rows, which the handler OWNS and disposes. Zero rows when the window
-/// held only dropped rows; NULL only when the topic's schema could not be opened, in
-/// which case every row is dropped for the life of the subscription.
+/// The decoded rows, which the handler OWNS, may keep, and disposes. Zero rows when the
+/// window held only dropped rows. An idle Closing is empty: zero rows, or NULL if no row has yet
+/// carried a schema, so there is nothing to build a batch from (d7 L6). NULL when no batch could be built
+/// for this window - no usable schema yet, a schema that cannot be opened (then for the
+/// subscription's life), or a window that could not be finished or handed over - with
+/// RowsDropped counting the window's rows; a failed hand-over also carries its failure in
+/// <see cref="BatchStatus.Failure"/>. Per row (<see cref="SubscriberArrow.Subscribe"/>):
+/// NULL when this one row could not be decoded, with RowsDropped = 1.
 /// </param>
 /// <param name="attachments">Row <c>i</c>'s attachments at index <c>i</c>, owned copies.</param>
 /// <param name="status">Why the batch was flushed, and how many rows were lost since the last one.</param>
@@ -115,23 +74,27 @@ public delegate void RecordBatchHandler(RecordBatch? batch, IReadOnlyList<Attach
 /// <summary>Why a batch was flushed.</summary>
 public enum BatchReason
 {
-    /// <summary><see cref="BatchOptions.MaxRows"/> was reached.</summary>
-    RowLimit,
+    /// <summary>
+    /// <see cref="BatchOptions.MaxRows"/> was reached; per row, on every call: the window is
+    /// the one row offered, delivered or dropped.
+    /// </summary>
+    RowLimit = 1,
 
     /// <summary>The window's deadline passed.</summary>
-    Timeout,
+    Timeout = 2,
 
     /// <summary>The subscription is being torn down.</summary>
-    Closing,
+    Closing = 3,
 }
 
 /// <summary>Why a batch was flushed and whether rows were lost.</summary>
 public readonly struct BatchStatus
 {
-    internal BatchStatus(BatchReason reason, long rowsDropped)
+    internal BatchStatus(BatchReason reason, long rowsDropped, FletcherException? failure = null)
     {
         Reason = reason;
         RowsDropped = rowsDropped;
+        Failure = failure;
     }
 
     /// <summary>Why this batch was flushed.</summary>
@@ -139,57 +102,47 @@ public readonly struct BatchStatus
 
     /// <summary>Rows lost since the previous flush; 0 means all good.</summary>
     public long RowsDropped { get; }
+
+    /// <summary>
+    /// Null, except on a window the server shim could not hand over: then the batch is null, the
+    /// window's rows are in <see cref="RowsDropped"/>, and this is the shim's failure, its status,
+    /// origin (<see cref="FletcherOrigin.Handover"/>) and message as the shim gave them (d10 L9).
+    /// A window C# itself could not take over carries none: its rows are counted, nothing more.
+    /// </summary>
+    public FletcherException? Failure { get; }
 }
 
 /// <summary>How a batched subscription flushes.</summary>
 public sealed class BatchOptions
 {
-    /// <summary>Flush at this many rows. Values below 1 mean 1.</summary>
+    /// <summary>Flush at this many rows. Below 1 is refused by domain 7 (<see cref="FletcherStatus.InvalidArgument"/>).</summary>
     public long MaxRows { get; init; } = 8000;
 
     /// <summary>
     /// ...or when this long has passed since the previous flush. <see cref="Timeout.InfiniteTimeSpan"/>
-    /// for never; otherwise zero up to <see cref="MaxTimeout"/>.
+    /// for never; a negative one is refused by domain 7 (<see cref="FletcherStatus.InvalidArgument"/>).
     /// </summary>
     public TimeSpan Timeout { get; init; } = TimeSpan.FromMinutes(1);
-
-    /// <summary>The longest finite <see cref="Timeout"/>: the most a timer can wait, about 49.7 days.</summary>
-    public static TimeSpan MaxTimeout { get; } = TimeSpan.FromMilliseconds(uint.MaxValue - 1);
 }
 
 /// <summary>A subscriber that delivers RecordBatches (D-BIND-25).</summary>
 public sealed class SubscriberArrow : IDisposable
 {
-    /// <summary>
-    /// The most one window may hold, in raw row bytes (D-BIND-63): C++'s Arrow
-    /// builder limit, 2^31-2, lowered to what one managed buffer can hold.
-    /// </summary>
-    internal static readonly long DefaultWindowByteCeiling = Math.Min((1L << 31) - 2, System.Array.MaxLength);
-
     private readonly Subscriber _subscriber;
     private readonly object _gate = new();
-    private readonly Dictionary<ulong, Batcher> _batchers = [];
-    private readonly long _windowByteCeiling;
+    // D10C-6: the kind each topic is held in (with a count of that kind), and the topic each
+    // live subscription holds, so a release is keyed by the subscription and happens once. A
+    // count of 0 is a quiet close's topic, still held for its kind (D10C-7 D5).
+    private readonly Dictionary<TopicPath, (bool PerRow, int Count)> _claims = [];
+    private readonly Dictionary<ulong, TopicPath> _claimed = [];
     private long _absorbed;
     private bool _disposed;
 
     /// <summary>Create an Arrow subscriber over a provider.</summary>
     public SubscriberArrow(PubSubProviderHandle provider)
-        : this(provider, DefaultWindowByteCeiling)
-    {
-    }
-
-    /// <summary>
-    /// With a lower window ceiling, so the split can be tested without
-    /// allocating gigabytes. Not public: the ceiling is C++'s, not a knob.
-    /// </summary>
-    internal SubscriberArrow(PubSubProviderHandle provider, long windowByteCeiling)
     {
         ArgumentNullException.ThrowIfNull(provider);
-        ArgumentOutOfRangeException.ThrowIfLessThan(windowByteCeiling, 1);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(windowByteCeiling, DefaultWindowByteCeiling);
         _subscriber = new Subscriber(provider);
-        _windowByteCeiling = windowByteCeiling;
     }
 
     /// <summary>Batch handlers that threw, absorbed by this subscriber.</summary>
@@ -198,71 +151,185 @@ public sealed class SubscriberArrow : IDisposable
     /// <summary>Raised for each absorbed batch-handler failure.</summary>
     public event EventHandler<HandlerFaultedEventArgs>? HandlerFaulted;
 
-    /// <summary>Per-row Arrow delivery: every row arrives as a one-row batch (D-BIND-59).</summary>
+    /// <summary>Per-row Arrow delivery: each row offered is exactly one handler call (d10 L7, L9; BC-16).</summary>
     /// <remarks>
-    /// Exactly <see cref="SubscribeBatched"/> with <see cref="BatchOptions.MaxRows"/> = 1:
-    /// each row is flushed on the delivery thread as it lands.
+    /// The native per-row path, with no window, count or timer, so it works on every shim.
+    /// A row that decodes arrives on the delivery thread as a one-row batch with its own
+    /// attachments; one that cannot be decoded - malformed, schema-less, or of a schema the
+    /// codec cannot open - arrives alone as a null batch with RowsDropped = 1 and no
+    /// attachments. The reason is <see cref="BatchReason.RowLimit"/> on every call, and
+    /// nothing is delivered after <see cref="Unsubscribe"/>.
     /// </remarks>
-    public SubscribeResult Subscribe(TopicPath topic, RecordBatchHandler handler, TopicOptions? topicOptions = null)
-        => SubscribeBatched(topic, handler, new BatchOptions { MaxRows = 1 }, topicOptions);
-
-    /// <summary>Batched RecordBatch delivery - the primary shape (D-BIND-25).</summary>
-    /// <exception cref="ArgumentOutOfRangeException">
-    /// <see cref="BatchOptions.Timeout"/> is negative and not <see cref="Timeout.InfiniteTimeSpan"/>.
+    /// <exception cref="InvalidOperationException">
+    /// This object already holds a <see cref="SubscribeBatched"/> subscription to the topic (ruling
+    /// :575 (6)); refused before anything is subscribed.
     /// </exception>
+    public SubscribeResult Subscribe(TopicPath topic, RecordBatchHandler handler, TopicOptions? topicOptions = null)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(handler);
+
+        var delivery = new RowDelivery(this, handler);
+        SubscribeResult result = SubscribeClaimed(
+            topic, perRow: true, () => _subscriber.Subscribe(topic, delivery.OnRow, topicOptions, delivery));
+        delivery.SubscriptionId = result.Subscription.Id;
+        result.Subscription.Canceller = Unsubscribe;
+        return result;
+    }
+
+    /// <summary>Batched RecordBatch delivery - the primary shape (D-BIND-25): domain 7's batches.</summary>
     /// <remarks>
-    /// Disposing the returned <see cref="Subscription"/> is <see cref="Unsubscribe"/>:
-    /// the pending window is flushed with <see cref="BatchReason.Closing"/> first.
+    /// Needs the server build of the shim (the Eiva.Fletcher.Server package). The options cross as
+    /// given (d10 L3): domain 7 answers a row limit below 1 or a negative timeout. Batches arrive on
+    /// domain 7's batch thread, one at a time, in window order; the first may arrive before this
+    /// returns. Disposing the returned <see cref="Subscription"/> is <see cref="Unsubscribe"/>.
     /// </remarks>
-    public SubscribeResult SubscribeBatched(
+    /// <exception cref="FletcherException">
+    /// <see cref="FletcherStatus.NotSupported"/> on the edge build of the shim, its message naming the
+    /// server package; <see cref="FletcherStatus.InvalidArgument"/> for options domain 7 refuses.
+    /// Nothing is delivered after a refusal.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// This object already holds a per-row <see cref="Subscribe"/> subscription to the topic (ruling
+    /// :575 (6)); refused before anything is subscribed.
+    /// </exception>
+    public unsafe SubscribeResult SubscribeBatched(
         TopicPath topic, RecordBatchHandler handler, BatchOptions? options = null, TopicOptions? topicOptions = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(handler);
 
         options ??= new BatchOptions();
-        // Refused at the door rather than failing later: past the timer's maximum,
-        // Timer.Change threw inside the delivery, and TimeSpan.MaxValue overflowed the
-        // deadline into "now" - a window meant never to time out flushed at once
-        // (BIND-5 review B8).
-        if (options.Timeout != Timeout.InfiniteTimeSpan &&
-            (options.Timeout < TimeSpan.Zero || options.Timeout > BatchOptions.MaxTimeout))
+        long maxRows = options.MaxRows;
+        long timeoutMs = SchemaArrival.ToNativeMilliseconds(options.Timeout);
+
+        // Built before the claim (D10C-6 DEBT-1). Native holds `self` from the instant it answers OK
+        // until its Closing, so this frame frees it only while `accepted` is false (review DEBT-2).
+        var delivery = new BatchDelivery(this, handler);
+        GCHandle self = GCHandle.Alloc(delivery);
+        bool accepted = false;
+        SubscribeResult result;
+        try
         {
-            throw new ArgumentOutOfRangeException(
-                nameof(options), options.Timeout,
-                "a Timeout must be between zero and BatchOptions.MaxTimeout (about 49.7 days, the most a timer can " +
-                "wait): use Timeout.InfiniteTimeSpan for a window with no deadline");
+            result = SubscribeClaimed(
+                topic,
+                perRow: false,
+                () => _subscriber.SubscribeBatches(
+                    topic, maxRows, timeoutMs, topicOptions,
+                    (nint)(delegate* unmanaged[Cdecl]<nint, FlBatch*, void>)&BatchThunk, GCHandle.ToIntPtr(self), ref accepted),
+                () => accepted);
+        }
+        catch when (!accepted)
+        {
+            self.Free();
+            throw;
         }
 
-        int maxRows = (int)Math.Clamp(options.MaxRows, 1, int.MaxValue);
-        var batcher = new Batcher(this, handler, maxRows, options.Timeout, _windowByteCeiling);
-
-        SubscribeResult result = _subscriber.Subscribe(topic, batcher.OnRow, topicOptions);
-        batcher.SubscriptionId = result.Subscription.Id;
+        delivery.Subscription = result.Subscription;
         result.Subscription.Canceller = Unsubscribe;
+        return result;
+    }
+
+    /// <summary>The one place a subscription takes, keeps or gives back its topic's claim (ruling :575 (6)).</summary>
+    /// <remarks>
+    /// The claim comes before the inner subscribe and is released if that throws before native
+    /// accepted (<paramref name="accepted"/>; a per-row subscribe passes none); the subscription is
+    /// recorded straight after it returns, outside the <c>try</c>, so the claim lasts exactly as long
+    /// as the native subscription.
+    /// </remarks>
+    private SubscribeResult SubscribeClaimed(
+        TopicPath topic, bool perRow, Func<SubscribeResult> subscribe, Func<bool>? accepted = null)
+    {
+        _ = topic.ToKey(); // a defaulted topic is refused here, before it can be claimed
+        Claim(topic, perRow);
+        SubscribeResult result;
+        try
+        {
+            result = subscribe();
+        }
+        catch when (accepted?.Invoke() != true)
+        {
+            Release(topic, quiet: false);
+            throw;
+        }
 
         lock (_gate)
         {
-            _batchers[result.Subscription.Id] = batcher;
+            _claimed[result.Subscription.Id] = topic;
         }
 
         return result;
     }
 
-    /// <summary>Flush the subscription's pending window as <see cref="BatchReason.Closing"/>, then cancel it.</summary>
+    /// <summary>Take the topic for one kind, or refuse: the two kinds never share a topic on this object.</summary>
     /// <remarks>
-    /// That order is C++'s: the handler sees the last partial window before the
-    /// data subscription goes, and rows that land in between are ignored. When it
-    /// returns, no handler call for the subscription is still running (D-BIND-64).
-    /// Called from inside the subscription's own handler it is served: the closing
-    /// flush delivers whatever the window holds by then, which can call the handler
-    /// again, nested, as C++ does.
+    /// Under the lock and before any subscribe, so two threads racing the kinds see exactly one win.
+    /// The same kind again is not refused: only the mix is (L3, ruling :575 (6)). A topic held at a
+    /// count of 0 by a quiet close is the same: its kind takes it again, the other is refused (D5).
+    /// </remarks>
+    private void Claim(TopicPath topic, bool perRow)
+    {
+        lock (_gate)
+        {
+            if (!_claims.TryGetValue(topic, out (bool PerRow, int Count) held))
+            {
+                _claims[topic] = (perRow, 1);
+            }
+            else if (held.PerRow != perRow)
+            {
+                throw new InvalidOperationException(
+                    $"cannot subscribe to '{topic}' {(perRow ? "per-row" : "batched")}: this SubscriberArrow " +
+                    $"already holds a {(held.PerRow ? "per-row" : "batched")} subscription to it, which a later one " +
+                    "of the other kind would silently replace. " +
+                    (held.Count == 0
+                        ? "That one was closed inside a delivery, so its transport subscription stays open until " +
+                          "this SubscriberArrow is disposed or the topic is subscribed again per that kind"
+                        : "Unsubscribe that one first"));
+            }
+            else
+            {
+                _claims[topic] = (perRow, held.Count + 1);
+            }
+        }
+    }
+
+    /// <summary>Give back one subscription's share of its topic; a quiet close keeps the topic at 0 (D5).</summary>
+    private void Release(TopicPath topic, bool quiet)
+    {
+        lock (_gate)
+        {
+            if (_claims.TryGetValue(topic, out (bool PerRow, int Count) held))
+            {
+                if (held.Count <= 1 && quiet)
+                {
+                    _claims[topic] = (held.PerRow, 0);
+                }
+                else if (held.Count <= 1)
+                {
+                    _claims.Remove(topic);
+                }
+                else
+                {
+                    _claims[topic] = (held.PerRow, held.Count - 1);
+                }
+            }
+        }
+    }
+
+    /// <summary>End a subscription of either kind, and give back its topic's claim.</summary>
+    /// <remarks>
+    /// A batched one ends with its Closing batch (d7 L9): from outside its handler this returns after
+    /// the Closing; from inside the handler it returns at once and the Closing follows the handler. A
+    /// close made inside a row delivery on this provider leaves the topic held for its kind (D5).
+    /// Closing ANOTHER batched subscription from inside a batch handler waits for that one's Closing,
+    /// so two handlers that close each other's subscriptions hang (binding.h,
+    /// fl_subscriber_unsubscribe_batches).
     /// </remarks>
     public void Unsubscribe(Subscription subscription)
     {
         ArgumentNullException.ThrowIfNull(subscription);
 
-        // Before the batcher is looked up: ids are per-subscriber counters, so another
+        // Before anything is closed: ids are per-subscriber counters, so another
         // subscriber's subscription #1 would otherwise stop THIS one's #1 (review B9).
         if (!subscription.BelongsTo(_subscriber))
         {
@@ -271,15 +338,34 @@ public sealed class SubscriberArrow : IDisposable
                 "or dispose it", nameof(subscription));
         }
 
-        Batcher? batcher;
-        lock (_gate)
+        // Asked before the close (D5): only a close inside a row delivery leaves the transport quiet.
+        bool quiet = _subscriber.InDeliveryOnThisProvider;
+
+        // The ABI's id rule: bit 63 set is a batched id, never a row id (binding.h).
+        if ((subscription.Id & BatchedIdBit) != 0)
         {
-            _batchers.Remove(subscription.Id, out batcher);
+            _subscriber.UnsubscribeBatches(subscription);
+        }
+        else
+        {
+            _subscriber.Unsubscribe(subscription);
         }
 
-        batcher?.Stop();
-        _subscriber.Unsubscribe(subscription);
+        // Only once the close has returned: a failed one keeps the claim, so a retry releases it.
+        TopicPath claimed;
+        bool held;
+        lock (_gate)
+        {
+            held = _claimed.Remove(subscription.Id, out claimed);
+        }
+
+        if (held)
+        {
+            Release(claimed, quiet);
+        }
     }
+
+    private const ulong BatchedIdBit = 1UL << 63;
 
     /// <summary>Watch a topic's schema without its data - <see cref="Subscriber.SubscribeSchema"/>, forwarded.</summary>
     public SchemaArrival SubscribeSchema(TopicPath topic)
@@ -295,10 +381,10 @@ public sealed class SubscriberArrow : IDisposable
         _subscriber.UnsubscribeSchema(topic);
     }
 
-    /// <summary>Flush every pending window as <see cref="BatchReason.Closing"/>, then tear down.</summary>
+    /// <summary>End every subscription - each batched one with its Closing batch - then tear down.</summary>
     /// <exception cref="InvalidOperationException">
-    /// Called from inside a delivery on this subscriber's provider - refused BEFORE
-    /// any window is flushed, so a refused Dispose leaves nothing half torn down.
+    /// Called from inside a row delivery on this subscriber's provider - refused BEFORE
+    /// anything is closed, so a refused Dispose leaves nothing half torn down.
     /// </exception>
     public void Dispose()
     {
@@ -316,19 +402,6 @@ public sealed class SubscriberArrow : IDisposable
         }
 
         _disposed = true;
-
-        List<Batcher> batchers;
-        lock (_gate)
-        {
-            batchers = [.. _batchers.Values];
-            _batchers.Clear();
-        }
-
-        foreach (Batcher batcher in batchers)
-        {
-            batcher.Stop();
-        }
-
         _subscriber.Dispose();
     }
 
@@ -349,479 +422,275 @@ public sealed class SubscriberArrow : IDisposable
         }
     }
 
-    /// <summary>One subscription's pending window, its deadline and its codec.</summary>
-    private sealed class Batcher
+    /// <summary>A delivery's attachments as an owned copy, empty keys included; a partial copy is disposed and the failure rethrown.</summary>
+    private static AttachmentsBuilder CopyAttachments(AttachmentsView view)
     {
-        private static readonly long MinWindowTicks = Stopwatch.Frequency / 1000;
+        var copy = new AttachmentsBuilder();
+        try
+        {
+            for (int i = 0; i < view.Count; i++)
+            {
+                copy.AppendDelivered(view.KeyAt(i), view.ValueAt(i));
+            }
 
+            return copy;
+        }
+        catch (Exception)
+        {
+            copy.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>One per-row subscription: its handler and its codec decision (d10 L7, L9; BC-16).</summary>
+    /// <remarks>
+    /// The inner Subscriber disposes it at the subscription's one free, after which no
+    /// delivery of it can run, so the codec outlives every decode - an in-handler
+    /// Unsubscribe included - with no count of its own (D-BIND-50).
+    /// </remarks>
+    private sealed class RowDelivery : IDisposable
+    {
         private readonly SubscriberArrow _owner;
         private readonly RecordBatchHandler _handler;
-        private readonly int _maxRows;
-        private readonly TimeSpan _timeout;
-        private readonly long _byteCeiling;
 
-        // State, under _gate. Never held while the handler runs.
+        // Under _gate, never held across a decode or the handler.
         private readonly object _gate = new();
-        private ArrayBufferWriter<byte> _rows = new();
-        private List<int> _ends = [];
-        private List<AttachmentsBuilder> _attachments = [];
-        private long _dropped;
         private FletcherCodec? _codec;
-        private bool _undecodable;
-        private Timer? _timer;
-        private bool _hasDeadline;
-        private long _deadline;
-        private long _lastFlush = Stopwatch.GetTimestamp();
-        private bool _stopped;
+        private bool _decided;
 
-        // Flushes past their cut and not yet returned. The codec is disposed by
-        // whichever of Stop and the last of these comes last, so a flush on another
-        // thread never decodes with a disposed codec - and nobody waits for one.
-        private int _activeFlushes;
-
-        // The managed thread running a Timeout flush, or 0. Stop waits for it to
-        // finish unless Stop is running on it (D-BIND-64).
-        private int _timerFlushThread;
-
-        internal Batcher(SubscriberArrow owner, RecordBatchHandler handler, int maxRows, TimeSpan timeout, long byteCeiling)
+        internal RowDelivery(SubscriberArrow owner, RecordBatchHandler handler)
         {
             _owner = owner;
             _handler = handler;
-            _maxRows = maxRows;
-            _timeout = timeout;
-            _byteCeiling = byteCeiling;
         }
 
         internal ulong SubscriptionId { get; set; }
 
-        /// <summary>The Subscriber's handler: copy the borrowed row, and flush at the row limit.</summary>
+        /// <summary>THE classify-and-count site: every row offered reaches exactly one handler call.</summary>
         internal void OnRow(ReadOnlySpan<byte> row, SchemaHandle schema, AttachmentsView view)
         {
-            // The intake owns its failures (D-BIND-66): a row it cannot copy is a
-            // counted drop, never an exception into the inner Subscriber, which would
-            // absorb it where no count of this tier sees it.
-            AttachmentsBuilder? attachments = CopyAttachments(view);
-
-            bool full;
-            while (true)
-            {
-                lock (_gate)
-                {
-                    if (_stopped)
-                    {
-                        return;
-                    }
-
-                    if (_codec is null && !_undecodable)
-                    {
-                        Resolve(schema);
-                    }
-
-                    // Alone past the ceiling: no window could decode it, so it is
-                    // dropped and counted - C++'s "the row alone exceeds the budget".
-                    // A row whose attachments could not be copied goes the same way.
-                    if (_undecodable || row.Length > _byteCeiling || attachments is null)
-                    {
-                        _dropped++;
-                        ArmDeadline();
-                        return;
-                    }
-
-                    // Fits once the pending window is out of the way: flush it first,
-                    // outside the gate, then look again - another delivery may have
-                    // added to the new window in between (D-BIND-63).
-                    if (_rows.WrittenCount + (long)row.Length <= _byteCeiling)
-                    {
-                        try
-                        {
-                            row.CopyTo(_rows.GetSpan(row.Length));
-                        }
-                        catch (Exception)
-                        {
-                            // The copy is the only allocation that grows with the data;
-                            // a failed one is a lost row, reported as one - never an
-                            // absorbed handler fault (D-BIND-63 rule 4, D-BIND-66).
-                            _dropped++;
-                            ArmDeadline();
-                            return;
-                        }
-
-                        _rows.Advance(row.Length);
-                        _ends.Add(_rows.WrittenCount);
-                        _attachments.Add(attachments);
-                        ArmDeadline();
-                        full = _ends.Count >= _maxRows;
-                        break;
-                    }
-                }
-
-                Flush(BatchReason.RowLimit);
-            }
-
-            if (full)
-            {
-                Flush(BatchReason.RowLimit);
-            }
-        }
-
-        /// <summary>The delivery's attachments as owned copies, or null if they could not be copied.</summary>
-        private static AttachmentsBuilder? CopyAttachments(AttachmentsView view)
-        {
-            var copy = new AttachmentsBuilder();
-            try
-            {
-                for (int i = 0; i < view.Count; i++)
-                {
-                    copy.AppendDelivered(view.KeyAt(i), view.ValueAt(i));
-                }
-
-                return copy;
-            }
-            catch (Exception)
-            {
-                copy.Dispose();
-                return null;
-            }
-        }
-
-        /// <summary>The codec, from the first delivery's schema - so a subscriber that subscribed first still
-        /// decodes on a schema-carrying transport. A subscription the transport serves with no schema (the
-        /// default inprocess loopback, subscribed before the topic was declared) is undecodable for its whole
-        /// life: the seam fixes the mode when Subscribe returns, and every row is dropped and counted (D-BIND-146).</summary>
-        private void Resolve(SchemaHandle schema)
-        {
-            try
-            {
-                _codec = schema.IsNull ? null : new FletcherCodec(schema.ToArrowSchema());
-            }
-            catch (Exception)
-            {
-                // Not only the codec's own refusal: Apache.Arrow's importer refuses
-                // with types of its own. Any of them means this schema cannot be
-                // decoded, reported as such, rather than a row lost on every delivery
-                // with nothing counted (BIND-5 review B6).
-                _codec = null;
-            }
-
-            _undecodable = _codec is null;
-        }
-
-        /// <summary>Armed by the window's first event; anchored to the previous flush.</summary>
-        private void ArmDeadline()
-        {
-            if (_hasDeadline || _timeout == Timeout.InfiniteTimeSpan)
-            {
-                return;
-            }
-
-            long now = Stopwatch.GetTimestamp();
-            long anchored = _lastFlush + (long)(_timeout.TotalSeconds * Stopwatch.Frequency);
-            _deadline = Math.Max(now + MinWindowTicks, anchored);
-            _hasDeadline = true;
-
-            _timer ??= new Timer(static state => ((Batcher)state!).OnDeadline(), this, System.Threading.Timeout.Infinite, System.Threading.Timeout.Infinite);
-            _timer.Change(DueIn(now), System.Threading.Timeout.InfiniteTimeSpan);
-        }
-
-        private TimeSpan DueIn(long now) =>
-            TimeSpan.FromSeconds(Math.Max(0, _deadline - now) / (double)Stopwatch.Frequency);
-
-        private void OnDeadline()
-        {
-            lock (_gate)
-            {
-                if (_stopped || !_hasDeadline)
-                {
-                    return;
-                }
-
-                long now = Stopwatch.GetTimestamp();
-                if (now < _deadline)
-                {
-                    // Woken early (timer granularity): go back to sleep for the rest.
-                    _timer?.Change(DueIn(now), System.Threading.Timeout.InfiniteTimeSpan);
-                    return;
-                }
-
-                _timerFlushThread = Environment.CurrentManagedThreadId;
-            }
-
-            try
-            {
-                Flush(BatchReason.Timeout);
-            }
-            finally
-            {
-                lock (_gate)
-                {
-                    _timerFlushThread = 0;
-                    Monitor.PulseAll(_gate);
-                }
-            }
-        }
-
-        /// <summary>Stop taking rows and deliver the pending window as Closing. Idempotent.</summary>
-        internal void Stop()
-        {
-            lock (_gate)
-            {
-                if (_stopped)
-                {
-                    return;
-                }
-
-                _stopped = true;
-            }
-
-            // The window as it stands goes out as Closing. A flush already running on
-            // another thread keeps what it cut; nothing waits for it here.
-            Flush(BatchReason.Closing);
-
-            lock (_gate)
-            {
-                _timer?.Dispose();
-                _timer = null;
-
-                // A Timeout flush on another thread may still be in its handler: C++'s
-                // Stop joins its timer thread for the same reason. Not when this IS
-                // that flush - a handler cancelling itself would wait for itself.
-                int self = Environment.CurrentManagedThreadId;
-                while (_timerFlushThread != 0 && _timerFlushThread != self)
-                {
-                    Monitor.Wait(_gate);
-                }
-
-                DisposeCodecIfIdle();
-            }
-        }
-
-        /// <summary>Under the gate: the codec goes once stopped and no flush still holds it.</summary>
-        private void DisposeCodecIfIdle()
-        {
-            // Every batch already handed out was imported on its own, so nothing
-            // delivered holds on to the codec - only a flush still decoding does.
-            if (_stopped && _activeFlushes == 0)
-            {
-                _codec?.Dispose();
-                _codec = null;
-            }
-        }
-
-        private void Flush(BatchReason reason)
-        {
-            // A RowLimit flush that put good rows back and found the window full again
-            // flushes again; each pass drops at least one bad row, so this ends.
-            while (FlushOnce(reason))
-            {
-            }
-        }
-
-        /// <summary>Cut the window and deliver it. True when rows were put back and the window is full again.</summary>
-        private bool FlushOnce(BatchReason reason)
-        {
-            ArrayBufferWriter<byte> rows;
-            int[] ends;
-            List<AttachmentsBuilder> attachments;
-            long dropped;
-            FletcherCodec? codec;
-
-            // The cut, under the gate: this is what keeps windows in order and whole
-            // while their handlers run concurrently (D-BIND-64).
-            lock (_gate)
-            {
-                _hasDeadline = false;
-                _lastFlush = Stopwatch.GetTimestamp();
-
-                if (_ends.Count == 0 && _dropped == 0)
-                {
-                    return false;
-                }
-
-                // Swapped out, not copied: the window's own buffer goes to the decode, so
-                // a flush allocates no second copy of up to ~2 GiB under the gate
-                // (review M-D1), and the cut itself cannot fail on one (review B5).
-                rows = _rows;
-                ends = [.. _ends];
-                attachments = _attachments;
-                dropped = _dropped;
-                codec = _codec;
-
-                _rows = new ArrayBufferWriter<byte>();
-                _ends = [];
-                _attachments = [];
-                _dropped = 0;
-                _activeFlushes++;
-            }
-
-            try
-            {
-                return Deliver(reason, codec, rows, ends, attachments, dropped);
-            }
-            finally
-            {
-                lock (_gate)
-                {
-                    _activeFlushes--;
-                    DisposeCodecIfIdle();
-                }
-            }
-        }
-
-        /// <summary>
-        /// Decode one cut window and hand it to the handler, with no lock held. True when
-        /// its good rows went back into the window instead, and the window is full again.
-        /// </summary>
-        private bool Deliver(
-            BatchReason reason, FletcherCodec? codec, ArrayBufferWriter<byte> rows, int[] ends, List<AttachmentsBuilder> attachments, long dropped)
-        {
+            AttachmentsBuilder? attachments = null;
             RecordBatch? batch = null;
-            List<AttachmentsBuilder> kept = attachments;
-            if (codec is not null)
-            {
-                try
-                {
-                    byte[] valid = new byte[ends.Length];
-                    batch = codec.DecodeBatchFramed(rows.WrittenSpan, ends, valid);
-                    int bad = 0;
-                    foreach (byte flag in valid)
-                    {
-                        if (flag == 0)
-                        {
-                            bad++;
-                        }
-                    }
-
-                    if (bad > 0)
-                    {
-                        kept = [];
-                        for (int i = 0; i < valid.Length; i++)
-                        {
-                            if (valid[i] != 0)
-                            {
-                                kept.Add(attachments[i]);
-                            }
-                        }
-
-                        dropped += bad;
-
-                        // Only good rows count toward MaxRows, as in C++: a RowLimit
-                        // window that came up short goes back and waits for more.
-                        if (reason == BatchReason.RowLimit &&
-                            TryPutBack(rows.WrittenSpan, ends, valid, kept, dropped, out bool fullAgain))
-                        {
-                            batch.Dispose();
-                            return fullAgain;
-                        }
-                    }
-                }
-                catch (Exception)
-                {
-                    // Whatever failed - the decode or the import - the window's rows are
-                    // lost, and counted as lost (D-BIND-66): every row not already
-                    // counted is in `kept`.
-                    dropped += kept.Count;
-                    kept = [];
-                    batch?.Dispose();
-                    batch = EmptyBatch(codec);
-                }
-            }
-
+            IReadOnlyList<AttachmentsBuilder> delivered = [];
             try
             {
-                _handler(batch, kept, new BatchStatus(reason, dropped));
+                attachments = CopyAttachments(view);
+                FletcherCodec? codec = Codec(schema);
+                if (codec is not null)
+                {
+                    // Domain 2's answer: a bad or trailing byte is refused, never repaired.
+                    batch = codec.Decode(row);
+                    delivered = [attachments];
+                }
+            }
+            catch (Exception)
+            {
+                // Refused, unopenable, or an allocation that failed: this row is one drop (D30).
+                batch?.Dispose();
+                batch = null;
+            }
+
+            if (batch is null)
+            {
+                attachments?.Dispose();
+            }
+
+            var status = new BatchStatus(BatchReason.RowLimit, batch is null ? 1 : 0);
+            try
+            {
+                _handler(batch, delivered, status);
             }
             catch (Exception e)
             {
                 _owner.ReportAbsorbed(e, SubscriptionId);
             }
-
-            return false;
         }
 
         /// <summary>
-        /// Put a RowLimit window's good rows back at the FRONT of the window, with their
-        /// attachments and the drops found, so they wait for more rows as C++'s would
-        /// (review B3). False, delivering them now instead, when the window was stopped
-        /// meanwhile or the rows would take it past the byte ceiling.
+        /// The codec, decided once by the first row that carries a schema (d7 L8, L13; ruling
+        /// :258 (3)): a schema-less row decides nothing; a schema the codec cannot open
+        /// decides "none" for the subscription's life.
         /// </summary>
-        private bool TryPutBack(
-            ReadOnlySpan<byte> rows, int[] ends, byte[] valid, List<AttachmentsBuilder> kept, long dropped, out bool fullAgain)
+        private FletcherCodec? Codec(SchemaHandle schema)
         {
-            fullAgain = false;
             lock (_gate)
             {
-                if (_stopped)
+                if (!_decided && !schema.IsNull)
                 {
-                    return false;
-                }
-
-                long goodBytes = 0;
-                for (int i = 0, start = 0; i < ends.Length; start = ends[i], i++)
-                {
-                    if (valid[i] != 0)
+                    _decided = true;
+                    try
                     {
-                        goodBytes += ends[i] - start;
+                        _codec = new FletcherCodec(schema.ToArrowSchema());
+                    }
+                    catch (Exception)
+                    {
+                        _codec = null;
                     }
                 }
 
-                if (goodBytes + _rows.WrittenCount > _byteCeiling)
-                {
-                    return false;
-                }
-
-                var merged = new ArrayBufferWriter<byte>((int)goodBytes + _rows.WrittenCount + 1);
-                var mergedEnds = new List<int>(kept.Count + _ends.Count);
-                var mergedAttachments = new List<AttachmentsBuilder>(kept.Count + _attachments.Count);
-                int k = 0;
-                for (int i = 0, start = 0; i < ends.Length; start = ends[i], i++)
-                {
-                    if (valid[i] == 0)
-                    {
-                        continue;
-                    }
-
-                    ReadOnlySpan<byte> one = rows.Slice(start, ends[i] - start);
-                    one.CopyTo(merged.GetSpan(one.Length));
-                    merged.Advance(one.Length);
-                    mergedEnds.Add(merged.WrittenCount);
-                    mergedAttachments.Add(kept[k++]);
-                }
-
-                // Then whatever arrived while this window was being decoded, after it.
-                int shift = merged.WrittenCount;
-                _rows.WrittenSpan.CopyTo(merged.GetSpan(_rows.WrittenCount));
-                merged.Advance(_rows.WrittenCount);
-                foreach (int end in _ends)
-                {
-                    mergedEnds.Add(end + shift);
-                }
-
-                mergedAttachments.AddRange(_attachments);
-
-                _rows = merged;
-                _ends = mergedEnds;
-                _attachments = mergedAttachments;
-                _dropped += dropped;
-                ArmDeadline();
-                fullAgain = _ends.Count >= _maxRows;
-                return true;
+                return _codec;
             }
         }
 
-        /// <summary>
-        /// A zero-row batch: what a decodable topic's window of only lost rows
-        /// delivers. NULL stays reserved for a schema that cannot be opened at all
-        /// (review B7); only if even this fails does the handler see NULL.
-        /// </summary>
-        private static RecordBatch? EmptyBatch(FletcherCodec codec)
+        public void Dispose()
         {
+            lock (_gate)
+            {
+                _decided = true;
+                _codec?.Dispose();
+                _codec = null;
+            }
+        }
+    }
+
+    /// <summary>
+    /// THE batch thunk (D10C-7 D3): move, import, copy the attachments, call, count a throw.
+    /// NOTHING may escape it (d10 L10). The only free after an accepted subscribe is here, at
+    /// the Closing batch - the subscription's last delivery (binding.h, fl_subscriber_destroy).
+    /// </summary>
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+    private static unsafe void BatchThunk(nint ctx, FlBatch* batch)
+    {
+        try
+        {
+            GCHandle self = GCHandle.FromIntPtr(ctx);
             try
             {
-                return codec.DecodeBatch(ReadOnlySpan<byte>.Empty, 0);
+                ((BatchDelivery)self.Target!).Deliver(batch);
             }
-            catch (Exception)
+            finally
             {
-                return null;
+                if (batch->Reason == (int)BatchReason.Closing)
+                {
+                    // A racing Dispose can deliver the Closing before the subscribing thread has
+                    // set the Subscription (review DEBT-2): retire it only if it is there.
+                    ((BatchDelivery)self.Target!).Subscription?.MarkRetired();
+                    self.Free();
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // Bookkeeping failed - nowhere to report it, and nothing may leave this frame.
+        }
+    }
+
+    /// <summary>One batched subscription: its handler, and its Subscription once the subscribe returned.</summary>
+    private sealed class BatchDelivery
+    {
+        private readonly SubscriberArrow _owner;
+        private readonly RecordBatchHandler _handler;
+        private Subscription? _subscription;
+
+        internal BatchDelivery(SubscriberArrow owner, RecordBatchHandler handler)
+        {
+            _owner = owner;
+            _handler = handler;
+        }
+
+        /// <summary>Set by the subscribing thread; a batch may arrive before it is (residue b).</summary>
+        internal Subscription? Subscription
+        {
+            get => Volatile.Read(ref _subscription);
+            set => Volatile.Write(ref _subscription, value);
+        }
+
+        /// <summary>Take one window over and hand it to the handler, which then owns it.</summary>
+        /// <remarks>
+        /// The array and schema are MOVED out of the shim's borrowed structs before they are
+        /// imported (copy, then NULL the source's release), so nothing the handler keeps points
+        /// into memory the shim reclaims when this returns (d10 L8). A window that cannot be taken
+        /// over arrives as no batch, its rows counted as dropped (residue a); a null array is
+        /// domain 7's (or the shim's) "no batch", passed through as given.
+        /// </remarks>
+        internal unsafe void Deliver(FlBatch* source)
+        {
+            // Nothing that can fail runs before the take-over's `try`: a failure anywhere in it, out
+            // of memory included, still reaches the handler as this window, a null batch with its
+            // rows counted (residue (a); d10 L9) - a Closing too.
+            RecordBatch? batch = null;
+            IReadOnlyList<AttachmentsBuilder> delivered = System.Array.Empty<AttachmentsBuilder>();
+            List<AttachmentsBuilder>? attachments = null;
+            long dropped = source->RowsDropped;
+            if (source->Array != 0)
+            {
+                CArrowArray* array = null;
+                CArrowSchema* schema = null;
+                try
+                {
+                    // The move's NULL goes where Apache.Arrow's own struct keeps `release` (Arrow
+                    // C Data Interface, "Moving an array"); the field is internal to the library.
+                    nint arrayRelease = Marshal.OffsetOf<CArrowArray>("release");
+                    nint schemaRelease = Marshal.OffsetOf<CArrowSchema>("release");
+                    array = CArrowArray.Create();
+                    schema = CArrowSchema.Create();
+                    attachments = new List<AttachmentsBuilder>(checked((int)source->NumRows));
+                    *array = *(CArrowArray*)source->Array;
+                    *(nint*)((byte*)source->Array + arrayRelease) = 0;
+                    *schema = *(CArrowSchema*)source->Schema;
+                    *(nint*)((byte*)source->Schema + schemaRelease) = 0;
+
+                    Schema imported = CArrowSchemaImporter.ImportSchema(schema);
+                    batch = CArrowArrayImporter.ImportRecordBatch(array, imported);
+                    nint* sets = (nint*)source->Attachments;
+                    for (long i = 0; i < source->NumRows; i++)
+                    {
+                        attachments.Add(CopyAttachments(new AttachmentsView(sets[i])));
+                    }
+
+                    delivered = attachments;
+                }
+                catch (Exception)
+                {
+                    batch?.Dispose();
+                    batch = null;
+                    foreach (AttachmentsBuilder copied in attachments ?? [])
+                    {
+                        copied.Dispose();
+                    }
+
+                    dropped += source->NumRows;
+                }
+                finally
+                {
+                    // Only what was allocated; each releases its struct only if the import has not
+                    // moved it out, so there is one release.
+                    if (schema != null)
+                    {
+                        CArrowSchema.Free(schema);
+                    }
+
+                    if (array != null)
+                    {
+                        CArrowArray.Free(array);
+                    }
+                }
+            }
+
+            // A failed hand-over's failure, copied as given (d10 L3) and never disposed: it is
+            // borrowed for this call, and the shim frees it when the call returns (d10 L8). A copy
+            // that throws (out of memory) costs the window only its failure (brief D10C-10, "Handled"; DEBT-3).
+            FletcherException? failure = null;
+            if (source->Failure != 0)
+            {
+                try
+                {
+                    failure = Errors.ToException(((FlError*)source->Failure)->Status, in *(FlError*)source->Failure);
+                }
+                catch (Exception)
+                {
+                    // Delivered without its failure; its rows are already counted.
+                }
+            }
+
+            var status = new BatchStatus((BatchReason)source->Reason, dropped, failure);
+            try
+            {
+                _handler(batch, delivered, status);
+            }
+            catch (Exception e)
+            {
+                _owner.ReportAbsorbed(e, Subscription?.Id ?? 0);
             }
         }
     }

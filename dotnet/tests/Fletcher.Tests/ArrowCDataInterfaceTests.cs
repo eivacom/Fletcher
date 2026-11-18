@@ -19,6 +19,7 @@
 // yet at BIND-0, and this test does not need it — the subject is the dependency.
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 using Apache.Arrow;
 using Apache.Arrow.C;
@@ -141,6 +142,42 @@ public sealed class ArrowCDataInterfaceTests
         Assert.True(imported.FieldsList[0].HasMetadata);
         Assert.Equal("7", imported.FieldsList[0].Metadata["fletcher.field_number"]);
         Assert.Equal("Example", imported.Metadata["fletcher.message"]);
+    }
+
+    /// <summary>
+    /// D24 (D10C-7 P1): a batch with a dictionary column crosses as a dictionary.
+    /// </summary>
+    /// <remarks>
+    /// A batched dictionary column reaches C# re-folded, as domain 7 delivers it
+    /// (ruling 2026-11-15, :551 (2)); C# converts nothing (d10 D24, :575 (5)). That
+    /// holds only if `Apache.Arrow` IMPORTS a dictionary through the C Data
+    /// Interface, and the import path is the batch thunk's own: `ImportSchema`
+    /// then `ImportRecordBatch`. Indices int32, values utf8, one null index.
+    /// </remarks>
+    [Fact]
+    public void ADictionaryColumnCrossesAsADictionary()
+    {
+        StringArray dictionary = new StringArray.Builder().Append("north").Append("søuth").Build();
+        Int32Array indices = new Int32Array.Builder().Append(1).AppendNull().Append(0).Append(1).Build();
+        var type = new DictionaryType(Int32Type.Default, StringType.Default, ordered: false);
+        var column = new DictionaryArray(type, indices, dictionary);
+        var batch = new RecordBatch(
+            new Schema([new Field("heading", type, nullable: true)], metadata: null), [column], column.Length);
+
+        RecordBatch imported = RoundTrip(batch);
+
+        var importedType = Assert.IsType<DictionaryType>(imported.Schema.FieldsList[0].DataType);
+        Assert.Equal(ArrowTypeId.Int32, importedType.IndexType.TypeId);
+        Assert.Equal(ArrowTypeId.String, importedType.ValueType.TypeId);
+        var importedColumn = Assert.IsType<DictionaryArray>(imported.Column(0));
+        Assert.Equal(4, importedColumn.Length);
+        Assert.Equal(1, importedColumn.NullCount);
+        Assert.True(importedColumn.IsNull(1));
+        var importedIndices = Assert.IsType<Int32Array>(importedColumn.Indices);
+        var importedValues = Assert.IsType<StringArray>(importedColumn.Dictionary);
+        string?[] read = [.. Enumerable.Range(0, 4).Select(i =>
+            importedColumn.IsNull(i) ? null : importedValues.GetString(importedIndices.GetValue(i)!.Value))];
+        Assert.Equal(new string?[] { "søuth", null, "north", "søuth" }, read);
     }
 
     // ── the crossing itself ─────────────────────────────────────────────────

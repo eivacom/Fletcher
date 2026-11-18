@@ -14,6 +14,12 @@
 # and runs both consumers for each target framework the packages ship. The C# is generated with
 # the plugin of the bundle's Eiva.Fletcher.Protoc (BIND-9b-5), and GrpcConsumer proves that
 # package's Grpc.Tools wiring (D-BIND-158). Linux, or Git Bash on Windows.
+#
+# D10C-11: PreviewConsumer runs in two configurations, `base` (as it is: the packages a user who
+# only publishes and subscribes references) and `server` (a copy, PreviewConsumerServer, to which
+# Eiva.Fletcher.Server is added with `dotnet add package`, as a user adds it), each told which it
+# is. The base one must get the named NotSupported for a batch and hold no server file; the server
+# one must get its batches, on the server shim.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -42,6 +48,7 @@ echo "preview bundle $VERSION, Eiva.Fletcher.Protoc $PROTOC_VERSION"
 rm -rf "$WORK/dotnet" "$WORK/gateway" "$WORK/plugin" "$WORK/packages"
 cp -r "$HERE/dotnet" "$WORK/"
 rm -rf "$WORK"/dotnet/*/bin "$WORK"/dotnet/*/obj
+cp -r "$WORK/dotnet/PreviewConsumer" "$WORK/dotnet/PreviewConsumerServer"
 mkdir -p "$WORK/gateway"
 
 # A downloaded zip keeps no executable bit, so the gateway is unpacked and made executable,
@@ -81,16 +88,26 @@ export NUGET_PACKAGES
 export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
 
 PROJECT=$(native "$WORK/dotnet/PreviewConsumer/PreviewConsumer.csproj")
+SERVER_PROJECT=$(native "$WORK/dotnet/PreviewConsumerServer/PreviewConsumer.csproj")
 GRPC_PROJECT=$(native "$WORK/dotnet/GrpcConsumer/GrpcConsumer.csproj")
 VERSIONS=(-p:FletcherVersion="$VERSION" -p:FletcherProtocVersion="$PROTOC_VERSION")
+# The server configuration is the base project plus the one reference a user adds; --no-restore
+# writes it without the network, the restore below reads it.
+dotnet add "$SERVER_PROJECT" package Eiva.Fletcher.Server --version "[$VERSION]" --no-restore
+grep -q 'Include="Eiva.Fletcher.Server"' "$WORK/dotnet/PreviewConsumerServer/PreviewConsumer.csproj" \
+  || { echo "::error::dotnet add package did not add Eiva.Fletcher.Server to the server configuration"; exit 1; }
 dotnet restore "$PROJECT" --configfile "$(native "$WORK/nuget.config")" "${VERSIONS[@]}"
+dotnet restore "$SERVER_PROJECT" --configfile "$(native "$WORK/nuget.config")" "${VERSIONS[@]}"
 dotnet restore "$GRPC_PROJECT" --configfile "$(native "$WORK/nuget.config")" "${VERSIONS[@]}"
 
 for tfm in net8.0 net10.0; do
-  echo "── $tfm"
+  echo "── $tfm, base (Eiva.Fletcher only)"
   dotnet run --project "$PROJECT" -c Release -f "$tfm" --no-restore "${VERSIONS[@]}" \
-    -- "$(native "$GATEWAY")"
+    -- "$(native "$GATEWAY")" base
+  echo "── $tfm, server (plus Eiva.Fletcher.Server)"
+  dotnet run --project "$SERVER_PROJECT" -c Release -f "$tfm" --no-restore "${VERSIONS[@]}" \
+    -- "$(native "$GATEWAY")" server
   echo "── $tfm, the gRPC consumer"
   dotnet run --project "$GRPC_PROJECT" -c Release -f "$tfm" --no-restore "${VERSIONS[@]}"
 done
-echo "preview bundle $VERSION: both consumers passed on every target framework"
+echo "preview bundle $VERSION: both configurations and the gRPC consumer passed on every target framework"

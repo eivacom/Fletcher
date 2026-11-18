@@ -86,6 +86,8 @@ jobs:
             .conan-profiles
             core
             pubsub
+            arrow-bridge
+            pubsub-arrow
             fastdds-pubsub-provider
             xrcedds-pubsub-provider
             c-abi
@@ -112,11 +114,11 @@ jobs:
       # inside the Conan cache and that cache is container-local.
       #
       # No Conan remote hosts the fletcher-* packages, so each dependency recipe
-      # has to be created before the next can resolve it. arrow-bridge is NOT in
-      # the loop: it is the c-abi lane byte-identity oracle, never linked into the
-      # shim, so this lane has no use for it.
+      # has to be created before the next can resolve it. arrow-bridge and
+      # pubsub-arrow are in the loop for the SERVER shim (D10C-4), which links them;
+      # the edge shim never does.
       #
-      # The find is checked rather than trusted. The two native rows in
+      # The lookup (locate_shim.sh) is checked rather than trusted. The two native rows in
       # Fletcher.Tests fail rather than skip when the shim is absent, so an empty
       # path here would surface as two confusing test failures instead of one
       # clear lane failure naming the real cause.
@@ -126,48 +128,65 @@ jobs:
           docker run --rm             -v "${GITHUB_WORKSPACE}:/workspace"             -w /workspace             -e CI=true             fletcher-build             bash -c '
               set -e
               PROFILE=/workspace/.conan-profiles/Linux-gcc13-x86_64-Release
-              for COMPONENT in core pubsub fastdds-pubsub-provider xrcedds-pubsub-provider integration-tests/copy-probe c-abi; do
+              for COMPONENT in core pubsub arrow-bridge pubsub-arrow fastdds-pubsub-provider xrcedds-pubsub-provider integration-tests/copy-probe c-abi; do
                 OPTS=""
                 if [ "$COMPONENT" = c-abi ]; then OPTS="-o &:with_probe_shim=True"; fi
                 echo "::group::conan create $COMPONENT"
                 (cd /workspace/$COMPONENT && conan create . --build=missing -pr:a=$PROFILE $OPTS)
                 echo "::endgroup::"
               done
+              echo "::group::conan create c-abi (server build)"
+              (cd /workspace/c-abi && conan create . --build=missing -pr:a=$PROFILE -o "&:variant=server")
+              echo "::endgroup::"
+              # D10C-10 (rung 11): the test-only hand-over fault shim of domain 9, built only by the
+              # c-abi test build of the server variant (no package carries it); no ctest run here.
+              # Exactly one file, or the lane fails by name. Fletcher.Handover.Tests stages it.
+              echo "::group::conan build c-abi (server build, tests built: the fault shim)"
+              (cd /workspace/c-abi && conan build . --build=missing -pr:a=$PROFILE -o "&:variant=server" -o "&:run_tests=True" -c tools.build:skip_test=True)
+              echo "::endgroup::"
+              FAULT=$(find /workspace/c-abi/build -type f -name "libfletcher-c-abi-handover-fault.so")
+              if [ "$(echo "$FAULT" | grep -c .)" != 1 ]; then echo "::error::expected exactly one libfletcher-c-abi-handover-fault.so under c-abi/build, found: $FAULT"; exit 1; fi
+              echo "hand-over fault shim: $FAULT"
 
-              SHIM=$(find ~/.conan2/p -path "*/p/lib/libfletcher-c-abi.so" -type f -print -quit)
-              if [ -z "$SHIM" ]; then
-                echo "::error::libfletcher-c-abi.so not found in the Conan cache after conan create"
-                exit 1
-              fi
+              # By the package identity (D9S-2), not by file name: the edge shim, with the probe.
+              SHIM=$(bash /workspace/scripts/locate_shim.sh fletcher-c-abi variant=edge with_probe_shim=True)
               echo "staging shim: $SHIM"
-              PROBE=$(find ~/.conan2/p -path "*/p/lib/libfletcher-c-abi-probe.so" -type f -print -quit)
-              if [ -z "$PROBE" ]; then
-                echo "::error::libfletcher-c-abi-probe.so not found in the Conan cache after conan create"
-                exit 1
-              fi
+              PROBE=$(bash /workspace/scripts/locate_shim.sh fletcher-c-abi-probe variant=edge with_probe_shim=True)
               echo "staging probe shim: $PROBE"
+              SERVER=$(bash /workspace/scripts/locate_shim.sh fletcher-c-abi-server variant=server)
+              echo "server shim: $SERVER"
 
               # BIND-9a-0 (D-BIND-134): the shim must load nothing but the OS and the
               # C/C++ runtime; then its third-party notice, read off the same graph
               # (with_probe_shim, as built above: it adds only first-party packages),
               # and both handed to the pack job.
               NATIVE=/workspace/dotnet/native/linux-x64
-              mkdir -p "$NATIVE"
+              mkdir -p "$NATIVE/server"
               cp "$SHIM" "$NATIVE/"
+              # D10C-5 (BC-17): the server shim, its notice and its lockfile belong to the
+              # server package, in a folder of their own.
+              cp "$SERVER" "$NATIVE/server/"
               # BIND-9b-1 (D-BIND-157): the packaged copy ships without its symbol table
               # (3.5 MB of 14.6 MB that nothing loads); the exported C ABI must be exactly
               # what it was, and from here on the tests, the AOT smoke and the checks all
               # use this copy, the one that ships. The Conan package keeps its symbols.
-              EXPORTS_BEFORE=$(nm -D --defined-only "$NATIVE/libfletcher-c-abi.so" | cut -d" " -f3 | sort)
-              strip --strip-unneeded "$NATIVE/libfletcher-c-abi.so"
-              EXPORTS_AFTER=$(nm -D --defined-only "$NATIVE/libfletcher-c-abi.so" | cut -d" " -f3 | sort)
-              if [ -z "$EXPORTS_AFTER" ] || [ "$EXPORTS_BEFORE" != "$EXPORTS_AFTER" ]; then
-                echo "::error::stripping changed the shim exports"
-                exit 1
-              fi
-              echo "stripped: $(stat -c %s "$SHIM") -> $(stat -c %s "$NATIVE/libfletcher-c-abi.so") bytes, $(echo "$EXPORTS_AFTER" | wc -l) exports unchanged"
+              # The server copy is stripped the same way (D10C-5, d10 Q7): the tested file
+              # is the shipped file.
+              for SO in "$NATIVE/libfletcher-c-abi.so" "$NATIVE/server/libfletcher-c-abi-server.so"; do
+                BYTES_BEFORE=$(stat -c %s "$SO")
+                EXPORTS_BEFORE=$(nm -D --defined-only "$SO" | cut -d" " -f3 | sort)
+                strip --strip-unneeded "$SO"
+                EXPORTS_AFTER=$(nm -D --defined-only "$SO" | cut -d" " -f3 | sort)
+                if [ -z "$EXPORTS_AFTER" ] || [ "$EXPORTS_BEFORE" != "$EXPORTS_AFTER" ]; then
+                  echo "::error::stripping changed the exports of $SO"
+                  exit 1
+                fi
+                echo "stripped $SO: $BYTES_BEFORE -> $(stat -c %s "$SO") bytes, $(echo "$EXPORTS_AFTER" | wc -l) exports unchanged"
+              done
               SHIM="$NATIVE/libfletcher-c-abi.so"
+              SERVER="$NATIVE/server/libfletcher-c-abi-server.so"
               bash /workspace/scripts/check_shim_dependencies.sh "$SHIM"
+              bash /workspace/scripts/check_shim_dependencies.sh "$SERVER"
               # BIND-9b-7 (review L14, D-BIND-173): the lockfile of the same graph, third-party
               # packages only, which a release attaches for the relinking route; checked to
               # resolve exactly that graph from ConanCenter in an empty Conan home.
@@ -178,18 +197,40 @@ jobs:
               test -s "$NATIVE/THIRD-PARTY-LICENSES.txt"
               conan lock remove --requires="fletcher-*/*" --lockfile="$LOCK" --lockfile-out="$LOCK"
               bash /workspace/scripts/check_conan_lockfile.sh "$LOCK" "$PROFILE"
+              # D10C-5 (D-BIND-140, -173): the same for the server graph, which has Arrow C++
+              # in it, so the server package carries its own notice and relinking route.
+              SLOCK="$NATIVE/server/fletcher-shim-server-linux-x64.conan.lock"
+              conan install --requires="fletcher-c-abi/[*, include_prerelease]" -o "fletcher-c-abi/*:variant=server" \
+                --deployer=/workspace/gateway/deployers/third_party_licenses.py --deployer-folder="$NATIVE/server" \
+                -c tools.graph:skip_binaries=False -pr:a=$PROFILE --lockfile-out="$SLOCK"
+              test -s "$NATIVE/server/THIRD-PARTY-LICENSES.txt"
+              conan lock remove --requires="fletcher-*/*" --lockfile="$SLOCK" --lockfile-out="$SLOCK"
+              bash /workspace/scripts/check_conan_lockfile.sh "$SLOCK" "$PROFILE" server
 
               cd /workspace/dotnet
               echo "::group::dotnet --info"
               dotnet --info
               echo "::endgroup::"
               dotnet restore Fletcher.slnx --locked-mode
-              dotnet build Fletcher.slnx -c Release --no-restore -p:FletcherNativeShim="$SHIM" -p:FletcherProbeShim="$PROBE"
+              dotnet build Fletcher.slnx -c Release --no-restore -p:FletcherNativeShim="$SHIM" -p:FletcherProbeShim="$PROBE" -p:FletcherServerShim="$SERVER" -p:FletcherHandoverFaultShim="$FAULT"
               # One results file per target framework (D-BIND-170): with a fixed LogFileName
               # the net10.0 leg overwrote the file of the net8.0 leg, so the per-test
               # timings of a failure never reached the uploaded artifact. (No apostrophes
               # here: this script is single-quoted.)
               dotnet test Fletcher.slnx -c Release --no-build --logger "trx;LogFilePrefix=linux"
+
+              # D10C-4 (d10 L5): the server leg. Fletcher.Tests again, with the server shim
+              # beside it under its own name, in every target framework output folder, so the
+              # loader must pick it (TheLoadedShimIsTheServerExactlyWhenItIsBesideTheTests
+              # checks the module that loaded). A missing copy fails here: it would silently
+              # re-run the edge leg.
+              OUTS=$(find tests/Fletcher.Tests/bin/Release -mindepth 1 -maxdepth 1 -type d)
+              if [ -z "$OUTS" ]; then echo "::error::no Fletcher.Tests output folder to stage the server shim into"; exit 1; fi
+              for OUT in $OUTS; do
+                cp "$SERVER" "$OUT/"
+                test -f "$OUT/libfletcher-c-abi-server.so" || { echo "::error::the server shim is not in $OUT"; exit 1; }
+              done
+              dotnet test tests/Fletcher.Tests -c Release --no-build --logger "trx;LogFilePrefix=linux-server"
 
               # D-BIND-81: a consumer of the generated pair, published with NativeAOT for both
               # TFMs. Warnings are errors (Directory.Build.props), so any trim or AOT warning
@@ -209,7 +250,7 @@ jobs:
             '
 
       # Handed to the pack job, which packs once for both RIDs (BIND-9a-0).
-      - name: Upload the Linux shim, its notice and its lockfile
+      - name: Upload the Linux shims, their notices and lockfiles
         uses: actions/upload-artifact@v7.0.1
         with:
           name: dotnet-native-linux-x64
@@ -236,6 +277,8 @@ jobs:
             .conan-profiles
             core
             pubsub
+            arrow-bridge
+            pubsub-arrow
             fastdds-pubsub-provider
             xrcedds-pubsub-provider
             c-abi
@@ -258,21 +301,28 @@ jobs:
         uses: ./.github/actions/conan-install
 
       # BIND-3a: the managed suite loads the native shim, so this lane builds it.
-      # Same component order as the c-abi lane, minus arrow-bridge, which is that
-      # lane's byte-identity oracle and is never linked into the shim.
+      # Same component order as the c-abi lane. arrow-bridge and pubsub-arrow are for
+      # the SERVER shim (D10C-4), which links them; the edge shim never does.
       - name: Build the native shim
         shell: bash
         run: |
           set -e
           # Absolute, because integration-tests/copy-probe is two levels deep.
           PROFILE="$PWD/.conan-profiles/Windows-msvc194-x86_64-Release"
-          for COMPONENT in core pubsub fastdds-pubsub-provider xrcedds-pubsub-provider integration-tests/copy-probe c-abi; do
+          for COMPONENT in core pubsub arrow-bridge pubsub-arrow fastdds-pubsub-provider xrcedds-pubsub-provider integration-tests/copy-probe c-abi; do
             OPTS=()
             if [ "$COMPONENT" = c-abi ]; then OPTS=(-o "&:with_probe_shim=True"); fi
             echo "::group::conan create $COMPONENT"
             (cd "$COMPONENT" && conan create . --build=missing -pr:a="$PROFILE" "${OPTS[@]}")
             echo "::endgroup::"
           done
+          echo "::group::conan create c-abi (server build)"
+          (cd c-abi && conan create . --build=missing -pr:a="$PROFILE" -o "&:variant=server")
+          echo "::endgroup::"
+          # D10C-10 (rung 11): the hand-over fault shim, as on the Linux leg.
+          echo "::group::conan build c-abi (server build, tests built: the fault shim)"
+          (cd c-abi && conan build . --build=missing -pr:a="$PROFILE" -o "&:variant=server" -o "&:run_tests=True" -c tools.build:skip_test=True)
+          echo "::endgroup::"
 
       # Checked, not trusted: the native rows fail rather than skip when the shim
       # is absent, so an empty path here would surface as test failures instead of
@@ -282,20 +332,21 @@ jobs:
         shell: bash
         run: |
           set -e
-          SHIM=$(find ~/.conan2/p -path '*/p/bin/fletcher-c-abi.dll' -type f -print -quit)
-          if [ -z "$SHIM" ]; then
-            echo "::error::fletcher-c-abi.dll not found in the Conan cache after conan create"
-            exit 1
-          fi
+          # By the package identity (D9S-2), not by file name: the edge shim, with the probe.
+          SHIM=$(bash scripts/locate_shim.sh fletcher-c-abi variant=edge with_probe_shim=True)
           echo "staging shim: $SHIM"
           echo "path=$SHIM" >> "$GITHUB_OUTPUT"
-          PROBE=$(find ~/.conan2/p -path '*/p/bin/fletcher-c-abi-probe.dll' -type f -print -quit)
-          if [ -z "$PROBE" ]; then
-            echo "::error::fletcher-c-abi-probe.dll not found in the Conan cache after conan create"
-            exit 1
-          fi
+          PROBE=$(bash scripts/locate_shim.sh fletcher-c-abi-probe variant=edge with_probe_shim=True)
           echo "staging probe shim: $PROBE"
           echo "probe=$PROBE" >> "$GITHUB_OUTPUT"
+          SERVER=$(bash scripts/locate_shim.sh fletcher-c-abi-server variant=server)
+          echo "server shim: $SERVER"
+          echo "server=$SERVER" >> "$GITHUB_OUTPUT"
+          # D10C-10: exactly one hand-over fault shim from c-abi's test build, or the lane fails by name.
+          FAULT=$(find "$PWD/c-abi/build" -type f -name "fletcher-c-abi-handover-fault.dll")
+          if [ "$(echo "$FAULT" | grep -c .)" != 1 ]; then echo "::error::expected exactly one fletcher-c-abi-handover-fault.dll under c-abi/build, found: $FAULT"; exit 1; fi
+          echo "hand-over fault shim: $FAULT"
+          echo "fault=$FAULT" >> "$GITHUB_OUTPUT"
 
       # BIND-9a-0 (D-BIND-134): as the Linux leg. dumpbin comes with the MSVC toolset
       # the shim was built with; vswhere finds it. The notice is read off the same graph.
@@ -323,8 +374,21 @@ jobs:
           test -s "$NATIVE/THIRD-PARTY-LICENSES.txt"
           conan lock remove --requires="fletcher-*/*" --lockfile="$LOCK" --lockfile-out="$LOCK"
           bash scripts/check_conan_lockfile.sh "$LOCK" "$PWD/.conan-profiles/Windows-msvc194-x86_64-Release"
+          # D10C-5 (BC-17, d10 Q7): the server shim, with the same DLL list, and its notice and
+          # lockfile, for the server package.
+          bash scripts/check_shim_dependencies.sh "${{ steps.shim.outputs.server }}" "$DUMPBIN"
+          mkdir -p "$NATIVE/server"
+          cp "${{ steps.shim.outputs.server }}" "$NATIVE/server/"
+          SLOCK="$NATIVE/server/fletcher-shim-server-win-x64.conan.lock"
+          conan install --requires="fletcher-c-abi/[*, include_prerelease]" -o "fletcher-c-abi/*:variant=server" \
+            --deployer=gateway/deployers/third_party_licenses.py --deployer-folder="$NATIVE/server" \
+            -c tools.graph:skip_binaries=False -pr:a="$PWD/.conan-profiles/Windows-msvc194-x86_64-Release" \
+            --lockfile-out="$SLOCK"
+          test -s "$NATIVE/server/THIRD-PARTY-LICENSES.txt"
+          conan lock remove --requires="fletcher-*/*" --lockfile="$SLOCK" --lockfile-out="$SLOCK"
+          bash scripts/check_conan_lockfile.sh "$SLOCK" "$PWD/.conan-profiles/Windows-msvc194-x86_64-Release" server
 
-      - name: Upload the Windows shim, its notice and its lockfile
+      - name: Upload the Windows shims, their notices and lockfiles
         uses: actions/upload-artifact@v7.0.1
         with:
           name: dotnet-native-win-x64
@@ -340,9 +404,27 @@ jobs:
           set -e
           dotnet --info
           dotnet restore Fletcher.slnx --locked-mode
-          dotnet build Fletcher.slnx -c Release --no-restore -p:FletcherNativeShim="${{ steps.shim.outputs.path }}" -p:FletcherProbeShim="${{ steps.shim.outputs.probe }}"
+          dotnet build Fletcher.slnx -c Release --no-restore -p:FletcherNativeShim="${{ steps.shim.outputs.path }}" -p:FletcherProbeShim="${{ steps.shim.outputs.probe }}" -p:FletcherServerShim="${{ steps.shim.outputs.server }}" -p:FletcherHandoverFaultShim="${{ steps.shim.outputs.fault }}"
           # One results file per target framework (D-BIND-170), as on the Linux leg.
           dotnet test Fletcher.slnx -c Release --no-build --logger "trx;LogFilePrefix=windows"
+
+      # D10C-4 (d10 L5): the server leg, as on Linux. Fletcher.Tests again with the server
+      # shim beside it under its own name in every target framework output folder; a
+      # missing copy fails here, since it would silently re-run the edge leg.
+      - name: Test on the server shim
+        shell: bash
+        working-directory: dotnet
+        env:
+          CI: "true"
+        run: |
+          set -e
+          OUTS=$(find tests/Fletcher.Tests/bin/Release -mindepth 1 -maxdepth 1 -type d)
+          if [ -z "$OUTS" ]; then echo "::error::no Fletcher.Tests output folder to stage the server shim into"; exit 1; fi
+          for OUT in $OUTS; do
+            cp "${{ steps.shim.outputs.server }}" "$OUT/"
+            test -f "$OUT/fletcher-c-abi-server.dll" || { echo "::error::the server shim is not in $OUT"; exit 1; }
+          done
+          dotnet test tests/Fletcher.Tests -c Release --no-build --logger "trx;LogFilePrefix=windows-server"
 
       # BIND-9b-3 (D-BIND-88, D-BIND-160): the Linux leg's D-BIND-81 smoke, on Windows. ILC
       # compiles, the MSVC linker links (the ILCompiler package finds it with vswhere, which
@@ -394,6 +476,9 @@ jobs:
             .github
             scripts
             integration-tests/preview-bundle-consumer
+            c-abi/include
+            protoc/tests/golden
+            integration-tests/protoc-coverage/golden
 
       # BIND-9a-4: the package README's code is the consumer test's code, region for region,
       # so what the README shows compiles and runs (the package-consumer job runs it).
@@ -409,39 +494,57 @@ jobs:
           image: ${{ inputs.devcontainer-image }}
           dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Download the Linux shim, its notice and its lockfile
+      - name: Download the Linux shims, their notices and lockfiles
         uses: actions/download-artifact@v8.0.1
         with:
           name: dotnet-native-linux-x64
           path: dotnet/native/linux-x64
 
-      - name: Download the Windows shim, its notice and its lockfile
+      - name: Download the Windows shims, their notices and lockfiles
         uses: actions/download-artifact@v8.0.1
         with:
           name: dotnet-native-win-x64
           path: dotnet/native/win-x64
 
-      - name: Stage one notice, the LICENSE and COPYING
+      - name: Stage one notice per shim, the LICENSE, COPYING and LICENSE-EXCEPTION
         shell: bash
         run: |
           set -e
           # The notice's own list of libraries: the bullets between its first two rules,
           # not the licence texts after them, which have bullets of their own.
           listed() { awk '/^=+$/ {n++; next} n == 1 && /^  \* / {print}' "$1" | sort; }
+          # One notice per package (D10C-5): the edge shim's for four, the server shim's for the
+          # server package. The edge notice is one for both platforms, so the two legs must agree.
           if ! diff <(listed dotnet/native/linux-x64/THIRD-PARTY-LICENSES.txt) <(listed dotnet/native/win-x64/THIRD-PARTY-LICENSES.txt); then
-            echo "::error::the Linux and Windows shims are built from different third-party libraries (above); one notice cannot cover both"
+            echo "::error::the Linux and Windows edge shims are built from different third-party libraries (above); one notice cannot cover both"
             exit 1
           fi
-          mkdir -p dotnet/native/licences
+          # The server notice is ONE too, and lists the UNION of the two graphs (ruling
+          # 2026-11-16: Linux adds libbacktrace, through Boost), so the lists may differ. Ship
+          # the notice of the platform whose list holds the other's, and require each platform's
+          # list to be inside it; neither holding the other is a stop (a notice to merge by hand).
+          SLINUX=dotnet/native/linux-x64/server/THIRD-PARTY-LICENSES.txt
+          SWIN=dotnet/native/win-x64/server/THIRD-PARTY-LICENSES.txt
+          SHIPPED=$SLINUX
+          if ! bash scripts/check_notice_covers.sh $SLINUX $SLINUX $SWIN > /dev/null 2>&1; then SHIPPED=$SWIN; fi
+          bash scripts/check_notice_covers.sh $SHIPPED $SLINUX $SWIN
+          mkdir -p dotnet/native/licences dotnet/native/licences-server
           cp dotnet/native/linux-x64/THIRD-PARTY-LICENSES.txt dotnet/native/licences/
+          cp $SHIPPED dotnet/native/licences-server/THIRD-PARTY-LICENSES.txt
           cp LICENSE COPYING dotnet/native/licences/
+          cp LICENSE COPYING dotnet/native/licences-server/
+          # D-BIND-175: the Fletcher Linking Exception, for the four managed packages only; the
+          # server package is a native library, which the exception leaves under the LGPL alone.
+          cp LICENSE-EXCEPTION dotnet/native/licences/
           listed dotnet/native/licences/THIRD-PARTY-LICENSES.txt
           # Compiled into the shim from source, so not in the Conan graph: their texts
           # come from the fletcher-* packages that vendor them, and must be here; since
           # BIND-9b-7 (D-BIND-166) also what Fast DDS compiles in from its own thirdparty/,
           # and nanoarrow's and flatcc's Apache NOTICE files.
-          bash scripts/check_third_party_notice.sh dotnet/native/licences/THIRD-PARTY-LICENSES.txt \
-            nanoarrow micro-cdr micro-xrce-dds-client fast-dds nlohmann-json filewatch taocpp-pegtl "boost 1.73.0"
+          EDGE=(nanoarrow micro-cdr micro-xrce-dds-client fast-dds nlohmann-json filewatch taocpp-pegtl "boost 1.73.0")
+          bash scripts/check_third_party_notice.sh dotnet/native/licences/THIRD-PARTY-LICENSES.txt "${EDGE[@]}"
+          # The server notice: the same, plus Arrow C++ and its NOTICE (D10C-5, d9 L8).
+          bash scripts/check_third_party_notice.sh dotnet/native/licences-server/THIRD-PARTY-LICENSES.txt "${EDGE[@]}" arrow
 
       # The commit the packages name in their README and nuspec (BIND-9a-2, D-BIND-145): the one
       # checked out, `ref` when ci.pr passes the PR head for the preview bundle (whose
@@ -463,23 +566,67 @@ jobs:
                   -p:FletcherLicenceDir=/workspace/dotnet/native/licences \
                   -p:FletcherSourceCommit=$SOURCE_COMMIT
               done
-              # BIND-9b-7 (review L14, D-BIND-173): the two lockfiles travel with the packages,
-              # so a release attaches them and a preview bundle carries them in nuget/.
+              # D10C-5: the server package, with the server shims and its own notice.
+              dotnet pack src/Fletcher.Server/Fletcher.Server.csproj -c Release --no-restore -o /workspace/dotnet/artifacts $VERSION_ARG \
+                -p:FletcherServerShimLinuxX64=/workspace/dotnet/native/linux-x64/server/libfletcher-c-abi-server.so \
+                -p:FletcherServerShimWinX64=/workspace/dotnet/native/win-x64/server/fletcher-c-abi-server.dll \
+                -p:FletcherLicenceDir=/workspace/dotnet/native/licences-server \
+                -p:FletcherSourceCommit=$SOURCE_COMMIT
+              # BIND-9b-7 (review L14, D-BIND-173): the lockfiles, the edge and the server
+              # one per platform, travel with the packages, so a release attaches them and a
+              # preview bundle carries them in nuget/.
               for RID in linux-x64 win-x64; do
-                cp /workspace/dotnet/native/\$RID/fletcher-shim-\$RID.conan.lock /workspace/dotnet/artifacts/
+                cp /workspace/dotnet/native/\$RID/fletcher-shim-\$RID.conan.lock /workspace/dotnet/native/\$RID/server/fletcher-shim-server-\$RID.conan.lock /workspace/dotnet/artifacts/
               done
             "
 
-      # D-BIND-13 and D-BIND-134 on the PACKED packages: Interop carries exactly the two
-      # shims, nothing else carries native assets or depends on a package that does (the
-      # gateway client's former Package.GatewayClientHasNoRuntimesFolder step), no probe
-      # shim, both licence files in every package, and (BIND-9a-2) a README naming the
+      # BC-17 (d10 L15; D-BIND-13 and D-BIND-134, extended by D10C-5) on the PACKED packages, now
+      # five: Interop carries exactly the two edge shims, the server package exactly the two
+      # server shims, no other package carries native assets; Eiva.Fletcher and the server package
+      # depend on Interop and on nothing else with a shim, and nothing depends on the server
+      # package (the gateway client's former Package.GatewayClientHasNoRuntimesFolder step). Also
+      # no probe shim, both licence files in every package, and (BIND-9a-2) a README naming the
       # floors, the relinking route and this commit.
       - name: Check the packages
         shell: bash
         env:
           SOURCE_COMMIT: ${{ inputs.ref || github.sha }}
         run: bash scripts/check_dotnet_packages.sh dotnet/artifacts "$SOURCE_COMMIT"
+
+      # D10C-5 (BC-17): the check must also REFUSE what it is there for. The fourteen breakages,
+      # each made in a copy of the folder just checked, each refused for its own reason.
+      - name: Check that the package check refuses what it should
+        shell: bash
+        env:
+          SOURCE_COMMIT: ${{ inputs.ref || github.sha }}
+        run: python3 scripts/test_check_dotnet_packages.py dotnet/artifacts "$SOURCE_COMMIT"
+
+      # D10C-7, rung 8 (d10 L4; BC-9): C#'s own batcher is gone from what SHIPS. The packed
+      # Eiva.Fletcher and Eiva.Fletcher.Interop, every target framework, unzipped and handed to
+      # ManagedBatcherGoneTests.TheManagedBatcherIsGoneFromTheAssemblies through
+      # FLETCHER_PACKED_ASSEMBLIES (unset, it reads the build output, as the dotnet legs run it).
+      # Fletcher.Tests is restored and built here, in this step's own container (the Pack step's
+      # package cache went with its container), for that one test; the sparse checkout above carries
+      # what its build reads (the header and the goldens). A filter that matches nothing fails.
+      - name: Check the managed batcher is gone from the packed assemblies
+        shell: bash
+        run: |
+          set -e
+          PACKED=dotnet/artifacts/packed-assemblies
+          rm -rf "$PACKED" && mkdir -p "$PACKED"
+          for NUPKG in dotnet/artifacts/Eiva.Fletcher.[0-9]*.nupkg dotnet/artifacts/Eiva.Fletcher.Interop.[0-9]*.nupkg; do
+            test -f "$NUPKG" || { echo "::error::no package matched $NUPKG"; exit 1; }
+            unzip -q "$NUPKG" -d "$PACKED/$(basename "$NUPKG" .nupkg)"
+          done
+          docker run --rm -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace/dotnet -e CI=true \
+            -e FLETCHER_PACKED_ASSEMBLIES=/workspace/$PACKED fletcher-build bash -c "
+              set -e
+              dotnet restore tests/Fletcher.Tests --locked-mode
+              dotnet test tests/Fletcher.Tests -c Release --no-restore \
+                --filter FullyQualifiedName=Eiva.Fletcher.Tests.ManagedBatcherGoneTests.TheManagedBatcherIsGoneFromTheAssemblies \
+                -- RunConfiguration.TreatNoTestsAsError=true
+            "
+          rm -rf "$PACKED"
 
       - name: Upload packages
         uses: actions/upload-artifact@v7.0.1

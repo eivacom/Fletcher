@@ -7,7 +7,7 @@ are not released anywhere. Instead, every push to its branch, `feature/csharp-bi
 
 | In the bundle | |
 |---|---|
-| `nuget/` | The NuGet packages, `Eiva.Fletcher`, `Eiva.Fletcher.Interop` (with the native library for Linux and Windows), `Eiva.Fletcher.Model`, `Eiva.Fletcher.GatewayClient`, and `Eiva.Fletcher.Protoc`, the code generator for C# projects |
+| `nuget/` | The NuGet packages, `Eiva.Fletcher`, `Eiva.Fletcher.Interop` (with the native library for Linux and Windows), `Eiva.Fletcher.Server` (the server build of that library, which adds batched Arrow subscriptions; reference it only for those), `Eiva.Fletcher.Model`, `Eiva.Fletcher.GatewayClient`, and `Eiva.Fletcher.Protoc`, the code generator for C# projects |
 | `gateway/` | The Fletcher gateway for Linux and Windows, built from the same commit. Use this one; the released 0.5 gateway does not work with the C# gateway client |
 | `protoc/` | The code generator `protoc-gen-fletcher` for Linux and Windows outside NuGet, and `fletcher/options.proto` |
 | `README-preview.md` | How to use all of it, step by step |

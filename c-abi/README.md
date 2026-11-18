@@ -1,14 +1,19 @@
 # fletcher-c-abi — the binding ABI shim
 
-One pure C surface over Fletcher, shipped as **one shared library per RID**. It
-is what `Eiva.Fletcher.Interop` carries in `runtimes/<rid>/native/`, and what a
-second binding (Rust, or a Node.js add-on, on the root README's Roadmap) would
-call. Nothing above this boundary links a Fletcher C++ library or sees a C++ type.
+One pure C surface over Fletcher, shipped as **one shared library per RID per
+build**. Today that is the edge build, which `Eiva.Fletcher.Interop` carries in
+`runtimes/<rid>/native/`; a server-tier build of the same source, which adds the
+batched subscribe and links Arrow C++, is designed to ship in a separate package,
+so there will be two shims per RID, one per package, of which a process loads one
+(owner ruling 2026-11-13; `docs/domains/d9-c-abi-shim.md` L12, L17, D22). It is
+also what a second binding (Rust, or a Node.js add-on, on the root README's
+Roadmap) would call. Nothing above this boundary links a Fletcher C++ library or
+sees a C++ type.
 
 ```
 c-abi/
   include/fletcher/abi/binding.h   the ABI: pure C99, versioned, append-only within a major
-  src/binding_version.c            fl_binding_abi_version()
+  src/binding_version.c            fl_binding_abi_version(), fl_binding_variant()
   src/binding.cpp                  every other entry point: registry, publisher, subscriber,
                                    arrival, attachments, blobs, schemas, the codec surface
   src/nanoarrow_codec.*            the Arrow-array codec behind fl_codec_* / fl_rows_*
@@ -35,7 +40,7 @@ the other.
 
 The eProsima and Micro XRCE-DDS chains are linked **statically**, and the three
 built-in providers — `inprocess`, `fastdds`, `xrce` — are **registered by the
-shim itself** (D-BIND-16). A C# application therefore selects a real transport
+shim itself** (D-BIND-3, as amended 2026-09-11). A C# application therefore selects a real transport
 with a configuration string and deploys one native file per RID: no loader, no
 driver binaries beside it, no `conanrun`. Selecting a provider by **path**
 answers `kNotSupported` until PDA-ABI fills the resolver seat, and managed code
@@ -72,6 +77,22 @@ recipe also needs `fletcher-arrow-bridge`, for the C ABI encoder's oracle, so
 `conan create ../arrow-bridge` goes before it; `ci.c-abi.yml` does that, and
 builds the probe shim too (below).
 
+### The server build (`variant=server`)
+
+```bash
+conan create . --build=missing -pr:a=../.conan-profiles/<profile> -o "&:variant=server"
+```
+
+The same sources, a second build: it answers `FL_VARIANT_SERVER` to
+`fl_binding_variant()` and is the file `fletcher-c-abi-server` (`.dll`, or
+`libfletcher-c-abi-server.so`), so both builds can sit in one folder. `variant`
+defaults to `edge`, is part of the package ID, and the CMake target stays
+`fletcher-c-abi::fletcher-c-abi`. It links `fletcher-pubsub-arrow` (domain 7's batcher) and so
+Arrow C++, statically and hidden, and only this build does; its recipe needs
+`conan create ../pubsub-arrow` first, after `../arrow-bridge`. It serves
+`fl_subscriber_subscribe_batches`. It cannot be combined with `with_probe_shim`. A direct CMake configure takes
+`-DFLETCHER_SHIM_VARIANT=edge|server`, and names the file from it.
+
 ### The probe shim (`with_probe_shim`, test-only)
 
 ```bash
@@ -93,7 +114,7 @@ built with it cannot pass for the release one. Its suite is `c_abi_probe_tests`.
 
 ## The surface
 
-[`binding.h`](include/fletcher/abi/binding.h) is **ABI 0.7: 47 entry points**, every one
+[`binding.h`](include/fletcher/abi/binding.h) is **ABI 0.8: 48 entry points**, every one
 implemented, in the header's sections: the version handshake; status and `fl_error`; strings,
 topics and the single-copy marker; blobs and schemas as shared owner handles; the schema arrival
 with its five outcomes; attachments (a builder, and a sealed set read by position); the write
@@ -102,6 +123,11 @@ window a caller lends the encoder; the provider, publisher and subscriber, with 
 channel: of the built-ins, all but `fastdds`); and the codec. Every declaration says which part of the seam specification it comes from, and restates
 the rule rather than pointing at it, so a binding author never has to read the C++ tree. Status
 numbers are the seam's own and are never renumbered.
+
+**The build.** `fl_binding_variant()` answers which build of the shim is loaded: `FL_VARIANT_EDGE`
+(1) for the edge build, `FL_VARIANT_SERVER` (2) for the server build. Like the version it is callable
+first and from any thread, and it still answers in a shim that refuses every other call. The edge
+shim and the test-only probe shim answer edge; the server shim (`fletcher-c-abi-server`) answers server.
 
 **Versioning.** `fl_binding_abi_version()` answers for the shim actually loaded, packed as
 `(major << 16) | minor`. Within a major the header is append-only, and from 1.0 a declaration is
@@ -192,10 +218,31 @@ things in its own idiom:
    `fletcher-c-abi.dll`) from where the package puts it for the RID (C#: `NativeLoader`, a
    `DllImportResolver`), and never ship a second copy beside another binding's: the shim refuses
    to work when it finds another module exporting `fl_single_copy_marker`, naming both
-   (D-BIND-17).
+   (D-BIND-17). That holds across the two builds too: an application that references both the
+   base and the server package still loads only one shim. Which file a binding loads when both are
+   present, and how the two packages name their files, is not settled yet
+   (`docs/domains/d9-c-abi-shim.md` §6, Q5a).
 2. **Handshake before anything else.** Call `fl_binding_abi_version()` and refuse a shim whose major,
    or before 1.0 whose minor, differs from the `FL_BINDING_ABI_VERSION` the binding was built
-   against, with a message saying which two.
+   against, with a message saying which two. Both builds share one version (d9 D27), so the
+   version does not say which build was loaded: a binding that needs the batched subscribe asks
+   `fl_binding_variant()` (d9 L16), and the edge build answers a
+   batched call with `FL_NOT_SUPPORTED` ("this provider or this build cannot do this"), never a
+   missing symbol (d9 L12). On the server build, `fl_subscriber_subscribe_batches` hands each window
+   domain 7 closes to a callback as one `fl_batch`: an Arrow C Data array and schema (borrowed for the
+   call; keep them by Arrow's move), the reason (`FL_BATCH_*`), the loss count and each row's
+   attachments (`fl_batch.attachments`: one set per row, in row order, an empty set for a row with
+   none; borrowed for the call, a value kept only by `fl_blob_retain`), one batch at a time
+   on domain 7's batch thread, in window order; a window that could not be built arrives with a NULL
+   array. So does a window the shim could not hand over (d9 L18): its rows are counted lost, its
+   reason is kept, and `fl_batch.failure` carries the failure (status, `FL_ORIGIN_HANDOVER`,
+   message), borrowed for the call like the rest of the batch: copy the message to keep it, and
+   never pass it to `fl_error_dispose`. A row and a batched subscription to the same topic through one provider collide (see the
+   header). `fl_subscriber_unsubscribe_batches` ends one batched subscription: called outside a
+   batch callback it returns once every finished batch, then the closing batch, has been delivered,
+   so `ctx` may be freed then. It refuses an id without bit 63 (`FL_INVALID_ARGUMENT`), and a
+   batched id already closed is a no-op. Closing from inside a batch callback: see
+   `fl_subscriber_destroy` in the header.
 3. **Bring your own Arrow.** The header only forward-declares `ArrowSchema` and `ArrowArray`; the
    binding uses its Arrow library's C Data Interface (C#: `Apache.Arrow.C`), exports a batch for
    `fl_rows_bind` and imports what `fl_decode_rows` and `fl_schema_copy` produce.
@@ -211,4 +258,5 @@ things in its own idiom:
    nor install a path resolver (D-BIND-24), and a path selector answers `FL_NOT_SUPPORTED`.
 
 [`test_package/`](test_package/) is the smallest consumer: a C program that links the package,
-calls `fl_binding_abi_version()` and compares it with the header's.
+calls `fl_binding_abi_version()` and compares it with the header's, then asks and prints
+`fl_binding_variant()` and fails on a build it does not know.

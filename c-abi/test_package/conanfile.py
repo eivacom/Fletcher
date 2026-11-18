@@ -34,7 +34,12 @@ class CAbiTestConan(ConanFile):
     def test(self):
         if can_run(self):
             cmd = os.path.join(self.cpp.build.bindir, "example")
+            # D9S-2: the build THIS package records, read from its own options
+            # (the `variant` option is part of the package ID), is what the shim's
+            # own answer must name. `example` fails without it and on a mismatch,
+            # so a server package that held the edge shim, or the reverse, is red.
+            variant = str(self.dependencies["fletcher-c-abi"].options.variant)
             # env="conanrun" puts the shim's directory on PATH / LD_LIBRARY_PATH:
             # unlike every other Fletcher component this one is a SHARED library,
             # so the loader has to find it at run time.
-            self.run(cmd, env="conanrun")
+            self.run(f"{cmd} {variant}", env="conanrun")

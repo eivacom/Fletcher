@@ -70,3 +70,25 @@ exercised here without anyone remembering to add it.
 
 Both halves **fail rather than skip** when the shim or the corpus is missing: a
 suite that reads green because it ran over nothing is worse than a red one.
+
+## Against both builds
+
+CI runs the C# round trip twice: once against the edge shim, then against the
+**server** shim, so "the server build only adds" (d9 L13) is checked from C# as
+well as from C++. The server pass stages the server file beside the tests **under
+its own name**, `fletcher-c-abi-server`, which the C# loader loads in preference
+to the edge file when present (owner ruling 2026-11-15, "Distinct names, loader
+prefers", `plans/RIX-rulings.md` :536 (2); D10C-4). The renamed copy of 2026-11-14
+(:525) is retired.
+
+Two checks keep the server pass honest. It writes into a fresh output folder,
+which must hold the server file, so an edge file left from the first pass cannot
+answer. And `TheShimBesideTheTestsIsTheOneLoaded` reads the process's module list
+on both passes: exactly one shim is loaded, the one beside the tests, and it is
+the server file exactly when a server file is there.
+
+The **corpus stays the edge build's**: C# round-trips it through each build, so
+the server pass compares server bytes with edge bytes. A corpus the server build
+emitted would compare the server build with itself. That is a design choice
+(D9S-7), not part of the ruling. Both legs are in
+`.github/workflows/ci.integration-test.binding-abi-conformance.yml`. (D9S, 2026-11-14; D10C-4, 2026-11-15.)

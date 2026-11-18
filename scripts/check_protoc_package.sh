@@ -8,7 +8,8 @@
 #   check_protoc_package.sh <Eiva.Fletcher.Protoc.<version>.nupkg> <dist folder> [<commit>]
 #
 # <dist folder> holds what ci.protoc's legs uploaded: protoc-gen-fletcher-linux-x64,
-# protoc-gen-fletcher-windows-x64.exe, LICENSE, COPYING and THIRD-PARTY-LICENSES.txt.
+# protoc-gen-fletcher-windows-x64.exe, LICENSE, COPYING, LICENSE-EXCEPTION and
+# THIRD-PARTY-LICENSES.txt.
 #
 #   * the two plugins are there, under tools/linux-x64/ and tools/win-x64/, byte for byte
 #     the binaries the release and the npm shim carry;
@@ -16,6 +17,8 @@
 #   * build/ holds exactly the package's props and targets, both well-formed XML;
 #   * LICENSE, COPYING and THIRD-PARTY-LICENSES.txt are at the root, the plugin's own, and the
 #     README the nuspec names;
+#   * D-BIND-175 (approved by EIVA legal, ruling 2026-11-17): LICENSE-EXCEPTION, the Fletcher
+#     Linking Exception, is at the root beside them, the one ci.protoc staged;
 #   * nothing a project would reference or load: no lib/, ref/ or runtimes/, no dependencies;
 #   * the nuspec marks it a development dependency and, given a <commit>, names that commit.
 set -euo pipefail
@@ -52,7 +55,7 @@ def same(member, path):
 same("tools/linux-x64/protoc-gen-fletcher-linux-x64", f"{dist}/protoc-gen-fletcher-linux-x64")
 same("tools/win-x64/protoc-gen-fletcher-windows-x64.exe", f"{dist}/protoc-gen-fletcher-windows-x64.exe")
 same("include/fletcher/options.proto", options)
-for licence in ("LICENSE", "COPYING", "THIRD-PARTY-LICENSES.txt"):
+for licence in ("LICENSE", "COPYING", "LICENSE-EXCEPTION", "THIRD-PARTY-LICENSES.txt"):
     same(licence, f"{dist}/{licence}")
 if "include/fletcher/options.proto" in names and \
         b'option csharp_namespace = "Eiva.Fletcher.Protobuf";' not in z.read("include/fletcher/options.proto"):
@@ -85,5 +88,5 @@ if commit and f'commit="{commit}"' not in nuspec:
 
 if failed:
     sys.exit(1)
-print(f"Eiva.Fletcher.Protoc checked: {len(names)} entries, both plugins, options.proto, licences, build files")
+print(f"Eiva.Fletcher.Protoc checked: {len(names)} entries, both plugins, options.proto, licences and the linking exception, build files")
 PY
